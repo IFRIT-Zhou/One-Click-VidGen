@@ -1,0 +1,21 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+requests>=2.31.0
+python-multipart>=0.0.9
+PyMySQL>=1.1.1
+email-validator>=2.2.0
+
+# App runtime helpers
+aiofiles>=23.2.0
+loguru>=0.7.0
+psutil>=5.9.0
+slowapi>=0.1.9
+
+# Pipeline: ASR / scene slicing
+# Keep torch/torchaudio provided by the pytorch2.11 conda environment.
+faster-whisper>=1.1.1
+# CTranslate2 GPU wheels require these CUDA 12 libraries even when PyTorch uses CUDA 13.
+nvidia-cublas-cu12>=12.4,<13
+nvidia-cudnn-cu12>=9,<10
+torchcodec>=0.8.0
