@@ -50,6 +50,8 @@ export const api = {
   ),
   job: (id) => requestJSON(`/api/jobs/${id}`),
   cancelJob: (id) => requestJSON(`/api/jobs/${id}/cancel`, { method: 'POST' }),
+  resumeJob: (id) => requestJSON(`/api/jobs/${id}/resume`, { method: 'POST' }),
+  openArtifactFolder: (artifactUrl) => requestJSON(`${artifactUrl}/open-folder`, { method: 'POST' }),
   editorUploads: () => requestJSON('/api/editor/uploads'),
   uploadEditorAsset: (file) => {
     const data = new FormData()

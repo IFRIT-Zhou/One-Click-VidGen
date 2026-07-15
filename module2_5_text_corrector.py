@@ -4,6 +4,69 @@ import os
 import sys
 import difflib
 
+
+def split_subtitle_text(text, max_chars=24):
+    normalized = re.sub(r'\s+', ' ', str(text or '')).strip()
+    if not normalized:
+        return []
+    pieces = re.findall(r'[^，。！？；：,.!?;:]+[，。！？；：,.!?;:]?', normalized)
+    chunks = []
+    current = ''
+    for piece in pieces or [normalized]:
+        while len(piece) > max_chars:
+            head, piece = piece[:max_chars], piece[max_chars:]
+            if current:
+                chunks.append(current)
+                current = ''
+            chunks.append(head)
+        if not piece:
+            continue
+        if current and len(current) + len(piece) > max_chars:
+            chunks.append(current)
+            current = piece
+        else:
+            current += piece
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
+    result = []
+    for index, item in enumerate(scene_data):
+        text = corrected_texts[index] if index < len(corrected_texts) else item.get('text_content', '')
+        chunks = split_subtitle_text(text, max_chars=max_chars) or [str(text or '').strip()]
+        start = float(item.get('start') or 0)
+        end = max(float(item.get('end') or start + 0.2), start + 0.2)
+        weights = [max(1, len(re.sub(r'\s+', '', chunk))) for chunk in chunks]
+        total_weight = sum(weights)
+        consumed = 0
+        for chunk_index, (chunk, weight) in enumerate(zip(chunks, weights)):
+            chunk_start = start + (end - start) * consumed / total_weight
+            consumed += weight
+            chunk_end = end if chunk_index == len(chunks) - 1 else start + (end - start) * consumed / total_weight
+            output_index = len(result) + 1
+            result.append(
+                {
+                    **item,
+                    'id': f'segment_{output_index:03d}',
+                    'slide_id': f'scene_{output_index:03d}',
+                    'start': round(chunk_start, 3),
+                    'end': round(chunk_end, 3),
+                    'text_content': chunk,
+                }
+            )
+    return result
+
+
+def format_srt_time(seconds):
+    milliseconds = max(0, int(round(float(seconds) * 1000)))
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return f'{hours:02d}:{minutes:02d}:{whole_seconds:02d},{milliseconds:03d}'
+
+
 def run_correction():
     print("🔍 [全局 Opcode 对齐] 正在执行物理级双轨文本校准...")
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -95,35 +158,22 @@ def run_correction():
         best_text = orig_text[real_start:real_end + 1].strip()
         corrected_texts.append(best_text)
 
-    # 步骤 4：双轨覆写 JSON 和 SRT 数据资产
-    for i, item in enumerate(scene_data):
-        if i < len(corrected_texts):
-            item['text_content'] = corrected_texts[i]
+    # 步骤 4：校对后再次按屏幕可读长度断句，并同步重建 JSON 与 SRT。
+    scene_data = split_corrected_scenes(scene_data, corrected_texts, max_chars=24)
 
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(scene_data, f, ensure_ascii=False, indent=2)
 
-    with open(srt_file, 'r', encoding='utf-8') as f:
-        srt_content = f.read().strip()
-
-    blocks = re.split(r'\n\s*\n', srt_content)
-    new_blocks = []
-    text_idx = 0
-
-    for block in blocks:
-        lines = block.split('\n')
-        if len(lines) >= 3 and '-->' in lines[1]:
-            if text_idx < len(corrected_texts):
-                lines[2:] = [corrected_texts[text_idx]]
-                text_idx += 1
-            new_blocks.append('\n'.join(lines))
-        else:
-            new_blocks.append(block)
+    new_blocks = [
+        f"{index}\n{format_srt_time(item['start'])} --> {format_srt_time(item['end'])}\n{item['text_content']}"
+        for index, item in enumerate(scene_data, 1)
+        if str(item.get('text_content') or '').strip()
+    ]
 
     with open(srt_file, 'w', encoding='utf-8') as f:
         f.write('\n\n'.join(new_blocks) + '\n\n')
 
-    print("✅ 物理级双轨文本校准完毕！全局坐标映射无误。")
+    print(f"✅ 文本校准与短字幕重切完毕，共 {len(scene_data)} 条，每条最多约 24 字。")
 
 if __name__ == "__main__":
     run_correction()

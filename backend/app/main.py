@@ -1,4 +1,5 @@
 import os
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -9,17 +10,18 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
-from .auth import COOKIE_NAME, current_user_from_request, require_user, sign_session
+from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .db import (
     authenticate_user,
     create_user,
     db_status,
+    ensure_local_user,
     init_database,
     list_media_assets,
     sole_user_id,
 )
 from .gemini_client import DEFAULT_GEMINI_MODEL, gemini_configured
-from .runninghub_tts import EMOTIONS, SYSTEM_VOICE_IDS, load_runninghub_tts_config
+from .indextts2_local import EMOTIONS, load_indextts2_config
 from .editor import (
     edit_store,
     list_uploads,
@@ -27,42 +29,34 @@ from .editor import (
     save_upload,
     upload_path,
 )
-from .pipeline import PROJECT_ROOT, JOBS_DIR, store
+from .pipeline import JOBS_DIR, PROJECT_ROOT, normalize_project_name, store
+from module4_video_render import (
+    CONTENT_MODE_SCIENCE,
+    CONTENT_MODE_STORY,
+    DEFAULT_VISUAL_PROMPT_SYSTEM,
+    DEFAULT_VISUAL_STYLE,
+    SCIENCE_VISUAL_PROMPT_SYSTEM,
+    SCIENCE_VISUAL_STYLE,
+    build_visual_prompt_system,
+)
 
 
 class GenerateRequest(BaseModel):
-    script: str = Field(..., min_length=5)
-    tts_voice_id: Literal[
-        "Wise_Woman",
-        "Friendly_Person",
-        "Inspirational_girl",
-        "Deep_Voice_Man",
-        "Calm_Woman",
-        "Casual_Guy",
-        "Lively_Girl",
-        "Patient_Man",
-        "Young_Knight",
-        "Determined_Man",
-        "Lovely_Girl",
-        "Decent_Boy",
-        "Imposing_Manner",
-        "Elegant_Man",
-        "Abbess",
-        "Sweet_Girl_2",
-        "Exuberant_Girl",
-    ] = "Wise_Woman"
+    project_name: str = Field(default="", max_length=80)
+    script: str = ""
+    module1_only: bool = False
+    content_mode: Literal["urban_suspense", "science_explainer"] = "urban_suspense"
+    skip_tts: bool = False
+    source_audio_id: str | None = None
+    skip_text_correction: bool = False
+    auto_split_long_text: bool = True
+    split_text_threshold: int = Field(default=3000, ge=800, le=12000)
+    tts_voice_id: str = Field(default="voice_05.wav", max_length=180)
     tts_speed: float = Field(default=1, ge=0.5, le=2)
     tts_volume: float = Field(default=1, ge=0.1, le=10)
     tts_pitch: int = Field(default=0, ge=-12, le=12)
-    tts_emotion: Literal[
-        "happy",
-        "sad",
-        "angry",
-        "fearful",
-        "disgusted",
-        "surprised",
-        "neutral",
-    ] | None = None
+    tts_parallelism: int = Field(default=2, ge=1, le=3)
+    tts_emotion: str | None = Field(default=None, max_length=30)
     tts_english_normalization: bool = False
     tts_pronunciation: str | None = Field(default=None, max_length=200)
     api_key: str | None = None
@@ -70,6 +64,9 @@ class GenerateRequest(BaseModel):
     model: str | None = "gpt-4o-mini"
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
+    visual_prompt_mode: Literal["simple", "full"] = "simple"
+    visual_style_prompt: str | None = Field(default=None, max_length=1000)
+    visual_prompt_system: str | None = Field(default=None, max_length=4000)
 
 
 class RegisterRequest(BaseModel):
@@ -118,6 +115,9 @@ if WORKSPACE_DIR.exists():
 def startup() -> None:
     init_database()
     if db_status()["ready"]:
+        if local_auth_enabled():
+            user = local_user()
+            ensure_local_user(int(user["id"]), str(user["email"]), str(user["name"]))
         store.load_persisted()
         edit_store.load_persisted()
         store.import_legacy_jobs(sole_user_id())
@@ -141,14 +141,16 @@ def list_files(patterns: list[str]) -> list[dict[str, str]]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    runninghub_tts = load_runninghub_tts_config()
+    indextts2 = load_indextts2_config()
     return {
         "ok": True,
-        "tts_online": runninghub_tts is not None,
-        "tts_provider": "runninghub/minimax/speech-2.8-hd",
-        "tts_voice_id": runninghub_tts.voice_id if runninghub_tts else None,
+        "tts_online": indextts2.ready,
+        "tts_provider": "official IndexTTS2 2.0.0 (local GPU)",
+        "tts_voice_id": indextts2.default_voice,
         "tts_autostart": False,
-        "tts_api_base_url": runninghub_tts.endpoint if runninghub_tts else None,
+        "tts_api_base_url": None,
+        "tts_device": indextts2.device,
+        "tts_missing": indextts2.missing_resources(),
         "mysql": db_status(),
         "gemini": {
             "configured": gemini_configured(),
@@ -161,19 +163,19 @@ def health() -> dict[str, Any]:
 @app.post("/api/tts/start")
 def start_tts(request: Request) -> dict[str, Any]:
     require_user(request)
-    runninghub_tts = load_runninghub_tts_config()
-    if runninghub_tts is not None:
+    indextts2 = load_indextts2_config()
+    if indextts2.ready:
         return {
             "online": True,
             "launching": False,
             "started": False,
-            "message": "RunningHub MiniMax TTS 已配置",
+            "message": f"官方 IndexTTS2 已就绪（{indextts2.device}）",
         }
     return {
         "online": False,
         "launching": False,
         "started": False,
-        "message": "RunningHub TTS 未启用或未配置 API Key",
+        "message": "官方 IndexTTS2 未就绪：" + "、".join(indextts2.missing_resources()),
     }
 
 
@@ -182,6 +184,7 @@ def session(request: Request) -> dict[str, Any]:
     user = current_user_from_request(request)
     return {
         "user": user,
+        "auth_mode": "local" if local_auth_enabled() else "account",
         "mysql": db_status(),
     }
 
@@ -230,27 +233,28 @@ def logout(response: Response) -> dict[str, bool]:
 
 @app.get("/api/settings")
 def settings() -> dict[str, Any]:
-    runninghub_tts = load_runninghub_tts_config()
+    indextts2 = load_indextts2_config()
+    last_visual_prompt = ""
+    for job in store.list_recent():
+        candidate = str(job.get("request", {}).get("visual_prompt_system") or "").strip()
+        if candidate:
+            last_visual_prompt = candidate
+            break
     return {
         "scripts": list_files(["*.txt"]),
         "tts": {
-            "model": "minimax/speech-2.8-hd",
-            "voices": list(SYSTEM_VOICE_IDS),
+            "model": "official IndexTTS2 2.0.0 · local FP16",
+            "voices": list(indextts2.available_voices()),
             "emotions": list(EMOTIONS),
             "defaults": {
-                "voice_id": runninghub_tts.voice_id if runninghub_tts else "Wise_Woman",
-                "speed": runninghub_tts.speed if runninghub_tts else 1,
-                "volume": runninghub_tts.volume if runninghub_tts else 1,
-                "pitch": runninghub_tts.pitch if runninghub_tts else 0,
-                "emotion": runninghub_tts.emotion if runninghub_tts else None,
-                "english_normalization": (
-                    runninghub_tts.english_normalization if runninghub_tts else False
-                ),
-                "pronunciation": (
-                    runninghub_tts.pronunciation_dict[0]
-                    if runninghub_tts and runninghub_tts.pronunciation_dict
-                    else ""
-                ),
+                "voice_id": indextts2.default_voice,
+                "speed": 1,
+                "volume": 1,
+                "pitch": 0,
+                "parallelism": 2,
+                "emotion": None,
+                "english_normalization": False,
+                "pronunciation": "",
             },
         },
         "model_options": [
@@ -264,6 +268,25 @@ def settings() -> dict[str, Any]:
             "可把 base_url 设置为 OpenAI 兼容中转，例如 https://openrouter.ai/api/v1。",
             "不建议使用来路不明的低价转发站保存长期密钥；本地使用时可填临时 key。",
         ],
+        "visual_prompt": {
+            "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
+            "default_style": DEFAULT_VISUAL_STYLE,
+            "last_used_system": last_visual_prompt,
+            "modes": {
+                CONTENT_MODE_STORY: {
+                    "label": "都市惊悚",
+                    "description": "人物、线索与悬念连续的阴森漫画故事",
+                    "default_style": DEFAULT_VISUAL_STYLE,
+                    "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
+                },
+                CONTENT_MODE_SCIENCE: {
+                    "label": "口播科普",
+                    "description": "红围巾短发少女的清晰科教漫画",
+                    "default_style": SCIENCE_VISUAL_STYLE,
+                    "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
+                },
+            },
+        },
     }
 
 
@@ -278,7 +301,28 @@ def read_script(name: str) -> dict[str, str]:
 @app.post("/api/jobs")
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
-    job = store.create(payload.model_dump(), user_id=int(user["id"]))
+    data = payload.model_dump()
+    data["project_name"] = normalize_project_name(data.get("project_name"))
+    if data.get("visual_prompt_mode") == "simple":
+        data["visual_prompt_system"] = build_visual_prompt_system(
+            str(data.get("visual_style_prompt") or ""),
+            str(data.get("content_mode") or CONTENT_MODE_STORY),
+        )
+    script = str(data.get("script") or "").strip()
+    if data.get("module1_only"):
+        data["skip_tts"] = False
+        data["skip_text_correction"] = False
+        data["source_audio_id"] = None
+    if data.get("skip_tts"):
+        if not data.get("source_audio_id"):
+            raise HTTPException(status_code=400, detail="请先上传已有配音")
+        if not script:
+            data["skip_text_correction"] = True
+    elif len(script) < 5:
+        raise HTTPException(status_code=400, detail="请输入至少 5 个字的口播文案")
+    elif data.get("skip_text_correction"):
+        raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
+    job = store.create(data, user_id=int(user["id"]))
     store.run_async(job)
     return job.snapshot()
 
@@ -317,6 +361,17 @@ def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
     return store.cancel(job)
 
 
+@app.post("/api/jobs/{job_id}/resume")
+def resume_job(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=400, detail="只有失败或已停止的任务可以断点续跑")
+    return store.resume(job)
+
+
 @app.get("/api/jobs/{job_id}/logs")
 def get_job_logs(job_id: str, request: Request) -> dict[str, Any]:
     user = require_user(request)
@@ -353,6 +408,25 @@ def get_artifact(job_id: str, filename: str, request: Request) -> FileResponse:
     if expected_root not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="artifact not found")
     return FileResponse(str(path), filename=filename)
+
+
+@app.post("/api/jobs/{job_id}/artifacts/{filename}/open-folder")
+def open_artifact_folder(job_id: str, filename: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="artifact not found")
+    path = (JOBS_DIR / job_id / "artifacts" / filename).resolve()
+    expected_root = (JOBS_DIR / job_id / "artifacts").resolve()
+    if expected_root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    if os.name != "nt":
+        raise HTTPException(status_code=501, detail="打开文件夹功能目前只支持 Windows 便携版")
+    try:
+        subprocess.Popen(["explorer.exe", f"/select,{path}"], close_fds=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"无法打开资源管理器: {exc}") from exc
+    return {"ok": True, "path": str(path.parent)}
 
 
 @app.post("/api/editor/uploads")

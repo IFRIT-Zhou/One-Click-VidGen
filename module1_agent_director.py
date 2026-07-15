@@ -1,55 +1,62 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import math
 import os
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import wave
-from dataclasses import replace
+from collections.abc import Callable
+from pathlib import Path
 
-from backend.app.db import record_media_asset
-from backend.app.runninghub_tts import (
-    RunningHubTTSError,
-    load_runninghub_tts_config,
-    synthesize_runninghub_to_wav,
+from backend.app.indextts2_local import (
+    emotion_vector_text,
+    load_indextts2_config,
+    resolve_voice_reference,
 )
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "workspace", "2_audio_srt")
-TEMP_ROOT = os.path.join(PROJECT_ROOT, "workspace", "temp_chunks")
+PROJECT_ROOT = Path(__file__).resolve().parent
+OUTPUT_DIR = PROJECT_ROOT / "workspace" / "2_audio_srt"
+TEMP_ROOT = PROJECT_ROOT / "workspace" / "temp_chunks"
 TEMP_DIR = TEMP_ROOT
+FFMPEG = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 
 os.environ["PYTHONUNBUFFERED"] = "1"
 
 CHUNK_MIN_LEN = 15
 CHUNK_MAX_LEN = 50
-MAX_TEST_CHUNKS = 999
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Module1 Agent Director - RunningHub TTS 合成与字幕生成"
+        description="Module1 Agent Director - official IndexTTS2 batch synthesis"
     )
     parser.add_argument(
         "--text", required=True, help="口播文案 txt 文件路径（绝对或相对路径）"
     )
     parser.add_argument("--job-id", help="关联的生成任务 ID")
     parser.add_argument("--user-id", type=int, help="关联的用户 ID")
-    parser.add_argument("--tts-voice-id", help="RunningHub MiniMax 系统音色 ID")
-    parser.add_argument("--tts-speed", type=float, help="RunningHub 语速（0.5-2）")
-    parser.add_argument("--tts-volume", type=float, help="RunningHub 音量（0.1-10）")
-    parser.add_argument("--tts-pitch", type=int, help="RunningHub 音调（-12 到 12）")
-    parser.add_argument("--tts-emotion", help="RunningHub 情绪")
-    parser.add_argument("--tts-pronunciation", help="RunningHub 发音词典规则")
+    parser.add_argument("--tts-voice-id", help="官方 IndexTTS2 参考音频 ID")
+    parser.add_argument("--tts-speed", type=float, default=1.0, help="输出语速（0.5-2）")
+    parser.add_argument("--tts-volume", type=float, default=1.0, help="输出音量（0.1-10）")
+    parser.add_argument("--tts-pitch", type=int, default=0, help="输出音调（-12 到 12）")
+    parser.add_argument("--tts-parallelism", type=int, default=2, help="IndexTTS2 并行进程数，建议 1-3")
+    parser.add_argument("--tts-emotion", help="IndexTTS2 八维情绪之一")
+    parser.add_argument("--tts-pronunciation", help="兼容旧请求；官方版请直接在文案中使用拼音标注")
     parser.add_argument(
         "--tts-english-normalization",
         choices=("true", "false"),
-        help="是否启用 RunningHub 英文规范化",
+        help="兼容旧请求；IndexTTS2 原生处理中英文文本",
     )
     return parser.parse_args()
 
 
-def ensure_dir(path):
-    os.makedirs(path, exist_ok=True)
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def clean_text(raw: str) -> str:
@@ -58,16 +65,14 @@ def clean_text(raw: str) -> str:
     return re.sub(r"【[^】]*】", "", "\n".join(lines))
 
 
-def step1_dynamic_chunk_slicing(text_path: str):
+def step1_dynamic_chunk_slicing(text_path: Path) -> list[str]:
     print("[Step 1] Dynamic chunk slicing...", flush=True)
-    with open(text_path, "r", encoding="utf-8") as f:
-        cleaned = clean_text(f.read())
-
+    cleaned = clean_text(text_path.read_text(encoding="utf-8"))
     cleaned = re.sub(r"\n{2,}", "\n", cleaned)
     raw_segments = re.split(r"(?<=[。，！？\n])", cleaned)
     raw_segments = [segment.strip() for segment in raw_segments if segment.strip()]
 
-    chunks = []
+    chunks: list[str] = []
     buffer = ""
     for segment in raw_segments:
         candidate = buffer + segment
@@ -94,14 +99,12 @@ def step1_dynamic_chunk_slicing(text_path: str):
             chunks[-2] = combined
             chunks.pop()
 
-    print(f"  -> Produced {len(chunks)} chunks", flush=True)
-    for index, chunk in enumerate(chunks):
-        print(f"     [{index}] ({len(chunk)} chars): {chunk[:50]}", flush=True)
+    print(f"  -> Produced {len(chunks)} chunks (no batch cap)", flush=True)
     return chunks
 
 
-def format_srt(index, start, end, text):
-    def fmt_time(value):
+def format_srt(index: int, start: float, end: float, text: str) -> str:
+    def fmt_time(value: float) -> str:
         hours = int(value // 3600)
         minutes = int((value % 3600) // 60)
         seconds = int(value % 60)
@@ -111,198 +114,386 @@ def format_srt(index, start, end, text):
     return f"{index}\n{fmt_time(start)} --> {fmt_time(end)}\n{text}\n"
 
 
-def get_wav_duration(wav_path: str) -> float:
-    with wave.open(wav_path, "rb") as audio:
+def get_wav_duration(wav_path: Path) -> float:
+    with wave.open(str(wav_path), "rb") as audio:
         return audio.getnframes() / audio.getframerate()
 
 
 def set_runtime_temp_dir(job_id: str | None) -> None:
-    """Keep chunk filenames isolated per generation job."""
     global TEMP_DIR
     safe_id = re.sub(
         r"[^A-Za-z0-9_.-]+",
         "_",
         job_id or f"manual_{os.getpid()}",
     ).strip("._")
-    TEMP_DIR = os.path.join(TEMP_ROOT, safe_id or f"manual_{os.getpid()}")
+    TEMP_DIR = TEMP_ROOT / (safe_id or f"manual_{os.getpid()}")
 
 
 def clear_temp_chunks() -> None:
-    if not os.path.isdir(TEMP_DIR):
+    if not TEMP_DIR.is_dir():
         return
-    for filename in os.listdir(TEMP_DIR):
-        path = os.path.join(TEMP_DIR, filename)
-        if os.path.isfile(path):
-            os.remove(path)
+    for path in TEMP_DIR.iterdir():
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
 
 
-def step2_runninghub_synthesize(
-    chunks,
-    job_id: str | None = None,
-    user_id: int | None = None,
-    config=None,
-):
-    config = config or load_runninghub_tts_config()
-    if config is None:
-        raise RunningHubTTSError("RunningHub TTS 未启用或未配置 API Key")
+def _run_and_stream(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    label: str | None = None,
+    on_generated: Callable[[], None] | None = None,
+) -> None:
+    process = subprocess.Popen(
+        command,
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    diagnostic_tail: list[str] = []
+    ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    for raw_line in process.stdout:
+        for part in re.split(r"[\r\n]+", ansi_escape.sub("", raw_line)):
+            line = part.strip()
+            if not line:
+                continue
+            diagnostic_tail.append(line)
+            diagnostic_tail = diagnostic_tail[-20:]
+            if line.startswith("Generated:"):
+                if on_generated is not None:
+                    on_generated()
+                continue
+            lowered = line.lower()
+            if (
+                line.startswith("ERROR:")
+                or line.startswith("Traceback")
+                or "cuda out of memory" in lowered
+                or "exception" in lowered
+                or "fatal" in lowered
+            ):
+                prefix = f"[{label}] " if label else ""
+                print(prefix + line, flush=True)
+    return_code = process.wait()
+    if return_code != 0:
+        useful_tail = [
+            line for line in diagnostic_tail
+            if "%|" not in line and "it/s" not in line and not re.search(r"\d+/\d+\s*\[", line)
+        ]
+        if useful_tail:
+            prefix = f"[{label}] " if label else ""
+            print(prefix + "IndexTTS2 错误摘要：" + " | ".join(useful_tail[-4:])[:800], flush=True)
+        raise RuntimeError(f"官方 IndexTTS2 批处理退出码: {return_code}")
 
+
+def _write_manifest(path: Path, chunks: list[str]) -> None:
+    path.write_text(
+        "\n".join(json.dumps({"text": chunk}, ensure_ascii=False) for chunk in chunks) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _build_indextts2_command(
+    config,
+    *,
+    manifest: Path,
+    output_dir: Path,
+    output_prefix: str,
+    voice_path: Path,
+    emotion_vector: str | None,
+) -> list[str]:
+    command = [
+        str(config.python),
+        "-I",
+        "-m",
+        "indextts.cli_v2",
+        "batch",
+        "--batch-file",
+        str(manifest),
+        "--model-dir",
+        str(config.model_dir),
+        "--output-dir",
+        str(output_dir),
+        "--output-prefix",
+        output_prefix,
+        "--voice",
+        str(voice_path),
+        "--device",
+        config.device,
+        "--fp16" if config.use_fp16 else "--no-fp16",
+        "--no-deepspeed",
+        "--no-cuda-kernel",
+        "--no-accel",
+        "--no-torch-compile",
+        "--force",
+    ]
+    if emotion_vector:
+        command.extend(
+            [
+                "--emotion-vector",
+                emotion_vector,
+                "--emotion-weight",
+                str(config.emotion_weight),
+            ]
+        )
+    return command
+
+
+def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int) -> None:
+    speed = min(2.0, max(0.5, float(speed)))
+    volume = min(10.0, max(0.1, float(volume)))
+    pitch = min(12, max(-12, int(pitch)))
+    if math.isclose(speed, 1.0) and math.isclose(volume, 1.0) and pitch == 0:
+        return
+    if not FFMPEG.is_file():
+        raise FileNotFoundError(f"找不到 FFmpeg: {FFMPEG}")
+
+    filters: list[str] = []
+    if pitch:
+        with wave.open(str(path), "rb") as audio:
+            sample_rate = audio.getframerate()
+        factor = 2 ** (pitch / 12)
+        filters.extend(
+            [
+                f"asetrate={sample_rate}*{factor:.8f}",
+                f"aresample={sample_rate}",
+                f"atempo={1 / factor:.8f}",
+            ]
+        )
+    if not math.isclose(speed, 1.0):
+        filters.append(f"atempo={speed:.8f}")
+    if not math.isclose(volume, 1.0):
+        filters.append(f"volume={volume:.8f}")
+
+    adjusted = path.with_name(f"{path.stem}.adjusted.wav")
+    result = subprocess.run(
+        [
+            str(FFMPEG),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(path),
+            "-filter:a",
+            ",".join(filters),
+            "-c:a",
+            "pcm_s16le",
+            str(adjusted),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0 or not adjusted.is_file():
+        adjusted.unlink(missing_ok=True)
+        raise RuntimeError(f"FFmpeg 音频参数处理失败: {result.stderr.strip()}")
+    os.replace(adjusted, path)
+
+
+def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str]]:
+    config = load_indextts2_config()
+    missing = config.missing_resources()
+    if missing:
+        raise RuntimeError("官方 IndexTTS2 未就绪: " + ", ".join(missing))
+    if not chunks:
+        raise RuntimeError("清洗和断句后没有可合成的文案")
+
+    ensure_dir(TEMP_DIR)
+    voice_path = resolve_voice_reference(config, args.tts_voice_id, user_id=args.user_id)
+    emotion_vector = emotion_vector_text(args.tts_emotion)
+
+    env = os.environ.copy()
+    env.update(config.runtime_environment())
+    parallelism = min(3, max(1, int(getattr(args, "tts_parallelism", 1) or 1)))
+    parallelism = min(parallelism, len(chunks))
     print(
-        "[Step 2] RunningHub minimax/speech-2.8-hd synthesis "
-        f"(voice_id={config.voice_id})...",
+        f"[TTS] 开始配音：共 {len(chunks)} 句，并行数 {parallelism}，"
+        f"音色 {voice_path.name}，设备 {config.device}",
         flush=True,
     )
-    ensure_dir(TEMP_DIR)
-    total = min(len(chunks), MAX_TEST_CHUNKS)
-    if total == 0:
-        raise RunningHubTTSError("清洗和断句后没有可合成的文案")
+    progress_lock = threading.Lock()
+    completed_count = 0
+
+    def report_generated(original_index: int, text: str) -> None:
+        nonlocal completed_count
+        with progress_lock:
+            completed_count += 1
+            completed = completed_count
+        preview = re.sub(r"\s+", " ", text).strip()
+        if len(preview) > 56:
+            preview = preview[:56] + "…"
+        print(
+            f"[TTS_PROGRESS] 配音进度 {completed}/{len(chunks)}："
+            f"原文第 {original_index + 1} 句已生成｜{preview}",
+            flush=True,
+        )
+
+    def generated_callback(items: list[tuple[int, str]]) -> Callable[[], None]:
+        local_index = 0
+
+        def callback() -> None:
+            nonlocal local_index
+            if local_index >= len(items):
+                return
+            original_index, text = items[local_index]
+            local_index += 1
+            report_generated(original_index, text)
+
+        return callback
+
+    if parallelism == 1:
+        manifest = TEMP_DIR / "indextts2_batch.jsonl"
+        _write_manifest(manifest, chunks)
+        command = _build_indextts2_command(
+            config,
+            manifest=manifest,
+            output_dir=TEMP_DIR,
+            output_prefix="chunk",
+            voice_path=voice_path,
+            emotion_vector=emotion_vector,
+        )
+        single_items = list(enumerate(chunks))
+        _run_and_stream(
+            command,
+            cwd=config.root,
+            env=env,
+            on_generated=generated_callback(single_items),
+        )
+        wav_paths = [TEMP_DIR / f"chunk-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+    else:
+        assignments: list[list[tuple[int, str]]] = [[] for _ in range(parallelism)]
+        for index, chunk in enumerate(chunks):
+            assignments[index % parallelism].append((index, chunk))
+
+        wav_paths = [TEMP_DIR / f"chunk-missing-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+
+        def run_worker(worker_index: int, items: list[tuple[int, str]]) -> list[tuple[int, Path]]:
+            worker_id = worker_index + 1
+            worker_dir = TEMP_DIR / f"worker_{worker_id}"
+            ensure_dir(worker_dir)
+            manifest = worker_dir / "indextts2_batch.jsonl"
+            _write_manifest(manifest, [chunk for _, chunk in items])
+            output_prefix = f"chunk-w{worker_id}"
+            command = _build_indextts2_command(
+                config,
+                manifest=manifest,
+                output_dir=worker_dir,
+                output_prefix=output_prefix,
+                voice_path=voice_path,
+                emotion_vector=emotion_vector,
+            )
+            _run_and_stream(
+                command,
+                cwd=config.root,
+                env=env,
+                label=f"TTS-{worker_id}",
+                on_generated=generated_callback(items),
+            )
+            return [
+                (original_index, worker_dir / f"{output_prefix}-{local_index:04d}.wav")
+                for local_index, (original_index, _) in enumerate(items, 1)
+            ]
+
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = [
+                executor.submit(run_worker, worker_index, items)
+                for worker_index, items in enumerate(assignments)
+                if items
+            ]
+            for future in as_completed(futures):
+                for original_index, path in future.result():
+                    wav_paths[original_index] = path
+    missing_outputs = [path.name for path in wav_paths if not path.is_file()]
+    if missing_outputs:
+        raise RuntimeError("IndexTTS2 未生成完整批次: " + ", ".join(missing_outputs[:10]))
 
     current_time = 0.0
-    wav_paths = []
-    srt_entries = []
-    for index, chunk in enumerate(chunks[:total]):
-        print(
-            f"[PROGRESS] RunningHub 正在生成第 {index + 1}/{total} 句...",
-            flush=True,
+    srt_entries: list[str] = []
+    for index, (chunk, wav_path) in enumerate(zip(chunks, wav_paths), 1):
+        _apply_audio_controls(
+            wav_path,
+            speed=args.tts_speed,
+            volume=args.tts_volume,
+            pitch=args.tts_pitch,
         )
-        wav_path = os.path.join(TEMP_DIR, f"chunk_{index:04d}.wav")
-        result = synthesize_runninghub_to_wav(chunk, wav_path, config)
-        real_duration = get_wav_duration(wav_path)
-        print(
-            f"     task_id: {result.task_id}, 总耗时: {result.elapsed_seconds:.2f}s "
-            f"(提交 {result.submit_seconds:.2f}s / 每秒轮询等待 "
-            f"{result.wait_seconds:.2f}s / 下载转码 {result.download_seconds:.2f}s), "
-            f"音频时长: {real_duration:.3f}s",
-            flush=True,
-        )
-        if job_id:
-            record_media_asset(
-                user_id=user_id,
-                generation_job_id=job_id,
-                kind="audio",
-                role="tts_chunk_remote",
-                storage_backend="remote_runninghub",
-                storage_path=result.audio_url,
-                remote_id=result.task_id,
-                original_name=f"runninghub_{result.task_id}.wav",
-                mime_type="audio/wav",
-                size_bytes=os.path.getsize(wav_path),
-                duration_seconds=real_duration,
-                sequence_index=index,
-                metadata={
-                    "text": chunk,
-                    "provider": "runninghub",
-                    "model": "minimax/speech-2.8-hd",
-                    "voice_id": config.voice_id,
-                    "source_output_type": result.output_type,
-                    "submit_seconds": result.submit_seconds,
-                    "wait_seconds": result.wait_seconds,
-                    "download_seconds": result.download_seconds,
-                    "client_elapsed_seconds": result.elapsed_seconds,
-                },
-            )
-        wav_paths.append(wav_path)
-        srt_entries.append(
-            format_srt(
-                index + 1,
-                current_time,
-                current_time + real_duration,
-                chunk,
-            )
-        )
-        current_time += real_duration
+        duration = get_wav_duration(wav_path)
+        srt_entries.append(format_srt(index, current_time, current_time + duration, chunk))
+        current_time += duration
+    print(f"[TTS] {len(chunks)} 句配音全部生成，正在合并音频与字幕", flush=True)
     return wav_paths, srt_entries
 
 
-def step3_finalize(wav_paths, srt_entries):
+def step3_finalize(wav_paths: list[Path], srt_entries: list[str]) -> None:
     print("[Step 3] Finalizing output...", flush=True)
     ensure_dir(OUTPUT_DIR)
-
-    output_wav = os.path.join(OUTPUT_DIR, "final_output.wav")
-    with wave.open(wav_paths[0], "rb") as first:
+    output_wav = OUTPUT_DIR / "final_output.wav"
+    with wave.open(str(wav_paths[0]), "rb") as first:
         params = first.getparams()
-    with wave.open(output_wav, "wb") as output:
+        expected_format = (params.nchannels, params.sampwidth, params.framerate)
+    with wave.open(str(output_wav), "wb") as output:
         output.setparams(params)
         for path in wav_paths:
-            with wave.open(path, "rb") as audio:
+            with wave.open(str(path), "rb") as audio:
+                actual_format = (
+                    audio.getnchannels(),
+                    audio.getsampwidth(),
+                    audio.getframerate(),
+                )
+                if actual_format != expected_format:
+                    raise RuntimeError(f"批次 WAV 格式不一致: {path.name}")
                 output.writeframes(audio.readframes(audio.getnframes()))
     print(f"  -> WAV written: {output_wav}", flush=True)
 
-    output_srt = os.path.join(OUTPUT_DIR, "final_output.srt")
-    with open(output_srt, "w", encoding="utf-8") as f:
-        f.write("\n".join(srt_entries) + "\n")
+    output_srt = OUTPUT_DIR / "final_output.srt"
+    output_srt.write_text("\n".join(srt_entries) + "\n", encoding="utf-8")
     print(f"  -> SRT written: {output_srt}", flush=True)
 
 
-def step4_cleanup():
+def step4_cleanup() -> None:
     print("[Step 4] Cleaning up temp files...", flush=True)
-    if os.path.isdir(TEMP_DIR):
-        clear_temp_chunks()
-        os.rmdir(TEMP_DIR)
+    if TEMP_DIR.is_dir():
+        shutil.rmtree(TEMP_DIR)
     print("  -> Cleanup done.", flush=True)
 
 
-def runninghub_config_from_args(args):
-    config = load_runninghub_tts_config()
-    if config is None:
-        raise RunningHubTTSError("RunningHub TTS 未启用或未配置 API Key")
-
-    overrides = {}
-    if args.tts_voice_id is not None:
-        overrides["voice_id"] = args.tts_voice_id
-    if args.tts_speed is not None:
-        overrides["speed"] = args.tts_speed
-    if args.tts_volume is not None:
-        overrides["volume"] = args.tts_volume
-    if args.tts_pitch is not None:
-        overrides["pitch"] = args.tts_pitch
-    if args.tts_emotion is not None:
-        overrides["emotion"] = args.tts_emotion or None
-    if args.tts_pronunciation is not None:
-        pronunciation = args.tts_pronunciation.strip()
-        overrides["pronunciation_dict"] = (pronunciation,) if pronunciation else ()
-    if args.tts_english_normalization is not None:
-        overrides["english_normalization"] = (
-            args.tts_english_normalization == "true"
-        )
-    return replace(config, **overrides)
-
-
-def main():
+def main() -> None:
     args = parse_args()
-    if not os.path.isabs(args.text):
-        args.text = os.path.join(PROJECT_ROOT, args.text)
-    if not os.path.isfile(args.text):
-        sys.exit(f"【路径错误】找不到文件：{args.text}")
+    text_path = Path(args.text)
+    if not text_path.is_absolute():
+        text_path = PROJECT_ROOT / text_path
+    if not text_path.is_file():
+        sys.exit(f"【路径错误】找不到文件：{text_path}")
 
     print("=" * 60, flush=True)
-    print("Module 1 -- RunningHub TTS Pipeline Start", flush=True)
+    print("Module 1 -- Official IndexTTS2 Pipeline Start", flush=True)
     print("=" * 60, flush=True)
-    print(f"  文案路径: {args.text}", flush=True)
+    print(f"  文案路径: {text_path}", flush=True)
 
     set_runtime_temp_dir(args.job_id)
     clear_temp_chunks()
     print(f"  临时音频目录: {TEMP_DIR}", flush=True)
 
     try:
-        chunks = step1_dynamic_chunk_slicing(args.text)
-        config = runninghub_config_from_args(args)
-        wav_paths, srt_entries = step2_runninghub_synthesize(
-            chunks,
-            args.job_id,
-            args.user_id,
-            config,
-        )
+        chunks = step1_dynamic_chunk_slicing(text_path)
+        wav_paths, srt_entries = step2_indextts2_synthesize(chunks, args)
         step3_finalize(wav_paths, srt_entries)
     except Exception as exc:
         clear_temp_chunks()
-        sys.exit(
-            "【致命错误】RunningHub minimax/speech-2.8-hd 生成失败："
-            f"{type(exc).__name__}: {exc}"
-        )
+        sys.exit(f"【致命错误】官方 IndexTTS2 生成失败：{type(exc).__name__}: {exc}")
 
     step4_cleanup()
     print("=" * 60, flush=True)
-    print("RunningHub TTS 与 SRT 合成完成。", flush=True)
+    print("官方 IndexTTS2 与 SRT 批量合成完成。", flush=True)
     print("=" * 60, flush=True)
 
 

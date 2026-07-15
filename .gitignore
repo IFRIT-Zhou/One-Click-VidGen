@@ -15,14 +15,22 @@ frontend/dist/
 
 workspace/
 runtime/
+runtime_logs/
 Archives/
+output/
 Vocal/
 tools/
+venv_audio_vedio/
+.agents/
 
 *.log
 *.mp4
+*.mp3
 *.wav
 *.pt
 *.pth
 *.ckpt
 *.safetensors
+
+# Root-level scripts and media used as local generation inputs.
+/*.txt

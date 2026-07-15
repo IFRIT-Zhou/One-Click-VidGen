@@ -66,10 +66,13 @@ def generate_fine_grained_timeline() -> Path:
     fine = [normalize_scene(item, index) for index, item in enumerate(raw, 1)]
     if gemini_configured():
         system_prompt = (
-            "你是口播视频的模块3语义分镜导演。"
+            "你是鬼故事与都市小说视频的语义分镜导演。"
             "你只能输出严格 JSON 数组，不要 Markdown，不要解释。"
             "保持 slide_id、start、end、text_content 不变，只重写 visual_summary。"
-            "visual_summary 要是适合 PPT 翻页画面的中文短金句，不能直接复制原文。"
+            "visual_summary 必须是可直接用于惊悚漫画分镜的具体视觉镜头摘要，"
+            "写清本镜头的人物、地点、动作、关键道具和悬念氛围，避免抽象金句和 PPT 表述。"
+            "忠于原文事实，原文没有鬼怪、凶案或暴力时不得擅自添加；"
+            "重复人物的身份与外观线索要前后一致，每条尽量控制在 60 个中文字符以内。"
         )
         user_prompt = json.dumps(fine, ensure_ascii=False)
         try:

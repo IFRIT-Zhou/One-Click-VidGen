@@ -1,0 +1,24 @@
+[
+  {
+    "id": "voice_001",
+    "filename": "男-揭笑大爷-爽朗幽默.wav",
+    "name": "揭笑大爷",
+    "description": "爽朗幽默音色，适合角色配音、有声书等场景使用。",
+    "iconColor": "from-amber-400 to-orange-500",
+    "tags": ["角色配音", "有声书"],
+    "attributes": {
+      "language": "中文-普通话",
+      "gender": "男",
+      "age": "老年",
+      "tone": "风趣幽默",
+      "region": "中国-北方"
+    },
+    "categories": ["男声"],
+    "duration": 5.2,
+    "fileSize": 524288,
+    "uploadDate": "2025-10-04",
+    "filePath": "男-之秋-电影解说.WAV",
+    "isPremium": false
+  }
+]
+

@@ -73,11 +73,11 @@ def upload_path(user_id: int, filename: str) -> Path:
     return path
 
 
-def asset_snapshot(user_id: int, path: Path) -> dict[str, str]:
+def asset_snapshot(user_id: int, path: Path, display_name: str | None = None) -> dict[str, str]:
     filename = path.name
     return {
         "id": filename,
-        "name": filename.split("_", 1)[-1],
+        "name": display_name or filename.split("_", 1)[-1],
         "kind": media_kind(path),
         "url": f"/api/editor/uploads/{filename}",
     }
@@ -119,14 +119,18 @@ async def save_upload(user_id: int, file: UploadFile) -> dict[str, str]:
                 break
             out.write(chunk)
     register_editor_asset(user_id, target, "editor_upload", original_name=original)
-    return asset_snapshot(user_id, target)
+    return asset_snapshot(user_id, target, display_name=original)
 
 
 def list_uploads(user_id: int) -> list[dict[str, str]]:
     root = user_upload_dir(user_id)
+    rows = list_media_assets(user_id=user_id, role="editor_upload")
+    known_paths = {str(row.get("storage_path") or "") for row in rows}
+
     # Backfill files created before database-backed asset management was added.
     for path in root.iterdir():
-        if path.is_file():
+        storage_path = str(path.resolve().relative_to(PROJECT_ROOT))
+        if path.is_file() and storage_path not in known_paths:
             register_editor_asset(user_id, path, "editor_upload")
 
     assets: list[dict[str, str]] = []
@@ -136,7 +140,7 @@ def list_uploads(user_id: int) -> list[dict[str, str]]:
             continue
         path = (PROJECT_ROOT / str(raw_path)).resolve()
         if path.is_file() and path.parent == root.resolve():
-            assets.append(asset_snapshot(user_id, path))
+            assets.append(asset_snapshot(user_id, path, display_name=str(row.get("original_name") or "")))
     return assets
 
 

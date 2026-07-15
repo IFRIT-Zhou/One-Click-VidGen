@@ -14,6 +14,25 @@ from .db import get_user_by_id
 COOKIE_NAME = "voice_video_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 SESSION_SECRET = os.getenv("SESSION_SECRET", "voice-over-video-local-session-secret")
+AUTH_MODE = os.getenv("AUTH_MODE", "account").strip().lower()
+DISABLE_AUTH = os.getenv("DISABLE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
+LOCAL_USER_ID = int(os.getenv("LOCAL_USER_ID", "1"))
+LOCAL_USER_EMAIL = os.getenv("LOCAL_USER_EMAIL", "local@voice-over-video.local")
+LOCAL_USER_NAME = os.getenv("LOCAL_USER_NAME", "本地工作台")
+
+
+def local_auth_enabled() -> bool:
+    return DISABLE_AUTH or AUTH_MODE in {"local", "none", "disabled"}
+
+
+def local_user() -> dict[str, Any]:
+    return {
+        "id": LOCAL_USER_ID,
+        "email": LOCAL_USER_EMAIL,
+        "name": LOCAL_USER_NAME,
+        "created_at": None,
+        "local": True,
+    }
 
 
 def _b64_encode(data: bytes) -> str:
@@ -53,6 +72,8 @@ def read_session(token: str | None) -> dict[str, Any] | None:
 
 
 def current_user_from_request(request: Request) -> dict[str, Any] | None:
+    if local_auth_enabled():
+        return local_user()
     payload = read_session(request.cookies.get(COOKIE_NAME))
     if not payload:
         return None

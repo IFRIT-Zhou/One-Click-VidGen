@@ -3,9 +3,11 @@ import hmac
 import json
 import os
 import secrets
+import sqlite3
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pymysql
@@ -16,17 +18,69 @@ from .config import load_project_env
 load_project_env()
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "voice_over_video")
+DB_BACKEND = os.getenv("DB_BACKEND", "mysql").strip().lower()
+SQLITE_PATH = Path(os.getenv("SQLITE_PATH", "runtime_logs/app.sqlite3"))
+if not SQLITE_PATH.is_absolute():
+    SQLITE_PATH = (PROJECT_ROOT / SQLITE_PATH).resolve(strict=False)
 
 _db_ready = False
 _last_error: str | None = None
 
 
+class SQLiteCursor:
+    def __init__(self, cursor: sqlite3.Cursor):
+        self._cursor = cursor
+
+    def __enter__(self) -> "SQLiteCursor":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._cursor.close()
+
+    @property
+    def lastrowid(self) -> int | None:
+        return self._cursor.lastrowid
+
+    def execute(self, query: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Cursor:
+        return self._cursor.execute(query.replace("%s", "?"), params)
+
+    def fetchone(self) -> dict[str, Any] | None:
+        row = self._cursor.fetchone()
+        return dict(row) if row is not None else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._cursor.fetchall()]
+
+
+class SQLiteConnection:
+    def __init__(self, path: Path):
+        self._conn = sqlite3.connect(path)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+
+    def __enter__(self) -> "SQLiteConnection":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if exc_info[0] is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+        self._conn.close()
+
+    def cursor(self) -> SQLiteCursor:
+        return SQLiteCursor(self._conn.cursor())
+
+
 def root_connection():
+    if DB_BACKEND == "sqlite":
+        return SQLiteConnection(SQLITE_PATH)
     return pymysql.connect(
         host=MYSQL_HOST,
         port=MYSQL_PORT,
@@ -39,6 +93,8 @@ def root_connection():
 
 
 def connection():
+    if DB_BACKEND == "sqlite":
+        return SQLiteConnection(SQLITE_PATH)
     return pymysql.connect(
         host=MYSQL_HOST,
         port=MYSQL_PORT,
@@ -54,6 +110,11 @@ def connection():
 def init_database() -> None:
     global _db_ready, _last_error
     try:
+        if DB_BACKEND == "sqlite":
+            _init_sqlite_database()
+            _db_ready = True
+            _last_error = None
+            return
         with root_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -176,12 +237,135 @@ def init_database() -> None:
         _last_error = str(exc)
 
 
+def _init_sqlite_database() -> None:
+    SQLITE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  email TEXT NOT NULL UNIQUE,
+                  name TEXT NOT NULL,
+                  password_hash TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_jobs (
+                  id TEXT PRIMARY KEY,
+                  user_id INTEGER NULL,
+                  status TEXT NOT NULL,
+                  step TEXT NOT NULL,
+                  progress INTEGER NOT NULL DEFAULT 0,
+                  message TEXT NOT NULL,
+                  request_json TEXT NOT NULL,
+                  artifacts_json TEXT NOT NULL,
+                  error TEXT NULL,
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generation_jobs_user_created "
+                "ON generation_jobs (user_id, created_at)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS generation_job_logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  job_id TEXT NOT NULL,
+                  line TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  FOREIGN KEY (job_id) REFERENCES generation_jobs(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_generation_logs_job_id "
+                "ON generation_job_logs (job_id, id)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS editor_jobs (
+                  id TEXT PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  status TEXT NOT NULL,
+                  progress INTEGER NOT NULL DEFAULT 0,
+                  message TEXT NOT NULL,
+                  request_json TEXT NOT NULL,
+                  artifacts_json TEXT NOT NULL,
+                  error TEXT NULL,
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_editor_jobs_user_created "
+                "ON editor_jobs (user_id, created_at)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS editor_job_logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  job_id TEXT NOT NULL,
+                  line TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  FOREIGN KEY (job_id) REFERENCES editor_jobs(id) ON DELETE CASCADE
+                )
+                """
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_editor_logs_job_id "
+                "ON editor_job_logs (job_id, id)"
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS media_assets (
+                  id TEXT PRIMARY KEY,
+                  asset_key TEXT NOT NULL UNIQUE,
+                  user_id INTEGER NULL,
+                  generation_job_id TEXT NULL,
+                  editor_job_id TEXT NULL,
+                  kind TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  storage_backend TEXT NOT NULL,
+                  storage_path TEXT NULL,
+                  remote_id TEXT NULL,
+                  original_name TEXT NULL,
+                  mime_type TEXT NULL,
+                  size_bytes INTEGER NULL,
+                  duration_seconds REAL NULL,
+                  sequence_index INTEGER NULL,
+                  metadata_json TEXT NOT NULL,
+                  created_at REAL NOT NULL,
+                  updated_at REAL NOT NULL,
+                  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+                """
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_user_role ON media_assets (user_id, role)")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_media_generation_job ON media_assets (generation_job_id, role)"
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_editor_job ON media_assets (editor_job_id, role)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_remote_id ON media_assets (remote_id)")
+
+
 def db_status() -> dict[str, Any]:
     return {
         "ready": _db_ready,
+        "backend": DB_BACKEND,
         "host": MYSQL_HOST,
         "port": MYSQL_PORT,
-        "database": MYSQL_DATABASE,
+        "database": str(SQLITE_PATH) if DB_BACKEND == "sqlite" else MYSQL_DATABASE,
         "last_error": _last_error,
     }
 
@@ -252,6 +436,43 @@ def create_user(email: str, password: str, name: str | None = None) -> dict[str,
     return user
 
 
+def ensure_local_user(
+    user_id: int = 1,
+    email: str = "local@voice-over-video.local",
+    name: str = "本地工作台",
+) -> dict[str, Any]:
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            if DB_BACKEND == "sqlite":
+                cursor.execute(
+                    """
+                    INSERT INTO users (id, email, name, password_hash)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT(id) DO UPDATE SET
+                      email=excluded.email,
+                      name=excluded.name,
+                      updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (int(user_id), email.lower().strip(), name.strip()[:120], "local-auth-disabled"),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO users (id, email, name, password_hash)
+                    VALUES (%s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                      email=VALUES(email),
+                      name=VALUES(name),
+                      updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (int(user_id), email.lower().strip(), name.strip()[:120], "local-auth-disabled"),
+                )
+    user = get_user_by_id(int(user_id))
+    if not user:
+        raise RuntimeError("本地用户初始化失败")
+    return user
+
+
 def authenticate_user(email: str, password: str) -> dict[str, Any] | None:
     row = get_user_by_email(email)
     if not row or not verify_password(password, row["password_hash"]):
@@ -286,37 +507,59 @@ def upsert_generation_job(snapshot: dict[str, Any]) -> None:
     request = {key: value for key, value in snapshot.get("request", {}).items() if key != "api_key"}
     with connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO generation_jobs (
-                  id, user_id, status, step, progress, message, request_json,
-                  artifacts_json, error, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                  user_id=VALUES(user_id),
-                  status=VALUES(status),
-                  step=VALUES(step),
-                  progress=VALUES(progress),
-                  message=VALUES(message),
-                  request_json=VALUES(request_json),
-                  artifacts_json=VALUES(artifacts_json),
-                  error=VALUES(error),
-                  updated_at=VALUES(updated_at)
-                """,
-                (
-                    snapshot["id"],
-                    snapshot.get("user_id"),
-                    snapshot.get("status", "queued"),
-                    snapshot.get("step", "queued"),
-                    int(snapshot.get("progress", 0)),
-                    str(snapshot.get("message", ""))[:500],
-                    _json_dump(request),
-                    _json_dump(snapshot.get("artifacts", {})),
-                    snapshot.get("error"),
-                    float(snapshot.get("created_at", time.time())),
-                    float(snapshot.get("updated_at", time.time())),
-                ),
+            values = (
+                snapshot["id"],
+                snapshot.get("user_id"),
+                snapshot.get("status", "queued"),
+                snapshot.get("step", "queued"),
+                int(snapshot.get("progress", 0)),
+                str(snapshot.get("message", ""))[:500],
+                _json_dump(request),
+                _json_dump(snapshot.get("artifacts", {})),
+                snapshot.get("error"),
+                float(snapshot.get("created_at", time.time())),
+                float(snapshot.get("updated_at", time.time())),
             )
+            if DB_BACKEND == "sqlite":
+                cursor.execute(
+                    """
+                    INSERT INTO generation_jobs (
+                      id, user_id, status, step, progress, message, request_json,
+                      artifacts_json, error, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(id) DO UPDATE SET
+                      user_id=excluded.user_id,
+                      status=excluded.status,
+                      step=excluded.step,
+                      progress=excluded.progress,
+                      message=excluded.message,
+                      request_json=excluded.request_json,
+                      artifacts_json=excluded.artifacts_json,
+                      error=excluded.error,
+                      updated_at=excluded.updated_at
+                    """,
+                    values,
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO generation_jobs (
+                      id, user_id, status, step, progress, message, request_json,
+                      artifacts_json, error, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                      user_id=VALUES(user_id),
+                      status=VALUES(status),
+                      step=VALUES(step),
+                      progress=VALUES(progress),
+                      message=VALUES(message),
+                      request_json=VALUES(request_json),
+                      artifacts_json=VALUES(artifacts_json),
+                      error=VALUES(error),
+                      updated_at=VALUES(updated_at)
+                    """,
+                    values,
+                )
 
 
 def append_generation_job_log(job_id: str, line: str, created_at: float | None = None) -> None:
@@ -356,35 +599,56 @@ def load_generation_jobs(limit: int = 100) -> list[dict[str, Any]]:
 def upsert_editor_job(snapshot: dict[str, Any]) -> None:
     with connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO editor_jobs (
-                  id, user_id, status, progress, message, request_json,
-                  artifacts_json, error, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                  user_id=VALUES(user_id),
-                  status=VALUES(status),
-                  progress=VALUES(progress),
-                  message=VALUES(message),
-                  request_json=VALUES(request_json),
-                  artifacts_json=VALUES(artifacts_json),
-                  error=VALUES(error),
-                  updated_at=VALUES(updated_at)
-                """,
-                (
-                    snapshot["id"],
-                    snapshot["user_id"],
-                    snapshot.get("status", "queued"),
-                    int(snapshot.get("progress", 0)),
-                    str(snapshot.get("message", ""))[:500],
-                    _json_dump(snapshot.get("request", {})),
-                    _json_dump(snapshot.get("artifacts", {})),
-                    snapshot.get("error"),
-                    float(snapshot.get("created_at", time.time())),
-                    float(snapshot.get("updated_at", time.time())),
-                ),
+            values = (
+                snapshot["id"],
+                snapshot["user_id"],
+                snapshot.get("status", "queued"),
+                int(snapshot.get("progress", 0)),
+                str(snapshot.get("message", ""))[:500],
+                _json_dump(snapshot.get("request", {})),
+                _json_dump(snapshot.get("artifacts", {})),
+                snapshot.get("error"),
+                float(snapshot.get("created_at", time.time())),
+                float(snapshot.get("updated_at", time.time())),
             )
+            if DB_BACKEND == "sqlite":
+                cursor.execute(
+                    """
+                    INSERT INTO editor_jobs (
+                      id, user_id, status, progress, message, request_json,
+                      artifacts_json, error, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(id) DO UPDATE SET
+                      user_id=excluded.user_id,
+                      status=excluded.status,
+                      progress=excluded.progress,
+                      message=excluded.message,
+                      request_json=excluded.request_json,
+                      artifacts_json=excluded.artifacts_json,
+                      error=excluded.error,
+                      updated_at=excluded.updated_at
+                    """,
+                    values,
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO editor_jobs (
+                      id, user_id, status, progress, message, request_json,
+                      artifacts_json, error, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                      user_id=VALUES(user_id),
+                      status=VALUES(status),
+                      progress=VALUES(progress),
+                      message=VALUES(message),
+                      request_json=VALUES(request_json),
+                      artifacts_json=VALUES(artifacts_json),
+                      error=VALUES(error),
+                      updated_at=VALUES(updated_at)
+                    """,
+                    values,
+                )
 
 
 def append_editor_job_log(job_id: str, line: str, created_at: float | None = None) -> None:
@@ -456,55 +720,88 @@ def record_media_asset(
     now = time.time()
     with connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO media_assets (
-                  id, asset_key, user_id, generation_job_id, editor_job_id,
-                  kind, role, storage_backend, storage_path, remote_id,
-                  original_name, mime_type, size_bytes, duration_seconds,
-                  sequence_index, metadata_json, created_at, updated_at
-                ) VALUES (
-                  %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                  %s, %s, %s, %s, %s, %s, %s, %s
-                )
-                ON DUPLICATE KEY UPDATE
-                  user_id=VALUES(user_id),
-                  generation_job_id=VALUES(generation_job_id),
-                  editor_job_id=VALUES(editor_job_id),
-                  kind=VALUES(kind),
-                  role=VALUES(role),
-                  storage_backend=VALUES(storage_backend),
-                  storage_path=VALUES(storage_path),
-                  remote_id=VALUES(remote_id),
-                  original_name=VALUES(original_name),
-                  mime_type=VALUES(mime_type),
-                  size_bytes=VALUES(size_bytes),
-                  duration_seconds=VALUES(duration_seconds),
-                  sequence_index=VALUES(sequence_index),
-                  metadata_json=VALUES(metadata_json),
-                  updated_at=VALUES(updated_at)
-                """,
-                (
-                    asset_id,
-                    asset_key,
-                    user_id,
-                    generation_job_id,
-                    editor_job_id,
-                    kind,
-                    role,
-                    storage_backend,
-                    storage_path,
-                    remote_id,
-                    original_name,
-                    mime_type,
-                    size_bytes,
-                    duration_seconds,
-                    sequence_index,
-                    _json_dump(metadata or {}),
-                    now,
-                    now,
-                ),
+            values = (
+                asset_id,
+                asset_key,
+                user_id,
+                generation_job_id,
+                editor_job_id,
+                kind,
+                role,
+                storage_backend,
+                storage_path,
+                remote_id,
+                original_name,
+                mime_type,
+                size_bytes,
+                duration_seconds,
+                sequence_index,
+                _json_dump(metadata or {}),
+                now,
+                now,
             )
+            if DB_BACKEND == "sqlite":
+                cursor.execute(
+                    """
+                    INSERT INTO media_assets (
+                      id, asset_key, user_id, generation_job_id, editor_job_id,
+                      kind, role, storage_backend, storage_path, remote_id,
+                      original_name, mime_type, size_bytes, duration_seconds,
+                      sequence_index, metadata_json, created_at, updated_at
+                    ) VALUES (
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT(asset_key) DO UPDATE SET
+                      user_id=excluded.user_id,
+                      generation_job_id=excluded.generation_job_id,
+                      editor_job_id=excluded.editor_job_id,
+                      kind=excluded.kind,
+                      role=excluded.role,
+                      storage_backend=excluded.storage_backend,
+                      storage_path=excluded.storage_path,
+                      remote_id=excluded.remote_id,
+                      original_name=excluded.original_name,
+                      mime_type=excluded.mime_type,
+                      size_bytes=excluded.size_bytes,
+                      duration_seconds=excluded.duration_seconds,
+                      sequence_index=excluded.sequence_index,
+                      metadata_json=excluded.metadata_json,
+                      updated_at=excluded.updated_at
+                    """,
+                    values,
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO media_assets (
+                      id, asset_key, user_id, generation_job_id, editor_job_id,
+                      kind, role, storage_backend, storage_path, remote_id,
+                      original_name, mime_type, size_bytes, duration_seconds,
+                      sequence_index, metadata_json, created_at, updated_at
+                    ) VALUES (
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON DUPLICATE KEY UPDATE
+                      user_id=VALUES(user_id),
+                      generation_job_id=VALUES(generation_job_id),
+                      editor_job_id=VALUES(editor_job_id),
+                      kind=VALUES(kind),
+                      role=VALUES(role),
+                      storage_backend=VALUES(storage_backend),
+                      storage_path=VALUES(storage_path),
+                      remote_id=VALUES(remote_id),
+                      original_name=VALUES(original_name),
+                      mime_type=VALUES(mime_type),
+                      size_bytes=VALUES(size_bytes),
+                      duration_seconds=VALUES(duration_seconds),
+                      sequence_index=VALUES(sequence_index),
+                      metadata_json=VALUES(metadata_json),
+                      updated_at=VALUES(updated_at)
+                    """,
+                    values,
+                )
             cursor.execute("SELECT id FROM media_assets WHERE asset_key=%s", (asset_key,))
             row = cursor.fetchone()
     return str(row["id"] if row else asset_id)

@@ -1,0 +1,19 @@
+[
+  {
+    "id": "cat_1",
+    "name": "男声",
+    "description": "男性音色集合",
+    "voiceCount": 33,
+    "createdAt": "2025-10-04",
+    "order": 1
+  },
+  {
+    "id": "cat_2",
+    "name": "女声",
+    "description": "女性音色集合",
+    "voiceCount": 25,
+    "createdAt": "2025-10-04",
+    "order": 2
+  }
+]
+

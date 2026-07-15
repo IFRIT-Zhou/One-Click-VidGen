@@ -1,0 +1,184 @@
+{
+  "voice_4c1a83949692": {
+    "avatar": "female-02.svg",
+    "uploadDate": 1759562436.4663117
+  },
+  "voice_ebf6acd7696e": {
+    "avatar": "",
+    "uploadDate": 1759570852.3175585
+  },
+  "voice_90dba51ccb05": {
+    "description": "是一个磁性女生，用于电影解说",
+    "lastModified": 1759577843.391129
+  },
+  "voice_77238c1dc30c": {
+    "avatar": "",
+    "description": "这是一个测试音色",
+    "uploadDate": 1759571739.2079377
+  },
+  "voice_0399d3cd8254": {
+    "description": "通用 · 通用",
+    "lastModified": 1759588092.238354,
+    "avatar": "child-boy.svg"
+  },
+  "voice_b8cb8beac46d": {
+    "avatar": "",
+    "description": "这是一个测试音色",
+    "uploadDate": 1759572229.6784737
+  },
+  "voice_8434a9c3ae7e": {
+    "avatar": "",
+    "description": "这是一个测试音色",
+    "uploadDate": 1759572349.6516736
+  },
+  "voice_df6a1d643508": {
+    "description": "解说、知识分享 · 解说·知识分享",
+    "lastModified": 1759580432.4173515
+  },
+  "voice_29c5e7ee53e6": {
+    "description": "知识付费 · 知识分享",
+    "lastModified": 1759580478.9014294
+  },
+  "voice_27f866311de8": {
+    "description": "知识分享 · 知识分享",
+    "lastModified": 1759673482.0829606,
+    "avatar": "avatar_1759586219787.jpg"
+  },
+  "voice_63d7fecec71b": {
+    "avatar": "female-01.svg",
+    "description": "科普女声 · 通用",
+    "lastModified": 1759588104.9661646
+  },
+  "voice_912900bc4098": {
+    "avatar": "female-01.svg",
+    "description": "风趣解说 · 解说",
+    "lastModified": 1759588124.1247067
+  },
+  "voice_9d915abc4ccd": {
+    "avatar": "male-01.svg",
+    "description": "甄嬛配音 · 角色配音",
+    "lastModified": 1759588139.037295
+  },
+  "voice_f511e21259b6": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759682873.7046826,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_9c39585fed56": {
+    "avatar": "default.svg",
+    "description": "",
+    "uploadDate": 1759601904.317383,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_13c868d8ac46": {
+    "avatar": "default.svg",
+    "description": "",
+    "uploadDate": 1759602036.3423238,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_5e7d7fc56f3d": {
+    "avatar": "male-01.svg",
+    "description": "适合儿童绘本、知识分享等配音",
+    "lastModified": 1759603349.2015765
+  },
+  "voice_fecb429a9e71": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759674838.582101,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_41b943699830": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759675481.1108816,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_8ff46abe2584": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759676039.1802704,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_d06c3ca1cc17": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759676100.5260496,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_949b0ee786c9": {
+    "avatar": "",
+    "description": "",
+    "uploadDate": 1759682901.1157975,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_a5d3d887ec4d": {
+    "avatar": "avatar_1759726195524.jpg",
+    "description": "亲子教育/读书分享大咖",
+    "uploadDate": 1759726265.4749813,
+    "processed": true,
+    "processDuration": 15.0
+  },
+  "voice_8dc65d8b66f8": {
+    "avatar": "avatar_1759726742216.jpg",
+    "description": "像主播南翔的一个温柔的青年音",
+    "uploadDate": 1759726747.4080873,
+    "processed": true,
+    "processDuration": 10.17
+  },
+  "voice_32f171f690a1": {
+    "avatar": "avatar_1759726032797.jpg",
+    "description": "一个有趣的近代史解说主播",
+    "uploadDate": 1759726039.2115886,
+    "processed": true,
+    "processDuration": 7.81,
+    "lastModified": 1759729227.7044811
+  },
+  "voice_afa2f6874d8e": {
+    "avatar": "avatar_1759727059990.jpg",
+    "description": "知名科技解说博主",
+    "uploadDate": 1759727065.738203,
+    "processed": true,
+    "processDuration": 15.0,
+    "lastModified": 1759743856.48645
+  },
+  "voice_b7c4fab91c1a": {
+    "avatar": "avatar_1759727577580.jpg",
+    "description": "一个声音温柔大学生的AI技术分享博主",
+    "uploadDate": 1759727582.4860072,
+    "processed": true,
+    "processDuration": 7.62,
+    "lastModified": 1759743837.679197
+  },
+  "voice_5ecb928f6cf2": {
+    "avatar": "avatar_1759754455383.jpg",
+    "description": "小宁子是一个数码评测博主！",
+    "uploadDate": 1759754333.0029984,
+    "processed": true,
+    "processDuration": 15.0,
+    "lastModified": 1759754456.6858475
+  },
+  "voice_9d8d7536b100": {
+    "avatar": "avatar_1759757011926.png",
+    "description": "一位爽朗幽默的老年男性大爷声音，带有北方口音的中文，充满个性。",
+    "uploadDate": 1759756879.2962809,
+    "processed": true,
+    "processDuration": 5.05,
+    "lastModified": 1759757013.9077644
+  },
+  "voice_4761a87fcfd9": {
+    "avatar": "avatar_1760105176982.jpg",
+    "description": "夜凯讲恐怖故事",
+    "uploadDate": 1760105220.0699058,
+    "processed": true,
+    "processDuration": 15.0
+  }
+}
