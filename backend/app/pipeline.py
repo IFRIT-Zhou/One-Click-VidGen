@@ -79,6 +79,57 @@ def normalize_project_name(value: str | None) -> str:
     return name[:80].rstrip(" .") or default_project_name()
 
 
+VISUAL_PACING_DEFAULTS = {
+    "urban_suspense": {"min_duration": 6.0, "target_duration": 8.0, "max_duration": 12.0, "max_slides": 6},
+    "science_explainer": {"min_duration": 7.0, "target_duration": 9.0, "max_duration": 14.0, "max_slides": 6},
+}
+
+
+def visual_pacing_settings(request: dict[str, Any]) -> dict[str, Any]:
+    """Resolve mode defaults and the optional user pacing override safely."""
+    mode = str(request.get("content_mode") or "urban_suspense")
+    base = dict(VISUAL_PACING_DEFAULTS.get(mode, VISUAL_PACING_DEFAULTS["urban_suspense"]))
+    preset = str(request.get("visual_pacing_preset") or "auto").lower()
+    if preset not in {"auto", "slow", "standard", "fast", "custom"}:
+        preset = "auto"
+
+    result = {**base, "preset": preset}
+    if preset == "slow":
+        result["target_duration"] += 2.0
+        result["max_duration"] += 2.0
+        result["max_slides"] += 1
+    elif preset == "fast":
+        result["target_duration"] = max(result["min_duration"], result["target_duration"] - 2.0)
+        result["max_duration"] = max(result["target_duration"], result["max_duration"] - 2.0)
+        result["max_slides"] = min(result["max_slides"], 3)
+    elif preset == "custom":
+        for key, low, high in (
+            ("min_duration", 4.0, 20.0),
+            ("target_duration", 5.0, 30.0),
+            ("max_duration", 6.0, 40.0),
+        ):
+            try:
+                value = float(request.get(f"visual_{key}") or result[key])
+                result[key] = max(low, min(high, value))
+            except (TypeError, ValueError):
+                pass
+        try:
+            result["max_slides"] = max(1, min(12, int(request.get("visual_max_slides") or result["max_slides"])))
+        except (TypeError, ValueError):
+            pass
+
+    result["target_duration"] = max(result["min_duration"], result["target_duration"])
+    result["max_duration"] = max(result["target_duration"], result["max_duration"])
+    result["label"] = {
+        "auto": "按作品风格自动",
+        "slow": "舒缓",
+        "standard": "标准",
+        "fast": "紧凑",
+        "custom": "自定义",
+    }[preset]
+    return result
+
+
 def normalize_log_line(line: str) -> str:
     text = ANSI_ESCAPE_RE.sub("", str(line or ""))
     text = text.replace("\r", "\n")
@@ -1053,6 +1104,25 @@ def render_semantic_visual_video(
     elif visual_backend in {"poster", "online-poster", "runninghub"}:
         poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id}
         poster_env["CONTENT_MODE"] = str(request.get("content_mode") or "urban_suspense")
+        visual_pacing = visual_pacing_settings(request)
+        poster_env.update({
+            "VISUAL_PACING_PRESET": visual_pacing["preset"],
+            "VISUAL_MIN_DURATION_SECONDS": str(visual_pacing["min_duration"]),
+            "VISUAL_TARGET_DURATION_SECONDS": str(visual_pacing["target_duration"]),
+            "VISUAL_MAX_DURATION_SECONDS": str(visual_pacing["max_duration"]),
+            "VISUAL_MAX_SLIDES_PER_IMAGE": str(visual_pacing["max_slides"]),
+        })
+        store.log(
+            job,
+            "画面节奏：%s（每张至少 %ss，目标 %ss，最长 %ss，最多 %s 个字幕片段）"
+            % (
+                visual_pacing["label"],
+                visual_pacing["min_duration"],
+                visual_pacing["target_duration"],
+                visual_pacing["max_duration"],
+                visual_pacing["max_slides"],
+            ),
+        )
         if story_plan_path is not None:
             poster_env["STORY_AGENT_PLAN_PATH"] = str(story_plan_path.resolve())
             poster_env["STORY_AGENT_PLAN_IS_GLOBAL"] = "1" if story_plan_is_global else "0"
@@ -1061,6 +1131,9 @@ def render_semantic_visual_video(
         visual_prompt_system = str(request.get("visual_prompt_system") or "").strip()
         if visual_prompt_system:
             poster_env["VISUAL_PROMPT_SYSTEM"] = visual_prompt_system
+        global_character_prompt = str(request.get("global_character_prompt") or "").strip()
+        if global_character_prompt:
+            poster_env["GLOBAL_CHARACTER_PROMPT"] = global_character_prompt
         if str(request.get("visual_prompt_mode") or "simple") == "simple":
             visual_style_prompt = str(request.get("visual_style_prompt") or "").strip()
             if visual_style_prompt:
@@ -1287,11 +1360,35 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
                 html_path=other_dir / "最终画面.html",
                 audio_url="../input/配音.wav",
             )
-            if output_srt.is_file():
-                output_html.write_text(
-                    with_subtitles(output_html.read_text(encoding="utf-8"), output_srt),
-                    encoding="utf-8",
-                )
+        if output_srt.is_file():
+            output_html.write_text(
+                with_subtitles(output_html.read_text(encoding="utf-8"), output_srt),
+                encoding="utf-8",
+            )
+
+        # Keep a self-contained post-production manifest in output.  The visual
+        # editor must keep working after workspace/jobs has been cleaned up.
+        output_mapping: list[dict[str, Any]] = []
+        for image in sorted(image_dir.glob("*")):
+            if image.suffix.lower() not in {".jpg", ".jpeg"}:
+                continue
+            macro_id = re.sub(r"_[0-9a-f]{8,}$", "", image.stem, flags=re.IGNORECASE)
+            prompt_file = image.with_suffix(".txt")
+            output_mapping.append({
+                "macro_scene_id": macro_id,
+                "image_prompt": prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else "",
+                "includes_slides": [],
+            })
+        (other_dir / "画面映射.json").write_text(
+            json.dumps(output_mapping, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (other_dir / "画面时间线.json").write_text(
+            json.dumps(combined_scenes, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (other_dir / "画面修改清单.json").write_text(
+            json.dumps({"job_id": job.id, "project_name": final_dir.name}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         temp_dir.rename(final_dir)
     except Exception:

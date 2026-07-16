@@ -35,6 +35,7 @@ POSTER_MAPPING_PATH = VISUAL_DIR / "poster_mapping.json"
 VISUAL_PROMPT_PLAN_PATH = VISUAL_DIR / "visual_prompt_plan.json"
 RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
+VISUAL_PROMPT_AGENT_VERSION = 4
 
 
 def backup_poster_mapping(path: Path = POSTER_MAPPING_PATH) -> Path | None:
@@ -54,23 +55,32 @@ def backup_poster_mapping(path: Path = POSTER_MAPPING_PATH) -> Path | None:
 DEFAULT_VISUAL_STYLE = (
     "伊藤润二式惊悚漫画与都市悬疑条漫风；冷青灰和墨黑为主色，暗红少量点缀，"
     "高反差电影光影、深阴影、薄雾与局部轮廓光，营造诡异、压迫、悬念渐进的氛围。"
-    "人物比例写实、表情克制，同一角色的脸型、发型、年龄、服装和标志性物件在所有画面中保持一致。"
+    "人物比例写实、表情克制；人物身份与服装由单独的全局人物设定和镜头造型规则控制。"
     "画面适合横版故事视频，避免可爱Q版、明亮科普插画、PPT信息图、夸张血腥和无意义怪物堆砌。"
 )
 SCIENCE_VISUAL_STYLE = (
-    "科教手绘漫画风的科普小漫画，理性、清晰，主角为黑色短发带红色围巾的可爱少女。"
+    "科教手绘漫画风的科普小漫画，理性、清晰；人物设定由单独的全局人物设定控制。"
     "画面可信、亲切、信息层级明确，适合口播视频背景。"
     "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
 )
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+DEFAULT_GLOBAL_CHARACTER_PROMPT = (
+    "主角：35岁憔悴中年女性，黑色长发；前期戴红色鸭舌帽、穿灰色旧衣服；"
+    "后期骑行一段时间、购入装备后，精神焕发，穿白色骑行服并佩戴白色骑行头盔。"
+)
+SCIENCE_GLOBAL_CHARACTER_PROMPT = "固定讲解主角：黑色短发、红色围巾的可爱少女；简洁科教风服装，出场时造型保持一致。"
 
 
 def normalize_content_mode(value: str | None) -> str:
     return CONTENT_MODE_SCIENCE if str(value or "").strip().lower() == CONTENT_MODE_SCIENCE else CONTENT_MODE_STORY
 
 
-def build_visual_prompt_system(style: str = "", content_mode: str = CONTENT_MODE_STORY) -> str:
+def build_visual_prompt_system(
+    style: str = "",
+    content_mode: str = CONTENT_MODE_STORY,
+    global_character_prompt: str = "",
+) -> str:
     content_mode = normalize_content_mode(content_mode)
     visual_style = style.strip() or (
         SCIENCE_VISUAL_STYLE if content_mode == CONTENT_MODE_SCIENCE else DEFAULT_VISUAL_STYLE
@@ -343,29 +353,96 @@ def _provider_configs() -> list[dict[str, str]]:
     ]
 
 
-def _visual_groups(scenes: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-    raw_duration = os.getenv("VISUAL_MAX_DURATION_SECONDS", "15").strip()
+def _pacing_by_slide(story_plan: dict[str, Any] | None) -> dict[str, str]:
+    pacing: dict[str, str] = {}
+    for beat in (story_plan or {}).get("story_beats", []):
+        if not isinstance(beat, dict):
+            continue
+        value = str(beat.get("visual_pacing") or "normal").strip().lower()
+        value = value if value in {"hold", "normal", "fast"} else "normal"
+        for slide_id in beat.get("slide_ids", []):
+            pacing[str(slide_id)] = value
+    return pacing
+
+
+def _visual_groups(
+    scenes: list[dict[str, Any]],
+    story_plan: dict[str, Any] | None = None,
+) -> list[list[dict[str, Any]]]:
+    def duration_from_env(name: str, default: float, lower: float, upper: float) -> float:
+        try:
+            return max(lower, min(upper, float(os.getenv(name, str(default)).strip())))
+        except ValueError:
+            return default
+
+    min_duration = duration_from_env("VISUAL_MIN_DURATION_SECONDS", 6.0, 3.0, 30.0)
+    target_duration = duration_from_env("VISUAL_TARGET_DURATION_SECONDS", 8.0, min_duration, 45.0)
+    raw_duration = os.getenv("VISUAL_MAX_DURATION_SECONDS", "12").strip()
     try:
-        max_duration = max(5.0, float(raw_duration))
+        max_duration = max(target_duration, float(raw_duration))
     except ValueError:
-        max_duration = 15.0
+        max_duration = max(target_duration, 12.0)
     max_slides = _positive_env_int("VISUAL_MAX_SLIDES_PER_IMAGE", 6)
+    # Agent pacing describes relative density only.  It never overrides the
+    # user-selected minimum dwell time; short trailing groups are merged below.
+    pacing_limits = {
+        "hold": (max_duration, max_slides),
+        "normal": (target_duration, max_slides),
+        "fast": (max(min_duration, min(target_duration, 6.0)), min(max_slides, 3)),
+    }
+    pacing_by_slide = _pacing_by_slide(story_plan)
     groups: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for scene in scenes:
         scene_end = float(scene.get("end") or 0)
         candidate_start = float((current[0] if current else scene).get("start") or 0)
-        if current and (len(current) >= max_slides or scene_end - candidate_start > max_duration):
+        group_pacing = pacing_by_slide.get(str((current[0] if current else scene).get("slide_id") or ""), "normal")
+        scene_pacing = pacing_by_slide.get(str(scene.get("slide_id") or ""), "normal")
+        group_target, group_slides = pacing_limits[group_pacing]
+        current_duration = float(current[-1].get("end") or 0) - candidate_start if current else 0.0
+        candidate_duration = scene_end - candidate_start
+        if current and (
+            len(current) >= group_slides
+            or candidate_duration > max_duration
+            or (candidate_duration > group_target and current_duration >= min_duration)
+            or (scene_pacing != group_pacing and current_duration >= min_duration)
+        ):
             groups.append(current)
             current = []
         current.append(scene)
     if current:
         groups.append(current)
+
+    # A last sentence or a pacing-boundary must not yield a 1--3 second image.
+    # Prefer merging backwards, unless that would exceed the hard maximum and
+    # the next group is a better fit.  A single short overall video is allowed.
+    index = 0
+    while index < len(groups):
+        group = groups[index]
+        group_duration = float(group[-1].get("end") or 0) - float(group[0].get("start") or 0)
+        if group_duration >= min_duration or len(groups) == 1:
+            index += 1
+            continue
+        if index > 0:
+            previous = groups[index - 1]
+            previous_duration = float(previous[-1].get("end") or 0) - float(previous[0].get("start") or 0)
+            if previous_duration + group_duration <= max_duration or index == len(groups) - 1:
+                previous.extend(group)
+                groups.pop(index)
+                continue
+        if index + 1 < len(groups):
+            groups[index + 1] = group + groups[index + 1]
+            groups.pop(index)
+            continue
+        index += 1
     return groups
 
 
-def _fallback_mapping(scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups = _visual_groups(scenes)
+def _fallback_mapping(
+    scenes: list[dict[str, Any]],
+    story_plan: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    groups = _visual_groups(scenes, story_plan)
     science_mode = normalize_content_mode(os.getenv("CONTENT_MODE")) == CONTENT_MODE_SCIENCE
     return [
         {
@@ -469,8 +546,17 @@ def _clean_style_for_image_prompt(style: str, quality_requirement: str) -> str:
     return cleaned.strip()
 
 
-def _character_descriptions(story_plan: dict[str, Any] | None) -> list[tuple[str, str]]:
-    """Build deterministic name -> visible-traits replacements from Agent 1's character bible."""
+def _style_protagonist_identity(style: str) -> str:
+    """Extract an explicit user-authored protagonist lock from the style prompt."""
+    match = re.search(r"主角\s*(?:为|是)\s*([^。；\n]+)", str(style or ""))
+    return match.group(1).strip(" ，。；") if match else ""
+
+
+def _character_descriptions(
+    story_plan: dict[str, Any] | None,
+    forced_style: str = "",
+) -> list[tuple[str, str]]:
+    """Build name -> immutable identity replacements without multi-stage wardrobe summaries."""
     generic_names = {"她", "他", "主角", "女人", "男人", "女孩", "男孩", "少女", "妈妈", "母亲", "父亲"}
     replacements: list[tuple[str, str]] = []
     characters = (story_plan or {}).get("characters")
@@ -482,26 +568,118 @@ def _character_descriptions(story_plan: dict[str, Any] | None) -> list[tuple[str
         name = str(character.get("name") or "").strip()
         if len(name) < 2 or name in generic_names:
             continue
-        traits: list[str] = []
-        for key in ("appearance", "wardrobe", "signature_item"):
-            value = str(character.get(key) or "").strip(" ，。；")
-            if value and value not in traits and not any(value in existing for existing in traits):
-                traits.append(value)
-        description = "，".join(traits)
+        protagonist_override = _style_protagonist_identity(forced_style)
+        role = str(character.get("role") or "")
+        description = (
+            protagonist_override
+            if protagonist_override and "主角" in role
+            else str(character.get("appearance") or "").strip(" ，。；")
+        )
         if description:
             replacements.append((name, description))
     return sorted(replacements, key=lambda pair: len(pair[0]), reverse=True)
 
 
-def _expand_character_names(prompt: str, story_plan: dict[str, Any] | None) -> tuple[str, int]:
+def _expand_character_names(
+    prompt: str,
+    story_plan: dict[str, Any] | None,
+    forced_style: str = "",
+) -> tuple[str, int]:
     expanded = str(prompt or "")
     count = 0
-    for name, description in _character_descriptions(story_plan):
+    for name, description in _character_descriptions(story_plan, forced_style):
         if name not in expanded:
             continue
         expanded, replacements = re.subn(re.escape(name), description, expanded)
         count += replacements
     return expanded, count
+
+
+def _active_wardrobe_state(
+    character: dict[str, Any],
+    included_slides: list[str],
+    scenes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    states = character.get("wardrobe_states")
+    if not isinstance(states, list) or not states or not included_slides:
+        return None
+    positions = {
+        str(scene.get("slide_id") or ""): index
+        for index, scene in enumerate(scenes)
+    }
+    included_positions = [positions[value] for value in included_slides if value in positions]
+    if not included_positions:
+        return None
+    center = sum(included_positions) / len(included_positions)
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for state in states:
+        if not isinstance(state, dict):
+            continue
+        start = positions.get(str(state.get("start_slide_id") or ""))
+        end = positions.get(str(state.get("end_slide_id") or ""))
+        if start is None or end is None:
+            continue
+        start, end = min(start, end), max(start, end)
+        overlap = sum(1 for value in included_positions if start <= value <= end)
+        if overlap:
+            candidates.append((overlap * 1000 - abs(center - (start + end) / 2), state))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _character_continuity_block(
+    original_prompt: str,
+    story_plan: dict[str, Any] | None,
+    forced_style: str,
+    included_slides: list[str],
+    scenes: list[dict[str, Any]],
+) -> str:
+    characters = (story_plan or {}).get("characters")
+    if not isinstance(characters, list):
+        return ""
+    protagonist_override = _style_protagonist_identity(forced_style)
+    lines: list[str] = []
+    for character in characters:
+        if not isinstance(character, dict):
+            continue
+        name = str(character.get("name") or "").strip()
+        role = str(character.get("role") or "").strip()
+        explicitly_present = bool(name and name in original_prompt)
+        generic_protagonist = (
+            "主角" in role
+            and not explicitly_present
+            and bool(re.search(r"主角|女主|她|女人|女性|妈妈", original_prompt))
+        )
+        if not explicitly_present and not generic_protagonist:
+            continue
+        identity = (
+            protagonist_override
+            if protagonist_override and "主角" in role
+            else str(character.get("appearance") or "").strip(" ，。；")
+        )
+        label = role or "人物"
+        parts = [f"{label}：固定身份={identity}"] if identity else [label]
+        state = _active_wardrobe_state(character, included_slides, scenes)
+        if state:
+            wardrobe = str(state.get("wardrobe") or "").strip(" ，。；")
+            headwear = str(state.get("headwear") or "").strip(" ，。；")
+            carried = str(state.get("carried_items") or "").strip(" ，。；")
+            if wardrobe:
+                parts.append(f"本镜头服装={wardrobe}")
+            style_locks_headwear = bool(
+                protagonist_override
+                and re.search(r"始终|一直|随时|全程", protagonist_override)
+            )
+            if headwear and not style_locks_headwear:
+                parts.append(f"本镜头头部状态={headwear}")
+            if carried:
+                parts.append(f"本镜头随身物品={carried}")
+        lines.append("；".join(parts))
+    if not lines:
+        return ""
+    return (
+        "【本镜头角色造型硬约束：若正文有冲突，以本块为最高优先级；不得自行换装、摘帽或增加头饰】\n"
+        + "\n".join(lines)
+    )
 
 
 def _plan_mapping_batch(
@@ -512,7 +690,7 @@ def _plan_mapping_batch(
 ) -> list[dict[str, Any]] | None:
     required_groups = [
         [str(scene["slide_id"]) for scene in group]
-        for group in _visual_groups(scenes)
+        for group in _visual_groups(scenes, story_context)
     ]
     runtime_prompt = (
         system_prompt
@@ -523,7 +701,10 @@ def _plan_mapping_batch(
         + json.dumps(required_groups, ensure_ascii=False)
         + "\n必须严格按上述顺序逐组输出：每组只生成一个对象，includes_slides 必须与对应分组完全一致，"
         "不得合并、拆分、遗漏或调整 slide_id。image_prompt 只写该组独有的具体画面内容，"
-        "不要重复通用风格和固定画质句；但重复出场的角色必须写出一致的外貌、发型、服装和标志性物件。"
+        "不要重复通用风格和固定画质句；但重复出场的角色必须使用角色的稳定姓名。"
+        "必须根据当前 slide_id 选择 wardrobe_states 中唯一适用的一条造型，只写当前服装、当前头部状态和"
+        "当前随身物品；严禁把‘前期/后期’、‘居家服或骑行服’等多个阶段同时写进一张图。"
+        "用户画风中明确写出的主角年龄、发型、帽子等要求高于 Agent 1 的推断，不得改写。"
     )
     try:
         response = generate_gemini_text(
@@ -562,8 +743,18 @@ def _finalize_mapping(
         for directive in STYLE_META_DIRECTIVES:
             prompt = prompt.replace(directive, "")
         prompt = prompt.replace(quality_requirement, "").strip(" \n，。")
-        prompt, replacement_count = _expand_character_names(prompt, story_plan)
+        original_prompt = prompt
+        continuity_block = _character_continuity_block(
+            original_prompt,
+            story_plan,
+            forced_style,
+            [str(value) for value in item.get("includes_slides", [])],
+            scenes,
+        )
+        prompt, replacement_count = _expand_character_names(prompt, story_plan, forced_style)
         expanded_character_names += replacement_count
+        if continuity_block:
+            prompt = f"{continuity_block}\n{prompt}"
         if clean_forced_style:
             prompt = f"【统一画面风格】{clean_forced_style}\n{prompt}"
         prompt = f"{prompt}\n{quality_requirement}"
@@ -594,11 +785,17 @@ def build_macro_mapping(
 ) -> list[dict[str, Any]]:
     if not gemini_configured():
         print("Gemini 未配置，模块 4 使用本地分组提示词。", flush=True)
-        return _finalize_mapping(_fallback_mapping(scenes), scenes, story_plan)
+        return _finalize_mapping(_fallback_mapping(scenes, story_plan), scenes, story_plan)
 
     custom_prompt = os.getenv("VISUAL_PROMPT_SYSTEM", "").strip()
     system_prompt = custom_prompt or DEFAULT_VISUAL_PROMPT_SYSTEM
     story_context = story_context_for_prompt(story_plan or {})
+    global_character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
+    if global_character_bible:
+        story_context["user_global_character_bible"] = global_character_bible
+    protagonist_lock = _style_protagonist_identity(os.getenv("VISUAL_STYLE_PROMPT", ""))
+    if protagonist_lock:
+        story_context["user_protagonist_identity_lock"] = protagonist_lock
     prompt_source = "自定义" if custom_prompt else "默认"
     print(
         f"Agent 2：使用{prompt_source}画面提示词命令（{len(system_prompt)} 字），"
@@ -623,7 +820,7 @@ def build_macro_mapping(
         mapping = _plan_mapping_batch(batch, system_prompt, batch_label, story_context)
         if mapping is None:
             print(f"{batch_label} 已降级为本地分组提示词。", flush=True)
-            mapping = _fallback_mapping(batch)
+            mapping = _fallback_mapping(batch, story_plan)
         combined.extend(mapping)
 
     return _finalize_mapping(combined, scenes, story_plan)
@@ -1253,7 +1450,8 @@ def run_online_poster_engine() -> None:
     if configured_story_path != STORY_PLAN_PATH.resolve():
         STORY_PLAN_PATH.write_text(json.dumps(story_plan, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"Agent 1：已保存本段使用的全文上下文快照: {STORY_PLAN_PATH}", flush=True)
-    if resume and POSTER_MAPPING_PATH.is_file():
+    reuse_existing_mapping = resume and POSTER_MAPPING_PATH.is_file()
+    if reuse_existing_mapping:
         if VISUAL_PROMPT_PLAN_PATH.is_file():
             try:
                 previous_plan = json.loads(VISUAL_PROMPT_PLAN_PATH.read_text(encoding="utf-8"))
@@ -1266,6 +1464,20 @@ def run_online_poster_engine() -> None:
             )
             if previous_scene_fingerprint and previous_scene_fingerprint != story_fingerprint(scenes, content_mode):
                 raise ValueError("断点续跑发现字幕场景已变化，旧海报规划与当前文案不匹配，已停止以防错图")
+            prompt_agent_is_current = (
+                isinstance(previous_plan, dict)
+                and int(previous_plan.get("agent_version") or 0) >= VISUAL_PROMPT_AGENT_VERSION
+                and int(previous_plan.get("story_agent_version") or 0) >= int(story_plan.get("agent_version") or 0)
+                and int(previous_plan.get("character_continuity_version") or 0)
+                >= int(story_plan.get("character_continuity_version") or 0)
+            )
+            if not prompt_agent_is_current:
+                reuse_existing_mapping = False
+                print("断点续跑：检测到旧版人物连续性规划，将重新生成提示词并只重画受影响图片。", flush=True)
+        else:
+            reuse_existing_mapping = False
+            print("断点续跑：缺少可校验的 Agent 2 规划，将重新生成提示词。", flush=True)
+    if reuse_existing_mapping:
         mapping = json.loads(POSTER_MAPPING_PATH.read_text(encoding="utf-8"))
         if not isinstance(mapping, list) or not mapping:
             raise ValueError("断点续跑发现 poster_mapping.json 无效，无法复用画面规划")
@@ -1279,10 +1491,11 @@ def run_online_poster_engine() -> None:
         )
         print(f"最终画面提示词已保存: {POSTER_MAPPING_PATH}", flush=True)
     visual_prompt_plan = {
-        "agent_version": 2,
+        "agent_version": VISUAL_PROMPT_AGENT_VERSION,
         "story_source_fingerprint": story_plan.get("source_fingerprint"),
         "story_generation_source": story_plan.get("generation_source"),
         "story_agent_version": story_plan.get("agent_version"),
+        "character_continuity_version": story_plan.get("character_continuity_version"),
         "content_mode": content_mode,
         "scene_source_fingerprint": story_fingerprint(scenes, content_mode),
         "mapping": mapping,

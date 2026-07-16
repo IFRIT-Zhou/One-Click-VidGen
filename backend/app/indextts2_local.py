@@ -102,13 +102,22 @@ class IndexTTS2Config:
     def runtime_environment(self) -> dict[str, str]:
         cache_dir = PROJECT_ROOT / "runtime" / "cache"
         temp_dir = PROJECT_ROOT / "runtime" / "temp"
-        for path in (self.runtime_dir, cache_dir, temp_dir):
+        appdata_dir = self.runtime_dir / "appdata"
+        localappdata_dir = self.runtime_dir / "localappdata"
+        for path in (self.runtime_dir, cache_dir, temp_dir, appdata_dir, localappdata_dir):
             path.mkdir(parents=True, exist_ok=True)
+        # The official CLI reads its persisted config before resolving the
+        # --model-dir argument.  Rewriting it here prevents a copied package
+        # from trying to create the previous computer/project's model path.
+        config_path = appdata_dir / "IndexTTS" / "config.toml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        model_path = self.model_dir.resolve(strict=False).as_posix().replace('"', '\\"')
+        config_path.write_text(f'model_dir = "{model_path}"\n', encoding="utf-8")
         torch_lib = self.python.parent / "Lib" / "site-packages" / "torch" / "lib"
         ffmpeg_bin = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
         return {
-            "APPDATA": str(self.runtime_dir / "appdata"),
-            "LOCALAPPDATA": str(self.runtime_dir / "localappdata"),
+            "APPDATA": str(appdata_dir),
+            "LOCALAPPDATA": str(localappdata_dir),
             "HF_HOME": str(self.model_dir / "hf_cache"),
             "HF_HUB_CACHE": str(self.model_dir / "hf_cache"),
             "TORCH_HOME": str(self.model_dir / "hf_cache"),

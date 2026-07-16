@@ -36,6 +36,14 @@ if not exist "%BACKEND_PYTHON%" (
     exit /b 1
 )
 
+echo Checking portable runtime paths...
+"%BACKEND_PYTHON%" "%ROOT_DIR%tools\portable_preflight.py"
+if errorlevel 1 (
+    echo [ERROR] Portable runtime path check failed. Please correct the reported configuration.
+    pause
+    exit /b 1
+)
+
 if not exist "%NPM%" (
     echo [ERROR] Portable Node/npm runtime was not found:
     echo %NPM%

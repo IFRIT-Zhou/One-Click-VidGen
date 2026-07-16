@@ -47,8 +47,9 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("遮挡", rewritten)
 
     def test_science_mode_restores_red_scarf_girl_and_science_agent(self) -> None:
-        self.assertIn("黑色短发", visual.SCIENCE_VISUAL_STYLE)
-        self.assertIn("红色围巾", visual.SCIENCE_VISUAL_STYLE)
+        self.assertNotIn("黑色短发", visual.SCIENCE_VISUAL_STYLE)
+        self.assertIn("黑色短发", visual.SCIENCE_GLOBAL_CHARACTER_PROMPT)
+        self.assertIn("红色围巾", visual.SCIENCE_GLOBAL_CHARACTER_PROMPT)
         system_prompt = visual.build_visual_prompt_system(
             content_mode=visual.CONTENT_MODE_SCIENCE,
         )
@@ -66,9 +67,29 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("手机、平板、书信或照片", system_prompt)
         self.assertIn("正面主体特写", system_prompt)
         self.assertIn("不使用第一视角或越肩机位", system_prompt)
+        self.assertNotIn("红色鸭舌帽", visual.DEFAULT_VISUAL_STYLE)
+        self.assertIn("红色鸭舌帽", visual.DEFAULT_GLOBAL_CHARACTER_PROMPT)
+
+    def test_pacing_groups_use_agent_one_recommendation_and_real_timestamps(self) -> None:
+        scenes = [
+            {"slide_id": f"scene_{index:03d}", "start": (index - 1) * 3, "end": index * 3}
+            for index in range(1, 7)
+        ]
+        plan = {"story_beats": [
+            {"slide_ids": ["scene_001", "scene_002"], "visual_pacing": "hold"},
+            {"slide_ids": ["scene_003", "scene_004"], "visual_pacing": "fast"},
+            {"slide_ids": ["scene_005", "scene_006"], "visual_pacing": "normal"},
+        ]}
+        groups = visual._visual_groups(scenes, plan)
+        self.assertEqual([[item["slide_id"] for item in group] for group in groups], [
+            ["scene_001", "scene_002"], ["scene_003", "scene_004"], ["scene_005", "scene_006"],
+        ])
 
     def test_character_name_is_expanded_and_style_meta_is_not_sent_to_image_model(self) -> None:
-        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        scenes = [
+            {"slide_id": "scene_001", "start": 0, "end": 5},
+            {"slide_id": "scene_002", "start": 5, "end": 10},
+        ]
         mapping = [{
             "macro_scene_id": "poster_001",
             "includes_slides": ["scene_001"],
@@ -77,18 +98,31 @@ class VisualConstraintsTest(unittest.TestCase):
         story_plan = {
             "characters": [{
                 "name": "萱萱妈妈",
-                "appearance": "35岁左右、黑色长发的女性",
-                "wardrobe": "红色鸭舌帽、深色运动外套",
-                "signature_item": "红色鸭舌帽",
+                "role": "主角",
+                "appearance": "30岁左右、扎马尾的女性",
+                "wardrobe": "前期居家服，后期骑行服或运动装",
+                "wardrobe_states": [{
+                    "state_id": "ride",
+                    "start_slide_id": "scene_001",
+                    "end_slide_id": "scene_002",
+                    "wardrobe": "磨旧的深灰色骑行服",
+                    "headwear": "白色骑行头盔",
+                    "carried_items": "旧自行车",
+                }],
+                "signature_item": "头盔",
             }],
         }
-        with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": visual.DEFAULT_VISUAL_STYLE}, clear=False):
+        style = "都市悬疑漫画；主角为35岁中年女性，黑色长发，随时都戴着红色鸭舌帽。"
+        with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": style}, clear=False):
             result = visual._finalize_mapping(mapping, scenes, story_plan)
         prompt = result[0]["image_prompt"]
         self.assertNotIn("萱萱妈妈", prompt)
-        self.assertEqual(prompt.count("35岁左右、黑色长发的女性"), 2)
-        self.assertIn("红色鸭舌帽、深色运动外套", prompt)
+        self.assertGreaterEqual(prompt.count("35岁中年女性，黑色长发，随时都戴着红色鸭舌帽"), 2)
+        self.assertIn("本镜头服装=磨旧的深灰色骑行服", prompt)
+        self.assertNotIn("前期居家服，后期骑行服或运动装", prompt)
+        self.assertNotIn("本镜头头部状态=白色骑行头盔", prompt)
         self.assertNotIn("同一角色的脸型、发型、年龄、服装和标志性物件", prompt)
+        self.assertIn("本镜头角色造型硬约束", prompt)
         self.assertIn("【统一画面风格】", prompt)
 
     def test_duration_and_character_style_are_enforced(self) -> None:

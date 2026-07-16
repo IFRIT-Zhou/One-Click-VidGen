@@ -1,0 +1,476 @@
+"""Post-production editor for replacing a completed job's generated images."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from .db import list_media_assets
+from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, register_job_asset
+
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
+MAPPING_FILENAME = "画面映射.json"
+TIMELINE_FILENAME = "画面时间线.json"
+MANIFEST_FILENAME = "画面修改清单.json"
+HTML_FILENAME = "最终画面.html"
+SUBTITLE_FILENAME = "最终字幕.srt"
+
+
+class VisualEditor:
+    def __init__(self) -> None:
+        self._tasks: dict[str, dict[str, Any]] = {}
+        self._image_tasks: dict[str, dict[str, dict[str, Any]]] = {}
+        self._render_processes: dict[str, subprocess.Popen[str]] = {}
+        self._render_cancelled: set[str] = set()
+        self._lock = threading.Lock()
+        self._mapping_lock = threading.Lock()
+
+    @staticmethod
+    def output_dir(job_id: str, user_id: int) -> Path:
+        root = OUTPUT_DIR.resolve()
+        for asset in list_media_assets(user_id=user_id, generation_job_id=job_id):
+            if str(asset.get("role") or "") != "project_output":
+                continue
+            stored = Path(str(asset.get("storage_path") or ""))
+            candidate = (stored if stored.is_absolute() else PROJECT_ROOT / stored).resolve()
+            try:
+                relative = candidate.relative_to(root)
+            except ValueError:
+                continue
+            if relative.parts:
+                directory = root / relative.parts[0]
+                if directory.is_dir():
+                    return directory
+        raise FileNotFoundError("project output folder is not available")
+
+    def projects(self, user_id: int) -> list[dict[str, Any]]:
+        root = OUTPUT_DIR.resolve()
+        job_by_folder: dict[str, str] = {}
+        for asset in list_media_assets(user_id=user_id):
+            if str(asset.get("role") or "") != "project_output":
+                continue
+            stored = Path(str(asset.get("storage_path") or ""))
+            candidate = (stored if stored.is_absolute() else PROJECT_ROOT / stored).resolve()
+            try:
+                relative = candidate.relative_to(root)
+            except ValueError:
+                continue
+            if relative.parts and asset.get("generation_job_id"):
+                job_by_folder.setdefault(relative.parts[0], str(asset["generation_job_id"]))
+        projects: list[dict[str, Any]] = []
+        if not root.is_dir():
+            return projects
+        for directory in sorted((path for path in root.iterdir() if path.is_dir() and not path.name.startswith(".")), key=lambda path: path.stat().st_mtime, reverse=True):
+            job_id = job_by_folder.get(directory.name)
+            if job_id:
+                self._ensure_editor_support_files(job_id, directory)
+                projects.append({"id": job_id, "name": directory.name, "editable": True})
+        return projects
+
+    @staticmethod
+    def _ensure_editor_support_files(job_id: str, output_dir: Path) -> None:
+        """Migrate old job artifacts once; all normal editing then uses output only."""
+        other_dir = output_dir / "other"
+        other_dir.mkdir(parents=True, exist_ok=True)
+        artifact_dir = JOBS_DIR / job_id / "artifacts"
+        for source_name, target_name in (
+            ("poster_mapping.json", MAPPING_FILENAME),
+            ("fine_grained_timeline.json", TIMELINE_FILENAME),
+        ):
+            source = artifact_dir / source_name
+            target = other_dir / target_name
+            if source.is_file() and not target.is_file():
+                shutil.copy2(source, target)
+        (other_dir / MANIFEST_FILENAME).write_text(
+            json.dumps({"job_id": job_id, "project_name": output_dir.name}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _mapping_path(project_dir: Path) -> Path:
+        return project_dir / "other" / MAPPING_FILENAME
+
+    @staticmethod
+    def _timeline_path(project_dir: Path) -> Path:
+        return project_dir / "other" / TIMELINE_FILENAME
+
+    @staticmethod
+    def _load_mapping(project_dir: Path) -> list[dict[str, Any]]:
+        path = VisualEditor._mapping_path(project_dir)
+        if not path.is_file():
+            return VisualEditor._rebuild_mapping_from_output(project_dir)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError("poster mapping is invalid")
+        return [item for item in payload if isinstance(item, dict)]
+
+    @staticmethod
+    def _save_mapping(project_dir: Path, mapping: list[dict[str, Any]]) -> None:
+        path = VisualEditor._mapping_path(project_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    @staticmethod
+    def _rebuild_mapping_from_output(project_dir: Path) -> list[dict[str, Any]]:
+        """Best-effort compatibility for old outputs whose job workspace was removed."""
+        mapping: list[dict[str, Any]] = []
+        for image in sorted((project_dir / "image").glob("*")):
+            if image.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            macro_id = re.sub(r"_[0-9a-f]{8,}$", "", image.stem, flags=re.IGNORECASE)
+            prompt_path = image.with_suffix(".txt")
+            mapping.append({
+                "macro_scene_id": macro_id,
+                "image_prompt": prompt_path.read_text(encoding="utf-8") if prompt_path.is_file() else "",
+                "includes_slides": [],
+            })
+        VisualEditor._save_mapping(project_dir, mapping)
+        return mapping
+
+    @staticmethod
+    def _find_image(image_dir: Path, macro_id: str) -> Path:
+        matches = [path for path in image_dir.glob(f"{macro_id}*") if path.suffix.lower() in IMAGE_EXTENSIONS]
+        if not matches:
+            raise FileNotFoundError(f"image for {macro_id} is missing")
+        return sorted(matches)[0]
+
+    @staticmethod
+    def _backup_dir(project_dir: Path) -> Path:
+        path = project_dir / ".visual_editor_backups"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def _backup_current(cls, project_dir: Path, image: Path, macro_id: str) -> None:
+        backup_dir = cls._backup_dir(project_dir)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        shutil.copy2(image, backup_dir / f"{macro_id}.{stamp}{image.suffix.lower()}")
+        prompt_path = image.with_suffix(".txt")
+        if prompt_path.is_file():
+            shutil.copy2(prompt_path, backup_dir / f"{macro_id}.{stamp}.txt")
+        original_image = backup_dir / f"{macro_id}.original{image.suffix.lower()}"
+        original_prompt = backup_dir / f"{macro_id}.original.txt"
+        if not original_image.exists():
+            shutil.copy2(image, original_image)
+        if prompt_path.is_file() and not original_prompt.exists():
+            shutil.copy2(prompt_path, original_prompt)
+
+    def inspect(self, job_id: str, user_id: int) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        image_dir = project_dir / "image"
+        timeline: dict[str, dict[str, Any]] = {}
+        if self._timeline_path(project_dir).is_file():
+            for item in json.loads(self._timeline_path(project_dir).read_text(encoding="utf-8")):
+                if isinstance(item, dict):
+                    timeline[str(item.get("slide_id") or "")] = item
+        items: list[dict[str, Any]] = []
+        for mapping in self._load_mapping(project_dir):
+            macro_id = str(mapping.get("macro_scene_id") or "")
+            if not macro_id:
+                continue
+            try:
+                image = self._find_image(image_dir, macro_id)
+            except FileNotFoundError:
+                continue
+            slides = [str(value) for value in mapping.get("includes_slides", [])]
+            text = " ".join(str(timeline.get(value, {}).get("text_content") or "") for value in slides).strip()
+            items.append({
+                "id": macro_id,
+                "prompt": str(mapping.get("image_prompt") or ""),
+                "slides": slides,
+                "text": text,
+                "image_url": f"/api/jobs/{job_id}/visual-images/{image.name}?v={image.stat().st_mtime_ns}",
+            })
+        with self._lock:
+            task = dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
+            image_tasks = {
+                macro_id: dict(value)
+                for macro_id, value in self._image_tasks.get(job_id, {}).items()
+            }
+        for item in items:
+            item["task"] = image_tasks.get(item["id"], {"status": "idle", "message": ""})
+        return {
+            "items": items,
+            "task": task,
+            "image_tasks": image_tasks,
+            "has_active_image_tasks": any(value.get("status") == "running" for value in image_tasks.values()),
+            "project_dir": str(project_dir),
+            "version": int(time.time() * 1000),
+        }
+
+    def status(self, job_id: str) -> dict[str, Any]:
+        """Lightweight task state for the UI; does not reload the image grid."""
+        with self._lock:
+            task = dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
+            image_tasks = {
+                macro_id: dict(value)
+                for macro_id, value in self._image_tasks.get(job_id, {}).items()
+            }
+        return {
+            "task": task,
+            "image_tasks": image_tasks,
+            "has_active_image_tasks": any(value.get("status") == "running" for value in image_tasks.values()),
+        }
+
+    @staticmethod
+    def image_path(job_id: str, user_id: int, filename: str) -> Path:
+        if Path(filename).name != filename:
+            raise FileNotFoundError("invalid image")
+        path = (VisualEditor.output_dir(job_id, user_id) / "image" / filename).resolve()
+        image_root = (VisualEditor.output_dir(job_id, user_id) / "image").resolve()
+        if image_root not in path.parents or not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
+            raise FileNotFoundError("image not found")
+        return path
+
+    def _set_task(self, job_id: str, **changes: Any) -> None:
+        with self._lock:
+            task = dict(self._tasks.get(job_id) or {})
+            task.update(changes)
+            task["updated_at"] = time.time()
+            self._tasks[job_id] = task
+
+    def _set_image_task(self, job_id: str, macro_id: str, **changes: Any) -> None:
+        with self._lock:
+            task = dict(self._image_tasks.setdefault(job_id, {}).get(macro_id) or {})
+            task.update(changes)
+            task["updated_at"] = time.time()
+            self._image_tasks[job_id][macro_id] = task
+
+    def _start_image_task(self, job: Any, macro_id: str, action: str, message: str) -> None:
+        with self._lock:
+            current = self._image_tasks.setdefault(job.id, {}).get(macro_id) or {}
+            if current.get("status") == "running":
+                raise RuntimeError(f"{macro_id} is already being processed")
+        self._set_image_task(job.id, macro_id, status="running", action=action, message=message)
+
+    @staticmethod
+    def _log(job: Any, message: str) -> None:
+        from .pipeline import store
+        store.log(job, f"[画面修改] {message}")
+
+    def redraw(self, *, job: Any, prompt: str, macro_id: str) -> None:
+        self._start_image_task(job, macro_id, "redraw", "正在调用 Image2 重绘图片")
+        self._log(job, f"开始重绘 {macro_id}，请等待 Image2 返回图片。")
+
+        def work() -> None:
+            try:
+                project_dir = self.output_dir(job.id, int(job.user_id))
+                image = self._find_image(project_dir / "image", macro_id)
+                with self._mapping_lock:
+                    mapping = self._load_mapping(project_dir)
+                    item = next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None)
+                    if item is None:
+                        raise ValueError("image mapping was not found")
+                    self._backup_current(project_dir, image, macro_id)
+                    item["image_prompt"] = prompt
+                    self._save_mapping(project_dir, mapping)
+                    image.with_suffix(".txt").write_text(prompt, encoding="utf-8")
+                import module4_video_render as visual
+                rendered = visual.render_posters_concurrently([dict(item)], visual._provider_configs())[0]
+                shutil.copy2(rendered, image)
+                self._set_image_task(job.id, macro_id, status="completed", action="redraw", message="图片已重绘，请检查效果")
+                self._log(job, f"{macro_id} 重绘完成。")
+            except Exception as exc:
+                self._set_image_task(job.id, macro_id, status="failed", action="redraw", message=str(exc))
+                self._log(job, f"{macro_id} 重绘失败：{exc}")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def upload(self, *, job: Any, macro_id: str, source: Path) -> None:
+        self._start_image_task(job, macro_id, "upload", "正在替换本地图片")
+        self._log(job, f"开始替换 {macro_id} 的本地图片。")
+
+        def work() -> None:
+            try:
+                project_dir = self.output_dir(job.id, int(job.user_id))
+                image = self._find_image(project_dir / "image", macro_id)
+                self._backup_current(project_dir, image, macro_id)
+                shutil.copy2(source, image)
+                self._set_image_task(job.id, macro_id, status="completed", action="upload", message="本地图片已替换")
+                self._log(job, f"{macro_id} 本地图片替换完成。")
+            except Exception as exc:
+                self._set_image_task(job.id, macro_id, status="failed", action="upload", message=str(exc))
+                self._log(job, f"{macro_id} 本地图片替换失败：{exc}")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def undo(self, *, job_id: str, user_id: int, macro_id: str) -> None:
+        project_dir = self.output_dir(job_id, user_id)
+        image = self._find_image(project_dir / "image", macro_id)
+        backups = sorted(self._backup_dir(project_dir).glob(f"{macro_id}.*{image.suffix.lower()}"))
+        backups = [path for path in backups if ".original" not in path.name]
+        if not backups:
+            raise FileNotFoundError("no previous image backup")
+        shutil.copy2(backups[-1], image)
+        self._set_task(job_id, status="completed", action="undo", macro_id=macro_id, message="已撤回到上一个图片版本")
+
+    def reset_prompt(self, *, job_id: str, user_id: int, macro_id: str) -> str:
+        project_dir = self.output_dir(job_id, user_id)
+        image = self._find_image(project_dir / "image", macro_id)
+        original = self._backup_dir(project_dir) / f"{macro_id}.original.txt"
+        if not original.is_file():
+            raise FileNotFoundError("original prompt backup is unavailable")
+        prompt = original.read_text(encoding="utf-8")
+        mapping = self._load_mapping(project_dir)
+        item = next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None)
+        if item is None:
+            raise ValueError("image mapping was not found")
+        item["image_prompt"] = prompt
+        self._save_mapping(project_dir, mapping)
+        image.with_suffix(".txt").write_text(prompt, encoding="utf-8")
+        self._set_task(job_id, status="completed", action="reset_prompt", macro_id=macro_id, message="提示词已重置为初始版本")
+        return prompt
+
+    def render_video(self, *, job: Any, mode: str = "both") -> None:
+        with self._lock:
+            has_active_image_tasks = any(
+                value.get("status") == "running"
+                for value in self._image_tasks.get(job.id, {}).values()
+            )
+        if has_active_image_tasks:
+            raise RuntimeError("请等待正在重绘或替换的图片完成后，再重新渲染视频")
+        self._set_task(job.id, status="running", action="render", message="正在仅运行模块 5 重新合成视频")
+
+        def work() -> None:
+            try:
+                with job_store_lock(job):
+                    project_dir = self.output_dir(job.id, int(job.user_id))
+                    import module4_video_render as visual
+                    import module5_video_render as renderer
+
+                    mapping_path = self._mapping_path(project_dir)
+                    timeline_path = self._timeline_path(project_dir)
+                    if mapping_path.is_file():
+                        shutil.copy2(mapping_path, visual.POSTER_MAPPING_PATH)
+                    if timeline_path.is_file():
+                        shutil.copy2(timeline_path, visual.TIMELINE_PATH)
+                    html_path = project_dir / "other" / HTML_FILENAME
+                    subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
+                    audio_path = project_dir / "input" / "配音.wav"
+                    if not html_path.is_file() or not subtitle_path.is_file() or not audio_path.is_file():
+                        raise FileNotFoundError("输出目录缺少重新渲染所需的画面、字幕或配音资料")
+                    html = html_path.read_text(encoding="utf-8")
+                    html = html.replace("../image/", "assets/").replace("../input/配音.wav", "2_audio_srt/final_output.wav")
+                    (visual.VISUAL_DIR / "index.html").write_text(html, encoding="utf-8")
+                    visual.ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+                    for image in (project_dir / "image").glob("*"):
+                        if image.suffix.lower() in IMAGE_EXTENSIONS:
+                            shutil.copy2(image, visual.ASSETS_DIR / image.name)
+                    shutil.copy2(audio_path, renderer.AUDIO_DIR / "final_output.wav")
+                    shutil.copy2(subtitle_path, renderer.AUDIO_DIR / "final_short.srt")
+                    from .pipeline import store
+                    render_env = os.environ.copy()
+                    render_env["VIDEO_RENDER_VARIANT"] = mode
+                    render_env["PYTHONUTF8"] = "1"
+                    command = [sys.executable, str(PROJECT_ROOT / "module5_video_render.py")]
+                    self._log(job, f"开始重新渲染（{mode}），模块 5 的实时输出将持续写入主后台日志。")
+                    process = subprocess.Popen(
+                        command,
+                        cwd=str(PROJECT_ROOT),
+                        env=render_env,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                    with self._lock:
+                        self._render_cancelled.discard(job.id)
+                        self._render_processes[job.id] = process
+                    try:
+                        assert process.stdout is not None
+                        for line in process.stdout:
+                            line = line.strip()
+                            if line:
+                                store.log(job, f"[画面修改/重新渲染] {line}")
+                        return_code = process.wait()
+                    finally:
+                        with self._lock:
+                            cancelled = job.id in self._render_cancelled
+                            self._render_processes.pop(job.id, None)
+                            self._render_cancelled.discard(job.id)
+                    if cancelled:
+                        self._set_task(job.id, status="cancelled", action="render", message="重新渲染已停止")
+                        self._log(job, "重新渲染已由用户停止。")
+                        return
+                    if return_code != 0:
+                        raise RuntimeError(f"模块 5 重新渲染失败，退出码 {return_code}")
+                    video_dir = project_dir / "video"
+                    video_dir.mkdir(parents=True, exist_ok=True)
+                    copies = {
+                        renderer.FINAL_DIR / "final_with_subtitles.mp4": video_dir / "最终视频_字幕版.mp4",
+                        renderer.FINAL_DIR / "final_raw_presentation.mp4": video_dir / "最终视频_纯净版.mp4",
+                    }
+                    selected = {"subtitles", "raw"} if mode == "both" else {mode}
+                    for variant, (source, target) in {
+                        "subtitles": (renderer.FINAL_DIR / "final_with_subtitles.mp4", video_dir / "最终视频_字幕版.mp4"),
+                        "raw": (renderer.FINAL_DIR / "final_raw_presentation.mp4", video_dir / "最终视频_纯净版.mp4"),
+                    }.items():
+                        if variant not in selected:
+                            continue
+                        shutil.copy2(source, target)
+                        artifact = JOBS_DIR / job.id / "artifacts" / source.name
+                        shutil.copy2(source, artifact)
+                        register_job_asset(job, target, "project_output", {"project_name": project_dir.name})
+                    if mode in {"subtitles", "both"}:
+                        job.artifacts["video_with_subtitles"] = f"/api/jobs/{job.id}/artifacts/final_with_subtitles.mp4"
+                    if mode in {"raw", "both"}:
+                        job.artifacts["video_raw"] = f"/api/jobs/{job.id}/artifacts/final_raw_presentation.mp4"
+                    from .pipeline import store
+                    store.update(job, artifacts=dict(job.artifacts), message="画面修改已重新渲染")
+                    self._set_task(job.id, status="completed", action="render", message="视频已重新渲染")
+                    self._log(job, "重新渲染完成，最终视频已更新。")
+            except Exception as exc:
+                self._set_task(job.id, status="failed", action="render", message=str(exc))
+                self._log(job, f"重新渲染失败：{exc}")
+
+        threading.Thread(target=work, daemon=True).start()
+
+
+    def cancel_render(self, job: Any) -> dict[str, Any]:
+        """Stop only a module-5 render launched from the visual editor."""
+        with self._lock:
+            process = self._render_processes.get(job.id)
+            task = dict(self._tasks.get(job.id) or {})
+            if process is None or task.get("action") != "render" or task.get("status") != "running":
+                return {"ok": False, "message": "当前没有可停止的重新渲染任务。"}
+            self._render_cancelled.add(job.id)
+        try:
+            from .pipeline import _terminate_process_tree
+            _terminate_process_tree(process)
+        except Exception:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        self._set_task(job.id, status="cancelled", action="render", message="正在停止重新渲染")
+        self._log(job, "已收到停止重新渲染请求，正在终止模块 5。")
+        return {"ok": True, "message": "已请求停止重新渲染，日志将显示最终结果。"}
+
+
+class job_store_lock:
+    """Share the generation lock: editing must not overwrite a running pipeline workspace."""
+
+    def __init__(self, _job: Any) -> None:
+        from .pipeline import store
+        self._lock = store._pipeline_lock
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+
+    def __exit__(self, *_args: Any) -> None:
+        self._lock.release()
+
+
+visual_editor = VisualEditor()

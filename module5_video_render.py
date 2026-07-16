@@ -14,6 +14,8 @@ WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 VISUAL_DIR = WORKSPACE_DIR / "3_visual_template"
 AUDIO_DIR = WORKSPACE_DIR / "2_audio_srt"
 FINAL_DIR = WORKSPACE_DIR / "4_final_video"
+PORTABLE_FFMPEG_DIR = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
+PORTABLE_FFMPEG = PORTABLE_FFMPEG_DIR / "ffmpeg.exe"
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -105,8 +107,14 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
     cli = PROJECT_ROOT / "node_modules" / "hyperframes" / "dist" / "cli.js"
     if not node or not cli.exists():
         raise RuntimeError("未找到 Hyperframes CLI，请先安装 Node 依赖")
+    if not PORTABLE_FFMPEG.is_file():
+        raise RuntimeError(f"未找到项目内便携 FFmpeg: {PORTABLE_FFMPEG}")
 
     command = build_render_command(node, cli, composition, output)
+    render_env = os.environ.copy()
+    # Hyperframes launches ffmpeg by name. Put the portable copy first so a
+    # broken system/Chocolatey shim can never affect an exported project.
+    render_env["PATH"] = f"{PORTABLE_FFMPEG_DIR}{os.pathsep}{render_env.get('PATH', '')}"
     print(
         "渲染加速配置: "
         f"workers={render_workers()}, "
@@ -123,6 +131,7 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=render_env,
     )
     assert process.stdout is not None
     for line in process.stdout:
@@ -153,11 +162,13 @@ def main() -> None:
     subtitle_html.write_text(with_subtitles(source_html, srt_path), encoding="utf-8")
     raw_html.write_text(without_subtitles(source_html), encoding="utf-8")
 
+    render_mode = str(os.getenv("VIDEO_RENDER_VARIANT", "both")).strip().lower()
+    render_mode = render_mode if render_mode in {"subtitles", "raw", "both"} else "both"
     try:
-        print("视频渲染共 2 个版本，第二个版本会从 0% 重新计数。", flush=True)
-        render(subtitle_html, FINAL_DIR / "final_with_subtitles.mp4", "字幕版 1/2")
-        print("字幕版已完成，开始生成不含字幕的纯净版。", flush=True)
-        render(raw_html, FINAL_DIR / "final_raw_presentation.mp4", "纯净版 2/2")
+        if render_mode in {"subtitles", "both"}:
+            render(subtitle_html, FINAL_DIR / "final_with_subtitles.mp4", "字幕版")
+        if render_mode in {"raw", "both"}:
+            render(raw_html, FINAL_DIR / "final_raw_presentation.mp4", "纯净版")
     finally:
         subtitle_html.unlink(missing_ok=True)
         raw_html.unlink(missing_ok=True)

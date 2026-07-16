@@ -30,7 +30,8 @@ class StoryAgentsTest(unittest.TestCase):
             stale["agent_version"] = 1
             path.write_text(json.dumps(stale, ensure_ascii=False), encoding="utf-8")
             replacement = dict(stale)
-            replacement["agent_version"] = 2
+            replacement["agent_version"] = story_agents.STORY_AGENT_VERSION
+            replacement["character_continuity_version"] = story_agents.CHARACTER_CONTINUITY_VERSION
             replacement["generation_source"] = "gemini"
             with (
                 patch.object(story_agents, "gemini_configured", return_value=True),
@@ -102,7 +103,8 @@ class StoryAgentsTest(unittest.TestCase):
             )
             replacement = story_agents._fallback_story_plan(scenes)
             replacement["source_fingerprint"] = story_agents.story_fingerprint(scenes)
-            replacement["agent_version"] = 2
+            replacement["agent_version"] = story_agents.STORY_AGENT_VERSION
+            replacement["character_continuity_version"] = story_agents.CHARACTER_CONTINUITY_VERSION
             replacement["generation_source"] = "gemini"
             with patch.object(story_agents, "create_story_plan", return_value=replacement) as create:
                 result = story_agents.load_or_create_story_plan(scenes, resume=True, path=path)
@@ -184,6 +186,38 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertEqual(len(payload["current_segment"]), 2)
         self.assertEqual(plan["generation_source"], "gemini")
         self.assertEqual(plan["planning_scope"], "hierarchical_segment")
+
+    def test_character_wardrobe_states_are_normalized_to_valid_slide_ranges(self) -> None:
+        scenes = sample_scenes()[:4]
+        raw = story_agents._fallback_story_plan(scenes)
+        raw["characters"] = [{
+            "name": "林岚",
+            "role": "主角",
+            "appearance": "35岁，黑色长发",
+            "wardrobe": "存在多阶段换装",
+            "wardrobe_states": [
+                {
+                    "state_id": "home",
+                    "start_slide_id": "scene_001",
+                    "end_slide_id": "scene_002",
+                    "wardrobe": "起球的灰色旧居家服",
+                    "headwear": "红色鸭舌帽",
+                    "carried_items": "无",
+                },
+                {
+                    "state_id": "invalid",
+                    "start_slide_id": "missing",
+                    "end_slide_id": "scene_004",
+                    "wardrobe": "不应保留",
+                },
+            ],
+        }]
+        plan = story_agents._normalize_story_plan(raw, scenes)
+        self.assertIsNotNone(plan)
+        states = plan["characters"][0]["wardrobe_states"]
+        self.assertEqual(len(states), 1)
+        self.assertEqual(states[0]["wardrobe"], "起球的灰色旧居家服")
+        self.assertEqual(plan["character_continuity_version"], story_agents.CHARACTER_CONTINUITY_VERSION)
 
 
 if __name__ == "__main__":

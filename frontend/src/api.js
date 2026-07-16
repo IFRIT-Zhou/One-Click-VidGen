@@ -51,6 +51,24 @@ export const api = {
   job: (id) => requestJSON(`/api/jobs/${id}`),
   cancelJob: (id) => requestJSON(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   resumeJob: (id) => requestJSON(`/api/jobs/${id}/resume`, { method: 'POST' }),
+  openJobOutputFolder: (id) => requestJSON(`/api/jobs/${id}/output-folder`, { method: 'POST' }),
+  visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
+  visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
+  visualEditorProjects: () => requestJSON('/api/visual-editor/projects'),
+  redrawVisualImage: (id, imageId, prompt) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+  }),
+  uploadVisualImage: (id, imageId, file) => {
+    const data = new FormData()
+    data.append('file', file)
+    return requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/upload`, { method: 'POST', body: data })
+  },
+  undoVisualImage: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/undo`, { method: 'POST' }),
+  resetVisualPrompt: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/reset-prompt`, { method: 'POST' }),
+  renderVisualEditor: (id, mode) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }),
+  }),
+  cancelVisualRender: (id) => requestJSON(`/api/jobs/${id}/visual-editor/cancel`, { method: 'POST' }),
   openArtifactFolder: (artifactUrl) => requestJSON(`${artifactUrl}/open-folder`, { method: 'POST' }),
   editorUploads: () => requestJSON('/api/editor/uploads'),
   uploadEditorAsset: (file) => {

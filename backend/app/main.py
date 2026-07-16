@@ -1,5 +1,7 @@
+import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -29,12 +31,15 @@ from .editor import (
     save_upload,
     upload_path,
 )
-from .pipeline import JOBS_DIR, PROJECT_ROOT, normalize_project_name, store
+from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, normalize_project_name, store
+from .visual_editor import IMAGE_EXTENSIONS, visual_editor
 from module4_video_render import (
     CONTENT_MODE_SCIENCE,
     CONTENT_MODE_STORY,
     DEFAULT_VISUAL_PROMPT_SYSTEM,
+    DEFAULT_GLOBAL_CHARACTER_PROMPT,
     DEFAULT_VISUAL_STYLE,
+    SCIENCE_GLOBAL_CHARACTER_PROMPT,
     SCIENCE_VISUAL_PROMPT_SYSTEM,
     SCIENCE_VISUAL_STYLE,
     build_visual_prompt_system,
@@ -65,8 +70,22 @@ class GenerateRequest(BaseModel):
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     visual_prompt_mode: Literal["simple", "full"] = "simple"
+    visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "auto"
+    visual_min_duration: float | None = Field(default=None, ge=4, le=20)
+    visual_target_duration: float | None = Field(default=None, ge=5, le=30)
+    visual_max_duration: float | None = Field(default=None, ge=6, le=40)
+    visual_max_slides: int | None = Field(default=None, ge=1, le=12)
     visual_style_prompt: str | None = Field(default=None, max_length=1000)
+    global_character_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
+
+
+class VisualRedrawRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=12000)
+
+
+class VisualRenderRequest(BaseModel):
+    mode: Literal["subtitles", "raw", "both"] = "both"
 
 
 class RegisterRequest(BaseModel):
@@ -271,18 +290,21 @@ def settings() -> dict[str, Any]:
         "visual_prompt": {
             "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
             "default_style": DEFAULT_VISUAL_STYLE,
+            "default_character": DEFAULT_GLOBAL_CHARACTER_PROMPT,
             "last_used_system": last_visual_prompt,
             "modes": {
                 CONTENT_MODE_STORY: {
                     "label": "都市惊悚",
                     "description": "人物、线索与悬念连续的阴森漫画故事",
                     "default_style": DEFAULT_VISUAL_STYLE,
+                    "default_character": DEFAULT_GLOBAL_CHARACTER_PROMPT,
                     "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
                 },
                 CONTENT_MODE_SCIENCE: {
                     "label": "口播科普",
                     "description": "红围巾短发少女的清晰科教漫画",
                     "default_style": SCIENCE_VISUAL_STYLE,
+                    "default_character": SCIENCE_GLOBAL_CHARACTER_PROMPT,
                     "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
                 },
             },
@@ -304,9 +326,16 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     data = payload.model_dump()
     data["project_name"] = normalize_project_name(data.get("project_name"))
     if data.get("visual_prompt_mode") == "simple":
+        if not str(data.get("global_character_prompt") or "").strip():
+            data["global_character_prompt"] = (
+                SCIENCE_GLOBAL_CHARACTER_PROMPT
+                if str(data.get("content_mode") or "") == CONTENT_MODE_SCIENCE
+                else DEFAULT_GLOBAL_CHARACTER_PROMPT
+            )
         data["visual_prompt_system"] = build_visual_prompt_system(
             str(data.get("visual_style_prompt") or ""),
             str(data.get("content_mode") or CONTENT_MODE_STORY),
+            str(data.get("global_character_prompt") or ""),
         )
     script = str(data.get("script") or "").strip()
     if data.get("module1_only"):
@@ -407,7 +436,154 @@ def get_artifact(job_id: str, filename: str, request: Request) -> FileResponse:
     expected_root = (JOBS_DIR / job_id / "artifacts").resolve()
     if expected_root not in path.parents or not path.exists():
         raise HTTPException(status_code=404, detail="artifact not found")
-    return FileResponse(str(path), filename=filename)
+    media_type = "video/mp4" if path.suffix.lower() == ".mp4" else None
+    return FileResponse(str(path), media_type=media_type)
+
+
+@app.post("/api/jobs/{job_id}/output-folder")
+def open_job_output_folder(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    output_root = OUTPUT_DIR.resolve()
+    project_dir: Path | None = None
+    for asset in list_media_assets(user_id=int(user["id"]), generation_job_id=job_id):
+        if str(asset.get("role") or "") != "project_output":
+            continue
+        try:
+            stored_path = Path(str(asset.get("storage_path") or ""))
+            candidate = (stored_path if stored_path.is_absolute() else PROJECT_ROOT / stored_path).resolve()
+            relative = candidate.relative_to(output_root)
+        except (OSError, ValueError):
+            continue
+        if relative.parts:
+            possible_dir = output_root / relative.parts[0]
+            if possible_dir.is_dir():
+                project_dir = possible_dir
+                break
+    if project_dir is None:
+        raise HTTPException(status_code=404, detail="project output folder is not available yet")
+    if os.name != "nt":
+        raise HTTPException(status_code=501, detail="open-folder is currently supported on Windows only")
+    try:
+        subprocess.Popen(["explorer.exe", str(project_dir)], close_fds=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not open output folder: {exc}") from exc
+    return {"ok": True, "path": str(project_dir)}
+
+
+def _owned_completed_job(job_id: str, request: Request) -> tuple[Any, int]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    if job.status != "completed":
+        raise HTTPException(status_code=409, detail="visual editing is available after a job completes")
+    return job, int(user["id"])
+
+
+@app.get("/api/jobs/{job_id}/visual-editor")
+def get_visual_editor(job_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.inspect(job_id, user_id)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=404, detail=f"visual editor data is unavailable: {exc}") from exc
+
+
+@app.get("/api/jobs/{job_id}/visual-editor/status")
+def get_visual_editor_status(job_id: str, request: Request) -> dict[str, Any]:
+    _owned_completed_job(job_id, request)
+    return visual_editor.status(job_id)
+
+
+@app.get("/api/visual-editor/projects")
+def list_visual_editor_projects(request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    projects = []
+    for item in visual_editor.projects(int(user["id"])):
+        job = store.get(str(item["id"]))
+        if job and job.status == "completed":
+            projects.append(item)
+    return {"projects": projects}
+
+
+@app.get("/api/jobs/{job_id}/visual-images/{filename}")
+def get_visual_editor_image(job_id: str, filename: str, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        path = visual_editor.image_path(job_id, user_id, filename)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="image not found") from exc
+    return FileResponse(str(path), media_type="image/jpeg")
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/redraw")
+def redraw_visual_editor_image(
+    job_id: str,
+    macro_id: str,
+    payload: VisualRedrawRequest,
+    request: Request,
+) -> dict[str, Any]:
+    job, _user_id = _owned_completed_job(job_id, request)
+    visual_editor.redraw(job=job, prompt=payload.prompt.strip(), macro_id=macro_id)
+    return {"ok": True, "message": "image redraw started"}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/upload")
+async def upload_visual_editor_image(
+    job_id: str,
+    macro_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    job, _user_id = _owned_completed_job(job_id, request)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="only JPG/JPEG replacement images are supported")
+    data = await file.read()
+    if not data or len(data) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="replacement image must be between 1 byte and 30 MB")
+    upload_dir = JOBS_DIR / job.id / "visual_editor_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    source = upload_dir / f"{macro_id}_{int(time.time() * 1000)}{suffix}"
+    source.write_bytes(data)
+    visual_editor.upload(job=job, macro_id=macro_id, source=source)
+    return {"ok": True, "message": "local image replacement started"}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/undo")
+def undo_visual_editor_image(job_id: str, macro_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        visual_editor.undo(job_id=job_id, user_id=user_id, macro_id=macro_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/reset-prompt")
+def reset_visual_editor_prompt(job_id: str, macro_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        prompt = visual_editor.reset_prompt(job_id=job_id, user_id=user_id, macro_id=macro_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "prompt": prompt}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/render")
+def render_visual_editor_video(job_id: str, payload: VisualRenderRequest, request: Request) -> dict[str, Any]:
+    job, _user_id = _owned_completed_job(job_id, request)
+    visual_editor.render_video(job=job, mode=payload.mode)
+    return {"ok": True, "message": "module 5 render started"}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/cancel")
+def cancel_visual_editor_render(job_id: str, request: Request) -> dict[str, Any]:
+    job, _user_id = _owned_completed_job(job_id, request)
+    return visual_editor.cancel_render(job)
 
 
 @app.post("/api/jobs/{job_id}/artifacts/{filename}/open-folder")

@@ -32,5 +32,8 @@ venv_audio_vedio/
 *.ckpt
 *.safetensors
 
+# Local distributable package; source remains in the repository, archives do not.
+/indexTTS2_standalone_package.zip
+
 # Root-level scripts and media used as local generation inputs.
 /*.txt

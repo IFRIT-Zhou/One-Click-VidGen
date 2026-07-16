@@ -29,6 +29,8 @@ VISUAL_DIR = PROJECT_ROOT / "workspace" / "3_visual_template"
 STORY_PLAN_PATH = VISUAL_DIR / "story_plan.json"
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+STORY_AGENT_VERSION = 4
+CHARACTER_CONTINUITY_VERSION = 3
 
 
 def normalize_content_mode(value: str | None) -> str:
@@ -48,7 +50,12 @@ STORY_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1：故事�
   "narrative_tone": "叙述口吻与情绪基调",
   "characters": [
     {"name":"姓名或稳定代称","role":"作用","appearance":"固定外貌",
-     "wardrobe":"固定服装","signature_item":"标志物","relationships":"人物关系"}
+     "wardrobe":"服装变化摘要，不得使用含糊的前期/后期二选一描述",
+     "wardrobe_states":[
+       {"state_id":"look_01","start_slide_id":"scene_001","end_slide_id":"scene_020",
+        "wardrobe":"该阶段唯一明确服装","headwear":"该阶段明确头部状态","carried_items":"手持或随身物品"}
+     ],
+     "signature_item":"标志物及明确佩戴规则","relationships":"人物关系"}
   ],
   "locations": [
     {"name":"地点","visual_identity":"稳定环境特征","time_and_light":"时间与光线"}
@@ -76,6 +83,10 @@ STORY_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1：故事�
 - story_beats 按原文顺序覆盖关键剧情，slide_ids 只能使用输入中存在的 ID。
 - 不得凭空增加鬼怪、凶案、人物或关键事件；都市小说不能被强行改成鬼故事。
 - 外貌、服装和场景特征要具体，供后续每批分镜重复使用。
+- appearance 只能写年龄、脸型、肤色、身材、固定发型等不会随剧情改变的身份特征，禁止写“前期/后期”。
+- 只要主要人物存在换装、脱帽、戴头盔、回忆或时间跳转，就必须填写 wardrobe_states；每个状态用起止
+  slide_id 覆盖连续剧情范围，并且 wardrobe/headwear/carried_items 各自只写该阶段实际状态，禁止写“A或B”。
+- 必须区分“戴着某物”和“手里拿着某物”。头盔、帽子等不得只写成含糊的 signature_item。
 - 手机、平板、书信或照片本身承载关键信息时，在 continuity_rules 中注明：采用正面主体特写或插入镜头，让物件占据画面主体，只保留必要的手部或桌面边缘，不使用第一视角或越肩机位。
 - 禁止建议露骨血腥、肢解、器官、性暴力、自残细节或针对未成年人的性化画面；
   必要情节改用影子、遮挡、反应镜头、环境痕迹和事后氛围表达。
@@ -85,7 +96,9 @@ STORY_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1：故事�
 STORY_AGENT_COMPACT_RETRY_PROMPT = """你是故事视频 Agent 1。上一次回答因长度上限被截断，
 这次必须只输出一个紧凑 JSON 对象，不要解释、不要 Markdown、不要复述原文。
 仅输出字段：story_type、logline、theme、narrative_tone、characters、locations、story_beats、continuity_rules。
-characters 最多 8 项，每项仅含 name、role、appearance、wardrobe、signature_item、relationships；
+characters 最多 8 项，每项仅含 name、role、appearance、wardrobe、wardrobe_states、signature_item、relationships；
+如人物有换装或头部状态变化，wardrobe_states 最多 6 项，每项仅含 state_id、start_slide_id、
+end_slide_id、wardrobe、headwear、carried_items；每个状态只允许一种明确造型，不得写“A或B”；
 locations 最多 8 项，每项仅含 name、visual_identity、time_and_light；
 story_beats 最多 8 项，每项仅含 beat_id、slide_ids、purpose、emotion、visual_focus；
 continuity_rules 最多 8 条。所有文字字段尽量少于 60 个中文字符。
@@ -104,6 +117,8 @@ segmentation_guidance 给出口播断句原则；visual_safety 给出安全可�
 - 找出核心观点、前置概念、因果链、案例、数据、结论和行动建议，不使用鬼故事或悬疑叙事框架。
 - 最多 8 个知识段、8 个关键概念、8 条连续性规则；文字字段尽量少于 80 个中文字符。
 - 固定视觉主持人为黑色短发、红色围巾的可爱少女；她只在有助讲解时出现，不要每张图都站着讲话。
+- 原文人物存在换装或头部状态变化时，characters 必须使用 wardrobe_states 按 slide_id 起止范围记录，
+  每个状态只写当时唯一明确的服装、头部状态和随身物品。
 - 抽象知识优先建议生活化比喻、实验演示、物体对比和过程示意，不编造原文没有的数据或结论。
 - 手机、平板、书信或照片本身承载关键信息时，采用正面主体特写或插入镜头，让物件占据画面主体，只保留必要的手部或桌面边缘，不使用第一视角或越肩机位。
 - 不输出逐张图片提示词，不复述整篇原文。"""
@@ -112,7 +127,8 @@ segmentation_guidance 给出口播断句原则；visual_safety 给出安全可�
 SCIENCE_AGENT_COMPACT_RETRY_PROMPT = """你是科普口播 Agent 1。上次回答被长度截断。
 只输出紧凑 JSON，字段仅限 story_type、logline、theme、narrative_tone、characters、locations、story_beats、continuity_rules。
 story_type 为 science_explainer；characters 最多 4 项；locations 最多 6 项；story_beats 最多 8 项；
-每个文字字段少于 60 个中文字符。story_beats 使用输入 slide_id，按核心观点、概念、证据、案例和结论组织。"""
+每个文字字段少于 60 个中文字符。人物换装时保留 wardrobe_states，每个状态包含起止 slide_id 和唯一造型。
+story_beats 使用输入 slide_id，按核心观点、概念、证据、案例和结论组织。"""
 
 
 SEGMENT_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1B：局部分段策划。
@@ -124,6 +140,8 @@ narrative_tone、characters、locations、story_beats、clues_and_payoffs、cont
 story_beats 必须按当前片段顺序覆盖关键动作、转折、线索和情绪变化，slide_ids 只能使用当前片段中的 ID。
 characters 中若出现全局已有角色，使用全局中的稳定姓名和设定，不得改写其固定外貌；原文只用关系称谓时，
 应结合全局设定明确为“姓名/稳定代称 + 固定人物描写”。最多 8 个局部节拍，其余数组最多 8 项。
+必须继承并细化当前片段适用的 wardrobe_states；每个镜头阶段只能选择一套明确服装和一种头部状态，
+禁止把“前期居家服、后期骑行服”整句交给下游。
 手机、平板、书信或照片承载信息时，采用正面主体特写或插入镜头，不使用第一视角或越肩机位。
 忠于原文，不增加事件，不输出逐张生图提示词。"""
 
@@ -189,6 +207,7 @@ def _fallback_story_plan(
                 "purpose": "承接并推进原文叙事",
                 "emotion": "依据原文情绪递进",
                 "visual_focus": "；".join(value for value in summaries if value)[:300],
+                "visual_pacing": "normal",
             }
         )
     science_mode = content_mode == CONTENT_MODE_SCIENCE
@@ -203,6 +222,7 @@ def _fallback_story_plan(
             "role": "固定视觉主持人",
             "appearance": "可爱少女，黑色短发，始终佩戴红色围巾",
             "wardrobe": "简洁科教风服装，红色围巾",
+            "wardrobe_states": [],
             "signature_item": "红色围巾",
             "relationships": "负责串联知识讲解",
         }] if science_mode else []),
@@ -232,7 +252,59 @@ def _fallback_story_plan(
             "敏感情节使用阴影、遮挡、反应镜头和环境痕迹表达",
             "不凭空增加鬼怪、凶案或暴力",
         ],
+        "agent_version": STORY_AGENT_VERSION,
+        "character_continuity_version": CHARACTER_CONTINUITY_VERSION,
     }
+
+
+def _normalize_characters(raw_characters: Any, scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize stable identity separately from time-bounded wardrobe states."""
+    if not isinstance(raw_characters, list):
+        return []
+    valid_ids = [str(scene.get("slide_id") or "") for scene in scenes]
+    positions = {slide_id: index for index, slide_id in enumerate(valid_ids) if slide_id}
+    characters: list[dict[str, Any]] = []
+    for raw in raw_characters[:10]:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            continue
+        states: list[dict[str, str]] = []
+        raw_states = raw.get("wardrobe_states")
+        if isinstance(raw_states, list):
+            for index, state in enumerate(raw_states[:8], 1):
+                if not isinstance(state, dict):
+                    continue
+                start_id = str(state.get("start_slide_id") or "").strip()
+                end_id = str(state.get("end_slide_id") or "").strip()
+                if start_id not in positions or end_id not in positions:
+                    continue
+                if positions[start_id] > positions[end_id]:
+                    start_id, end_id = end_id, start_id
+                wardrobe = str(state.get("wardrobe") or "").strip(" ，。；")
+                headwear = str(state.get("headwear") or "").strip(" ，。；")
+                carried_items = str(state.get("carried_items") or "").strip(" ，。；")
+                if not any((wardrobe, headwear, carried_items)):
+                    continue
+                states.append({
+                    "state_id": str(state.get("state_id") or f"look_{index:02d}").strip(),
+                    "start_slide_id": start_id,
+                    "end_slide_id": end_id,
+                    "wardrobe": wardrobe,
+                    "headwear": headwear,
+                    "carried_items": carried_items,
+                })
+        characters.append({
+            "name": name,
+            "role": str(raw.get("role") or "").strip(),
+            "appearance": str(raw.get("appearance") or "").strip(" ，。；"),
+            "wardrobe": str(raw.get("wardrobe") or "").strip(" ，。；"),
+            "wardrobe_states": states,
+            "signature_item": str(raw.get("signature_item") or "").strip(" ，。；"),
+            "relationships": str(raw.get("relationships") or "").strip(" ，。；"),
+        })
+    return characters
 
 
 def _normalize_story_plan(
@@ -261,6 +333,11 @@ def _normalize_story_plan(
                 "purpose": str(beat.get("purpose") or "推进叙事").strip(),
                 "emotion": str(beat.get("emotion") or "依据原文").strip(),
                 "visual_focus": str(beat.get("visual_focus") or "依据原文场景").strip(),
+                "visual_pacing": (
+                    str(beat.get("visual_pacing") or "normal").strip().lower()
+                    if str(beat.get("visual_pacing") or "normal").strip().lower() in {"hold", "normal", "fast"}
+                    else "normal"
+                ),
             }
         )
     if not normalized_beats:
@@ -274,9 +351,11 @@ def _normalize_story_plan(
         if value not in (None, "", []):
             plan[key] = value
     plan["story_beats"] = normalized_beats
+    plan["characters"] = _normalize_characters(raw.get("characters"), scenes)
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
     plan["content_mode"] = content_mode
-    plan["agent_version"] = 2
+    plan["agent_version"] = STORY_AGENT_VERSION
+    plan["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
     return plan
 
 
@@ -299,11 +378,30 @@ def create_story_plan(
             }
             for scene in scenes
         ]
+        global_character_prompt = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
         print(f"Agent 1：正在通读全文并建立故事上下文（{len(scenes)} 个片段）...", flush=True)
         try:
-            user_prompt = json.dumps({"complete_story": compact_scenes}, ensure_ascii=False)
+            user_prompt = json.dumps(
+                {
+                    "complete_story": compact_scenes,
+                    "user_global_character_bible": global_character_prompt,
+                },
+                ensure_ascii=False,
+            )
             system_prompt = SCIENCE_AGENT_SYSTEM_PROMPT if science_mode else STORY_AGENT_SYSTEM_PROMPT
+            system_prompt += (
+                "\n\n【新增硬规则】每个 story_beats 必须额外输出 visual_pacing，只能为 hold、normal 或 fast。"
+                "hold 用于环境铺垫、稳定对话和需停留观察的信息；fast 用于动作、转折、地点切换或情绪骤变；其余为 normal。"
+                "这只是节奏建议，程序会结合真实音频时间戳执行。"
+                "\n【用户全局人物档案】输入中的 user_global_character_bible 是最高优先级。"
+                "若非空，必须据此建立或修正主角固定 appearance，并把前期/后期换装、帽子或头盔拆成互不重叠的 wardrobe_states；"
+                "不得把整段阶段说明塞进 appearance、wardrobe 或单一镜头。未登记角色仅依据原文建立最少的临时档案。"
+            )
             retry_prompt = SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode else STORY_AGENT_COMPACT_RETRY_PROMPT
+            retry_prompt += (
+                "\n额外字段：每个 story_beats 输出 visual_pacing（hold、normal、fast 三选一）；"
+                "user_global_character_bible 为最高优先级，必须拆成固定 appearance 和明确 wardrobe_states。"
+            )
             try:
                 response = generate_gemini_text(
                     system_prompt=system_prompt,
@@ -333,7 +431,8 @@ def create_story_plan(
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
     plan["content_mode"] = content_mode
     plan["generation_source"] = generation_source
-    plan["agent_version"] = 2
+    plan["agent_version"] = STORY_AGENT_VERSION
+    plan["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
     return plan
 
 
@@ -356,7 +455,11 @@ def load_or_create_story_plan(
         source_matches = isinstance(existing, dict) and (
             existing.get("source_fingerprint") == fingerprint or allow_source_mismatch
         )
-        plan_is_current = isinstance(existing, dict) and int(existing.get("agent_version") or 0) >= 2
+        plan_is_current = (
+            isinstance(existing, dict)
+            and int(existing.get("agent_version") or 0) >= STORY_AGENT_VERSION
+            and int(existing.get("character_continuity_version") or 0) >= CHARACTER_CONTINUITY_VERSION
+        )
         plan_is_ai = isinstance(existing, dict) and existing.get("generation_source") == "gemini"
         may_reuse_fallback = not gemini_configured()
         if source_matches and plan_is_current and (plan_is_ai or may_reuse_fallback):
@@ -399,6 +502,9 @@ def _merge_named_records(
         if name and name in positions:
             current = merged[positions[name]]
             for key, value in record.items():
+                if key == "wardrobe_states" and isinstance(value, list) and value:
+                    current[key] = value
+                    continue
                 if key not in current or current[key] in (None, "", []):
                     current[key] = value
         else:
@@ -453,7 +559,8 @@ def merge_global_and_segment_plan(
     merged["global_source_fingerprint"] = global_plan.get("source_fingerprint")
     merged["content_mode"] = content_mode
     merged["planning_scope"] = "hierarchical_segment"
-    merged["agent_version"] = 3
+    merged["agent_version"] = STORY_AGENT_VERSION
+    merged["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
     return merged
 
 
@@ -478,12 +585,16 @@ def create_segment_story_plan(
             ],
         }
         try:
+            segment_system_prompt = (
+                SCIENCE_SEGMENT_AGENT_SYSTEM_PROMPT
+                if content_mode == CONTENT_MODE_SCIENCE
+                else SEGMENT_AGENT_SYSTEM_PROMPT
+            ) + (
+                "\n每个 story_beats 必须输出 visual_pacing（hold、normal、fast 三选一）；"
+                "它只表示叙事节奏，后续程序会以真实音频时间戳执行切图。"
+            )
             response = generate_gemini_text(
-                system_prompt=(
-                    SCIENCE_SEGMENT_AGENT_SYSTEM_PROMPT
-                    if content_mode == CONTENT_MODE_SCIENCE
-                    else SEGMENT_AGENT_SYSTEM_PROMPT
-                ),
+                system_prompt=segment_system_prompt,
                 user_prompt=json.dumps(payload, ensure_ascii=False),
                 temperature=0.15,
                 response_mime_type="application/json",
@@ -523,7 +634,8 @@ def load_or_create_segment_story_plan(
             and existing.get("source_fingerprint") == fingerprint
             and existing.get("global_source_fingerprint") == global_fingerprint
             and existing.get("planning_scope") == "hierarchical_segment"
-            and int(existing.get("agent_version") or 0) >= 3
+            and int(existing.get("agent_version") or 0) >= STORY_AGENT_VERSION
+            and int(existing.get("character_continuity_version") or 0) >= CHARACTER_CONTINUITY_VERSION
         )
         reusable = matches and (
             existing.get("generation_source") == "gemini" or not gemini_configured()

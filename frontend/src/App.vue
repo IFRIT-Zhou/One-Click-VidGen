@@ -280,6 +280,41 @@
                   </button>
                 </div>
               </div>
+              <div class="visual-pacing-panel">
+                <div class="visual-pacing-copy">
+                  <div class="sidebar-label">画面节奏</div>
+                  <strong>{{ visualPacingSummary }}</strong>
+                  <small class="muted">根据字幕时间戳分组；Agent 的快节奏建议不会突破最低停留时长。</small>
+                </div>
+                <label class="visual-pacing-select">
+                  <span>节奏预设</span>
+                  <select v-model="form.visual_pacing_preset" @change="rememberVisualPacing">
+                    <option value="auto">按作品风格自动</option>
+                    <option value="slow">舒缓</option>
+                    <option value="standard">标准</option>
+                    <option value="fast">紧凑</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </label>
+                <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
+                  <label>
+                    <span>最低停留（秒）</span>
+                    <input v-model.number="form.visual_min_duration" type="number" min="4" max="20" step="0.5" @input="rememberVisualPacing" />
+                  </label>
+                  <label>
+                    <span>目标时长（秒）</span>
+                    <input v-model.number="form.visual_target_duration" type="number" min="5" max="30" step="0.5" @input="rememberVisualPacing" />
+                  </label>
+                  <label>
+                    <span>最长时长（秒）</span>
+                    <input v-model.number="form.visual_max_duration" type="number" min="6" max="40" step="0.5" @input="rememberVisualPacing" />
+                  </label>
+                  <label>
+                    <span>单图最多字幕片段</span>
+                    <input v-model.number="form.visual_max_slides" type="number" min="1" max="12" step="1" @input="rememberVisualPacing" />
+                  </label>
+                </div>
+              </div>
               <div class="tts-parameter-head">
                 <div>
                   <div class="sidebar-label">模块 4</div>
@@ -302,8 +337,19 @@
                     : '描述惊悚漫画画风、角色一致性、色彩与悬疑氛围。'"
                 ></textarea>
               </label>
+              <label class="stack">
+                <span>全局人物设定</span>
+                <textarea
+                  v-model="form.global_character_prompt"
+                  @focus="setVisualPromptMode('simple')"
+                  @input="rememberVisualPrompt"
+                  rows="3"
+                  maxlength="2000"
+                  placeholder="可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。"
+                ></textarea>
+              </label>
               <small class="muted">
-                双 Agent 会自动补充人物一致性、分镜、审核规避和画质规则；完整指令已收进“待开发”。
+                可留空：采用当前模式默认主角。未登记角色会按文案建立临时档案并保持一致；人物造型会按镜头阶段自动锁定。
               </small>
             </div>
 
@@ -377,23 +423,18 @@
             </div>
             <video
               v-if="activeJob?.artifacts?.video_with_subtitles"
+              :key="activeJob.id"
               class="project-video"
               controls
+              preload="metadata"
               :src="activeJob.artifacts.video_with_subtitles"
             ></video>
             <div v-else class="empty-state">生成完成后，字幕版视频会显示在这里。</div>
-            <div v-if="activeJob?.artifacts" class="artifact-grid">
-              <button
-                v-for="(url, key) in activeJob.artifacts"
-                :key="key"
-                class="artifact-card"
-                type="button"
-                @click="openArtifactFolder(url)"
-              >
-                <div class="artifact-label">{{ artifactLabel(key) }}</div>
-                <div class="artifact-value">{{ url.split('/').pop() }}</div>
-                <div class="artifact-action">打开所在文件夹</div>
+            <div v-if="activeJob?.status === 'completed'" class="output-folder-action">
+              <button class="ghost-btn" type="button" @click="openProjectOutputFolder">
+                打开项目输出文件夹
               </button>
+              <small class="muted">包含文案、配音、全部图片、提示词、字幕和最终视频。</small>
             </div>
             <div v-if="folderOpenMessage" class="folder-open-message">{{ folderOpenMessage }}</div>
           </article>
@@ -446,6 +487,94 @@
             </div>
           </article>
         </section>
+
+        <section id="visual-editor" class="panel visual-editor-panel">
+          <div class="panel-head">
+            <div>
+              <div class="eyebrow">模块 4 / 5</div>
+              <h2>画面修改</h2>
+              <p class="muted">只重绘选中的图片；确认后再重新合成视频，不会重新配音、断句或调用 Agent。</p>
+            </div>
+            <div class="visual-editor-controls">
+              <label v-if="visualEditorOpen">编辑项目
+                <select v-model="visualEditorProjectId" :disabled="!visualEditorProjects.length || visualEditorLoading" @change="selectVisualEditorProject">
+                  <option v-for="project in visualEditorProjects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                </select>
+              </label>
+              <button class="ghost-btn" type="button" :disabled="visualEditorLoading" @click="toggleVisualEditor">
+                {{ visualEditorOpen ? '收起画面修改' : '展开画面修改' }}
+              </button>
+            </div>
+          </div>
+          <div v-if="visualEditorOpen" class="visual-editor-body">
+            <div v-if="!visualEditorProjects.length" class="empty-state">暂未找到可编辑的已完成任务。请先完成一次视频生成。</div>
+            <div v-else-if="visualEditorLoading" class="empty-state">正在读取该项目的图片与提示词…</div>
+            <template v-else>
+              <div class="visual-task-message" :class="visualEditor.task?.status">
+                {{ visualEditor.task?.message || '可逐张修改提示词、重绘或替换本地 JPG 图片。' }}
+              </div>
+              <div class="visual-editor-toolbar">
+                <span class="muted small">共 {{ visualEditor.items.length }} 张 · 每页 24 张</span>
+                <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorLoading" @click="loadVisualEditor({ preservePage: true })">刷新图片</button>
+              </div>
+              <div class="visual-image-grid">
+                <article v-for="item in visibleVisualEditorItems" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
+                  <div class="visual-image-actions">
+                    <strong>{{ item.id }}</strong>
+                    <button type="button" class="icon-action" title="按当前提示词重绘" aria-label="按当前提示词重绘" :disabled="item.task?.status === 'running'" @click="redrawVisualImage(item)">▶</button>
+                    <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
+                    <button type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
+                    <label class="icon-action replace-action" title="替换本地 JPG 图片" aria-label="替换本地 JPG 图片">
+                      ↕<input type="file" accept="image/jpeg" @change="uploadVisualImage($event, item)" />
+                    </label>
+                  </div>
+                  <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
+                    <img :src="item.image_url" :alt="item.id" />
+                    <span>点击放大预览</span>
+                    <em v-if="item.task?.status === 'running'" class="visual-image-running">{{ item.task?.action === 'upload' ? '替换中…' : '重绘中…' }}</em>
+                  </button>
+                  <label class="stack compact-stack">
+                    <span>提示词</span>
+                    <textarea v-model="item.prompt" rows="3" maxlength="12000"></textarea>
+                  </label>
+                  <label class="stack compact-stack">
+                    <span>对应文案（暂只读）</span>
+                    <textarea :value="item.text" rows="2" readonly></textarea>
+                  </label>
+                </article>
+              </div>
+              <div v-if="visualEditorPageCount > 1" class="visual-editor-pagination">
+                <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorPage <= 1" @click="visualEditorPage -= 1">上一页</button>
+                <span>第 {{ visualEditorPage }} / {{ visualEditorPageCount }} 页</span>
+                <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorPage >= visualEditorPageCount" @click="visualEditorPage += 1">下一页</button>
+              </div>
+              <div class="visual-render-footer">
+                <label>渲染设置
+                  <select v-model="visualRenderMode">
+                    <option value="subtitles">仅渲染字幕版</option>
+                    <option value="raw">仅渲染无字幕版</option>
+                    <option value="both">双版本渲染</option>
+                  </select>
+                </label>
+                <button class="primary-btn" type="button" :disabled="visualEditor.task?.status === 'running' || visualEditor.has_active_image_tasks" @click="renderEditedVideo">
+                  重新渲染
+                </button>
+                <button class="ghost-btn stop-btn" type="button" :disabled="visualEditor.task?.status !== 'running' || visualEditor.task?.action !== 'render'" @click="cancelVisualRender">停止渲染</button>
+              </div>
+            </template>
+          </div>
+          <div v-else class="muted small">展开后可选择当前任务或任意历史项目进行画面修改。</div>
+        </section>
+
+        <div v-if="visualPreviewItem" class="visual-preview-modal" role="dialog" aria-modal="true" @click.self="visualPreviewItem = null">
+          <div class="visual-preview-content">
+            <div class="visual-preview-head">
+              <strong>{{ visualPreviewItem.id }}</strong>
+              <button class="icon-action" type="button" title="关闭预览" @click="visualPreviewItem = null">×</button>
+            </div>
+            <img :src="visualPreviewItem.image_url" :alt="visualPreviewItem.id" />
+          </div>
+        </div>
 
         </section>
 
@@ -753,8 +882,14 @@ import { api } from './api'
 
 const VISUAL_PROMPT_FULL_STORAGE_KEY = 'visual_prompt_system_story_v3'
 const VISUAL_PROMPT_STYLE_STORAGE_KEY = 'visual_prompt_style_story_v3'
+const GLOBAL_CHARACTER_STORAGE_KEY = 'global_character_prompt_v1'
 const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
 const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
+const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
+const VISUAL_PACING_DEFAULTS = {
+  urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
+  science_explainer: { min: 7, target: 9, max: 14, slides: 6 },
+}
 const FALLBACK_CONTENT_MODES = {
   urban_suspense: {
     label: '都市惊悚',
@@ -786,6 +921,15 @@ const ttsVoiceUploadName = ref('')
 const ttsVoiceUploadError = ref('')
 const ttsVoiceUploading = ref(false)
 const folderOpenMessage = ref('')
+const visualEditorOpen = ref(false)
+const visualEditorLoading = ref(false)
+const visualEditor = ref({ items: [], task: { status: 'idle', message: '' }, version: 0 })
+const visualEditorProjects = ref([])
+const visualEditorProjectId = ref('')
+const visualEditorPage = ref(1)
+const VISUAL_EDITOR_PAGE_SIZE = 24
+const visualPreviewItem = ref(null)
+const visualRenderMode = ref('both')
 const submitting = ref(false)
 const submittingModule1 = ref(false)
 const cancellingGeneration = ref(false)
@@ -810,6 +954,7 @@ const startingTts = ref(false)
 const ttsStartMessage = ref('')
 const showFullLogs = ref(false)
 let timer = null
+let visualEditorTaskTimer = null
 const MAX_SCRIPT_FILE_SIZE = 2 * 1024 * 1024
 
 const loginForm = reactive({
@@ -835,7 +980,13 @@ const form = reactive({
   tts_pronunciation: '',
   visual_backend: 'poster',
   visual_prompt_mode: 'simple',
+  visual_pacing_preset: 'auto',
+  visual_min_duration: 6,
+  visual_target_duration: 8,
+  visual_max_duration: 12,
+  visual_max_slides: 6,
   visual_style_prompt: '',
+  global_character_prompt: '',
   visual_prompt_system: '',
   auto_split_long_text: true,
   split_text_threshold: 3000,
@@ -849,6 +1000,12 @@ const contentModeOptions = computed(() => {
   return Object.entries(modes).map(([key, value]) => ({ key, ...value }))
 })
 
+const visualEditorPageCount = computed(() => Math.max(1, Math.ceil(visualEditor.value.items.length / VISUAL_EDITOR_PAGE_SIZE)))
+const visibleVisualEditorItems = computed(() => {
+  const start = (visualEditorPage.value - 1) * VISUAL_EDITOR_PAGE_SIZE
+  return visualEditor.value.items.slice(start, start + VISUAL_EDITOR_PAGE_SIZE)
+})
+
 function contentModeDefaults(mode = form.content_mode) {
   return settings.value.visual_prompt?.modes?.[mode]
     || (mode === 'urban_suspense' ? settings.value.visual_prompt : null)
@@ -859,6 +1016,42 @@ function contentModeDefaults(mode = form.content_mode) {
 function modeStorageKey(baseKey, mode = form.content_mode) {
   return `${baseKey}_${mode}`
 }
+
+function visualPacingDefaults(mode = form.content_mode) {
+  return VISUAL_PACING_DEFAULTS[mode] || VISUAL_PACING_DEFAULTS.urban_suspense
+}
+
+function applyVisualPacing(mode = form.content_mode) {
+  const defaults = visualPacingDefaults(mode)
+  let saved = null
+  try {
+    saved = JSON.parse(window.localStorage.getItem(modeStorageKey(VISUAL_PACING_STORAGE_KEY, mode)) || 'null')
+  } catch {
+    saved = null
+  }
+  form.visual_pacing_preset = ['auto', 'slow', 'standard', 'fast', 'custom'].includes(saved?.preset)
+    ? saved.preset
+    : 'auto'
+  form.visual_min_duration = Number(saved?.min) || defaults.min
+  form.visual_target_duration = Number(saved?.target) || defaults.target
+  form.visual_max_duration = Number(saved?.max) || defaults.max
+  form.visual_max_slides = Number(saved?.slides) || defaults.slides
+}
+
+const visualPacingSummary = computed(() => {
+  const defaults = visualPacingDefaults()
+  const labels = {
+    auto: '自动', slow: '舒缓', standard: '标准', fast: '紧凑', custom: '自定义',
+  }
+  let min = defaults.min
+  let target = defaults.target
+  if (form.visual_pacing_preset === 'slow') target += 2
+  if (form.visual_pacing_preset === 'fast') target = Math.max(min, target - 2)
+  if (form.visual_pacing_preset === 'custom') {
+    return `自定义：至少 ${form.visual_min_duration} 秒，目标 ${form.visual_target_duration} 秒`
+  }
+  return `${labels[form.visual_pacing_preset] || '自动'}：至少 ${min} 秒，目标 ${target} 秒`
+})
 const editorForm = reactive({
   video_id: '',
   audio_id: '',
@@ -1093,10 +1286,13 @@ async function loadSettings() {
   const modeDefaults = contentModeDefaults()
   form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY))
     || modeDefaults.default_style
+  form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY))
+    || modeDefaults.default_character
     || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY))
     || modeDefaults.default_system
     || ''
+  applyVisualPacing()
   rememberVisualPrompt()
 }
 
@@ -1152,6 +1348,7 @@ function resetVisualPrompt() {
   const modeDefaults = contentModeDefaults()
   if (form.visual_prompt_mode === 'simple') {
     form.visual_style_prompt = modeDefaults.default_style || ''
+    form.global_character_prompt = modeDefaults.default_character || ''
   } else {
     form.visual_prompt_system = modeDefaults.default_system || ''
   }
@@ -1161,6 +1358,7 @@ function resetVisualPrompt() {
 function resetSimpleVisualPrompt() {
   form.visual_prompt_mode = 'simple'
   form.visual_style_prompt = contentModeDefaults().default_style || ''
+  form.global_character_prompt = contentModeDefaults().default_character || ''
   rememberVisualPrompt()
 }
 
@@ -1172,10 +1370,13 @@ function setContentMode(mode) {
   const modeDefaults = contentModeDefaults(mode)
   form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY, mode))
     || modeDefaults.default_style
+  form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY, mode))
+    || modeDefaults.default_character
     || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY, mode))
     || modeDefaults.default_system
     || ''
+  applyVisualPacing(mode)
   rememberVisualPrompt()
 }
 
@@ -1188,7 +1389,18 @@ function rememberVisualPrompt() {
   window.localStorage.setItem(CONTENT_MODE_STORAGE_KEY, form.content_mode)
   window.localStorage.setItem(VISUAL_PROMPT_MODE_STORAGE_KEY, form.visual_prompt_mode)
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY), form.visual_style_prompt || '')
+  window.localStorage.setItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY), form.global_character_prompt || '')
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY), form.visual_prompt_system || '')
+}
+
+function rememberVisualPacing() {
+  window.localStorage.setItem(modeStorageKey(VISUAL_PACING_STORAGE_KEY), JSON.stringify({
+    preset: form.visual_pacing_preset,
+    min: form.visual_min_duration,
+    target: form.visual_target_duration,
+    max: form.visual_max_duration,
+    slides: form.visual_max_slides,
+  }))
 }
 
 async function uploadTtsVoice(event) {
@@ -1224,6 +1436,155 @@ async function openArtifactFolder(url) {
     folderOpenMessage.value = '已在资源管理器中定位该文件。'
   } catch (error) {
     folderOpenMessage.value = error.message || '无法打开文件所在文件夹'
+  }
+}
+
+async function openProjectOutputFolder() {
+  folderOpenMessage.value = ''
+  if (!activeJob.value?.id) return
+  try {
+    const payload = await api.openJobOutputFolder(activeJob.value.id)
+    folderOpenMessage.value = `已打开项目输出：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '暂时找不到项目输出文件夹'
+  }
+}
+
+async function loadVisualEditor({ preservePage = false } = {}) {
+  if (!visualEditorProjectId.value) return
+  visualEditorLoading.value = true
+  try {
+    visualEditor.value = await api.visualEditor(visualEditorProjectId.value)
+    if (!preservePage) visualEditorPage.value = 1
+    if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
+  } catch (error) {
+    visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
+  } finally {
+    visualEditorLoading.value = false
+  }
+}
+
+function stopVisualEditorTaskPolling() {
+  if (visualEditorTaskTimer) window.clearInterval(visualEditorTaskTimer)
+  visualEditorTaskTimer = null
+}
+
+async function pollVisualEditorTaskStatus() {
+  if (!visualEditorOpen.value || !visualEditorProjectId.value) return
+  try {
+    const status = await api.visualEditorStatus(visualEditorProjectId.value)
+    visualEditor.value.task = status.task || visualEditor.value.task
+    let changedImage = false
+    for (const item of visualEditor.value.items) {
+      const previousStatus = item.task?.status
+      const nextTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
+      item.task = nextTask
+      if (previousStatus === 'running' && nextTask.status === 'completed') {
+        item.image_url = `${item.image_url.split('?')[0]}?v=${Date.now()}`
+        changedImage = true
+      }
+    }
+    if (!status.has_active_image_tasks) stopVisualEditorTaskPolling()
+  } catch {
+    // The main log remains the source of truth if a short status request fails.
+  }
+}
+
+function startVisualEditorTaskPolling() {
+  if (visualEditorTaskTimer) return
+  visualEditorTaskTimer = window.setInterval(pollVisualEditorTaskStatus, 1800)
+}
+
+async function selectVisualEditorProject() {
+  if (!visualEditorProjectId.value) return
+  try {
+    activeJob.value = await api.job(visualEditorProjectId.value)
+  } catch {
+    // The editor can still be loaded even if the task list has just refreshed.
+  }
+  await loadVisualEditor()
+}
+
+async function toggleVisualEditor() {
+  visualEditorOpen.value = !visualEditorOpen.value
+  if (visualEditorOpen.value) {
+    const payload = await api.visualEditorProjects()
+    visualEditorProjects.value = payload.projects || []
+    if (!visualEditorProjectId.value || !visualEditorProjects.value.some((item) => item.id === visualEditorProjectId.value)) {
+      const activeMatch = visualEditorProjects.value.find((item) => item.id === activeJob.value?.id)
+      visualEditorProjectId.value = activeMatch?.id || visualEditorProjects.value[0]?.id || ''
+    }
+    await selectVisualEditorProject()
+  }
+  else {
+    stopVisualEditorTaskPolling()
+    visualPreviewItem.value = null
+  }
+}
+
+async function redrawVisualImage(item) {
+  if (!visualEditorProjectId.value || !item.prompt.trim()) return
+  try {
+    activeJob.value = await api.job(visualEditorProjectId.value)
+    await api.redrawVisualImage(visualEditorProjectId.value, item.id, item.prompt)
+    item.task = { status: 'running', action: 'redraw', message: '重绘中' }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    item.task = { status: 'failed', action: 'redraw', message: error.message || '图片重绘失败' }
+  }
+}
+
+async function uploadVisualImage(event, item) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || !visualEditorProjectId.value) return
+  try {
+    await api.uploadVisualImage(visualEditorProjectId.value, item.id, file)
+    item.task = { status: 'running', action: 'upload', message: '替换中' }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '图片替换失败' }
+  }
+}
+
+async function undoVisualImage(item) {
+  if (!visualEditorProjectId.value) return
+  try {
+    await api.undoVisualImage(visualEditorProjectId.value, item.id)
+    await loadVisualEditor()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '没有可撤回的图片版本' }
+  }
+}
+
+async function resetVisualImagePrompt(item) {
+  if (!visualEditorProjectId.value) return
+  try {
+    const payload = await api.resetVisualPrompt(visualEditorProjectId.value, item.id)
+    item.prompt = payload.prompt || item.prompt
+    await loadVisualEditor()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '没有可重置的初始提示词' }
+  }
+}
+
+async function renderEditedVideo() {
+  if (!visualEditorProjectId.value) return
+  await api.renderVisualEditor(visualEditorProjectId.value, visualRenderMode.value)
+  visualEditor.value.task = { status: 'running', action: 'render', message: '已开始重新渲染，实时进度请查看上方主后台日志。' }
+}
+
+async function cancelVisualRender() {
+  if (!visualEditorProjectId.value) return
+  try {
+    const payload = await api.cancelVisualRender(visualEditorProjectId.value)
+    visualEditor.value.task = {
+      status: payload.ok ? 'cancelled' : 'failed',
+      action: 'render',
+      message: payload.message || '已请求停止重新渲染。',
+    }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'render', message: error.message || '停止渲染失败' }
   }
 }
 
@@ -1285,6 +1646,11 @@ async function selectJob(id, replace = true) {
   const payload = await api.job(id)
   if (replace) activeJob.value = payload
   else activeJob.value = payload
+  // Background refreshes also call selectJob(..., false). They must not close
+  // the post-production editor the user is currently working in.
+  if (replace) {
+    visualEditorOpen.value = false
+  }
 }
 
 async function cancelGeneration() {
@@ -1471,5 +1837,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
+  stopVisualEditorTaskPolling()
 })
 </script>
