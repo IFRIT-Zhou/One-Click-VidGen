@@ -58,7 +58,7 @@ NOISY_PROGRESS_RE = re.compile(
     re.I,
 )
 TTS_SENTENCE_PROGRESS_RE = re.compile(
-    r"^\[TTS_PROGRESS\]\s+配音进度\s+(?P<completed>\d+)/(?P<total>\d+)"
+    r"^\[(?:TTS|QWEN_TTS)_PROGRESS\]\s+配音进度\s+(?P<completed>\d+)/(?P<total>\d+)"
 )
 
 
@@ -368,7 +368,7 @@ class JobStore:
         if tts_progress is not None:
             completed = int(tts_progress.group("completed"))
             total = max(1, int(tts_progress.group("total")))
-            normalized = normalized.replace("[TTS_PROGRESS] ", "", 1)
+            normalized = re.sub(r"^\[(?:TTS|QWEN_TTS)_PROGRESS\]\s*", "", normalized, count=1)
             if job.step == "tts":
                 job.progress = min(29, 8 + round(min(completed, total) / total * 21))
                 job.message = normalized[:500]
@@ -919,6 +919,51 @@ def write_srt_from_scenes(scenes: list[dict[str, Any]], path: Path) -> None:
         raise RuntimeError("分段字幕为空")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(blocks), encoding="utf-8")
+
+
+def correct_asr_subtitles_with_language_model(job: Job, store: JobStore) -> None:
+    """Correct ASR wording while keeping each original timestamped segment intact."""
+    if not gemini_configured():
+        raise RuntimeError("未配置语言模型 API Key：请在左侧模型 API Key 面板填写语言模型或通用 API Key")
+    scenes = load_scene_timeline()
+    batches = [scenes[index:index + 40] for index in range(0, len(scenes), 40)]
+    corrected: list[dict[str, Any]] = []
+    system_prompt = (
+        "你是中文视频字幕校对员。根据语义纠正 ASR 的错别字、同音字、标点和明显断句，"
+        "不得添加原音频中不存在的内容。必须保留每个 id 一一对应，不能合并、删除或新增条目。"
+        "仅返回 JSON：{\\\"items\\\":[{\\\"id\\\":\\\"原id\\\",\\\"text\\\":\\\"校对后的字幕\\\"}]}。"
+    )
+    for batch_index, batch in enumerate(batches, 1):
+        store.raise_if_cancelled(job)
+        payload = [{"id": str(item.get("id") or f"segment_{index:03d}"), "text": str(item.get("text_content") or "")} for index, item in enumerate(batch, 1)]
+        store.log(job, f"语言模型字幕校对：第 {batch_index}/{len(batches)} 批（{len(batch)} 条）")
+        try:
+            response = generate_gemini_text(
+                system_prompt=system_prompt,
+                user_prompt=json.dumps({"items": payload}, ensure_ascii=False),
+                temperature=0.05,
+                max_output_tokens=4096,
+            )
+            parsed = parse_json_response(response)
+        except GeminiError as exc:
+            raise RuntimeError(f"语言模型字幕校对失败：{exc}") from exc
+        items = parsed.get("items") if isinstance(parsed, dict) else parsed
+        if not isinstance(items, list):
+            raise RuntimeError("语言模型字幕校对返回格式无效")
+        replacement = {
+            str(item.get("id") or ""): str(item.get("text") or "").strip().replace("\n", " ")
+            for item in items
+            if isinstance(item, dict)
+        }
+        for scene, source in zip(batch, payload):
+            updated = dict(scene)
+            text = replacement.get(source["id"], "")
+            updated["text_content"] = text or str(scene.get("text_content") or "").strip()
+            corrected.append(updated)
+    timeline_path = WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json"
+    timeline_path.write_text(json.dumps(corrected, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_srt_from_scenes(corrected, WORKSPACE_DIR / "2_audio_srt" / "final_short.srt")
+    store.log(job, f"语言模型字幕校对完成：共 {len(corrected)} 条字幕")
 
 
 def split_scenes_by_text_length(
@@ -1616,6 +1661,13 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         store.log(job, "已跳过模块 1：使用上传配音作为 final_output.wav")
     else:
         store.update(job, status="running", step="tts", progress=8, message=STEPS[0][1])
+        tts_engine = str(request.get("tts_engine") or "indextts2").strip().lower()
+        if tts_engine not in {"indextts2", "qwen"}:
+            tts_engine = "indextts2"
+        if tts_engine == "qwen":
+            store.log(job, "模块 1：使用 Qwen-TTS 云端配音，逐句下载并合并本地 WAV")
+        else:
+            store.log(job, "模块 1：使用官方 IndexTTS2 本地 GPU 配音")
         tts_command = [
             sys.executable,
             "module1_agent_director.py",
@@ -1623,6 +1675,8 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             str(script_path),
             "--job-id",
             job.id,
+            "--tts-engine",
+            tts_engine,
         ]
         if job.user_id is not None:
             tts_command.extend(["--user-id", str(job.user_id)])
@@ -1648,6 +1702,16 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         pronunciation = str(request.get("tts_pronunciation") or "").strip()
         if pronunciation:
             tts_command.extend(["--tts-pronunciation", pronunciation])
+        qwen_instructions = str(request.get("qwen_tts_instructions") or "").strip()
+        if tts_engine == "qwen" and qwen_instructions:
+            tts_command.extend(["--qwen-instructions", qwen_instructions])
+        if tts_engine == "qwen":
+            tts_command.extend([
+                "--qwen-voice",
+                str(request.get("qwen_tts_voice") or "Elias"),
+                "--qwen-optimize-instructions",
+                "true" if request.get("qwen_tts_optimize_instructions", False) else "false",
+            ])
         run_command(
             job,
             store,
@@ -1682,6 +1746,31 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             [asr_python, "module2_scene_director.py"],
             STEPS[1][1],
         )
+
+    if request.get("subtitle_only"):
+        store.raise_if_cancelled(job)
+        use_correction = bool(request.get("subtitle_use_correction", True))
+        if use_correction:
+            if script.strip():
+                store.update(job, step="correct", progress=72, message="模块 2.5：参考文案校对")
+                run_command(job, store, [sys.executable, "module2_5_text_corrector.py"], "模块 2.5：参考文案校对")
+            else:
+                store.update(job, step="correct", progress=72, message="模块 2.5：语言模型校对")
+                correct_asr_subtitles_with_language_model(job, store)
+        else:
+            store.log(job, "已跳过模块 2.5：保留 ASR 原始字幕")
+        artifacts = copy_artifacts(job)
+        subtitle_artifacts = {key: value for key, value in artifacts.items() if key == "subtitle"}
+        store.update(
+            job,
+            status="completed",
+            step="completed",
+            progress=100,
+            message="字幕识别完成，SRT 已生成",
+            artifacts=subtitle_artifacts,
+        )
+        store.log(job, "模块 2 独立任务完成：已输出 SRT 字幕文件")
+        return
 
     store.raise_if_cancelled(job)
     store.update(job, step="correct", progress=45, message=STEPS[2][1])

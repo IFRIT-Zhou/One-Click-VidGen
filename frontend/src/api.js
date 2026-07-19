@@ -39,6 +39,10 @@ export const api = {
   logout: () => requestJSON('/api/auth/logout', { method: 'POST' }),
   startTts: () => requestJSON('/api/tts/start', { method: 'POST' }),
   settings: () => requestJSON('/api/settings'),
+  apiKeySettings: () => requestJSON('/api/api-keys'),
+  saveApiKeySettings: (payload) => requestJSON('/api/api-keys', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   script: (name) => requestJSON(`/api/scripts/${encodeURIComponent(name)}`),
   createJob: (payload) => requestJSON('/api/jobs', {
     method: 'POST',

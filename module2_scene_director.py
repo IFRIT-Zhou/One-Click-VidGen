@@ -144,6 +144,35 @@ def format_srt_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d},{milliseconds:03d}"
 
 
+def close_short_subtitle_gaps(
+    scenes: list[dict[str, float | str]], *, max_gap_seconds: float = 0.35
+) -> int:
+    """Keep a subtitle visible across tiny VAD pauses between spoken chunks.
+
+    Cloud TTS often has a short leading pause at an independently synthesized
+    chunk boundary.  Those pauses are not meaningful scene breaks, and leaving
+    them empty makes a transparent subtitle layer flash against the renderer's
+    default white canvas.  Longer pauses stay untouched as intentional silence.
+    """
+    closed = 0
+    for previous, current in zip(scenes, scenes[1:]):
+        previous_end = float(previous.get("end") or 0.0)
+        current_start = float(current.get("start") or 0.0)
+        gap = current_start - previous_end
+        if 0 < gap <= max_gap_seconds:
+            previous["end"] = round(current_start, 3)
+            closed += 1
+    return closed
+
+
+def build_srt_entries(scenes: list[dict[str, float | str]]) -> list[str]:
+    return [
+        f"{index}\n{format_srt_time(float(item['start']))} --> {format_srt_time(float(item['end']))}\n{str(item['text_content']).strip()}\n"
+        for index, item in enumerate(scenes, 1)
+        if str(item.get("text_content") or "").strip()
+    ]
+
+
 def run_asr_pipeline() -> None:
     if sys.stdout.encoding != "utf-8":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
@@ -163,18 +192,14 @@ def run_asr_pipeline() -> None:
         f"(置信度: {info.language_probability:.2f})"
     )
 
-    srt_entries: list[str] = []
     scene_segments: list[dict[str, float | str]] = []
     for segment in segments:
         text = segment.text.strip()
         if not text:
             continue
-        index = len(srt_entries) + 1
+        index = len(scene_segments) + 1
         start = round(float(segment.start), 3)
         end = round(float(segment.end), 3)
-        srt_entries.append(
-            f"{index}\n{format_srt_time(start)} --> {format_srt_time(end)}\n{text}\n"
-        )
         scene_segments.append(
             {
                 "id": f"segment_{index:03d}",
@@ -184,15 +209,19 @@ def run_asr_pipeline() -> None:
             }
         )
 
-    if not srt_entries:
+    if not scene_segments:
         raise RuntimeError("ASR 未识别出有效字幕，请检查 final_output.wav")
 
+    closed_gaps = close_short_subtitle_gaps(scene_segments)
+    srt_entries = build_srt_entries(scene_segments)
     srt_output_path.parent.mkdir(parents=True, exist_ok=True)
     srt_output_path.write_text("\n".join(srt_entries), encoding="utf-8")
     json_output_path.parent.mkdir(parents=True, exist_ok=True)
     json_output_path.write_text(
         json.dumps(scene_segments, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if closed_gaps:
+        print(f"[字幕连续性] 已填补 {closed_gaps} 处不超过 0.35 秒的微小语音空档")
     print(f"[资产] 高频短字幕已写入: {srt_output_path} (共 {len(srt_entries)} 条)")
     print(f"[资产] 原生分镜骨架已写入: {json_output_path}")
 

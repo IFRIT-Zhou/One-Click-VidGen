@@ -17,6 +17,7 @@ from backend.app.indextts2_local import (
     load_indextts2_config,
     resolve_voice_reference,
 )
+from backend.app.qwen_tts import QwenTtsError, detect_language_type, synthesize_to_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -29,6 +30,11 @@ os.environ["PYTHONUNBUFFERED"] = "1"
 
 CHUNK_MIN_LEN = 15
 CHUNK_MAX_LEN = 50
+# The Qwen endpoint enforces a 600-unit payload ceiling.  Chinese UTF-8 text
+# can consume multiple units per displayed character, so measure payload bytes
+# (with headroom) rather than using Python character counts.
+QWEN_CHUNK_MIN_LEN = 240
+QWEN_CHUNK_MAX_LEN = 540
 
 
 def parse_args():
@@ -46,6 +52,15 @@ def parse_args():
     parser.add_argument("--tts-pitch", type=int, default=0, help="输出音调（-12 到 12）")
     parser.add_argument("--tts-parallelism", type=int, default=2, help="IndexTTS2 并行进程数，建议 1-3")
     parser.add_argument("--tts-emotion", help="IndexTTS2 八维情绪之一")
+    parser.add_argument("--tts-engine", choices=("indextts2", "qwen"), default="indextts2")
+    parser.add_argument("--qwen-instructions", default="", help="Qwen3-TTS-Instruct-Flash 配音描述")
+    parser.add_argument("--qwen-voice", default="Elias", help="Qwen-TTS 系统音色")
+    parser.add_argument(
+        "--qwen-optimize-instructions",
+        choices=("true", "false"),
+        default="false",
+        help="是否允许 Qwen 改写配音描述",
+    )
     parser.add_argument("--tts-pronunciation", help="兼容旧请求；官方版请直接在文案中使用拼音标注")
     parser.add_argument(
         "--tts-english-normalization",
@@ -65,7 +80,13 @@ def clean_text(raw: str) -> str:
     return re.sub(r"【[^】]*】", "", "\n".join(lines))
 
 
-def step1_dynamic_chunk_slicing(text_path: Path) -> list[str]:
+def step1_dynamic_chunk_slicing(
+    text_path: Path,
+    *,
+    min_len: int = CHUNK_MIN_LEN,
+    max_len: int = CHUNK_MAX_LEN,
+    measure: Callable[[str], int] = len,
+) -> list[str]:
     print("[Step 1] Dynamic chunk slicing...", flush=True)
     cleaned = clean_text(text_path.read_text(encoding="utf-8"))
     cleaned = re.sub(r"\n{2,}", "\n", cleaned)
@@ -76,26 +97,37 @@ def step1_dynamic_chunk_slicing(text_path: Path) -> list[str]:
     buffer = ""
     for segment in raw_segments:
         candidate = buffer + segment
-        if len(candidate) <= CHUNK_MAX_LEN:
+        if measure(candidate) <= max_len:
             buffer = candidate
         else:
             if buffer.strip():
                 chunks.append(buffer)
-            buffer = segment
+            if max_len == CHUNK_MAX_LEN:
+                # Preserve the legacy IndexTTS2 behavior exactly.
+                buffer = segment
+            else:
+                # A punctuation-free paragraph can still exceed the Qwen safe limit.
+                while measure(segment) > max_len:
+                    split_at = len(segment)
+                    while split_at > 1 and measure(segment[:split_at]) > max_len:
+                        split_at -= 1
+                    chunks.append(segment[:split_at])
+                    segment = segment[split_at:]
+                buffer = segment
     if buffer.strip():
         chunks.append(buffer)
 
     index = 0
     while index < len(chunks):
-        if len(chunks[index]) < CHUNK_MIN_LEN and index + 1 < len(chunks):
+        if measure(chunks[index]) < min_len and index + 1 < len(chunks):
             chunks[index] += chunks[index + 1]
             chunks.pop(index + 1)
         else:
             index += 1
 
-    if len(chunks) > 1 and len(chunks[-1]) < CHUNK_MIN_LEN:
+    if len(chunks) > 1 and measure(chunks[-1]) < min_len:
         combined = chunks[-2] + chunks[-1]
-        if len(combined) <= CHUNK_MAX_LEN:
+        if measure(combined) <= max_len:
             chunks[-2] = combined
             chunks.pop()
 
@@ -433,6 +465,121 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
     return wav_paths, srt_entries
 
 
+def _normalize_qwen_audio(source: Path, destination: Path) -> None:
+    """Normalize Qwen audio and remove only the synthetic leading silence.
+
+    Do not use a trailing silenceremove stage here: natural sentence pauses in
+    a long cloud response are indistinguishable from the final tail to FFmpeg.
+    """
+    if not FFMPEG.is_file():
+        raise FileNotFoundError(f"找不到 FFmpeg: {FFMPEG}")
+    result = subprocess.run(
+        [
+            str(FFMPEG), "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+            "-af", "silenceremove=start_periods=1:start_duration=0.10:start_threshold=-45dB:stop_periods=0",
+            "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(destination),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0 or not destination.is_file():
+        raise RuntimeError(f"Qwen-TTS 音频转码失败: {result.stderr.strip()[:500]}")
+
+
+def _normalize_qwen_loudness(path: Path) -> None:
+    """Normalize each independent cloud chunk to a consistent narration level."""
+    adjusted = path.with_name(f"{path.stem}.loudnorm.wav")
+    result = subprocess.run(
+        [
+            str(FFMPEG), "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
+            "-filter:a", "loudnorm=I=-18:TP=-2:LRA=7:linear=true",
+            "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(adjusted),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0 or not adjusted.is_file():
+        adjusted.unlink(missing_ok=True)
+        raise RuntimeError(f"Qwen-TTS 响度归一化失败: {result.stderr.strip()[:500]}")
+    os.replace(adjusted, path)
+
+
+def step2_qwen_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str]]:
+    if not chunks:
+        raise RuntimeError("清洗和断句后没有可合成的文案")
+    if not os.getenv("DASHSCOPE_API_KEY", "").strip():
+        raise RuntimeError("未配置 DASHSCOPE_API_KEY；请在 Qwen-TTS 面板保存 API Key 后重试")
+
+    ensure_dir(TEMP_DIR)
+    # Qwen requests are stateless.  Run each longer chunk in order, rather than
+    # interleaving independent cloud generations, so every call receives one
+    # immutable voice profile and the output is easier to diagnose/retry.
+    parallelism = 1
+    instructions = str(getattr(args, "qwen_instructions", "") or "").strip()
+    # Rewriting instructions independently per request is a direct source of
+    # prosody drift.  The app therefore sends the user's description verbatim.
+    optimize_instructions = False
+    language_type = detect_language_type("\n".join(chunks))
+    print(
+        f"[QWEN_TTS] 开始云端配音：共 {len(chunks)} 句，并行数 {parallelism}，"
+        f"模型 {'qwen3-tts-instruct-flash' if instructions else 'qwen3-tts-flash'}，音色 {args.qwen_voice}，语言 {language_type}",
+        flush=True,
+    )
+    progress_lock = threading.Lock()
+    completed_count = 0
+
+    def synthesize_one(index: int, chunk: str) -> tuple[int, Path]:
+        nonlocal completed_count
+        source = TEMP_DIR / f"qwen-source-{index + 1:04d}.wav"
+        target = TEMP_DIR / f"chunk-qwen-{index + 1:04d}.wav"
+        try:
+            synthesize_to_file(
+                text=chunk,
+                destination=source,
+                instructions=instructions,
+                voice=args.qwen_voice,
+                language_type=language_type,
+                optimize_instructions=optimize_instructions,
+            )
+            _normalize_qwen_audio(source, target)
+            _normalize_qwen_loudness(target)
+        finally:
+            source.unlink(missing_ok=True)
+        with progress_lock:
+            completed_count += 1
+            completed = completed_count
+        preview = re.sub(r"\s+", " ", chunk).strip()
+        print(f"[QWEN_TTS_PROGRESS] 配音进度 {completed}/{len(chunks)}：原文第 {index + 1} 句已生成｜{preview[:56]}", flush=True)
+        return index, target
+
+    wav_paths: list[Path] = [TEMP_DIR / f"missing-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+    try:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = [executor.submit(synthesize_one, index, chunk) for index, chunk in enumerate(chunks)]
+            for future in as_completed(futures):
+                index, path = future.result()
+                wav_paths[index] = path
+    except QwenTtsError as exc:
+        raise RuntimeError(f"Qwen-TTS 合成失败: {exc}") from exc
+
+    missing_outputs = [path.name for path in wav_paths if not path.is_file()]
+    if missing_outputs:
+        raise RuntimeError("Qwen-TTS 未生成完整批次: " + ", ".join(missing_outputs[:10]))
+    current_time = 0.0
+    srt_entries: list[str] = []
+    for index, (chunk, wav_path) in enumerate(zip(chunks, wav_paths), 1):
+        _apply_audio_controls(wav_path, speed=args.tts_speed, volume=args.tts_volume, pitch=args.tts_pitch)
+        duration = get_wav_duration(wav_path)
+        srt_entries.append(format_srt(index, current_time, current_time + duration, chunk))
+        current_time += duration
+    print(f"[QWEN_TTS] {len(chunks)} 句云端配音已下载，正在合并音频与字幕", flush=True)
+    return wav_paths, srt_entries
+
+
 def step3_finalize(wav_paths: list[Path], srt_entries: list[str]) -> None:
     print("[Step 3] Finalizing output...", flush=True)
     ensure_dir(OUTPUT_DIR)
@@ -475,7 +622,8 @@ def main() -> None:
         sys.exit(f"【路径错误】找不到文件：{text_path}")
 
     print("=" * 60, flush=True)
-    print("Module 1 -- Official IndexTTS2 Pipeline Start", flush=True)
+    engine_label = "Qwen-TTS Cloud Pipeline" if args.tts_engine == "qwen" else "Official IndexTTS2 Pipeline"
+    print(f"Module 1 -- {engine_label} Start", flush=True)
     print("=" * 60, flush=True)
     print(f"  文案路径: {text_path}", flush=True)
 
@@ -484,16 +632,27 @@ def main() -> None:
     print(f"  临时音频目录: {TEMP_DIR}", flush=True)
 
     try:
-        chunks = step1_dynamic_chunk_slicing(text_path)
-        wav_paths, srt_entries = step2_indextts2_synthesize(chunks, args)
+        if args.tts_engine == "qwen":
+            chunks = step1_dynamic_chunk_slicing(
+                text_path,
+                min_len=QWEN_CHUNK_MIN_LEN,
+                max_len=QWEN_CHUNK_MAX_LEN,
+                measure=lambda value: len(value.encode("utf-8")),
+            )
+        else:
+            chunks = step1_dynamic_chunk_slicing(text_path)
+        if args.tts_engine == "qwen":
+            wav_paths, srt_entries = step2_qwen_synthesize(chunks, args)
+        else:
+            wav_paths, srt_entries = step2_indextts2_synthesize(chunks, args)
         step3_finalize(wav_paths, srt_entries)
     except Exception as exc:
         clear_temp_chunks()
-        sys.exit(f"【致命错误】官方 IndexTTS2 生成失败：{type(exc).__name__}: {exc}")
+        sys.exit(f"【致命错误】{engine_label} 生成失败：{type(exc).__name__}: {exc}")
 
     step4_cleanup()
     print("=" * 60, flush=True)
-    print("官方 IndexTTS2 与 SRT 批量合成完成。", flush=True)
+    print(f"{engine_label} 与 SRT 批量合成完成。", flush=True)
     print("=" * 60, flush=True)
 
 

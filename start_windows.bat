@@ -59,8 +59,12 @@ if errorlevel 1 (
 )
 
 if not exist ".env" (
-    echo [WARN] .env was not found.
-    echo        Copy .env.example to .env and fill Gemini / RunningHub image keys before generating videos.
+    if exist ".env.example" (
+        copy /Y ".env.example" ".env" >nul
+        echo [INFO] Created .env from .env.example. Configure API Keys in the left-side UI panel.
+    ) else (
+        echo [WARN] .env and .env.example were not found.
+    )
     echo.
 )
 

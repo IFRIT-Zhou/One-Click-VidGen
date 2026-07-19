@@ -54,6 +54,37 @@
         </template>
       </div>
 
+      <div v-if="session.user" class="sidebar-card api-key-card">
+        <div class="sidebar-label">模型 API Key</div>
+        <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
+        <label>
+          <span>语言模型 API Key</span>
+          <input v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" placeholder="Gemini / RunningHub LLM" />
+        </label>
+        <div class="api-key-status" :class="{ configured: apiKeyStatus.language?.configured }">
+          {{ apiKeyStatus.language?.configured ? '已配置' : '未配置' }}
+        </div>
+        <label>
+          <span>图像模型 API Key</span>
+          <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" placeholder="RunningHub Image2" />
+        </label>
+        <div class="api-key-status" :class="{ configured: apiKeyStatus.image?.configured }">
+          {{ apiKeyStatus.image?.configured ? '已配置' : '未配置' }}
+        </div>
+        <label>
+          <span>通用 API Key</span>
+          <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" placeholder="仅填此项会同时用于语言和图像" />
+        </label>
+        <div class="api-key-status" :class="{ configured: apiKeyStatus.common?.configured }">
+          {{ apiKeyStatus.common?.configured ? '已配置' : '未配置' }}
+        </div>
+        <div class="muted small">填写通用 Key 时，会自动补全未单独填写的语言与图像 Key。</div>
+        <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
+        <button class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
+          {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
+        </button>
+      </div>
+
       <div class="sidebar-card">
         <div class="sidebar-label">TTS 引擎</div>
         <div class="sidebar-value">{{ ttsStatusText }}</div>
@@ -72,7 +103,7 @@
         </button>
         <div class="topbar-copy">
           <div class="eyebrow">工作台</div>
-          <div class="topbar-title">{{ activePage === 'workspace' ? '故事视频生成工作台' : activePage === 'development' ? '待开发功能' : '模块 1 · 仅配音' }}</div>
+          <div class="topbar-title">{{ activePage === 'workspace' ? '故事视频生成工作台' : activePage === 'development' ? '待开发功能' : activePage === 'subtitle' ? '模块 2 · 字幕识别' : '模块 1 · 仅配音' }}</div>
         </div>
         <div class="topbar-actions">
           <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
@@ -107,6 +138,14 @@
             <span>模块 1 · 仅配音</span>
             <small>只运行 IndexTTS2</small>
           </button>
+          <button
+            type="button"
+            :class="{ active: activePage === 'subtitle' }"
+            @click="activePage = 'subtitle'"
+          >
+            <span>模块 2 · 字幕识别</span>
+            <small>音频转 SRT 与校对</small>
+          </button>
         </nav>
 
         <section v-if="activePage === 'workspace'" class="workspace-page stack">
@@ -121,6 +160,7 @@
               <span class="status-chip success">双 Agent 已启用</span>
             </div>
 
+            <div class="create-copy-column">
             <div class="form-grid">
               <label class="project-name-field">
                 <span>项目名称</span>
@@ -171,15 +211,34 @@
               </div>
             </div>
 
+            <label class="stack">
+              <span>{{ form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
+              <textarea
+                v-model="form.script"
+                rows="14"
+                :disabled="form.skip_text_correction"
+                :placeholder="scriptPlaceholder"
+              ></textarea>
+            </label>
+            </div>
+
+            <div class="create-settings-column">
             <div v-if="!form.skip_tts" class="tts-parameter-panel">
               <div class="tts-parameter-head">
                 <div>
-                  <div class="sidebar-label">官方 IndexTTS2 · 本地 GPU</div>
+                  <div class="tts-engine-row">
+                    <div class="sidebar-label">{{ ttsEngine === 'indextts2' ? '官方 IndexTTS2 · 本地 GPU' : 'Qwen-TTS · 云端 API' }}</div>
+                    <label class="tts-engine-switch" title="切换本地 IndexTTS2 与 Qwen-TTS 云端配音">
+                      <input v-model="ttsEngine" type="checkbox" true-value="qwen" false-value="indextts2" />
+                      <span class="tts-engine-track" aria-hidden="true"></span>
+                      <span>Qwen-TTS</span>
+                    </label>
+                  </div>
                   <h3>语音参数</h3>
                 </div>
-                <span class="muted small">{{ settings.tts?.model || 'official IndexTTS2 2.0.0' }}</span>
+                <span class="muted small">{{ ttsEngine === 'indextts2' ? (settings.tts?.model || 'official IndexTTS2 2.0.0') : 'DashScope / 百炼' }}</span>
               </div>
-              <div class="form-grid tts-param-grid">
+              <div v-if="ttsEngine === 'indextts2'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
                   <span>上传本地参考音色</span>
                   <label class="script-file-picker">
@@ -219,17 +278,46 @@
                   4090 建议日常用 2；3 是上限尝试档，显存紧张或报错时调回 2。
                 </small>
               </div>
+              <div v-else class="qwen-tts-config">
+                <label class="qwen-key-field">
+                  <input v-model="apiKeyForm.qwen_tts_api_key" type="password" autocomplete="off" placeholder="DashScope API Key（sk-...）" />
+                </label>
+                <div class="qwen-voice-controls">
+                  <label>
+                    <span>系统音色</span>
+                    <select v-model="form.qwen_tts_voice">
+                      <optgroup v-for="group in qwenVoiceGroups" :key="group.label" :label="group.label">
+                        <option v-for="voice in group.voices" :key="voice.value" :value="voice.value">
+                          {{ voice.label }}
+                        </option>
+                      </optgroup>
+                    </select>
+                    <small v-if="!qwenSelectedVoiceSupportsInstructions && form.qwen_tts_instructions.trim()" class="qwen-voice-warning">
+                      当前音色仅支持基础合成；请清空“配音描述”，或换用“支持配音描述”的音色。
+                    </small>
+                  </label>
+                </div>
+                <label class="qwen-instruction-field">
+                  <span>配音描述（指令控制）</span>
+                  <textarea
+                    v-model="form.qwen_tts_instructions"
+                    rows="7"
+                    maxlength="1600"
+                    placeholder="例如：沉稳的中年女性，语速偏慢，吐字清晰，带有克制而渐进的悬疑感，适合都市怪谈叙述。"
+                  ></textarea>
+                </label>
+                <div class="qwen-tts-actions">
+                  <span class="api-key-status" :class="{ configured: apiKeyStatus.qwen_tts?.configured }">
+                    {{ apiKeyStatus.qwen_tts?.configured ? '已配置' : '未配置' }}
+                  </span>
+                  <button class="primary-btn qwen-save-btn" type="button" :disabled="savingQwenTtsKey" @click="saveQwenTtsKey">
+                    {{ savingQwenTtsKey ? '保存中...' : '保存 API Key' }}
+                  </button>
+                </div>
+                <small class="muted">系统会严格、原样执行配音描述：整篇文案固定音色、模型、语言与描述，并采用长分段合成后统一响度。</small>
+                <small v-if="qwenTtsKeyMessage" class="api-key-message">{{ qwenTtsKeyMessage }}</small>
+              </div>
             </div>
-
-            <label class="stack">
-              <span>{{ form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
-              <textarea
-                v-model="form.script"
-                rows="14"
-                :disabled="form.skip_text_correction"
-                :placeholder="scriptPlaceholder"
-              ></textarea>
-            </label>
 
             <div class="tts-parameter-panel split-panel">
               <div class="tts-parameter-head">
@@ -351,6 +439,7 @@
               <small class="muted">
                 可留空：采用当前模式默认主角。未登记角色会按文案建立临时档案并保持一致；人物造型会按镜头阶段自动锁定。
               </small>
+            </div>
             </div>
 
             <div class="inline-actions">
@@ -773,7 +862,7 @@
         </section>
         </section>
 
-        <section v-else class="module1-page stack">
+        <section v-else-if="activePage === 'module1'" class="module1-page stack">
           <article class="panel module1-panel">
             <div class="panel-head">
               <div>
@@ -871,6 +960,85 @@
             <pre class="log-view">{{ module1LogText }}</pre>
           </article>
         </section>
+
+        <section v-else class="module1-page stack">
+          <article class="panel module1-panel">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">独立工具</div>
+                <h2>模块 2 · 音频字幕识别</h2>
+                <p class="muted create-summary">只运行 Faster-Whisper 字幕识别和可选的模块 2.5 校对，最终输出 SRT 文件。</p>
+              </div>
+              <span class="status-chip success">不生成画面和视频</span>
+            </div>
+
+            <div class="module1-layout">
+              <div class="module1-copy-column">
+                <label>
+                  <span>字幕任务名称</span>
+                  <input v-model.trim="subtitleForm.project_name" type="text" maxlength="80" />
+                </label>
+                <div class="script-upload-field">
+                  <span>上传需要识别的音频</span>
+                  <label class="script-file-picker">
+                    <input type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*" @change="uploadSubtitleAudio" />
+                    <span>{{ subtitleAudioUploading ? '上传中' : '浏览音频' }}</span>
+                    <strong>{{ subtitleAudioName || '选择 WAV / MP3 / M4A / FLAC' }}</strong>
+                  </label>
+                  <div v-if="subtitleAudioError" class="board-error">{{ subtitleAudioError }}</div>
+                </div>
+                <div class="muted small">识别会保留音频原始时间轴；长音频会在后台任务中顺序处理。</div>
+              </div>
+
+              <div class="module1-settings-column">
+                <div class="tts-parameter-panel subtitle-options">
+                  <label class="checkbox-row">
+                    <input v-model="subtitleForm.use_correction" type="checkbox" />
+                    <span>使用字幕校对（模块 2.5）</span>
+                  </label>
+                  <p class="muted small">有参考文案时按文案逐段对齐；没有参考文案时自动调用语言模型修正 ASR 错别字、标点和同音字。</p>
+                </div>
+                <div v-if="subtitleForm.use_correction" class="script-upload-field">
+                  <span>可选：上传参考文案</span>
+                  <label class="script-file-picker">
+                    <input type="file" accept=".txt,.md,text/plain,text/markdown" @change="loadSubtitleReference" />
+                    <span>浏览文案</span>
+                    <strong>{{ subtitleReferenceName || '不上传则使用语言模型校对' }}</strong>
+                  </label>
+                  <div v-if="subtitleReferenceError" class="board-error">{{ subtitleReferenceError }}</div>
+                </div>
+                <div v-if="subtitleForm.use_correction && !subtitleForm.reference_text" class="muted small">
+                  当前将使用语言模型校对。语言模型或通用 API Key 未配置时，任务会提示你先在左侧填写。
+                </div>
+                <div class="inline-actions module1-actions">
+                  <button class="ghost-btn stop-btn" type="button" :disabled="!subtitleJobRunning" @click="cancelSubtitleJob">停止识别</button>
+                  <button class="primary-btn" type="button" :disabled="submittingSubtitle || !canSubmitSubtitle" @click="submitSubtitleJob">
+                    {{ submittingSubtitle ? '正在提交...' : '开始识别字幕' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel progress-panel">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">字幕任务</div>
+                <h2>{{ subtitleJob?.message || '等待上传音频并开始识别' }}</h2>
+              </div>
+              <span class="progress-percent">{{ subtitleJob?.progress || 0 }}%</span>
+            </div>
+            <div class="progress-track"><span :style="{ width: `${subtitleJob?.progress || 0}%` }"></span></div>
+            <div v-if="subtitleJob?.artifacts?.subtitle" class="artifact-grid module1-artifacts">
+              <button class="artifact-card" type="button" @click="openArtifactFolder(subtitleJob.artifacts.subtitle)">
+                <div class="artifact-label">最终 SRT 字幕</div>
+                <div class="artifact-value">final_short.srt</div>
+                <div class="artifact-action">打开所在文件夹</div>
+              </button>
+            </div>
+            <pre class="log-view">{{ subtitleLogText }}</pre>
+          </article>
+        </section>
       </section>
     </main>
   </div>
@@ -932,6 +1100,7 @@ const visualPreviewItem = ref(null)
 const visualRenderMode = ref('both')
 const submitting = ref(false)
 const submittingModule1 = ref(false)
+const submittingSubtitle = ref(false)
 const cancellingGeneration = ref(false)
 const resumingGeneration = ref(false)
 const health = ref({ ok: false, tts_online: false })
@@ -940,6 +1109,7 @@ const session = ref({ user: null, auth_mode: 'account', mysql: {} })
 const authError = ref('')
 const activeJob = ref(null)
 const module1Job = ref(null)
+const subtitleJob = ref(null)
 const jobs = ref([])
 const jobPage = ref(1)
 const jobTotal = ref(0)
@@ -953,6 +1123,85 @@ const editing = ref(false)
 const startingTts = ref(false)
 const ttsStartMessage = ref('')
 const showFullLogs = ref(false)
+const apiKeyStatus = ref({ language: {}, image: {}, common: {}, qwen_tts: {} })
+const apiKeyMessage = ref('')
+const savingApiKeys = ref(false)
+const savingQwenTtsKey = ref(false)
+const qwenTtsKeyMessage = ref('')
+const ttsEngine = ref('indextts2')
+// Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
+// 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
+const qwenVoiceGroups = [
+  {
+    label: '推荐叙述 · 支持配音描述',
+    voices: [
+      { value: 'Elias', label: '墨讲师 · 女性讲述感（默认）', supportsInstructions: true },
+      { value: 'Eldric Sage', label: '沧明子 · 沉稳睿智老者', supportsInstructions: true },
+      { value: 'Vincent', label: '田叔 · 沙哑烟嗓男声', supportsInstructions: true },
+      { value: 'Neil', label: '阿闻 · 新闻主持男声', supportsInstructions: true },
+      { value: 'Arthur', label: '徐大爷 · 沧桑老者', supportsInstructions: true },
+      { value: 'Seren', label: '小婉 · 舒缓女声', supportsInstructions: true },
+      { value: 'Maia', label: '四月 · 知性温柔女声', supportsInstructions: true },
+      { value: 'Serena', label: '苏瑶 · 温柔自然女声', supportsInstructions: true },
+    ],
+  },
+  {
+    label: '其他普通话 · 支持配音描述',
+    voices: [
+      { value: 'Cherry', label: '芊悦 · 阳光亲切女声', supportsInstructions: true },
+      { value: 'Ethan', label: '晨煦 · 温暖活力男声', supportsInstructions: true },
+      { value: 'Chelsie', label: '千雪 · 二次元女友', supportsInstructions: true },
+      { value: 'Momo', label: '茉兔 · 撒娇搞怪女声', supportsInstructions: true },
+      { value: 'Vivian', label: '十三 · 可爱小暴躁女声', supportsInstructions: true },
+      { value: 'Moon', label: '月白 · 率性帅气男声', supportsInstructions: true },
+      { value: 'Kai', label: '凯 · 温柔耳语男声', supportsInstructions: true },
+      { value: 'Nofish', label: '不吃鱼 · 设计师男声', supportsInstructions: true },
+      { value: 'Bella', label: '萌宝 · 萝莉女声', supportsInstructions: true },
+      { value: 'Mia', label: '乖小妹 · 温顺女声', supportsInstructions: true },
+      { value: 'Mochi', label: '沙小弥 · 小大人男声', supportsInstructions: true },
+      { value: 'Bellona', label: '燕铮莺 · 洪亮鲜活女声', supportsInstructions: true },
+      { value: 'Bunny', label: '萌小姬 · 小萝莉女声', supportsInstructions: true },
+      { value: 'Nini', label: '邻家妹妹 · 亲切女声', supportsInstructions: true },
+      { value: 'Pip', label: '顽屁小孩 · 男童声', supportsInstructions: true },
+      { value: 'Stella', label: '少女阿月 · 少女声', supportsInstructions: true },
+    ],
+  },
+  {
+    label: '国际音色 · 仅基础合成（不填配音描述）',
+    voices: [
+      { value: 'Jennifer', label: '詹妮弗 · 电影感美语女声', supportsInstructions: false },
+      { value: 'Ryan', label: '甜茶 · 戏感美语男声', supportsInstructions: false },
+      { value: 'Katerina', label: '卡捷琳娜 · 成熟御姐', supportsInstructions: false },
+      { value: 'Aiden', label: '艾登 · 美语大男孩', supportsInstructions: false },
+      { value: 'Bodega', label: '博德加 · 西班牙语男声', supportsInstructions: false },
+      { value: 'Sonrisa', label: '索尼莎 · 拉美女声', supportsInstructions: false },
+      { value: 'Alek', label: '阿列克 · 俄语男声', supportsInstructions: false },
+      { value: 'Dolce', label: '多尔切 · 意大利语男声', supportsInstructions: false },
+      { value: 'Sohee', label: '素熙 · 韩语女声', supportsInstructions: false },
+      { value: 'Ono Anna', label: '小野杏 · 日语女声', supportsInstructions: false },
+      { value: 'Lenn', label: '莱恩 · 德语男声', supportsInstructions: false },
+      { value: 'Emilien', label: '埃米尔安 · 法语男声', supportsInstructions: false },
+      { value: 'Andre', label: '安德雷 · 磁性沉稳男声', supportsInstructions: false },
+      { value: 'Radio Gol', label: '拉迪奥·戈尔 · 男声', supportsInstructions: false },
+    ],
+  },
+  {
+    label: '方言音色 · 仅基础合成（不填配音描述）',
+    voices: [
+      { value: 'Jada', label: '上海-阿珍 · 上海女声', supportsInstructions: false },
+      { value: 'Dylan', label: '北京-晓东 · 北京男声', supportsInstructions: false },
+      { value: 'Li', label: '南京-老李 · 南京男声', supportsInstructions: false },
+      { value: 'Marcus', label: '陕西-秦川 · 陕西男声', supportsInstructions: false },
+      { value: 'Roy', label: '闽南-阿杰 · 闽南男声', supportsInstructions: false },
+      { value: 'Peter', label: '天津-李彼得 · 天津男声', supportsInstructions: false },
+      { value: 'Sunny', label: '四川-晴儿 · 四川女声', supportsInstructions: false },
+      { value: 'Eric', label: '四川-程川 · 四川男声', supportsInstructions: false },
+      { value: 'Rocky', label: '粤语-阿强 · 粤语男声', supportsInstructions: false },
+      { value: 'Kiki', label: '粤语-阿清 · 粤语女声', supportsInstructions: false },
+    ],
+  },
+]
+let apiKeyStatusLoaded = false
 let timer = null
 let visualEditorTaskTimer = null
 const MAX_SCRIPT_FILE_SIZE = 2 * 1024 * 1024
@@ -966,6 +1215,23 @@ const registerForm = reactive({
   email: '',
   password: '',
 })
+const subtitleForm = reactive({
+  project_name: '字幕识别任务',
+  source_audio_id: '',
+  use_correction: true,
+  reference_text: '',
+})
+const subtitleAudioName = ref('')
+const subtitleAudioError = ref('')
+const subtitleAudioUploading = ref(false)
+const subtitleReferenceName = ref('')
+const subtitleReferenceError = ref('')
+const apiKeyForm = reactive({
+  language_api_key: '',
+  image_api_key: '',
+  common_api_key: '',
+  qwen_tts_api_key: '',
+})
 const form = reactive({
   project_name: randomProjectName(),
   script: '',
@@ -978,6 +1244,8 @@ const form = reactive({
   tts_emotion: '',
   tts_english_normalization: false,
   tts_pronunciation: '',
+  qwen_tts_instructions: '',
+  qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'auto',
@@ -1108,6 +1376,10 @@ const videoAssets = computed(() => editorAssets.value.filter((asset) => asset.ki
 const audioAssets = computed(() => editorAssets.value.filter((asset) => asset.kind === 'audio'))
 const subtitleAssets = computed(() => editorAssets.value.filter((asset) => asset.kind === 'subtitle'))
 const selectedVideoAsset = computed(() => videoAssets.value.find((asset) => asset.id === editorForm.video_id))
+const qwenSelectedVoice = computed(() => qwenVoiceGroups
+  .flatMap((group) => group.voices)
+  .find((voice) => voice.value === form.qwen_tts_voice))
+const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.value?.supportsInstructions !== false)
 const canSubmitGeneration = computed(() => {
   if (!session.value.user) return false
   if (!form.project_name.trim()) return false
@@ -1115,6 +1387,8 @@ const canSubmitGeneration = computed(() => {
     if (!form.source_audio_id) return false
     return form.skip_text_correction || form.script.trim().length > 0
   }
+  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return false
+  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return false
   return form.script.trim().length > 0
 })
 const canSubmitModule1 = computed(() => Boolean(
@@ -1129,11 +1403,22 @@ const module1ArtifactEntries = computed(() => Object.entries(module1Job.value?.a
   .filter(([key]) => ['audio', 'module1_subtitle'].includes(key))
   .map(([key, url]) => ({ key, url })))
 const module1LogText = computed(() => (module1Job.value?.logs || []).join('\n') || '模块 1 日志会显示在这里。')
+const subtitleJobRunning = computed(() => ['queued', 'running'].includes(subtitleJob.value?.status))
+const canSubmitSubtitle = computed(() => Boolean(
+  session.value.user
+  && subtitleForm.project_name.trim()
+  && subtitleForm.source_audio_id
+  && !subtitleJobRunning.value
+  && (!subtitleForm.use_correction || subtitleForm.reference_text || apiKeyStatus.value.language?.configured),
+))
+const subtitleLogText = computed(() => (subtitleJob.value?.logs || []).join('\n') || '字幕识别日志会显示在这里。')
 const submitButtonText = computed(() => {
   if (!session.value.user) return '请先登录'
   if (submitting.value) return '任务已提交'
   if (form.skip_tts && !form.source_audio_id) return '请先上传配音'
   if (form.skip_tts) return '从已有配音生成视频'
+  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return '请先保存 Qwen-TTS API Key'
+  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return '该音色不支持配音描述'
   return '一键生成视频'
 })
 const scriptPlaceholder = computed(() => {
@@ -1169,6 +1454,8 @@ async function refresh() {
   }
   try {
     if (!session.value.user) {
+      apiKeyStatusLoaded = false
+      apiKeyStatus.value = { language: {}, image: {}, common: {}, qwen_tts: {} }
       jobs.value = []
       jobPage.value = 1
       jobTotal.value = 0
@@ -1176,6 +1463,7 @@ async function refresh() {
       activeJob.value = null
       return
     }
+    if (!apiKeyStatusLoaded) await loadApiKeySettings()
     const payload = await api.jobs(jobPage.value, JOB_PAGE_SIZE)
     jobs.value = payload.jobs || []
     jobPage.value = payload.page || 1
@@ -1188,6 +1476,9 @@ async function refresh() {
     }
     if (module1Job.value?.id) {
       module1Job.value = await api.job(module1Job.value.id)
+    }
+    if (subtitleJob.value?.id) {
+      subtitleJob.value = await api.job(subtitleJob.value.id)
     }
     await refreshEditor()
   } catch {
@@ -1248,6 +1539,68 @@ async function logout() {
   editorAssets.value = []
   editorJobs.value = []
   editorJob.value = null
+  apiKeyStatusLoaded = false
+  apiKeyStatus.value = { language: {}, image: {}, common: {}, qwen_tts: {} }
+  apiKeyMessage.value = ''
+}
+
+async function loadApiKeySettings() {
+  if (!session.value.user) return
+  try {
+    const payload = await api.apiKeySettings()
+    apiKeyStatus.value = payload.keys || { language: {}, image: {}, common: {}, qwen_tts: {} }
+    apiKeyStatusLoaded = true
+  } catch (error) {
+    apiKeyMessage.value = error.message || '无法读取 API Key 配置状态'
+  }
+}
+
+async function saveApiKeySettings() {
+  const payload = {}
+  for (const key of ['language_api_key', 'image_api_key', 'common_api_key']) {
+    const value = String(apiKeyForm[key] || '').trim()
+    if (value) payload[key] = value
+  }
+  if (!Object.keys(payload).length) {
+    apiKeyMessage.value = '请至少填写一个 API Key。'
+    return
+  }
+  savingApiKeys.value = true
+  apiKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings(payload)
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    apiKeyStatusLoaded = true
+    apiKeyMessage.value = result.message || 'API Key 已保存。'
+    apiKeyForm.language_api_key = ''
+    apiKeyForm.image_api_key = ''
+    apiKeyForm.common_api_key = ''
+  } catch (error) {
+    apiKeyMessage.value = error.message || '保存 API Key 失败。'
+  } finally {
+    savingApiKeys.value = false
+  }
+}
+
+async function saveQwenTtsKey() {
+  const key = String(apiKeyForm.qwen_tts_api_key || '').trim()
+  if (!key) {
+    qwenTtsKeyMessage.value = '请填写 DashScope API Key。'
+    return
+  }
+  savingQwenTtsKey.value = true
+  qwenTtsKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings({ qwen_tts_api_key: key })
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    apiKeyStatusLoaded = true
+    apiKeyForm.qwen_tts_api_key = ''
+    qwenTtsKeyMessage.value = 'Qwen-TTS API Key 已保存到本机 .env。'
+  } catch (error) {
+    qwenTtsKeyMessage.value = error.message || '保存 Qwen-TTS API Key 失败。'
+  } finally {
+    savingQwenTtsKey.value = false
+  }
 }
 
 async function startTts() {
@@ -1631,6 +1984,7 @@ async function submit() {
   try {
     activeJob.value = await api.createJob({
       ...form,
+      tts_engine: ttsEngine.value,
       tts_emotion: form.tts_emotion || null,
       tts_pronunciation: form.tts_pronunciation || null,
     })
@@ -1687,6 +2041,89 @@ async function submitModule1() {
 async function cancelModule1() {
   if (!module1JobRunning.value || !module1Job.value?.id) return
   module1Job.value = await api.cancelJob(module1Job.value.id)
+  await refresh()
+}
+
+async function uploadSubtitleAudio(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  subtitleAudioError.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(suffix)) {
+    subtitleAudioName.value = ''
+    subtitleForm.source_audio_id = ''
+    subtitleAudioError.value = '仅支持 MP3、WAV、M4A、AAC、FLAC 或 OGG 音频。'
+    return
+  }
+  subtitleAudioUploading.value = true
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    subtitleForm.source_audio_id = payload.asset.id
+    subtitleAudioName.value = payload.asset.name || file.name
+    await refreshEditor()
+  } catch (error) {
+    subtitleForm.source_audio_id = ''
+    subtitleAudioName.value = ''
+    subtitleAudioError.value = error.message || '音频上传失败。'
+  } finally {
+    subtitleAudioUploading.value = false
+  }
+}
+
+async function loadSubtitleReference(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  subtitleReferenceError.value = ''
+  if (!file) return
+  if (!['txt', 'md'].includes(file.name.split('.').pop()?.toLowerCase())) {
+    subtitleReferenceName.value = ''
+    subtitleForm.reference_text = ''
+    subtitleReferenceError.value = '参考文案仅支持 TXT 或 Markdown 文件。'
+    return
+  }
+  if (file.size > MAX_SCRIPT_FILE_SIZE) {
+    subtitleReferenceError.value = '参考文案不能超过 2 MB。'
+    return
+  }
+  try {
+    const content = (await file.text()).trim()
+    if (!content) throw new Error('参考文案为空。')
+    subtitleForm.reference_text = content
+    subtitleReferenceName.value = file.name
+  } catch (error) {
+    subtitleReferenceName.value = ''
+    subtitleForm.reference_text = ''
+    subtitleReferenceError.value = error.message || '读取参考文案失败。'
+  }
+}
+
+async function submitSubtitleJob() {
+  if (!canSubmitSubtitle.value) return
+  submittingSubtitle.value = true
+  try {
+    subtitleJob.value = await api.createJob({
+      project_name: subtitleForm.project_name,
+      script: subtitleForm.reference_text,
+      subtitle_only: true,
+      subtitle_use_correction: subtitleForm.use_correction,
+      skip_tts: true,
+      source_audio_id: subtitleForm.source_audio_id,
+      skip_text_correction: !subtitleForm.use_correction,
+    })
+    jobPage.value = 1
+    await refresh()
+  } finally {
+    submittingSubtitle.value = false
+  }
+}
+
+async function cancelSubtitleJob() {
+  if (!subtitleJobRunning.value || !subtitleJob.value?.id) return
+  subtitleJob.value = await api.cancelJob(subtitleJob.value.id)
   await refresh()
 }
 

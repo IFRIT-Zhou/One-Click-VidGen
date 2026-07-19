@@ -1,21 +1,50 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic>=2.7.0
-requests>=2.31.0
-python-multipart>=0.0.9
-PyMySQL>=1.1.1
-email-validator>=2.2.0
+# One-Click-VidGen — Python dependencies for a source (Git) deployment.
+#
+# Supported environment: Windows 10/11, Python 3.10 or 3.11, NVIDIA GPU.
+# Install with:
+#   python -m pip install --upgrade pip
+#   python -m pip install -r requirements.txt
+#
+# This file installs Python packages only.  It does NOT include the official
+# IndexTTS2 model checkpoints, FFmpeg, or Node.js.  Those are large external
+# runtime assets and must be installed by the project bootstrap procedure.
 
-# App runtime helpers
-aiofiles>=23.2.0
-loguru>=0.7.0
-psutil>=5.9.0
-slowapi>=0.1.9
+# PyTorch CUDA 12.8 wheels used by the official IndexTTS2 2.0 pipeline.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0+cu128; platform_system == "Windows"
+torchaudio==2.8.0+cu128; platform_system == "Windows"
 
-# Pipeline: ASR / scene slicing
-# Keep torch/torchaudio provided by the pytorch2.11 conda environment.
-faster-whisper>=1.1.1
-# CTranslate2 GPU wheels require these CUDA 12 libraries even when PyTorch uses CUDA 13.
-nvidia-cublas-cu12>=12.4,<13
-nvidia-cudnn-cu12>=9,<10
-torchcodec>=0.8.0
+# Backend / local web API
+fastapi==0.116.2
+uvicorn[standard]==0.35.0
+pydantic==2.11.9
+email-validator==2.3.0
+python-multipart==0.0.20
+PyMySQL==1.2.0
+requests==2.32.5
+
+# Subtitle recognition (Module 2)
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+
+# Official IndexTTS2 runtime (Module 1 local GPU mode)
+indextts==2.0.0
+accelerate==1.8.1
+transformers==4.52.1
+tokenizers==0.21.0
+sentencepiece==0.2.1
+modelscope==1.27.0
+
+# Utilities required by the official TTS runtime and this application
+numpy==1.26.2
+librosa==0.10.2.post1
+soundfile==0.13.1
+ffmpeg-python==0.2.0
+opencv-python==4.9.0.80
+omegaconf==2.3.0
+safetensors==0.5.2
+tqdm==4.67.1
+aiofiles==24.1.0
+psutil==7.0.0
+loguru==0.7.3
+slowapi==0.1.10

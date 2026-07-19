@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
+from .config import _parse_env_lines, save_project_env_values
 from .db import (
     authenticate_user,
     create_user,
@@ -24,6 +25,7 @@ from .db import (
 )
 from .gemini_client import DEFAULT_GEMINI_MODEL, gemini_configured
 from .indextts2_local import EMOTIONS, load_indextts2_config
+from .qwen_tts import DEFAULT_VOICE as DEFAULT_QWEN_VOICE, voice_supports_instructions
 from .editor import (
     edit_store,
     list_uploads,
@@ -50,6 +52,8 @@ class GenerateRequest(BaseModel):
     project_name: str = Field(default="", max_length=80)
     script: str = ""
     module1_only: bool = False
+    subtitle_only: bool = False
+    subtitle_use_correction: bool = True
     content_mode: Literal["urban_suspense", "science_explainer"] = "urban_suspense"
     skip_tts: bool = False
     source_audio_id: str | None = None
@@ -61,9 +65,13 @@ class GenerateRequest(BaseModel):
     tts_volume: float = Field(default=1, ge=0.1, le=10)
     tts_pitch: int = Field(default=0, ge=-12, le=12)
     tts_parallelism: int = Field(default=2, ge=1, le=3)
+    tts_engine: Literal["indextts2", "qwen"] = "indextts2"
     tts_emotion: str | None = Field(default=None, max_length=30)
     tts_english_normalization: bool = False
     tts_pronunciation: str | None = Field(default=None, max_length=200)
+    qwen_tts_instructions: str | None = Field(default=None, max_length=1600)
+    qwen_tts_voice: str = Field(default=DEFAULT_QWEN_VOICE, min_length=1, max_length=80)
+    qwen_tts_optimize_instructions: bool = False
     api_key: str | None = None
     base_url: str | None = "https://api.openai.com/v1"
     model: str | None = "gpt-4o-mini"
@@ -97,6 +105,13 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+
+
+class ApiKeySettingsRequest(BaseModel):
+    language_api_key: str | None = Field(default=None, max_length=2048)
+    image_api_key: str | None = Field(default=None, max_length=2048)
+    common_api_key: str | None = Field(default=None, max_length=2048)
+    qwen_tts_api_key: str | None = Field(default=None, max_length=2048)
 
 
 class EditRequest(BaseModel):
@@ -312,6 +327,54 @@ def settings() -> dict[str, Any]:
     }
 
 
+def _api_key_status() -> dict[str, Any]:
+    values = _parse_env_lines(PROJECT_ROOT / ".env")
+    return {
+        "language": {"configured": bool(values.get("GEMINI_API_KEY", "").strip())},
+        "image": {"configured": bool(values.get("RUNNINGHUB_API_KEY", "").strip())},
+        "common": {"configured": bool(values.get("APP_COMMON_API_KEY", "").strip())},
+        "qwen_tts": {"configured": bool(values.get("DASHSCOPE_API_KEY", "").strip())},
+    }
+
+
+@app.get("/api/api-keys")
+def get_api_key_settings(request: Request) -> dict[str, Any]:
+    require_user(request)
+    return {"keys": _api_key_status()}
+
+
+@app.put("/api/api-keys")
+def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> dict[str, Any]:
+    require_user(request)
+    language = str(payload.language_api_key or "").strip()
+    image = str(payload.image_api_key or "").strip()
+    common = str(payload.common_api_key or "").strip()
+    qwen_tts = str(payload.qwen_tts_api_key or "").strip()
+    if not any((language, image, common, qwen_tts)):
+        raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
+    if any("\n" in value or "\r" in value for value in (language, image, common, qwen_tts)):
+        raise HTTPException(status_code=400, detail="API Key 不能包含换行")
+
+    # A common RunningHub-style key fills either dedicated field left blank.
+    updates: dict[str, str] = {}
+    if common:
+        updates["APP_COMMON_API_KEY"] = common
+    if language or common:
+        updates["GEMINI_API_KEY"] = language or common
+    if image or common:
+        updates["RUNNINGHUB_API_KEY"] = image or common
+    if qwen_tts:
+        updates["DASHSCOPE_API_KEY"] = qwen_tts
+    try:
+        save_project_env_values(updates)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"保存 API Key 失败: {exc}") from exc
+    return {
+        "keys": _api_key_status(),
+        "message": "API Key 已保存到本机 .env；通用 Key 已自动补全未单独填写的模型。",
+    }
+
+
 @app.get("/api/scripts/{name}")
 def read_script(name: str) -> dict[str, str]:
     path = (PROJECT_ROOT / name).resolve()
@@ -342,6 +405,11 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         data["skip_tts"] = False
         data["skip_text_correction"] = False
         data["source_audio_id"] = None
+    if data.get("subtitle_only"):
+        data["module1_only"] = False
+        data["skip_tts"] = True
+        if not data.get("source_audio_id"):
+            raise HTTPException(status_code=400, detail="字幕识别需要先上传音频")
     if data.get("skip_tts"):
         if not data.get("source_audio_id"):
             raise HTTPException(status_code=400, detail="请先上传已有配音")
@@ -349,6 +417,10 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             data["skip_text_correction"] = True
     elif len(script) < 5:
         raise HTTPException(status_code=400, detail="请输入至少 5 个字的口播文案")
+    elif data.get("tts_engine") == "qwen" and not os.getenv("DASHSCOPE_API_KEY", "").strip():
+        raise HTTPException(status_code=400, detail="Qwen-TTS 尚未配置 API Key，请先在语音参数中保存 DASHSCOPE_API_KEY")
+    elif data.get("tts_engine") == "qwen" and str(data.get("qwen_tts_instructions") or "").strip() and not voice_supports_instructions(str(data.get("qwen_tts_voice") or "")):
+        raise HTTPException(status_code=400, detail="所选 Qwen 系统音色仅支持基础合成；请清空配音描述，或改选支持配音描述的音色")
     elif data.get("skip_text_correction"):
         raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
     job = store.create(data, user_id=int(user["id"]))
