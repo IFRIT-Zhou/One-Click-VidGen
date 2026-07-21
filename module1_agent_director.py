@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import wave
 from collections.abc import Callable
 from pathlib import Path
@@ -355,6 +356,8 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
     )
     progress_lock = threading.Lock()
     completed_count = 0
+    synthesis_started_at = time.monotonic()
+    heartbeat_stop = threading.Event()
 
     def report_generated(original_index: int, text: str) -> None:
         nonlocal completed_count
@@ -383,68 +386,89 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
 
         return callback
 
-    if parallelism == 1:
-        manifest = TEMP_DIR / "indextts2_batch.jsonl"
-        _write_manifest(manifest, chunks)
-        command = _build_indextts2_command(
-            config,
-            manifest=manifest,
-            output_dir=TEMP_DIR,
-            output_prefix="chunk",
-            voice_path=voice_path,
-            emotion_vector=emotion_vector,
-        )
-        single_items = list(enumerate(chunks))
-        _run_and_stream(
-            command,
-            cwd=config.root,
-            env=env,
-            on_generated=generated_callback(single_items),
-        )
-        wav_paths = [TEMP_DIR / f"chunk-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
-    else:
-        assignments: list[list[tuple[int, str]]] = [[] for _ in range(parallelism)]
-        for index, chunk in enumerate(chunks):
-            assignments[index % parallelism].append((index, chunk))
+    def report_heartbeat() -> None:
+        """Keep long GPU inference visible without forwarding noisy model bars."""
+        while not heartbeat_stop.wait(45):
+            with progress_lock:
+                completed = completed_count
+            elapsed = max(0, round(time.monotonic() - synthesis_started_at))
+            minutes, seconds = divmod(elapsed, 60)
+            print(
+                f"[TTS_HEARTBEAT] 正在生成：已完成 {completed}/{len(chunks)} 句，"
+                f"并行 {parallelism}，已运行 {minutes}分{seconds:02d}秒；"
+                "IndexTTS2 正在进行 GPU 推理，请耐心等待下一句完成。",
+                flush=True,
+            )
 
-        wav_paths = [TEMP_DIR / f"chunk-missing-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+    heartbeat_thread = threading.Thread(target=report_heartbeat, daemon=True)
+    heartbeat_thread.start()
 
-        def run_worker(worker_index: int, items: list[tuple[int, str]]) -> list[tuple[int, Path]]:
-            worker_id = worker_index + 1
-            worker_dir = TEMP_DIR / f"worker_{worker_id}"
-            ensure_dir(worker_dir)
-            manifest = worker_dir / "indextts2_batch.jsonl"
-            _write_manifest(manifest, [chunk for _, chunk in items])
-            output_prefix = f"chunk-w{worker_id}"
+    try:
+        if parallelism == 1:
+            manifest = TEMP_DIR / "indextts2_batch.jsonl"
+            _write_manifest(manifest, chunks)
             command = _build_indextts2_command(
                 config,
                 manifest=manifest,
-                output_dir=worker_dir,
-                output_prefix=output_prefix,
+                output_dir=TEMP_DIR,
+                output_prefix="chunk",
                 voice_path=voice_path,
                 emotion_vector=emotion_vector,
             )
+            single_items = list(enumerate(chunks))
             _run_and_stream(
                 command,
                 cwd=config.root,
                 env=env,
-                label=f"TTS-{worker_id}",
-                on_generated=generated_callback(items),
+                on_generated=generated_callback(single_items),
             )
-            return [
-                (original_index, worker_dir / f"{output_prefix}-{local_index:04d}.wav")
-                for local_index, (original_index, _) in enumerate(items, 1)
-            ]
+            wav_paths = [TEMP_DIR / f"chunk-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+        else:
+            assignments: list[list[tuple[int, str]]] = [[] for _ in range(parallelism)]
+            for index, chunk in enumerate(chunks):
+                assignments[index % parallelism].append((index, chunk))
 
-        with ThreadPoolExecutor(max_workers=parallelism) as executor:
-            futures = [
-                executor.submit(run_worker, worker_index, items)
-                for worker_index, items in enumerate(assignments)
-                if items
-            ]
-            for future in as_completed(futures):
-                for original_index, path in future.result():
-                    wav_paths[original_index] = path
+            wav_paths = [TEMP_DIR / f"chunk-missing-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+
+            def run_worker(worker_index: int, items: list[tuple[int, str]]) -> list[tuple[int, Path]]:
+                worker_id = worker_index + 1
+                worker_dir = TEMP_DIR / f"worker_{worker_id}"
+                ensure_dir(worker_dir)
+                manifest = worker_dir / "indextts2_batch.jsonl"
+                _write_manifest(manifest, [chunk for _, chunk in items])
+                output_prefix = f"chunk-w{worker_id}"
+                command = _build_indextts2_command(
+                    config,
+                    manifest=manifest,
+                    output_dir=worker_dir,
+                    output_prefix=output_prefix,
+                    voice_path=voice_path,
+                    emotion_vector=emotion_vector,
+                )
+                _run_and_stream(
+                    command,
+                    cwd=config.root,
+                    env=env,
+                    label=f"TTS-{worker_id}",
+                    on_generated=generated_callback(items),
+                )
+                return [
+                    (original_index, worker_dir / f"{output_prefix}-{local_index:04d}.wav")
+                    for local_index, (original_index, _) in enumerate(items, 1)
+                ]
+
+            with ThreadPoolExecutor(max_workers=parallelism) as executor:
+                futures = [
+                    executor.submit(run_worker, worker_index, items)
+                    for worker_index, items in enumerate(assignments)
+                    if items
+                ]
+                for future in as_completed(futures):
+                    for original_index, path in future.result():
+                        wav_paths[original_index] = path
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1)
     missing_outputs = [path.name for path in wav_paths if not path.is_file()]
     if missing_outputs:
         raise RuntimeError("IndexTTS2 未生成完整批次: " + ", ".join(missing_outputs[:10]))

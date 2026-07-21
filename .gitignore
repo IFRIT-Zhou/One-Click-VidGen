@@ -19,6 +19,7 @@ runtime_logs/
 Archives/
 output/
 saved_parameters/
+saved_agent_prompts/
 Vocal/
 tools/
 venv_audio_vedio/

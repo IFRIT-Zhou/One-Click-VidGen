@@ -105,22 +105,6 @@
           <div class="eyebrow">工作台</div>
           <div class="topbar-title">{{ activePage === 'workspace' ? '故事视频生成工作台' : activePage === 'development' ? '待开发功能' : activePage === 'subtitle' ? '模块 2 · 字幕识别' : '模块 1 · 仅配音' }}</div>
         </div>
-        <div class="topbar-actions">
-          <template v-if="session.user">
-            <button class="ghost-btn compact-btn" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
-              {{ savingParameterPreset ? '保存中…' : '保存当前参数' }}
-            </button>
-            <select v-model="selectedParameterPreset" class="parameter-preset-select" :disabled="loadingParameterPresets || !parameterPresets.length">
-              <option value="">读取已保存参数</option>
-              <option v-for="preset in parameterPresets" :key="preset.name" :value="preset.name">{{ preset.name }}</option>
-            </select>
-            <button class="ghost-btn compact-btn" type="button" :disabled="!selectedParameterPreset || loadingParameterPresets" @click="loadSelectedParameterPreset">读取参数</button>
-          </template>
-          <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
-            {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
-          </span>
-          <span v-if="parameterPresetMessage" class="muted small">{{ parameterPresetMessage }}</span>
-        </div>
       </header>
 
       <section class="content stack">
@@ -157,6 +141,22 @@
             <span>模块 2 · 字幕识别</span>
             <small>音频转 SRT 与校对</small>
           </button>
+          <div class="page-tabs-actions">
+            <template v-if="session.user">
+              <button class="toolbar-save-button" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
+                {{ savingParameterPreset ? '保存中…' : '保存当前参数' }}
+              </button>
+              <select v-model="selectedParameterPreset" class="parameter-preset-select" :disabled="loadingParameterPresets || !parameterPresets.length">
+                <option value="">读取已保存参数</option>
+                <option v-for="preset in parameterPresets" :key="preset.name" :value="preset.name">{{ preset.name }}</option>
+              </select>
+              <button class="toolbar-load-button" type="button" :disabled="!selectedParameterPreset || loadingParameterPresets" @click="loadSelectedParameterPreset">读取参数</button>
+            </template>
+            <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
+              {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
+            </span>
+            <span v-if="parameterPresetMessage" class="muted small page-tabs-message">{{ parameterPresetMessage }}</span>
+          </div>
         </nav>
 
         <section v-if="activePage === 'workspace'" class="workspace-page stack">
@@ -168,7 +168,6 @@
                 <h2>创建故事视频</h2>
                 <p class="muted create-summary">输入文案，选择声音和画风，其余步骤交给双 Agent 流水线。</p>
               </div>
-              <span class="status-chip success">双 Agent 已启用</span>
             </div>
 
             <div class="create-copy-column">
@@ -234,6 +233,7 @@
             </div>
 
             <div class="create-settings-column">
+            <div class="create-audio-column">
             <div v-if="!form.skip_tts" class="tts-parameter-panel">
               <div class="tts-parameter-head">
                 <div>
@@ -359,26 +359,10 @@
                 系统会先让大模型通读全文，按主题完整性分段；该数值只是上限，不会为了凑字数硬切。分段视频完成后会按顺序自动拼接。
               </small>
             </div>
+            </div>
+            </div>
 
-            <div class="tts-parameter-panel visual-prompt-panel">
-              <div class="content-mode-bar">
-                <div class="content-mode-copy">
-                  <div class="sidebar-label">作品风格</div>
-                  <strong>选择内容与画面模式</strong>
-                </div>
-                <div class="content-mode-options">
-                  <button
-                    v-for="mode in contentModeOptions"
-                    :key="mode.key"
-                    type="button"
-                    :class="{ active: form.content_mode === mode.key }"
-                    @click="setContentMode(mode.key)"
-                  >
-                    <span>{{ mode.label }}</span>
-                    <small>{{ mode.description }}</small>
-                  </button>
-                </div>
-              </div>
+            <div class="tts-parameter-panel visual-pacing-standalone">
               <div class="visual-pacing-panel">
                 <div class="visual-pacing-copy">
                   <div class="sidebar-label">画面节奏</div>
@@ -414,6 +398,10 @@
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="tts-parameter-panel visual-prompt-panel">
+              <template v-if="form.visual_prompt_mode !== 'full'">
               <div class="tts-parameter-head">
                 <div>
                   <div class="sidebar-label">模块 4</div>
@@ -451,13 +439,106 @@
                     : '可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。'"
                 ></textarea>
               </label>
+              <label class="stack">
+                <span>故事世界与环境设定（可选）</span>
+                <textarea
+                  v-model="form.story_environment_prompt"
+                  @focus="setVisualPromptMode('simple')"
+                  @input="rememberVisualPrompt"
+                  rows="3"
+                  maxlength="2000"
+                  placeholder="例如：2010 年代中国北方小城，老旧居民楼与宠物医院；冬末阴天、冷白灯、潮湿街道。指定时代、城市气质、常驻场景、天气或关键环境道具。"
+                ></textarea>
+              </label>
               <small class="muted">
                 {{ form.content_mode === 'general'
                   ? '通用模式默认不预设主角：可留空，Agent 会仅按原文建立必要角色档案；填写后会作为全局人物设定严格保持。'
                   : '可留空：采用当前模式默认主角。未登记角色会按文案建立临时档案并保持一致；人物造型会按镜头阶段自动锁定。' }}
               </small>
+              </template>
+              <div v-else class="expert-mode-takeover">
+                <div class="sidebar-label">模块 4 · 专家模式</div>
+                <strong>Agent 提示词正在接管画面规划</strong>
+                <small class="muted">基础画风、人物与环境输入已收起，避免与下方 Agent 指令产生冲突。关闭专家模式后即可恢复基础编辑。</small>
+              </div>
             </div>
+
+            <div class="content-mode-bar content-mode-full-row">
+              <div class="content-mode-copy">
+                <div class="sidebar-label">作品风格</div>
+                <strong>选择内容与画面模式</strong>
+              </div>
+              <div class="content-mode-options">
+                <button
+                  v-for="mode in contentModeOptions"
+                  :key="mode.key"
+                  type="button"
+                  :class="{ active: form.content_mode === mode.key && form.visual_prompt_mode !== 'full' }"
+                  @click="setContentMode(mode.key)"
+                >
+                  <span>{{ mode.label }}</span>
+                  <small>{{ mode.description }}</small>
+                </button>
+              </div>
             </div>
+
+            <section class="agent-prompt-full-row advanced-agent-console">
+              <div class="advanced-agent-console-header">
+                <div class="sidebar-label">高级创作控制台</div>
+                <strong>提示词预设与 Agent DIY</strong>
+              </div>
+              <div class="advanced-agent-console-body">
+              <div class="agent-prompt-toggle-row">
+                <button class="expert-mode-switch" :class="{ active: form.visual_prompt_mode === 'full' }" type="button" @click="setVisualPromptMode(form.visual_prompt_mode === 'full' ? 'simple' : 'full')">
+                  <span class="expert-mode-switch-track"><span></span></span>
+                  <span><strong>{{ form.visual_prompt_mode === 'full' ? '专家模式已开启' : '开启专家模式' }}</strong><small>修改 Agent 提示词</small></span>
+                </button>
+                <button v-if="form.visual_prompt_mode === 'full'" class="ghost-btn compact-btn" type="button" :disabled="savingAgentPromptPreset" @click="saveCurrentAgentPromptPreset">
+                  {{ savingAgentPromptPreset ? '保存中…' : '保存 Agent 提示词' }}
+                </button>
+              </div>
+              <label v-if="form.visual_prompt_mode === 'full'" class="agent-preset-picker">
+                <span>Agent 提示词预设</span>
+                <select v-model="selectedAgentPromptPreset" :disabled="loadingAgentPromptPresets" @change="loadSelectedAgentPromptPreset">
+                  <option value="">选择 Agent 提示词</option>
+                  <optgroup v-if="defaultAgentPromptPresets.length" label="默认参考提示词">
+                    <option v-for="preset in defaultAgentPromptPresets" :key="preset.key" :value="preset.key">{{ preset.name }}</option>
+                  </optgroup>
+                  <optgroup v-if="userAgentPromptPresets.length" label="我保存的提示词">
+                    <option v-for="preset in userAgentPromptPresets" :key="preset.key" :value="preset.key">{{ preset.name }}</option>
+                  </optgroup>
+                </select>
+                <small>所有提示词均从 saved_agent_prompts 文件夹读取</small>
+              </label>
+              <label v-if="form.visual_prompt_mode === 'full'" class="stack agent-prompt-editor">
+                <label class="agent2-director-theme-field">
+                  <span>导演题材（填空）</span>
+                  <input v-model="agent2DirectorThemeModel" type="text" maxlength="40" :placeholder="agent2DirectorThemePlaceholder" />
+                </label>
+                <span>系统锁定协议（不可修改）</span>
+                <textarea class="agent-prompt-locked" :value="activeAgent2LockedProtocol" rows="7" readonly aria-label="Agent 2 系统锁定协议"></textarea>
+                <span>{{ form.content_mode === 'general' ? '可编辑的创作指令（Agent 2）承接系统提示词，开头默认为分镜规则' : '完整 Gemini 画面指令（Agent 2）' }}</span>
+                <textarea
+                  v-model="editableVisualPromptSystem"
+                  @input="rememberVisualPrompt"
+                  rows="14"
+                  :maxlength="form.content_mode === 'general' ? 3400 : 4000"
+                  :placeholder="form.content_mode === 'general'
+                    ? '在这里补充镜头语言、叙事节奏、画面构图、风格执行或特殊限制。系统输出格式与固定分组规则已锁定。'
+                    : '需保留 JSON 输出格式、includes_slides 与 image_prompt 字段约定。'"
+                ></textarea>
+                <small class="muted">此处编辑 Agent 2 的画面规划指令；下方可按需展开 Agent 1 的全文规划指令。</small>
+              </label>
+              <details v-if="form.visual_prompt_mode === 'full'" class="agent1-prompt-editor">
+                <summary>Agent 1 全文规划指令 <span class="agent1-risk-label">（高危参数）</span></summary>
+                <p class="agent1-danger-note">修改后会直接影响全文理解、人物档案、场景关系与画面节奏规划。必须保留严格 JSON 对象输出与既有字段结构，否则可能导致任务失败或严重画面错乱。</p>
+                <label class="stack">
+                  <span>完整 Agent 1 指令</span>
+                  <textarea v-model="form.agent1_prompt_system" @input="rememberVisualPrompt" rows="18" maxlength="12000" placeholder="保留默认内容即可；仅建议熟悉 JSON 输出结构和全文规划流程的用户修改。"></textarea>
+                </label>
+              </details>
+              </div>
+            </section>
 
             <div class="inline-actions">
               <button
@@ -695,47 +776,6 @@
             </div>
             <span class="status-chip warning">不影响主流程</span>
           </article>
-
-          <div class="development-grid">
-            <article class="panel dev-feature-card">
-              <div class="panel-head">
-                <div>
-                  <div class="eyebrow">高级控制</div>
-                  <h2>完整 Gemini 画面指令</h2>
-                </div>
-                <span class="status-chip warning">专家模式</span>
-              </div>
-              <div class="prompt-mode-switch" role="group" aria-label="提示词编辑模式">
-                <button
-                  type="button"
-                  :class="{ active: form.visual_prompt_mode === 'simple' }"
-                  @click="setVisualPromptMode('simple')"
-                >
-                  使用默认双 Agent
-                </button>
-                <button
-                  type="button"
-                  :class="{ active: form.visual_prompt_mode === 'full' }"
-                  @click="setVisualPromptMode('full')"
-                >
-                  使用完整指令
-                </button>
-              </div>
-              <label class="stack">
-                <span>完整画面规划系统指令</span>
-                <textarea
-                  v-model="form.visual_prompt_system"
-                  @input="rememberVisualPrompt"
-                  rows="14"
-                  maxlength="4000"
-                  placeholder="留空时使用程序内置的双 Agent 画面规则。"
-                ></textarea>
-              </label>
-              <div class="dev-notice">
-                当前状态：{{ form.visual_prompt_mode === 'full' ? '将覆盖内置 Agent 2 画面指令' : '继续使用内置双 Agent 规则' }}
-              </div>
-            </article>
-          </div>
 
         <section id="editor" class="panel editor-panel">
           <div class="panel-head">
@@ -1066,8 +1106,33 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { api } from './api'
 
 const VISUAL_PROMPT_FULL_STORAGE_KEY = 'visual_prompt_system_story_v3'
+const LOCKED_GENERAL_AGENT2_PROTOCOL = `你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
+
+`
+const LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL = `你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。`
+const EDITABLE_GENERAL_AGENT2_PREFIX = '【分镜规则】'
+const AGENT2_DIRECTOR_THEME_STORAGE_KEY = 'agent2_director_theme_v1'
+const AGENT2_DIRECTOR_THEME_DEFAULTS = {
+  urban_suspense: '惊悚漫画',
+  science_explainer: '科普科技口播视频',
+  general: '通用视频',
+}
 const VISUAL_PROMPT_STYLE_STORAGE_KEY = 'visual_prompt_style_story_v3'
 const GLOBAL_CHARACTER_STORAGE_KEY = 'global_character_prompt_v1'
+const STORY_ENVIRONMENT_STORAGE_KEY = 'story_environment_prompt_v1'
+const AGENT1_PROMPT_STORAGE_KEY = 'agent1_prompt_system_v1'
 const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
 const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
 const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
@@ -1262,6 +1327,10 @@ const selectedParameterPreset = ref('')
 const loadingParameterPresets = ref(false)
 const savingParameterPreset = ref(false)
 const parameterPresetMessage = ref('')
+const agentPromptPresets = ref([])
+const selectedAgentPromptPreset = ref('')
+const loadingAgentPromptPresets = ref(false)
+const savingAgentPromptPreset = ref(false)
 const form = reactive({
   project_name: randomProjectName(),
   script: '',
@@ -1285,7 +1354,10 @@ const form = reactive({
   visual_max_slides: 6,
   visual_style_prompt: '',
   global_character_prompt: '',
+  story_environment_prompt: '',
   visual_prompt_system: '',
+  agent1_prompt_system: '',
+  agent2_director_theme: '',
   auto_split_long_text: true,
   split_text_threshold: 3000,
   skip_tts: false,
@@ -1297,6 +1369,73 @@ const contentModeOptions = computed(() => {
   const modes = settings.value.visual_prompt?.modes || FALLBACK_CONTENT_MODES
   return Object.entries(modes).map(([key, value]) => ({ key, ...value }))
 })
+const defaultAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind === 'default'))
+const userAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind !== 'default'))
+const activeAgent2LockedProtocol = computed(() => {
+  if (form.content_mode === 'urban_suspense') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.urban_suspense).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.urban_suspense
+    return `你是鬼故事与都市小说视频的${theme}分镜导演。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统为本次任务提供的固定 slide 分组，每组生成一张 2:1 横版电影感漫画分镜。`
+  }
+  if (form.content_mode === 'science_explainer') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.science_explainer).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.science_explainer
+    return `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版解说漫画。`
+  }
+  const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.general).trim()
+    || AGENT2_DIRECTOR_THEME_DEFAULTS.general
+  return LOCKED_GENERAL_AGENT2_PROTOCOL.replace(
+    '你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。',
+    `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。`,
+  )
+})
+const editableVisualPromptSystem = computed({
+  get() {
+    const prompt = String(form.visual_prompt_system || '')
+    const locked = activeAgent2LockedProtocol.value
+    let editable = prompt.startsWith(locked)
+      ? prompt.slice(locked.length).replace(/^\s+/, '')
+      : prompt
+    if (form.content_mode === 'general' && prompt.startsWith(LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL)) {
+      editable = prompt.slice(LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL.length).replace(/^\s+/, '')
+    }
+    if (form.content_mode !== 'general') return editable
+    return editable.startsWith(EDITABLE_GENERAL_AGENT2_PREFIX)
+      ? editable
+      : `${EDITABLE_GENERAL_AGENT2_PREFIX}\n${editable}`.trimEnd()
+  },
+  set(value) {
+    let editable = String(value || '').trim()
+    if (form.content_mode === 'general' && !editable.startsWith(EDITABLE_GENERAL_AGENT2_PREFIX)) {
+      editable = `${EDITABLE_GENERAL_AGENT2_PREFIX}${editable ? `\n${editable}` : ''}`
+    }
+    form.visual_prompt_system = `${activeAgent2LockedProtocol.value}${editable ? `\n\n${editable}` : ''}`
+  },
+})
+const agent2DirectorThemeModel = computed({
+  get: () => String(form.agent2_director_theme || ''),
+  set(value) {
+    const editable = editableVisualPromptSystem.value
+    form.agent2_director_theme = String(value || '').trim()
+    editableVisualPromptSystem.value = editable
+    rememberVisualPrompt()
+  },
+})
+const agent2DirectorThemePlaceholder = computed(() => `例如：${AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode] || '电影叙事视频'}`)
 
 const visualEditorPageCount = computed(() => Math.max(1, Math.ceil(visualEditor.value.items.length / VISUAL_EDITOR_PAGE_SIZE)))
 const visibleVisualEditorItems = computed(() => {
@@ -1372,7 +1511,7 @@ const steps = [
   { key: 'archive', label: '项目归档' },
 ]
 
-const importantLogPattern = /(失败|错误|异常|Traceback|Error|error|HTTP \d+|退出码|找不到|缺少|拒绝|超时|开始:|完成:|配音进度|开始配音|句配音|提交|等待|返图|云端状态|模块|海报|队列|分段|拼接|Streaming frame|Capturing frame|Encoding video|Assembling final video|Render complete|已停止|全部完成|输出:)/
+const importantLogPattern = /(失败|错误|异常|Traceback|Error|error|HTTP \d+|退出码|找不到|缺少|拒绝|超时|开始:|完成:|配音进度|TTS_HEARTBEAT|正在生成|开始配音|句配音|提交|等待|返图|云端状态|模块|海报|队列|分段|拼接|Streaming frame|Capturing frame|Encoding video|Assembling final video|Render complete|已停止|全部完成|输出:)/
 const streamingFramePattern = /Streaming frame \d+\/\d+/
 
 function compactStreamingFrameLogs(logs) {
@@ -1543,6 +1682,7 @@ async function login() {
     loginForm.password = ''
     await refresh()
     await refreshParameterPresets()
+    await refreshAgentPromptPresets()
   } catch (error) {
     authError.value = error.message || '登录失败'
   }
@@ -1555,6 +1695,7 @@ async function register() {
     registerForm.password = ''
     await refresh()
     await refreshParameterPresets()
+    await refreshAgentPromptPresets()
   } catch (error) {
     authError.value = error.message || '注册失败'
   }
@@ -1565,6 +1706,8 @@ async function logout() {
   session.value = { user: null, auth_mode: 'account', mysql: {} }
   parameterPresets.value = []
   selectedParameterPreset.value = ''
+  agentPromptPresets.value = []
+  selectedAgentPromptPreset.value = ''
   jobs.value = []
   jobPage.value = 1
   jobTotal.value = 0
@@ -1676,8 +1819,15 @@ async function loadSettings() {
   form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY))
     || modeDefaults.default_character
     || ''
+  form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY)) || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY))
     || modeDefaults.default_system
+    || ''
+  form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY))
+    || modeDefaults.default_agent1_system
+    || ''
+  form.agent2_director_theme = window.localStorage.getItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY))
+    || AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode]
     || ''
   applyVisualPacing()
   rememberVisualPrompt()
@@ -1697,6 +1847,67 @@ async function refreshParameterPresets() {
     parameterPresetMessage.value = error.message || '无法读取已保存参数'
   } finally {
     loadingParameterPresets.value = false
+  }
+}
+
+async function refreshAgentPromptPresets() {
+  if (!session.value.user) {
+    agentPromptPresets.value = []
+    selectedAgentPromptPreset.value = ''
+    return
+  }
+  loadingAgentPromptPresets.value = true
+  try {
+    const payload = await api.agentPromptPresets()
+    agentPromptPresets.value = payload.presets || []
+  } finally {
+    loadingAgentPromptPresets.value = false
+  }
+}
+
+async function loadSelectedAgentPromptPreset() {
+  if (!selectedAgentPromptPreset.value) return
+  try {
+    const presetKey = selectedAgentPromptPreset.value
+    const payload = await api.agentPromptPreset(presetKey)
+    if (contentModeOptions.value.some((item) => item.key === payload.content_mode)) {
+      setContentMode(payload.content_mode)
+    }
+    form.visual_prompt_system = payload.visual_prompt_system || ''
+    form.agent1_prompt_system = payload.agent1_prompt_system || contentModeDefaults().default_agent1_system || ''
+    form.agent2_director_theme = payload.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode] || ''
+    form.visual_prompt_mode = 'full'
+    selectedAgentPromptPreset.value = presetKey
+    rememberVisualPrompt()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '读取 Agent 提示词失败'
+  }
+}
+
+async function saveCurrentAgentPromptPreset() {
+  const prompt = String(form.visual_prompt_system || '').trim()
+  if (!prompt) {
+    parameterPresetMessage.value = '请先填写完整 Agent 2 画面指令。'
+    return
+  }
+  const name = window.prompt('请输入 Agent 提示词保存名：', selectedAgentPromptPreset.value || form.project_name || '')
+  if (!name?.trim()) return
+  savingAgentPromptPreset.value = true
+  try {
+    const payload = await api.saveAgentPromptPreset({
+      name: name.trim(),
+      visual_prompt_system: prompt,
+      agent1_prompt_system: form.agent1_prompt_system,
+      agent2_director_theme: form.agent2_director_theme,
+      content_mode: form.content_mode,
+    })
+    selectedAgentPromptPreset.value = payload.key || `user:${payload.name || name.trim()}`
+    parameterPresetMessage.value = payload.message || 'Agent 提示词已保存。'
+    await refreshAgentPromptPresets()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '保存 Agent 提示词失败'
+  } finally {
+    savingAgentPromptPreset.value = false
   }
 }
 
@@ -1729,6 +1940,7 @@ async function loadSelectedParameterPreset() {
     Object.assign(form, parameters)
     ttsEngine.value = parameters.tts_engine === 'qwen' ? 'qwen' : 'indextts2'
     form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
+    await restoreSavedTtsVoiceLabel()
     rememberVisualPrompt()
     rememberVisualPacing()
     parameterPresetMessage.value = `已读取参数：${payload.name || selectedParameterPreset.value}`
@@ -1800,6 +2012,7 @@ function resetSimpleVisualPrompt() {
   form.visual_prompt_mode = 'simple'
   form.visual_style_prompt = contentModeDefaults().default_style || ''
   form.global_character_prompt = contentModeDefaults().default_character || ''
+  form.story_environment_prompt = ''
   rememberVisualPrompt()
 }
 
@@ -1808,14 +2021,22 @@ function setContentMode(mode) {
   rememberVisualPrompt()
   form.content_mode = mode
   form.visual_prompt_mode = 'simple'
+  selectedAgentPromptPreset.value = ''
   const modeDefaults = contentModeDefaults(mode)
   form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY, mode))
     || modeDefaults.default_style
   form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY, mode))
     || modeDefaults.default_character
     || ''
+  form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY, mode)) || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY, mode))
     || modeDefaults.default_system
+    || ''
+  form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY, mode))
+    || modeDefaults.default_agent1_system
+    || ''
+  form.agent2_director_theme = window.localStorage.getItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY, mode))
+    || AGENT2_DIRECTOR_THEME_DEFAULTS[mode]
     || ''
   applyVisualPacing(mode)
   rememberVisualPrompt()
@@ -1823,6 +2044,10 @@ function setContentMode(mode) {
 
 function setVisualPromptMode(mode) {
   form.visual_prompt_mode = mode
+  if (mode === 'full' && !String(form.agent1_prompt_system || '').trim()) {
+    form.agent1_prompt_system = contentModeDefaults().default_agent1_system || ''
+  }
+  if (mode !== 'full') selectedAgentPromptPreset.value = ''
   rememberVisualPrompt()
 }
 
@@ -1831,7 +2056,10 @@ function rememberVisualPrompt() {
   window.localStorage.setItem(VISUAL_PROMPT_MODE_STORAGE_KEY, form.visual_prompt_mode)
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY), form.visual_style_prompt || '')
   window.localStorage.setItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY), form.global_character_prompt || '')
+  window.localStorage.setItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY), form.story_environment_prompt || '')
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY), form.visual_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY), form.agent1_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY), form.agent2_director_theme || '')
 }
 
 function rememberVisualPacing() {
@@ -1867,6 +2095,32 @@ async function uploadTtsVoice(event) {
     ttsVoiceUploadError.value = error.message || '上传参考音色失败'
   } finally {
     ttsVoiceUploading.value = false
+  }
+}
+
+async function restoreSavedTtsVoiceLabel() {
+  const savedVoiceId = String(form.tts_voice_id || '')
+  ttsVoiceUploadError.value = ''
+  if (!savedVoiceId.startsWith('upload:')) {
+    ttsVoiceUploadName.value = ''
+    return
+  }
+
+  const assetId = savedVoiceId.slice('upload:'.length)
+  try {
+    if (!editorAssets.value.length) {
+      const payload = await api.editorUploads()
+      editorAssets.value = payload.assets || []
+    }
+    const asset = editorAssets.value.find((item) => String(item.id) === assetId)
+    if (asset) {
+      ttsVoiceUploadName.value = asset.name || '已恢复本地参考音色'
+      return
+    }
+    ttsVoiceUploadName.value = '已保存的参考音色'
+    ttsVoiceUploadError.value = '该参考音色文件当前不存在，请重新上传后再运行。'
+  } catch {
+    ttsVoiceUploadName.value = '已保存的参考音色'
   }
 }
 
@@ -2364,6 +2618,7 @@ onMounted(async () => {
   await loadSettings()
   await refresh()
   await refreshParameterPresets()
+  await refreshAgentPromptPresets()
   timer = window.setInterval(refresh, 2500)
 })
 

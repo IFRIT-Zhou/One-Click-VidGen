@@ -49,6 +49,11 @@ export const api = {
   saveParameterPreset: (payload) => requestJSON('/api/parameter-presets', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
+  agentPromptPresets: () => requestJSON('/api/agent-prompt-presets'),
+  agentPromptPreset: (name) => requestJSON(`/api/agent-prompt-presets/${encodeURIComponent(name)}`),
+  saveAgentPromptPreset: (payload) => requestJSON('/api/agent-prompt-presets', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   createJob: (payload) => requestJSON('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

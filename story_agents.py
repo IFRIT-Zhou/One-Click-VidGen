@@ -188,7 +188,13 @@ def story_fingerprint(
         for scene in scenes
     ]
     payload = json.dumps(
-        {"content_mode": normalize_content_mode(content_mode), "scenes": compact},
+        {
+            "content_mode": normalize_content_mode(content_mode),
+            "agent1_prompt": hashlib.sha1(
+                os.getenv("AGENT1_PROMPT_SYSTEM", "").strip().encode("utf-8")
+            ).hexdigest(),
+            "scenes": compact,
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -390,6 +396,10 @@ def create_story_plan(
     science_mode = content_mode == CONTENT_MODE_SCIENCE
     general_mode = content_mode == CONTENT_MODE_GENERAL
     generation_source = "local_fallback"
+    # This is intentionally supplied as structured context, not as an editable
+    # Agent 1 prompt.  It must also be available to the local fallback path.
+    global_environment_prompt = os.getenv("GLOBAL_ENVIRONMENT_PROMPT", "").strip()
+    custom_agent1_prompt = os.getenv("AGENT1_PROMPT_SYSTEM", "").strip()
     if not gemini_configured():
         print("Agent 1：Gemini 未配置，使用本地故事上下文。", flush=True)
         plan = _fallback_story_plan(scenes, content_mode)
@@ -408,10 +418,11 @@ def create_story_plan(
                 {
                     "complete_story": compact_scenes,
                     "user_global_character_bible": global_character_prompt,
+                    "user_world_bible": global_environment_prompt,
                 },
                 ensure_ascii=False,
             )
-            system_prompt = (
+            system_prompt = custom_agent1_prompt or (
                 SCIENCE_AGENT_SYSTEM_PROMPT if science_mode
                 else GENERAL_AGENT_SYSTEM_PROMPT if general_mode
                 else STORY_AGENT_SYSTEM_PROMPT
@@ -423,15 +434,18 @@ def create_story_plan(
                 "\n【用户全局人物档案】输入中的 user_global_character_bible 是最高优先级。"
                 "若非空，必须据此建立或修正主角固定 appearance，并把前期/后期换装、帽子或头盔拆成互不重叠的 wardrobe_states；"
                 "不得把整段阶段说明塞进 appearance、wardrobe 或单一镜头。未登记角色仅依据原文建立最少的临时档案。"
+                "\n【用户世界与环境设定】user_world_bible 若非空，必须作为地点、时代、天气、空间、常驻道具与环境连续性的最高优先级；"
+                "将可复用内容整理到 locations、continuity_rules 和 world_bible，不得擅自替换用户指定的时代或地域。"
             )
-            retry_prompt = (
+            retry_prompt = custom_agent1_prompt or (
                 SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode
                 else GENERAL_AGENT_COMPACT_RETRY_PROMPT if general_mode
                 else STORY_AGENT_COMPACT_RETRY_PROMPT
             )
             retry_prompt += (
                 "\n额外字段：每个 story_beats 输出 visual_pacing（hold、normal、fast 三选一）；"
-                "user_global_character_bible 为最高优先级，必须拆成固定 appearance 和明确 wardrobe_states。"
+                "user_global_character_bible 为最高优先级，必须拆成固定 appearance 和明确 wardrobe_states；"
+                "user_world_bible 为环境连续性的最高优先级。"
             )
             try:
                 response = generate_gemini_text(
@@ -460,6 +474,8 @@ def create_story_plan(
             plan = _fallback_story_plan(scenes, content_mode)
 
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+    if global_environment_prompt:
+        plan["world_bible"] = global_environment_prompt
     plan["content_mode"] = content_mode
     plan["generation_source"] = generation_source
     plan["agent_version"] = STORY_AGENT_VERSION
@@ -702,5 +718,6 @@ def story_context_for_prompt(plan: dict[str, Any]) -> dict[str, Any]:
         "clues_and_payoffs",
         "continuity_rules",
         "visual_safety",
+        "world_bible",
     )
     return {key: plan.get(key) for key in keys if key in plan}

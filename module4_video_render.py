@@ -132,9 +132,9 @@ def build_visual_prompt_system(
 【输出格式】
 - 只输出严格 JSON 数组，不要 Markdown，不要解释。
 - 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
 
 【分镜规则】
-- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
 - 先通读前后文，再为每组选择一个能清楚表达原文的具体瞬间、场景、物体或动作；每张图只有一个视觉焦点。
 - 原文有角色时，首次出现必须写出具体外貌、年龄、发型、服装与标志物；再次出现直接复写已确定的特征。没有角色时可使用环境、物件、示意或空镜，不强行创建主角。
 - 手机、平板、书信或照片承载关键信息时，采用物件正面特写或插入镜头，不使用第一视角或越肩机位。
@@ -834,6 +834,9 @@ def build_macro_mapping(
     global_character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
     if global_character_bible:
         story_context["user_global_character_bible"] = global_character_bible
+    global_environment_bible = os.getenv("GLOBAL_ENVIRONMENT_PROMPT", "").strip()
+    if global_environment_bible:
+        story_context["user_world_bible"] = global_environment_bible
     protagonist_lock = _style_protagonist_identity(os.getenv("VISUAL_STYLE_PROMPT", ""))
     if protagonist_lock:
         story_context["user_protagonist_identity_lock"] = protagonist_lock

@@ -49,6 +49,7 @@ from module4_video_render import (
     SCIENCE_VISUAL_STYLE,
     build_visual_prompt_system,
 )
+from story_agents import GENERAL_AGENT_SYSTEM_PROMPT, SCIENCE_AGENT_SYSTEM_PROMPT, STORY_AGENT_SYSTEM_PROMPT
 
 
 class GenerateRequest(BaseModel):
@@ -88,12 +89,22 @@ class GenerateRequest(BaseModel):
     visual_max_slides: int | None = Field(default=None, ge=1, le=12)
     visual_style_prompt: str | None = Field(default=None, max_length=1000)
     global_character_prompt: str | None = Field(default=None, max_length=2000)
+    story_environment_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
+    agent1_prompt_system: str | None = Field(default=None, max_length=12000)
 
 
 class ParameterPresetRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     parameters: dict[str, Any]
+
+
+class AgentPromptPresetRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    visual_prompt_system: str = Field(min_length=1, max_length=4000)
+    agent1_prompt_system: str | None = Field(default=None, max_length=12000)
+    agent2_director_theme: str | None = Field(default=None, max_length=40)
+    content_mode: Literal["urban_suspense", "science_explainer", "general"] | None = None
 
 
 class VisualRedrawRequest(BaseModel):
@@ -150,6 +161,7 @@ app.add_middleware(
 
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 PARAMETER_PRESETS_DIR = PROJECT_ROOT / "saved_parameters"
+AGENT_PROMPT_PRESETS_DIR = PROJECT_ROOT / "saved_agent_prompts"
 if WORKSPACE_DIR.exists():
     app.mount("/workspace", StaticFiles(directory=str(WORKSPACE_DIR)), name="workspace")
 
@@ -323,6 +335,7 @@ def settings() -> dict[str, Any]:
                     "default_style": DEFAULT_VISUAL_STYLE,
                     "default_character": DEFAULT_GLOBAL_CHARACTER_PROMPT,
                     "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
+                    "default_agent1_system": STORY_AGENT_SYSTEM_PROMPT,
                 },
                 CONTENT_MODE_SCIENCE: {
                     "label": "口播科普",
@@ -330,6 +343,7 @@ def settings() -> dict[str, Any]:
                     "default_style": SCIENCE_VISUAL_STYLE,
                     "default_character": SCIENCE_GLOBAL_CHARACTER_PROMPT,
                     "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
+                    "default_agent1_system": SCIENCE_AGENT_SYSTEM_PROMPT,
                 },
                 CONTENT_MODE_GENERAL: {
                     "label": "通用自定义",
@@ -337,6 +351,7 @@ def settings() -> dict[str, Any]:
                     "default_style": GENERAL_VISUAL_STYLE,
                     "default_character": "",
                     "default_system": GENERAL_VISUAL_PROMPT_SYSTEM,
+                    "default_agent1_system": GENERAL_AGENT_SYSTEM_PROMPT,
                 },
             },
         },
@@ -410,6 +425,66 @@ def _parameter_preset_path(user_id: int, name: str) -> Path:
     return _parameter_preset_dir(user_id) / f"{safe_name}.json"
 
 
+def _agent_prompt_preset_dir(user_id: int) -> Path:
+    directory = AGENT_PROMPT_PRESETS_DIR / str(int(user_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _agent_prompt_preset_path(user_id: int, name: str) -> Path:
+    return _agent_prompt_preset_dir(user_id) / f"{normalize_project_name(name)}.json"
+
+
+def _default_agent_prompt_preset_dir() -> Path:
+    directory = AGENT_PROMPT_PRESETS_DIR / "defaults"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
+    CONTENT_MODE_STORY: {
+        "name": "都市惊悚",
+        "visual_prompt_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
+        "agent1_prompt_system": STORY_AGENT_SYSTEM_PROMPT,
+        "agent2_director_theme": "惊悚漫画",
+    },
+    CONTENT_MODE_SCIENCE: {
+        "name": "口播科普",
+        "visual_prompt_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
+        "agent1_prompt_system": SCIENCE_AGENT_SYSTEM_PROMPT,
+        "agent2_director_theme": "科普科技口播视频",
+    },
+    CONTENT_MODE_GENERAL: {
+        "name": "通用自定义",
+        "visual_prompt_system": GENERAL_VISUAL_PROMPT_SYSTEM,
+        "agent1_prompt_system": GENERAL_AGENT_SYSTEM_PROMPT,
+        "agent2_director_theme": "通用视频",
+    },
+}
+
+
+def _default_agent_prompt_preset_path(content_mode: str) -> Path:
+    return _default_agent_prompt_preset_dir() / f"{content_mode}.json"
+
+
+def _ensure_default_agent_prompt_presets() -> None:
+    for content_mode, defaults in DEFAULT_AGENT_PROMPT_PRESETS.items():
+        path = _default_agent_prompt_preset_path(content_mode)
+        if path.exists():
+            continue
+        document = {
+            "version": 1,
+            "kind": "default",
+            "content_mode": content_mode,
+            "name": defaults["name"],
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "visual_prompt_system": defaults["visual_prompt_system"],
+            "agent1_prompt_system": defaults["agent1_prompt_system"],
+            "agent2_director_theme": defaults["agent2_director_theme"],
+        }
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 @app.get("/api/parameter-presets")
 def list_parameter_presets(request: Request) -> dict[str, Any]:
     user = require_user(request)
@@ -464,11 +539,89 @@ def save_parameter_preset(payload: ParameterPresetRequest, request: Request) -> 
     return {"ok": True, "name": name, "message": f"参数已保存：{name}"}
 
 
+@app.get("/api/agent-prompt-presets")
+def list_agent_prompt_presets(request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    presets: list[dict[str, Any]] = []
+    _ensure_default_agent_prompt_presets()
+    for content_mode, defaults in DEFAULT_AGENT_PROMPT_PRESETS.items():
+        path = _default_agent_prompt_preset_path(content_mode)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(payload.get("visual_prompt_system") or "").strip():
+            presets.append({
+                "key": f"default:{content_mode}",
+                "name": str(payload.get("name") or defaults["name"]),
+                "kind": "default",
+                "saved_at": str(payload.get("saved_at") or ""),
+            })
+    for path in sorted(_agent_prompt_preset_dir(int(user["id"])).glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(payload.get("visual_prompt_system") or "").strip():
+            presets.append({"key": f"user:{path.stem}", "name": str(payload.get("name") or path.stem), "kind": "user", "saved_at": str(payload.get("saved_at") or "")})
+    return {"presets": presets}
+
+
+@app.get("/api/agent-prompt-presets/{name}")
+def load_agent_prompt_preset(name: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    _ensure_default_agent_prompt_presets()
+    if name.startswith("default:"):
+        content_mode = name.split(":", 1)[1]
+        if content_mode not in DEFAULT_AGENT_PROMPT_PRESETS:
+            raise HTTPException(status_code=404, detail="未找到默认 Agent 提示词")
+        path = _default_agent_prompt_preset_path(content_mode)
+    else:
+        path = _agent_prompt_preset_path(int(user["id"]), name.removeprefix("user:"))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="未找到已保存的 Agent 提示词")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Agent 提示词文件无法读取") from exc
+    prompt = str(payload.get("visual_prompt_system") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=500, detail="Agent 提示词文件格式无效")
+    return {
+        "name": str(payload.get("name") or path.stem),
+        "visual_prompt_system": prompt,
+        "agent1_prompt_system": str(payload.get("agent1_prompt_system") or "").strip(),
+        "agent2_director_theme": str(payload.get("agent2_director_theme") or "").strip(),
+        "content_mode": str(payload.get("content_mode") or "").strip(),
+    }
+
+
+@app.put("/api/agent-prompt-presets")
+def save_agent_prompt_preset(payload: AgentPromptPresetRequest, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    name = normalize_project_name(payload.name)
+    document = {
+        "version": 1,
+        "name": name,
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "visual_prompt_system": payload.visual_prompt_system.strip(),
+        "agent1_prompt_system": str(payload.agent1_prompt_system or "").strip(),
+        "agent2_director_theme": str(payload.agent2_director_theme or "").strip(),
+        "content_mode": str(payload.content_mode or "").strip(),
+    }
+    _agent_prompt_preset_path(int(user["id"]), name).write_text(
+        json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return {"ok": True, "key": f"user:{name}", "name": name, "message": f"Agent 提示词已保存：{name}"}
+
+
 @app.post("/api/jobs")
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
     data["project_name"] = normalize_project_name(data.get("project_name"))
+    if data.get("visual_prompt_mode") != "full":
+        data["agent1_prompt_system"] = None
     if data.get("visual_prompt_mode") == "simple":
         if not str(data.get("global_character_prompt") or "").strip() and str(data.get("content_mode") or "") != CONTENT_MODE_GENERAL:
             data["global_character_prompt"] = (

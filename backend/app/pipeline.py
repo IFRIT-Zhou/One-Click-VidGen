@@ -1212,9 +1212,15 @@ def render_semantic_visual_video(
         visual_prompt_system = str(request.get("visual_prompt_system") or "").strip()
         if visual_prompt_system:
             poster_env["VISUAL_PROMPT_SYSTEM"] = visual_prompt_system
+        agent1_prompt_system = str(request.get("agent1_prompt_system") or "").strip()
+        if agent1_prompt_system:
+            poster_env["AGENT1_PROMPT_SYSTEM"] = agent1_prompt_system
         global_character_prompt = str(request.get("global_character_prompt") or "").strip()
         if global_character_prompt:
             poster_env["GLOBAL_CHARACTER_PROMPT"] = global_character_prompt
+        story_environment_prompt = str(request.get("story_environment_prompt") or "").strip()
+        if story_environment_prompt:
+            poster_env["GLOBAL_ENVIRONMENT_PROMPT"] = story_environment_prompt
         if str(request.get("visual_prompt_mode") or "simple") == "simple":
             visual_style_prompt = str(request.get("visual_style_prompt") or "").strip()
             if visual_style_prompt:
