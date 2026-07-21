@@ -106,9 +106,20 @@
           <div class="topbar-title">{{ activePage === 'workspace' ? '故事视频生成工作台' : activePage === 'development' ? '待开发功能' : activePage === 'subtitle' ? '模块 2 · 字幕识别' : '模块 1 · 仅配音' }}</div>
         </div>
         <div class="topbar-actions">
+          <template v-if="session.user">
+            <button class="ghost-btn compact-btn" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
+              {{ savingParameterPreset ? '保存中…' : '保存当前参数' }}
+            </button>
+            <select v-model="selectedParameterPreset" class="parameter-preset-select" :disabled="loadingParameterPresets || !parameterPresets.length">
+              <option value="">读取已保存参数</option>
+              <option v-for="preset in parameterPresets" :key="preset.name" :value="preset.name">{{ preset.name }}</option>
+            </select>
+            <button class="ghost-btn compact-btn" type="button" :disabled="!selectedParameterPreset || loadingParameterPresets" @click="loadSelectedParameterPreset">读取参数</button>
+          </template>
           <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
             {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
           </span>
+          <span v-if="parameterPresetMessage" class="muted small">{{ parameterPresetMessage }}</span>
         </div>
       </header>
 
@@ -422,7 +433,9 @@
                   maxlength="1000"
                   :placeholder="form.content_mode === 'science_explainer'
                     ? '描述科教漫画画风、红围巾短发少女、信息表达与画面质感。'
-                    : '描述惊悚漫画画风、角色一致性、色彩与悬疑氛围。'"
+                    : form.content_mode === 'general'
+                      ? '可自由填写：例如日系治愈动画、赛博朋克电影、写实水墨、儿童绘本等。'
+                      : '描述惊悚漫画画风、角色一致性、色彩与悬疑氛围。'"
                 ></textarea>
               </label>
               <label class="stack">
@@ -433,11 +446,15 @@
                   @input="rememberVisualPrompt"
                   rows="3"
                   maxlength="2000"
-                  placeholder="可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。"
+                  :placeholder="form.content_mode === 'general'
+                    ? '可留空；如需固定角色，可填写外貌、服装和标志物。'
+                    : '可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。'"
                 ></textarea>
               </label>
               <small class="muted">
-                可留空：采用当前模式默认主角。未登记角色会按文案建立临时档案并保持一致；人物造型会按镜头阶段自动锁定。
+                {{ form.content_mode === 'general'
+                  ? '通用模式默认不预设主角：可留空，Agent 会仅按原文建立必要角色档案；填写后会作为全局人物设定严格保持。'
+                  : '可留空：采用当前模式默认主角。未登记角色会按文案建立临时档案并保持一致；人物造型会按镜头阶段自动锁定。' }}
               </small>
             </div>
             </div>
@@ -1057,6 +1074,7 @@ const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
 const VISUAL_PACING_DEFAULTS = {
   urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
   science_explainer: { min: 7, target: 9, max: 14, slides: 6 },
+  general: { min: 6, target: 8, max: 12, slides: 6 },
 }
 const FALLBACK_CONTENT_MODES = {
   urban_suspense: {
@@ -1066,6 +1084,13 @@ const FALLBACK_CONTENT_MODES = {
   science_explainer: {
     label: '口播科普',
     description: '红围巾短发少女的清晰科教漫画',
+  },
+  general: {
+    label: '通用自定义',
+    description: '自由定义画风与人物的通用视频模式',
+    default_style: '通用横版叙事画面：请填写希望的画风、色彩、质感与镜头气质。',
+    default_character: '',
+    default_system: '',
   },
 }
 
@@ -1232,6 +1257,11 @@ const apiKeyForm = reactive({
   common_api_key: '',
   qwen_tts_api_key: '',
 })
+const parameterPresets = ref([])
+const selectedParameterPreset = ref('')
+const loadingParameterPresets = ref(false)
+const savingParameterPreset = ref(false)
+const parameterPresetMessage = ref('')
 const form = reactive({
   project_name: randomProjectName(),
   script: '',
@@ -1512,6 +1542,7 @@ async function login() {
     session.value = await api.login({ ...loginForm })
     loginForm.password = ''
     await refresh()
+    await refreshParameterPresets()
   } catch (error) {
     authError.value = error.message || '登录失败'
   }
@@ -1523,6 +1554,7 @@ async function register() {
     session.value = await api.register({ ...registerForm })
     registerForm.password = ''
     await refresh()
+    await refreshParameterPresets()
   } catch (error) {
     authError.value = error.message || '注册失败'
   }
@@ -1531,6 +1563,8 @@ async function register() {
 async function logout() {
   await api.logout()
   session.value = { user: null, auth_mode: 'account', mysql: {} }
+  parameterPresets.value = []
+  selectedParameterPreset.value = ''
   jobs.value = []
   jobPage.value = 1
   jobTotal.value = 0
@@ -1647,6 +1681,60 @@ async function loadSettings() {
     || ''
   applyVisualPacing()
   rememberVisualPrompt()
+}
+
+async function refreshParameterPresets() {
+  if (!session.value.user) {
+    parameterPresets.value = []
+    selectedParameterPreset.value = ''
+    return
+  }
+  loadingParameterPresets.value = true
+  try {
+    const payload = await api.parameterPresets()
+    parameterPresets.value = payload.presets || []
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '无法读取已保存参数'
+  } finally {
+    loadingParameterPresets.value = false
+  }
+}
+
+async function saveCurrentParameterPreset() {
+  const name = String(form.project_name || '').trim()
+  if (!name) {
+    parameterPresetMessage.value = '请先填写项目名称，再保存参数。'
+    return
+  }
+  savingParameterPreset.value = true
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.saveParameterPreset({ name, parameters: { ...form, tts_engine: ttsEngine.value } })
+    selectedParameterPreset.value = payload.name || name
+    parameterPresetMessage.value = payload.message || '参数已保存。'
+    await refreshParameterPresets()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '保存参数失败'
+  } finally {
+    savingParameterPreset.value = false
+  }
+}
+
+async function loadSelectedParameterPreset() {
+  if (!selectedParameterPreset.value) return
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.parameterPreset(selectedParameterPreset.value)
+    const parameters = payload.parameters || {}
+    Object.assign(form, parameters)
+    ttsEngine.value = parameters.tts_engine === 'qwen' ? 'qwen' : 'indextts2'
+    form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
+    rememberVisualPrompt()
+    rememberVisualPacing()
+    parameterPresetMessage.value = `已读取参数：${payload.name || selectedParameterPreset.value}`
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '读取参数失败'
+  }
 }
 
 async function uploadLocalScript(event) {
@@ -1923,8 +2011,14 @@ async function resetVisualImagePrompt(item) {
 
 async function renderEditedVideo() {
   if (!visualEditorProjectId.value) return
-  await api.renderVisualEditor(visualEditorProjectId.value, visualRenderMode.value)
-  visualEditor.value.task = { status: 'running', action: 'render', message: '已开始重新渲染，实时进度请查看上方主后台日志。' }
+  try {
+    await api.renderVisualEditor(visualEditorProjectId.value, visualRenderMode.value)
+    activeJob.value = await api.job(visualEditorProjectId.value)
+    visualEditor.value.task = { status: 'running', action: 'render', message: '已开始重新渲染，进度显示在上方主进度条。' }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'render', message: error.message || '重新渲染启动失败' }
+  }
 }
 
 async function cancelVisualRender() {
@@ -2269,6 +2363,7 @@ function kindLabel(kind) {
 onMounted(async () => {
   await loadSettings()
   await refresh()
+  await refreshParameterPresets()
   timer = window.setInterval(refresh, 2500)
 })
 

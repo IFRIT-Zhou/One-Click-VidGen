@@ -44,6 +44,11 @@ export const api = {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
   script: (name) => requestJSON(`/api/scripts/${encodeURIComponent(name)}`),
+  parameterPresets: () => requestJSON('/api/parameter-presets'),
+  parameterPreset: (name) => requestJSON(`/api/parameter-presets/${encodeURIComponent(name)}`),
+  saveParameterPreset: (payload) => requestJSON('/api/parameter-presets', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   createJob: (payload) => requestJSON('/api/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -114,6 +114,53 @@ class VisualEditor:
         return [item for item in payload if isinstance(item, dict)]
 
     @staticmethod
+    def _legacy_text_by_image(project_dir: Path) -> dict[str, str]:
+        """Recover per-image text from the self-contained HTML + SRT of old outputs."""
+        html_path = project_dir / "other" / HTML_FILENAME
+        srt_path = project_dir / "other" / SUBTITLE_FILENAME
+        if not html_path.is_file() or not srt_path.is_file():
+            return {}
+        try:
+            html = html_path.read_text(encoding="utf-8")
+            match = re.search(r"const posterTimeline\s*=\s*(\[.*?\]);\s*let subtitleData", html, re.S)
+            posters = json.loads(match.group(1)) if match else []
+            srt = srt_path.read_text(encoding="utf-8")
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {}
+
+        def as_seconds(value: str) -> float:
+            hours, minutes, tail = value.strip().split(":")
+            seconds, milliseconds = tail.replace(".", ",").split(",")
+            return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(milliseconds) / 1000
+
+        subtitles: list[tuple[float, float, str]] = []
+        for block in re.split(r"\n\s*\n", srt.strip()):
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            timing_index = next((index for index, line in enumerate(lines) if "-->" in line), -1)
+            if timing_index < 0:
+                continue
+            try:
+                start_raw, end_raw = lines[timing_index].split("-->", 1)
+                subtitles.append((as_seconds(start_raw), as_seconds(end_raw), " ".join(lines[timing_index + 1:])))
+            except (ValueError, IndexError):
+                continue
+        result: dict[str, str] = {}
+        for poster in posters if isinstance(posters, list) else []:
+            if not isinstance(poster, dict):
+                continue
+            filename = Path(str(poster.get("url") or "")).name
+            if not filename:
+                continue
+            try:
+                start, end = float(poster.get("start") or 0), float(poster.get("end") or 0)
+            except (TypeError, ValueError):
+                continue
+            text = " ".join(item[2] for item in subtitles if item[1] > start and item[0] < end).strip()
+            if text:
+                result[filename] = text
+        return result
+
+    @staticmethod
     def _save_mapping(project_dir: Path, mapping: list[dict[str, Any]]) -> None:
         path = VisualEditor._mapping_path(project_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +216,7 @@ class VisualEditor:
     def inspect(self, job_id: str, user_id: int) -> dict[str, Any]:
         project_dir = self.output_dir(job_id, user_id)
         image_dir = project_dir / "image"
+        legacy_text_by_image = self._legacy_text_by_image(project_dir)
         timeline: dict[str, dict[str, Any]] = {}
         if self._timeline_path(project_dir).is_file():
             for item in json.loads(self._timeline_path(project_dir).read_text(encoding="utf-8")):
@@ -185,6 +233,8 @@ class VisualEditor:
                 continue
             slides = [str(value) for value in mapping.get("includes_slides", [])]
             text = " ".join(str(timeline.get(value, {}).get("text_content") or "") for value in slides).strip()
+            if not text:
+                text = legacy_text_by_image.get(image.name, "")
             items.append({
                 "id": macro_id,
                 "prompt": str(mapping.get("image_prompt") or ""),
@@ -340,6 +390,10 @@ class VisualEditor:
             )
         if has_active_image_tasks:
             raise RuntimeError("请等待正在重绘或替换的图片完成后，再重新渲染视频")
+        mode = mode if mode in {"subtitles", "raw", "both"} else "both"
+        from .pipeline import store
+        setattr(job, "_visual_editor_render_mode", mode)
+        store.update(job, step="render", progress=0, message="画面修改：准备重新渲染")
         self._set_task(job.id, status="running", action="render", message="正在仅运行模块 5 重新合成视频")
 
         def work() -> None:
@@ -369,7 +423,6 @@ class VisualEditor:
                             shutil.copy2(image, visual.ASSETS_DIR / image.name)
                     shutil.copy2(audio_path, renderer.AUDIO_DIR / "final_output.wav")
                     shutil.copy2(subtitle_path, renderer.AUDIO_DIR / "final_short.srt")
-                    from .pipeline import store
                     render_env = os.environ.copy()
                     render_env["VIDEO_RENDER_VARIANT"] = mode
                     render_env["PYTHONUTF8"] = "1"
@@ -393,7 +446,7 @@ class VisualEditor:
                         for line in process.stdout:
                             line = line.strip()
                             if line:
-                                store.log(job, f"[画面修改/重新渲染] {line}")
+                                store.log(job, line)
                         return_code = process.wait()
                     finally:
                         with self._lock:
@@ -427,13 +480,15 @@ class VisualEditor:
                         job.artifacts["video_with_subtitles"] = f"/api/jobs/{job.id}/artifacts/final_with_subtitles.mp4"
                     if mode in {"raw", "both"}:
                         job.artifacts["video_raw"] = f"/api/jobs/{job.id}/artifacts/final_raw_presentation.mp4"
-                    from .pipeline import store
-                    store.update(job, artifacts=dict(job.artifacts), message="画面修改已重新渲染")
+                    store.update(job, artifacts=dict(job.artifacts), progress=100, message="画面修改已重新渲染")
                     self._set_task(job.id, status="completed", action="render", message="视频已重新渲染")
                     self._log(job, "重新渲染完成，最终视频已更新。")
             except Exception as exc:
                 self._set_task(job.id, status="failed", action="render", message=str(exc))
                 self._log(job, f"重新渲染失败：{exc}")
+            finally:
+                if hasattr(job, "_visual_editor_render_mode"):
+                    delattr(job, "_visual_editor_render_mode")
 
         threading.Thread(target=work, daemon=True).start()
 

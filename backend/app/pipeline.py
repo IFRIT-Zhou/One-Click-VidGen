@@ -52,13 +52,16 @@ TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
 ASR_RUNTIME_SUCCESS_CACHE: set[str] = set()
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 NOISY_PROGRESS_RE = re.compile(
-    r"^(?:\[(?P<phase>字幕版 1/2|纯净版 2/2)\]\s*)?.*?"
+    r"^(?:\[(?P<phase>[^\]]+)\]\s*)?.*?"
     r"(?P<percent>\d{1,3})%\s+"
     r"(?P<label>Streaming frame|Capturing frame|Encoding video|Assembling final video|Render complete)",
     re.I,
 )
 TTS_SENTENCE_PROGRESS_RE = re.compile(
     r"^\[(?:TTS|QWEN_TTS)_PROGRESS\]\s+配音进度\s+(?P<completed>\d+)/(?P<total>\d+)"
+)
+POSTER_PROGRESS_RE = re.compile(
+    r"^\[POSTER_PROGRESS\]\s*(?P<completed>\d+)\s*/\s*(?P<total>\d+)"
 )
 
 
@@ -82,6 +85,7 @@ def normalize_project_name(value: str | None) -> str:
 VISUAL_PACING_DEFAULTS = {
     "urban_suspense": {"min_duration": 6.0, "target_duration": 8.0, "max_duration": 12.0, "max_slides": 6},
     "science_explainer": {"min_duration": 7.0, "target_duration": 9.0, "max_duration": 14.0, "max_slides": 6},
+    "general": {"min_duration": 6.0, "target_duration": 8.0, "max_duration": 12.0, "max_slides": 6},
 }
 
 
@@ -372,21 +376,52 @@ class JobStore:
             if job.step == "tts":
                 job.progress = min(29, 8 + round(min(completed, total) / total * 21))
                 job.message = normalized[:500]
+        poster_progress = POSTER_PROGRESS_RE.search(normalized)
+        if poster_progress is not None and job.step == "visual":
+            completed = int(poster_progress.group("completed"))
+            total = max(1, int(poster_progress.group("total")))
+            completed = min(completed, total)
+            job.progress = max(job.progress, min(84, 55 + round(completed / total * 29)))
+            job.message = f"模块 4：画面生成 {completed}/{total}"
         progress = parse_noisy_progress_log(normalized)
+        render_progress_changed = False
         if progress is not None:
             key, percent = progress
+            editor_render_mode = str(getattr(job, "_visual_editor_render_mode", "") or "")
+            if editor_render_mode:
+                if editor_render_mode == "both":
+                    mapped_progress = round(percent * 0.5) if "字幕版" in key else 50 + round(percent * 0.5)
+                else:
+                    mapped_progress = percent
+                job.progress = max(job.progress, min(99, mapped_progress))
+                job.message = f"画面修改：{key} {percent}%"
+                job.updated_at = time.time()
+                upsert_generation_job(job.snapshot())
+                # The progress bar and task message already expose this detail.
+                # Do not flood the main log with renderer frame counters.
+                return
             cache_key = f"{job.id}:{key}"
             previous = self._last_progress_log.get(cache_key)
             if previous and percent < 100 and percent - previous[1] < 10:
                 return
             self._last_progress_log[cache_key] = (key, percent)
             normalized = f"{key}: {percent}%"
+            if job.step == "render":
+                if "1/2" in key:
+                    mapped_progress = 86 + round(percent * 0.04)
+                elif "2/2" in key:
+                    mapped_progress = 90 + round(percent * 0.05)
+                else:
+                    mapped_progress = 86 + round(percent * 0.09)
+                job.progress = max(job.progress, min(95, mapped_progress))
+                job.message = f"模块 5：{normalized}"
+                render_progress_changed = True
         stamp = time.strftime("%H:%M:%S")
         persisted_line = f"[{stamp}] {normalized}"
         job.logs.append(persisted_line)
         job.updated_at = time.time()
         append_generation_job_log(job.id, persisted_line, job.updated_at)
-        if tts_progress is not None:
+        if tts_progress is not None or poster_progress is not None or render_progress_changed:
             upsert_generation_job(job.snapshot())
 
     def run_async(self, job: Job, *, resume: bool = False) -> None:
@@ -1135,6 +1170,7 @@ def render_semantic_visual_video(
         fine_path = generate_fine_grained_timeline()
     store.raise_if_cancelled(job)
     store.log(job, f"模块 3 剧本写入: {fine_path}")
+    store.update(job, step="visual", progress=max(job.progress, 55), message=STEPS[4][1])
 
     visual_backend = str(request.get("visual_backend") or "poster").lower()
     if visual_backend in {"html", "gpt", "html-gpt"}:
@@ -1194,6 +1230,7 @@ def render_semantic_visual_video(
         raise ValueError(f"不支持的视觉后端: {visual_backend}")
 
     store.raise_if_cancelled(job)
+    store.update(job, step="render", progress=max(job.progress, 86), message=STEPS[5][1])
     run_command(job, store, [sys.executable, "module5_video_render.py"], STEPS[5][1])
 
 
@@ -1495,7 +1532,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     hierarchical_planning = total_chars > hierarchical_min_chars
     if not auto_split or total_chars <= threshold:
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
-        store.update(job, step="semantic", progress=54, message=STEPS[3][1])
+        store.update(job, step="semantic", progress=48, message=STEPS[3][1])
         render_semantic_visual_video(job, store, request, resume=resume)
         return
 
@@ -1522,7 +1559,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         groups = split_scenes_by_text_length(scenes, threshold)
         store.log(job, "长文主题分段不可用，已回退到字幕边界字数分段")
     if len(groups) <= 1:
-        store.update(job, step="semantic", progress=54, message=STEPS[3][1])
+        store.update(job, step="semantic", progress=48, message=STEPS[3][1])
         render_semantic_visual_video(
             job,
             store,

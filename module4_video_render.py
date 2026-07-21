@@ -63,8 +63,13 @@ SCIENCE_VISUAL_STYLE = (
     "画面可信、亲切、信息层级明确，适合口播视频背景。"
     "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
 )
+GENERAL_VISUAL_STYLE = (
+    "通用横版叙事画面：请在此填写你希望的画风、色彩、质感、时代背景和镜头气质。"
+    "未填写时，采用清晰、电影感、主体明确的叙事插画表现；避免乱码、水印、二维码和密集文字。"
+)
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+CONTENT_MODE_GENERAL = "general"
 DEFAULT_GLOBAL_CHARACTER_PROMPT = (
     "主角：35岁憔悴中年女性，黑色长发；前期戴红色鸭舌帽、穿灰色旧衣服；"
     "后期骑行一段时间、购入装备后，精神焕发，穿白色骑行服并佩戴白色骑行头盔。"
@@ -73,7 +78,12 @@ SCIENCE_GLOBAL_CHARACTER_PROMPT = "固定讲解主角：黑色短发、红色围
 
 
 def normalize_content_mode(value: str | None) -> str:
-    return CONTENT_MODE_SCIENCE if str(value or "").strip().lower() == CONTENT_MODE_SCIENCE else CONTENT_MODE_STORY
+    mode = str(value or "").strip().lower()
+    if mode == CONTENT_MODE_SCIENCE:
+        return CONTENT_MODE_SCIENCE
+    if mode == CONTENT_MODE_GENERAL:
+        return CONTENT_MODE_GENERAL
+    return CONTENT_MODE_STORY
 
 
 def build_visual_prompt_system(
@@ -82,9 +92,10 @@ def build_visual_prompt_system(
     global_character_prompt: str = "",
 ) -> str:
     content_mode = normalize_content_mode(content_mode)
-    visual_style = style.strip() or (
-        SCIENCE_VISUAL_STYLE if content_mode == CONTENT_MODE_SCIENCE else DEFAULT_VISUAL_STYLE
-    )
+    visual_style = style.strip() or {
+        CONTENT_MODE_SCIENCE: SCIENCE_VISUAL_STYLE,
+        CONTENT_MODE_GENERAL: GENERAL_VISUAL_STYLE,
+    }.get(content_mode, DEFAULT_VISUAL_STYLE)
     if content_mode == CONTENT_MODE_SCIENCE:
         return f"""你是科普科技口播视频的分镜视觉导演，也是本流水线的 Agent 2。
 
@@ -115,6 +126,29 @@ def build_visual_prompt_system(
 【固定画质要求】
 - 系统会在每条 image_prompt 末尾统一加入：
   去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"""
+    if content_mode == CONTENT_MODE_GENERAL:
+        return f"""你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
+- 先通读前后文，再为每组选择一个能清楚表达原文的具体瞬间、场景、物体或动作；每张图只有一个视觉焦点。
+- 原文有角色时，首次出现必须写出具体外貌、年龄、发型、服装与标志物；再次出现直接复写已确定的特征。没有角色时可使用环境、物件、示意或空镜，不强行创建主角。
+- 手机、平板、书信或照片承载关键信息时，采用物件正面特写或插入镜头，不使用第一视角或越肩机位。
+
+【用户可控设定】
+- 当前统一画风参考为：{visual_style}
+- 用户全局人物设定为：{global_character_prompt.strip() or '未填写；只能依据原文建立必要的临时角色档案。'}
+- 上述设定只作为全局资料；image_prompt 只写本镜头独有的主体、动作、环境、景别、机位、构图、光线和氛围，不重复整段通用画风或画质句。
+
+【画面要求】
+- 忠于原文，不擅自把普通内容改成恐怖、科普、儿童风或特定题材。
+- 不要生成长文字、字幕、水印、二维码、品牌 logo、拼贴页或密集 PPT；如有文字，总量少于 20 个中文字符。
+- 避免露骨血腥、裸体、自残及危险行为特写；必要时用反应、剪影、遮挡、远景或环境痕迹间接表达。
+- 系统会在每条 image_prompt 末尾统一加入干净画质要求，模型不要重复输出。"""
     return f"""你是鬼故事与都市小说视频的惊悚漫画分镜导演。
 
 【输出格式】
@@ -162,6 +196,7 @@ def build_visual_prompt_system(
 
 DEFAULT_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_STORY)
 SCIENCE_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_SCIENCE)
+GENERAL_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_GENERAL)
 
 
 @dataclass(frozen=True)
@@ -443,7 +478,9 @@ def _fallback_mapping(
     story_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     groups = _visual_groups(scenes, story_plan)
-    science_mode = normalize_content_mode(os.getenv("CONTENT_MODE")) == CONTENT_MODE_SCIENCE
+    content_mode = normalize_content_mode(os.getenv("CONTENT_MODE"))
+    science_mode = content_mode == CONTENT_MODE_SCIENCE
+    general_mode = content_mode == CONTENT_MODE_GENERAL
     return [
         {
             "macro_scene_id": f"poster_{index:03d}",
@@ -456,6 +493,10 @@ def _fallback_mapping(
                 )
                 if science_mode
                 else (
+                    "2:1 横版叙事插画或漫画分镜，单一视觉焦点，人物、环境或关键物件清楚服务于原文，"
+                    f"具体呈现“{'；'.join(str(scene.get('visual_summary') or '') for scene in group)}”，"
+                    "镜头、光线和情绪按原文自然选择，不强加惊悚或科普风格，不要拼贴、分格、字幕、水印或边框。"
+                ) if general_mode else (
                     "2:1 横版电影感惊悚漫画分镜，单一视觉焦点，人物与环境具有明确叙事关系，"
                     f"具体呈现“{'；'.join(str(scene.get('visual_summary') or '') for scene in group)}”，"
                     "用景别、遮挡、阴影和冷色光营造悬念，忠于原文，不凭空添加鬼怪或血腥内容，"
@@ -1334,6 +1375,7 @@ def render_posters_concurrently(
         f"{len(provider_configs)} 个账号可轮换，421 优先切账号后再入队）...",
         flush=True,
     )
+    print(f"[POSTER_PROGRESS] 0/{len(mapping)}", flush=True)
 
     completed: dict[int, Path] = {}
     failures: dict[int, str] = {}
@@ -1346,6 +1388,7 @@ def render_posters_concurrently(
             index = futures[future]
             try:
                 completed[index] = future.result()
+                print(f"[POSTER_PROGRESS] {len(completed)}/{len(mapping)}", flush=True)
             except RunningHubAllAccountsPowerInsufficient as exc:
                 for pending in futures:
                     pending.cancel()

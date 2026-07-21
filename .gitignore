@@ -18,6 +18,7 @@ runtime/
 runtime_logs/
 Archives/
 output/
+saved_parameters/
 Vocal/
 tools/
 venv_audio_vedio/

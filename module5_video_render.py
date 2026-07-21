@@ -16,6 +16,9 @@ AUDIO_DIR = WORKSPACE_DIR / "2_audio_srt"
 FINAL_DIR = WORKSPACE_DIR / "4_final_video"
 PORTABLE_FFMPEG_DIR = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
 PORTABLE_FFMPEG = PORTABLE_FFMPEG_DIR / "ffmpeg.exe"
+PORTABLE_HYPERFRAMES_BROWSER_DIR = (
+    PROJECT_ROOT / "runtime" / "hyperframes" / ".cache" / "hyperframes" / "chrome"
+)
 
 
 def env_flag(name: str, default: bool) -> bool:
@@ -23,6 +26,14 @@ def env_flag(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def find_portable_hyperframes_browser() -> Path | None:
+    """Find Chrome bundled with this portable package, independent of USERPROFILE."""
+    if not PORTABLE_HYPERFRAMES_BROWSER_DIR.is_dir():
+        return None
+    candidates = sorted(PORTABLE_HYPERFRAMES_BROWSER_DIR.rglob("chrome-headless-shell.exe"))
+    return candidates[-1] if candidates else None
 
 
 def render_workers() -> str:
@@ -115,6 +126,17 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
     # Hyperframes launches ffmpeg by name. Put the portable copy first so a
     # broken system/Chocolatey shim can never affect an exported project.
     render_env["PATH"] = f"{PORTABLE_FFMPEG_DIR}{os.pathsep}{render_env.get('PATH', '')}"
+    browser = find_portable_hyperframes_browser()
+    if browser is None:
+        raise RuntimeError(
+            "未找到整合包内 Hyperframes Chrome Headless Shell。"
+            "请覆盖浏览器热修补丁，或重新下载完整整合包。"
+        )
+    # Do not trust a stale value inherited from an already-running backend.
+    # Hyperframes otherwise falls back to C:\\Users\\<name>\\.cache and fails
+    # on machines that never downloaded its browser cache.
+    render_env["HYPERFRAMES_BROWSER_PATH"] = str(browser)
+    print(f"Hyperframes 浏览器: {browser}", flush=True)
     print(
         "渲染加速配置: "
         f"workers={render_workers()}, "

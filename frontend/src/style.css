@@ -197,6 +197,13 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(18px);
 }
+.parameter-preset-select {
+  width: min(210px, 24vw);
+  min-width: 140px;
+  padding: 9px 30px 9px 11px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+}
 .page-tabs button {
   display: grid;
   gap: 3px;

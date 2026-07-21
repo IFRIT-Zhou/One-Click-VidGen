@@ -29,12 +29,18 @@ VISUAL_DIR = PROJECT_ROOT / "workspace" / "3_visual_template"
 STORY_PLAN_PATH = VISUAL_DIR / "story_plan.json"
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+CONTENT_MODE_GENERAL = "general"
 STORY_AGENT_VERSION = 4
 CHARACTER_CONTINUITY_VERSION = 3
 
 
 def normalize_content_mode(value: str | None) -> str:
-    return CONTENT_MODE_SCIENCE if str(value or "").strip().lower() == CONTENT_MODE_SCIENCE else CONTENT_MODE_STORY
+    mode = str(value or "").strip().lower()
+    if mode == CONTENT_MODE_SCIENCE:
+        return CONTENT_MODE_SCIENCE
+    if mode == CONTENT_MODE_GENERAL:
+        return CONTENT_MODE_GENERAL
+    return CONTENT_MODE_STORY
 
 
 STORY_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1：故事策划与叙事编辑。
@@ -104,6 +110,17 @@ story_beats 最多 8 项，每项仅含 beat_id、slide_ids、purpose、emotion�
 continuity_rules 最多 8 条。所有文字字段尽量少于 60 个中文字符。
 slide_ids 只能使用输入中存在的 ID。忠于原文，不增加事件；敏感事件使用非血腥、非直观的视觉表达。"""
 
+GENERAL_AGENT_SYSTEM_PROMPT = STORY_AGENT_SYSTEM_PROMPT.replace(
+    "故事视频流水线的 Agent 1：故事策划与叙事编辑",
+    "通用视频流水线的 Agent 1：内容策划与叙事编辑",
+).replace(
+    "不得凭空增加鬼怪、凶案、人物或关键事件；都市小说不能被强行改成鬼故事。",
+    "不得凭空增加人物、事件或题材设定；普通内容不能被强行改成鬼故事、科普或其他特定题材。",
+)
+GENERAL_AGENT_COMPACT_RETRY_PROMPT = STORY_AGENT_COMPACT_RETRY_PROMPT.replace(
+    "故事视频 Agent 1", "通用视频 Agent 1"
+)
+
 
 SCIENCE_AGENT_SYSTEM_PROMPT = """你是科普口播视频流水线的 Agent 1：知识结构策划与讲解编辑。
 你必须通读全部文案，建立供分镜 Agent 使用的全文知识上下文。只输出严格 JSON 对象，不要解释。
@@ -151,6 +168,11 @@ SCIENCE_SEGMENT_AGENT_SYSTEM_PROMPT = """你是科普口播视频流水线的 Ag
 细化当前片段的概念前置、因果链、案例、解释和结论。
 只输出严格 JSON，字段与全局设定相同。story_beats 最多 8 项，按当前片段顺序组织，slide_ids 只能使用
 当前片段中的 ID。不得编造数据或结论，不输出逐张生图提示词。"""
+
+GENERAL_SEGMENT_AGENT_SYSTEM_PROMPT = SEGMENT_AGENT_SYSTEM_PROMPT.replace(
+    "故事视频流水线的 Agent 1B：局部分段策划",
+    "通用视频流水线的 Agent 1B：局部内容策划",
+)
 
 
 def story_fingerprint(
@@ -366,6 +388,7 @@ def create_story_plan(
     """Run Agent 1 once, with a deterministic local fallback."""
     content_mode = normalize_content_mode(content_mode)
     science_mode = content_mode == CONTENT_MODE_SCIENCE
+    general_mode = content_mode == CONTENT_MODE_GENERAL
     generation_source = "local_fallback"
     if not gemini_configured():
         print("Agent 1：Gemini 未配置，使用本地故事上下文。", flush=True)
@@ -388,7 +411,11 @@ def create_story_plan(
                 },
                 ensure_ascii=False,
             )
-            system_prompt = SCIENCE_AGENT_SYSTEM_PROMPT if science_mode else STORY_AGENT_SYSTEM_PROMPT
+            system_prompt = (
+                SCIENCE_AGENT_SYSTEM_PROMPT if science_mode
+                else GENERAL_AGENT_SYSTEM_PROMPT if general_mode
+                else STORY_AGENT_SYSTEM_PROMPT
+            )
             system_prompt += (
                 "\n\n【新增硬规则】每个 story_beats 必须额外输出 visual_pacing，只能为 hold、normal 或 fast。"
                 "hold 用于环境铺垫、稳定对话和需停留观察的信息；fast 用于动作、转折、地点切换或情绪骤变；其余为 normal。"
@@ -397,7 +424,11 @@ def create_story_plan(
                 "若非空，必须据此建立或修正主角固定 appearance，并把前期/后期换装、帽子或头盔拆成互不重叠的 wardrobe_states；"
                 "不得把整段阶段说明塞进 appearance、wardrobe 或单一镜头。未登记角色仅依据原文建立最少的临时档案。"
             )
-            retry_prompt = SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode else STORY_AGENT_COMPACT_RETRY_PROMPT
+            retry_prompt = (
+                SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode
+                else GENERAL_AGENT_COMPACT_RETRY_PROMPT if general_mode
+                else STORY_AGENT_COMPACT_RETRY_PROMPT
+            )
             retry_prompt += (
                 "\n额外字段：每个 story_beats 输出 visual_pacing（hold、normal、fast 三选一）；"
                 "user_global_character_bible 为最高优先级，必须拆成固定 appearance 和明确 wardrobe_states。"
@@ -588,6 +619,8 @@ def create_segment_story_plan(
             segment_system_prompt = (
                 SCIENCE_SEGMENT_AGENT_SYSTEM_PROMPT
                 if content_mode == CONTENT_MODE_SCIENCE
+                else GENERAL_SEGMENT_AGENT_SYSTEM_PROMPT
+                if content_mode == CONTENT_MODE_GENERAL
                 else SEGMENT_AGENT_SYSTEM_PROMPT
             ) + (
                 "\n每个 story_beats 必须输出 visual_pacing（hold、normal、fast 三选一）；"

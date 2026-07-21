@@ -37,8 +37,11 @@ from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, normalize_project_name
 from .visual_editor import IMAGE_EXTENSIONS, visual_editor
 from module4_video_render import (
     CONTENT_MODE_SCIENCE,
+    CONTENT_MODE_GENERAL,
     CONTENT_MODE_STORY,
     DEFAULT_VISUAL_PROMPT_SYSTEM,
+    GENERAL_VISUAL_PROMPT_SYSTEM,
+    GENERAL_VISUAL_STYLE,
     DEFAULT_GLOBAL_CHARACTER_PROMPT,
     DEFAULT_VISUAL_STYLE,
     SCIENCE_GLOBAL_CHARACTER_PROMPT,
@@ -54,7 +57,7 @@ class GenerateRequest(BaseModel):
     module1_only: bool = False
     subtitle_only: bool = False
     subtitle_use_correction: bool = True
-    content_mode: Literal["urban_suspense", "science_explainer"] = "urban_suspense"
+    content_mode: Literal["urban_suspense", "science_explainer", "general"] = "urban_suspense"
     skip_tts: bool = False
     source_audio_id: str | None = None
     skip_text_correction: bool = False
@@ -86,6 +89,11 @@ class GenerateRequest(BaseModel):
     visual_style_prompt: str | None = Field(default=None, max_length=1000)
     global_character_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
+
+
+class ParameterPresetRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    parameters: dict[str, Any]
 
 
 class VisualRedrawRequest(BaseModel):
@@ -141,6 +149,7 @@ app.add_middleware(
 )
 
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
+PARAMETER_PRESETS_DIR = PROJECT_ROOT / "saved_parameters"
 if WORKSPACE_DIR.exists():
     app.mount("/workspace", StaticFiles(directory=str(WORKSPACE_DIR)), name="workspace")
 
@@ -322,6 +331,13 @@ def settings() -> dict[str, Any]:
                     "default_character": SCIENCE_GLOBAL_CHARACTER_PROMPT,
                     "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
                 },
+                CONTENT_MODE_GENERAL: {
+                    "label": "通用自定义",
+                    "description": "自行决定画风与人物形象的通用视频模式",
+                    "default_style": GENERAL_VISUAL_STYLE,
+                    "default_character": "",
+                    "default_system": GENERAL_VISUAL_PROMPT_SYSTEM,
+                },
             },
         },
     }
@@ -383,13 +399,78 @@ def read_script(name: str) -> dict[str, str]:
     return {"name": path.name, "content": path.read_text(encoding="utf-8")}
 
 
+def _parameter_preset_dir(user_id: int) -> Path:
+    directory = PARAMETER_PRESETS_DIR / str(int(user_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _parameter_preset_path(user_id: int, name: str) -> Path:
+    safe_name = normalize_project_name(name)
+    return _parameter_preset_dir(user_id) / f"{safe_name}.json"
+
+
+@app.get("/api/parameter-presets")
+def list_parameter_presets(request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    presets: list[dict[str, Any]] = []
+    for path in sorted(_parameter_preset_dir(int(user["id"])).glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        presets.append({
+            "name": str(payload.get("name") or path.stem),
+            "saved_at": str(payload.get("saved_at") or ""),
+        })
+    return {"presets": presets}
+
+
+@app.get("/api/parameter-presets/{name}")
+def load_parameter_preset(name: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    path = _parameter_preset_path(int(user["id"]), name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="未找到已保存的参数")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="参数文件无法读取") from exc
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, dict):
+        raise HTTPException(status_code=500, detail="参数文件格式无效")
+    return {"name": str(payload.get("name") or path.stem), "parameters": parameters}
+
+
+@app.put("/api/parameter-presets")
+def save_parameter_preset(payload: ParameterPresetRequest, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    allowed_fields = set(GenerateRequest.model_fields) - {"api_key"}
+    raw = {key: value for key, value in payload.parameters.items() if key in allowed_fields}
+    try:
+        parameters = GenerateRequest(**raw).model_dump(exclude={"api_key"})
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"参数格式不正确：{exc}") from exc
+    name = normalize_project_name(payload.name)
+    parameters["project_name"] = name
+    document = {
+        "version": 1,
+        "name": name,
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "parameters": parameters,
+    }
+    path = _parameter_preset_path(int(user["id"]), name)
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "name": name, "message": f"参数已保存：{name}"}
+
+
 @app.post("/api/jobs")
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
     data["project_name"] = normalize_project_name(data.get("project_name"))
     if data.get("visual_prompt_mode") == "simple":
-        if not str(data.get("global_character_prompt") or "").strip():
+        if not str(data.get("global_character_prompt") or "").strip() and str(data.get("content_mode") or "") != CONTENT_MODE_GENERAL:
             data["global_character_prompt"] = (
                 SCIENCE_GLOBAL_CHARACTER_PROMPT
                 if str(data.get("content_mode") or "") == CONTENT_MODE_SCIENCE

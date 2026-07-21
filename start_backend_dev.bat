@@ -19,10 +19,17 @@ set "NUMBA_CACHE_DIR=%ROOT_DIR%runtime\cache\numba"
 set "MPLCONFIGDIR=%ROOT_DIR%runtime\cache\matplotlib"
 set "CUDA_CACHE_PATH=%ROOT_DIR%runtime\cache\cuda"
 set "PATH=%ROOT_DIR%runtime\python;%ROOT_DIR%runtime\python\Scripts;%ROOT_DIR%runtime\python\Lib\site-packages\torch\lib;%ROOT_DIR%tools\ffmpeg\bin;%ROOT_DIR%runtime\node;%PATH%"
+set "HYPERFRAMES_BROWSER_PATH="
+for /r "%ROOT_DIR%runtime\hyperframes\.cache\hyperframes\chrome" %%F in (chrome-headless-shell.exe) do if not defined HYPERFRAMES_BROWSER_PATH set "HYPERFRAMES_BROWSER_PATH=%%F"
 
 if not exist "%BACKEND_PYTHON%" (
     echo [ERROR] Portable Python runtime was not found:
     echo %BACKEND_PYTHON%
+    exit /b 1
+)
+
+if not defined HYPERFRAMES_BROWSER_PATH (
+    echo [ERROR] Bundled Hyperframes Chrome Headless Shell was not found.
     exit /b 1
 )
 
