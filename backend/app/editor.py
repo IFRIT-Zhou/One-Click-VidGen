@@ -26,6 +26,7 @@ EDITOR_DIR = WORKSPACE_DIR / "editor"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 def ffmpeg_binary() -> str:
@@ -50,6 +51,8 @@ def media_kind(path: Path) -> str:
         return "audio"
     if suffix in SUBTITLE_EXTENSIONS:
         return "subtitle"
+    if suffix in IMAGE_EXTENSIONS:
+        return "image"
     return "file"
 
 
@@ -108,8 +111,8 @@ def register_editor_asset(
 async def save_upload(user_id: int, file: UploadFile) -> dict[str, str]:
     original = file.filename or "upload.bin"
     suffix = Path(original).suffix.lower()
-    if suffix not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | SUBTITLE_EXTENSIONS:
-        raise ValueError("只支持视频、音频和字幕文件")
+    if suffix not in VIDEO_EXTENSIONS | AUDIO_EXTENSIONS | SUBTITLE_EXTENSIONS | IMAGE_EXTENSIONS:
+        raise ValueError("只支持图片、视频、音频和字幕文件")
     filename = sanitize_filename(original)
     target = user_upload_dir(user_id) / filename
     with target.open("wb") as out:

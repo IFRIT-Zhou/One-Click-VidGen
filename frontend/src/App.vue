@@ -151,6 +151,14 @@
                 <option v-for="preset in parameterPresets" :key="preset.name" :value="preset.name">{{ preset.name }}</option>
               </select>
               <button class="toolbar-load-button" type="button" :disabled="!selectedParameterPreset || loadingParameterPresets" @click="loadSelectedParameterPreset">读取参数</button>
+              <button
+                class="toolbar-delete-button"
+                type="button"
+                :disabled="!selectedParameterPreset || deletingParameterPreset || loadingParameterPresets"
+                @click="deleteSelectedParameterPreset"
+              >
+                {{ deletingParameterPreset ? '删除中…' : '删除参数' }}
+              </button>
             </template>
             <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
               {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
@@ -252,11 +260,16 @@
               <div v-if="ttsEngine === 'indextts2'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
                   <span>上传本地参考音色</span>
-                  <label class="script-file-picker">
-                    <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
-                    <span>{{ ttsVoiceUploading ? '上传中' : '浏览音频' }}</span>
-                    <strong>{{ ttsVoiceUploadName || '选择清晰的 WAV / MP3 / FLAC' }}</strong>
-                  </label>
+                  <div class="tts-voice-picker-row">
+                    <label class="script-file-picker">
+                      <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
+                      <span>{{ ttsVoiceUploading ? '上传中' : '浏览音频' }}</span>
+                      <strong>{{ ttsVoiceUploadName || '选择清晰的 WAV / MP3 / FLAC' }}</strong>
+                    </label>
+                    <button class="voice-preview-btn" type="button" :disabled="!ttsVoicePreviewUrl" :title="ttsVoicePreviewPlaying ? '暂停试听' : '播放试听'" @click="toggleTtsVoicePreview">
+                      {{ ttsVoicePreviewPlaying ? '❚❚' : '▶' }}
+                    </button>
+                  </div>
                   <small v-if="ttsVoiceUploadError" class="script-upload-error">{{ ttsVoiceUploadError }}</small>
                   <small v-else class="muted">建议使用 10–30 秒、单人、无背景音乐的干净人声。</small>
                 </div>
@@ -439,6 +452,23 @@
                     : '可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。'"
                 ></textarea>
               </label>
+              <div class="visual-reference-panel">
+                <div class="sidebar-label">角色一致性增强（可选）</div>
+                <strong>上传角色形象参考图（最多 3 张）</strong>
+                <label class="script-file-picker compact-reference-picker">
+                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadReferenceImages" />
+                  <span>{{ protagonistReferenceUploading ? '上传中' : '浏览图片' }}</span>
+                  <small>{{ referenceImageNames.length ? `已选择 ${referenceImageNames.length} 张（按上传顺序为图 1 至图 ${referenceImageNames.length}）` : 'JPG / PNG / WebP，建议单人清晰半身或正脸图' }}</small>
+                </label>
+                <div v-if="referenceImageNames.length" class="reference-image-chips">
+                  <span v-for="(name, index) in referenceImageNames" :key="`${name}-${index}`" class="reference-image-chip">
+                    图 {{ index + 1 }} · {{ name }}
+                    <button type="button" :title="`移除图 ${index + 1}`" @click="removeReferenceImage(index)">×</button>
+                  </span>
+                </div>
+                <div v-if="protagonistReferenceImageError" class="board-error">{{ protagonistReferenceImageError }}</div>
+                <small class="muted">可在全局人物设定中写“男主角图 1、女主角图 2”。Agent 2 会在镜头提示词中标注“角色形象参考图 1”，并只把实际出场角色对应的图片传给 Image2。</small>
+              </div>
               <label class="stack">
                 <span>故事世界与环境设定（可选）</span>
                 <textarea
@@ -541,6 +571,14 @@
             </section>
 
             <div class="inline-actions">
+              <label class="main-render-variant">
+                <span>成片版本</span>
+                <select v-model="form.video_render_variant">
+                  <option value="subtitles">仅字幕版</option>
+                  <option value="raw">仅无字幕版</option>
+                  <option value="both">双版本</option>
+                </select>
+              </label>
               <button
                 class="ghost-btn stop-btn"
                 type="button"
@@ -702,12 +740,28 @@
               </div>
               <div class="visual-editor-toolbar">
                 <span class="muted small">共 {{ visualEditor.items.length }} 张 · 每页 24 张</span>
+                <span v-if="visualReferenceSummary" class="visual-reference-summary">
+                  重绘参考图：{{ visualReferenceSummary }}
+                </span>
+                <button v-if="visualReferenceSummary" class="ghost-btn compact-btn" type="button" @click="clearVisualReferenceImages">清空参考图</button>
                 <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorLoading" @click="loadVisualEditor({ preservePage: true })">刷新图片</button>
               </div>
               <div class="visual-image-grid">
                 <article v-for="item in visibleVisualEditorItems" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
                   <div class="visual-image-actions">
                     <strong>{{ item.id }}</strong>
+                    <button
+                      type="button"
+                      class="icon-action self-reference-action"
+                      :class="{ selected: visualSelfReferenceMacroId === item.id }"
+                      :title="visualSelfReferenceMacroId === item.id ? '已作为图1参考，再次点击取消' : '将这张项目内图片作为图1参考'"
+                      :aria-label="visualSelfReferenceMacroId === item.id ? '取消图1参考' : '将本图作为图1参考'"
+                      :disabled="item.task?.status === 'running'"
+                      @click="toggleVisualSelfReferenceImage(item.id)"
+                    >⬆️</button>
+                    <label class="icon-action replace-action reference-image-action" title="上传本地重绘参考图（最多 3 张）" aria-label="上传本地重绘参考图">
+                      ▣<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualReferenceImages($event, item.id)" />
+                    </label>
                     <button type="button" class="icon-action" title="按当前提示词重绘" aria-label="按当前提示词重绘" :disabled="item.task?.status === 'running'" @click="redrawVisualImage(item)">▶</button>
                     <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
                     <button type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
@@ -961,11 +1015,16 @@
                     </div>
                   </div>
                   <div class="script-upload-field">
-                    <label class="script-file-picker">
-                      <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
-                      <span>{{ ttsVoiceUploading ? '上传中' : '浏览音频' }}</span>
-                      <strong>{{ ttsVoiceUploadName || '选择 WAV / MP3 / FLAC' }}</strong>
-                    </label>
+                    <div class="tts-voice-picker-row">
+                      <label class="script-file-picker">
+                        <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
+                        <span>{{ ttsVoiceUploading ? '上传中' : '浏览音频' }}</span>
+                        <strong>{{ ttsVoiceUploadName || '选择 WAV / MP3 / FLAC' }}</strong>
+                      </label>
+                      <button class="voice-preview-btn" type="button" :disabled="!ttsVoicePreviewUrl" :title="ttsVoicePreviewPlaying ? '暂停试听' : '播放试听'" @click="toggleTtsVoicePreview">
+                        {{ ttsVoicePreviewPlaying ? '❚❚' : '▶' }}
+                      </button>
+                    </div>
                     <small v-if="ttsVoiceUploadError" class="script-upload-error">{{ ttsVoiceUploadError }}</small>
                     <small v-else class="muted">建议 10–30 秒、单人、无音乐的干净人声。</small>
                   </div>
@@ -1036,15 +1095,15 @@
                   <input v-model.trim="subtitleForm.project_name" type="text" maxlength="80" />
                 </label>
                 <div class="script-upload-field">
-                  <span>上传需要识别的音频</span>
+                  <span>上传需要识别的音频或视频</span>
                   <label class="script-file-picker">
-                    <input type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*" @change="uploadSubtitleAudio" />
-                    <span>{{ subtitleAudioUploading ? '上传中' : '浏览音频' }}</span>
-                    <strong>{{ subtitleAudioName || '选择 WAV / MP3 / M4A / FLAC' }}</strong>
+                    <input type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,.mp4,.mov,.mkv,.webm,.avi,.m4v,audio/*,video/*" @change="uploadSubtitleAudio" />
+                    <span>{{ subtitleAudioUploading ? '上传中' : '浏览音频/视频' }}</span>
+                    <strong>{{ subtitleAudioName || '选择音频或 MP4 / MOV / MKV 视频' }}</strong>
                   </label>
                   <div v-if="subtitleAudioError" class="board-error">{{ subtitleAudioError }}</div>
                 </div>
-                <div class="muted small">识别会保留音频原始时间轴；长音频会在后台任务中顺序处理。</div>
+                <div class="muted small">视频会先自动提取音轨；识别会保留原始时间轴，长媒体会在后台任务中顺序处理。</div>
               </div>
 
               <div class="module1-settings-column">
@@ -1086,14 +1145,18 @@
               <span class="progress-percent">{{ subtitleJob?.progress || 0 }}%</span>
             </div>
             <div class="progress-track"><span :style="{ width: `${subtitleJob?.progress || 0}%` }"></span></div>
-            <div v-if="subtitleJob?.artifacts?.subtitle" class="artifact-grid module1-artifacts">
-              <button class="artifact-card" type="button" @click="openArtifactFolder(subtitleJob.artifacts.subtitle)">
-                <div class="artifact-label">最终 SRT 字幕</div>
-                <div class="artifact-value">final_short.srt</div>
-                <div class="artifact-action">打开所在文件夹</div>
+            <pre class="log-view">{{ subtitleLogText }}</pre>
+            <div v-if="subtitleJob?.artifacts?.subtitle" class="subtitle-output-result">
+              <div>
+                <div class="artifact-label">最终产物</div>
+                <a class="artifact-value" :href="subtitleJob.artifacts.subtitle" download>final_short.srt</a>
+                <div class="muted small">点击文件名可下载 SRT；也可直接在资源管理器中打开所在位置。</div>
+              </div>
+              <button class="ghost-btn" type="button" @click="openSubtitleOutputFolder">
+                打开产物所在目录
               </button>
             </div>
-            <pre class="log-view">{{ subtitleLogText }}</pre>
+            <div v-if="folderOpenMessage" class="folder-open-message">{{ folderOpenMessage }}</div>
           </article>
         </section>
       </section>
@@ -1178,6 +1241,9 @@ const sourceAudioUploading = ref(false)
 const ttsVoiceUploadName = ref('')
 const ttsVoiceUploadError = ref('')
 const ttsVoiceUploading = ref(false)
+const ttsVoicePreviewUrl = ref('')
+const ttsVoicePreviewPlaying = ref(false)
+let ttsVoicePreviewAudio = null
 const folderOpenMessage = ref('')
 const visualEditorOpen = ref(false)
 const visualEditorLoading = ref(false)
@@ -1185,6 +1251,10 @@ const visualEditor = ref({ items: [], task: { status: 'idle', message: '' }, ver
 const visualEditorProjects = ref([])
 const visualEditorProjectId = ref('')
 const visualEditorPage = ref(1)
+const visualSelfReferenceMacroId = ref('')
+const visualReferenceUploads = ref([])
+const visualReferenceUploading = ref(false)
+const visualReferenceOwnerMacroId = ref('')
 const VISUAL_EDITOR_PAGE_SIZE = 24
 const visualPreviewItem = ref(null)
 const visualRenderMode = ref('both')
@@ -1316,6 +1386,9 @@ const subtitleAudioError = ref('')
 const subtitleAudioUploading = ref(false)
 const subtitleReferenceName = ref('')
 const subtitleReferenceError = ref('')
+const referenceImageNames = ref([])
+const protagonistReferenceImageError = ref('')
+const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
   language_api_key: '',
   image_api_key: '',
@@ -1326,6 +1399,7 @@ const parameterPresets = ref([])
 const selectedParameterPreset = ref('')
 const loadingParameterPresets = ref(false)
 const savingParameterPreset = ref(false)
+const deletingParameterPreset = ref(false)
 const parameterPresetMessage = ref('')
 const agentPromptPresets = ref([])
 const selectedAgentPromptPreset = ref('')
@@ -1346,6 +1420,7 @@ const form = reactive({
   qwen_tts_instructions: '',
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
+  video_render_variant: 'both',
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'auto',
   visual_min_duration: 6,
@@ -1354,6 +1429,8 @@ const form = reactive({
   visual_max_slides: 6,
   visual_style_prompt: '',
   global_character_prompt: '',
+  protagonist_reference_image_id: '',
+  reference_image_ids: [],
   story_environment_prompt: '',
   visual_prompt_system: '',
   agent1_prompt_system: '',
@@ -1441,6 +1518,14 @@ const visualEditorPageCount = computed(() => Math.max(1, Math.ceil(visualEditor.
 const visibleVisualEditorItems = computed(() => {
   const start = (visualEditorPage.value - 1) * VISUAL_EDITOR_PAGE_SIZE
   return visualEditor.value.items.slice(start, start + VISUAL_EDITOR_PAGE_SIZE)
+})
+const visualReferenceSummary = computed(() => {
+  const parts = []
+  if (visualSelfReferenceMacroId.value) parts.push(`图1 ${visualSelfReferenceMacroId.value}`)
+  const offset = visualSelfReferenceMacroId.value ? 2 : 1
+  visualReferenceUploads.value.forEach((asset, index) => parts.push(`图${offset + index} ${asset.name}`))
+  if (!parts.length) return ''
+  return `${visualReferenceOwnerMacroId.value || '当前卡片'}：${parts.join(' · ')}`
 })
 
 function contentModeDefaults(mode = form.content_mode) {
@@ -1920,7 +2005,14 @@ async function saveCurrentParameterPreset() {
   savingParameterPreset.value = true
   parameterPresetMessage.value = ''
   try {
-    const payload = await api.saveParameterPreset({ name, parameters: { ...form, tts_engine: ttsEngine.value } })
+    const payload = await api.saveParameterPreset({
+      name,
+      parameters: {
+        ...form,
+        manual_script: String(form.script || ''),
+        tts_engine: ttsEngine.value,
+      },
+    })
     selectedParameterPreset.value = payload.name || name
     parameterPresetMessage.value = payload.message || '参数已保存。'
     await refreshParameterPresets()
@@ -1938,14 +2030,34 @@ async function loadSelectedParameterPreset() {
     const payload = await api.parameterPreset(selectedParameterPreset.value)
     const parameters = payload.parameters || {}
     Object.assign(form, parameters)
+    form.script = typeof parameters.script === 'string' ? parameters.script : ''
     ttsEngine.value = parameters.tts_engine === 'qwen' ? 'qwen' : 'indextts2'
     form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
     await restoreSavedTtsVoiceLabel()
+    await restoreSavedProtagonistReferenceImageLabel()
     rememberVisualPrompt()
     rememberVisualPacing()
     parameterPresetMessage.value = `已读取参数：${payload.name || selectedParameterPreset.value}`
   } catch (error) {
     parameterPresetMessage.value = error.message || '读取参数失败'
+  }
+}
+
+async function deleteSelectedParameterPreset() {
+  const name = String(selectedParameterPreset.value || '').trim()
+  if (!name) return
+  if (!window.confirm(`确定删除已保存参数“${name}”？此操作无法撤销。`)) return
+  deletingParameterPreset.value = true
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.deleteParameterPreset(name)
+    selectedParameterPreset.value = ''
+    await refreshParameterPresets()
+    parameterPresetMessage.value = payload.message || `已删除参数：${name}`
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '删除参数失败'
+  } finally {
+    deletingParameterPreset.value = false
   }
 }
 
@@ -2076,6 +2188,7 @@ async function uploadTtsVoice(event) {
   const input = event.target
   const file = input.files?.[0]
   input.value = ''
+  stopTtsVoicePreview()
   ttsVoiceUploadError.value = ''
   if (!file) return
   const suffix = file.name.split('.').pop()?.toLowerCase()
@@ -2090,8 +2203,10 @@ async function uploadTtsVoice(event) {
     if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
     form.tts_voice_id = `upload:${payload.asset.id}`
     ttsVoiceUploadName.value = payload.asset.name || file.name
+    ttsVoicePreviewUrl.value = payload.asset.url || ''
   } catch (error) {
     ttsVoiceUploadName.value = ''
+    ttsVoicePreviewUrl.value = ''
     ttsVoiceUploadError.value = error.message || '上传参考音色失败'
   } finally {
     ttsVoiceUploading.value = false
@@ -2103,6 +2218,7 @@ async function restoreSavedTtsVoiceLabel() {
   ttsVoiceUploadError.value = ''
   if (!savedVoiceId.startsWith('upload:')) {
     ttsVoiceUploadName.value = ''
+    ttsVoicePreviewUrl.value = ''
     return
   }
 
@@ -2115,12 +2231,84 @@ async function restoreSavedTtsVoiceLabel() {
     const asset = editorAssets.value.find((item) => String(item.id) === assetId)
     if (asset) {
       ttsVoiceUploadName.value = asset.name || '已恢复本地参考音色'
+      ttsVoicePreviewUrl.value = asset.url || ''
       return
     }
     ttsVoiceUploadName.value = '已保存的参考音色'
+    ttsVoicePreviewUrl.value = ''
     ttsVoiceUploadError.value = '该参考音色文件当前不存在，请重新上传后再运行。'
   } catch {
     ttsVoiceUploadName.value = '已保存的参考音色'
+    ttsVoicePreviewUrl.value = ''
+  }
+}
+
+function stopTtsVoicePreview() {
+  if (ttsVoicePreviewAudio) {
+    ttsVoicePreviewAudio.pause()
+    ttsVoicePreviewAudio.currentTime = 0
+  }
+  ttsVoicePreviewPlaying.value = false
+}
+
+async function toggleTtsVoicePreview() {
+  const source = ttsVoicePreviewUrl.value
+  if (!source) return
+  if (ttsVoicePreviewAudio && ttsVoicePreviewAudio.src.endsWith(source)) {
+    if (ttsVoicePreviewAudio.paused) {
+      await ttsVoicePreviewAudio.play()
+      ttsVoicePreviewPlaying.value = true
+    } else {
+      ttsVoicePreviewAudio.pause()
+      ttsVoicePreviewPlaying.value = false
+    }
+    return
+  }
+  stopTtsVoicePreview()
+  const player = new Audio(source)
+  ttsVoicePreviewAudio = player
+  player.addEventListener('ended', () => {
+    if (ttsVoicePreviewAudio === player) ttsVoicePreviewPlaying.value = false
+  })
+  player.addEventListener('pause', () => {
+    if (ttsVoicePreviewAudio === player && player.currentTime < player.duration) ttsVoicePreviewPlaying.value = false
+  })
+  try {
+    await player.play()
+    ttsVoicePreviewPlaying.value = true
+  } catch (error) {
+    ttsVoicePreviewPlaying.value = false
+    ttsVoiceUploadError.value = error.message || '音色试听无法播放。'
+  }
+}
+
+async function restoreSavedProtagonistReferenceImageLabel() {
+  let assetIds = Array.isArray(form.reference_image_ids)
+    ? form.reference_image_ids.map((value) => String(value || '')).filter(Boolean).slice(0, 3)
+    : []
+  if (!assetIds.length && form.protagonist_reference_image_id) {
+    assetIds = [String(form.protagonist_reference_image_id)]
+  }
+  form.reference_image_ids = assetIds
+  form.protagonist_reference_image_id = assetIds[0] || ''
+  protagonistReferenceImageError.value = ''
+  if (!assetIds.length) {
+    referenceImageNames.value = []
+    return
+  }
+  try {
+    if (!editorAssets.value.length) {
+      const payload = await api.editorUploads()
+      editorAssets.value = payload.assets || []
+    }
+    const assets = assetIds.map((assetId) => editorAssets.value.find(
+      (item) => String(item.id) === assetId && item.kind === 'image',
+    ))
+    if (assets.some((asset) => !asset)) throw new Error('保存的角色参考图当前不存在，请重新上传后再运行。')
+    referenceImageNames.value = assets.map((asset, index) => asset.name || `角色参考图 ${index + 1}`)
+  } catch (error) {
+    referenceImageNames.value = assetIds.map((_, index) => `已保存的参考图 ${index + 1}`)
+    protagonistReferenceImageError.value = error.message || '无法恢复主角参考图。'
   }
 }
 
@@ -2131,6 +2319,17 @@ async function openArtifactFolder(url) {
     folderOpenMessage.value = '已在资源管理器中定位该文件。'
   } catch (error) {
     folderOpenMessage.value = error.message || '无法打开文件所在文件夹'
+  }
+}
+
+async function openSubtitleOutputFolder() {
+  folderOpenMessage.value = ''
+  if (!subtitleJob.value?.id) return
+  try {
+    const payload = await api.openJobOutputFolder(subtitleJob.value.id)
+    folderOpenMessage.value = `已打开字幕任务输出：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '暂时找不到字幕任务输出文件夹'
   }
 }
 
@@ -2192,6 +2391,7 @@ function startVisualEditorTaskPolling() {
 
 async function selectVisualEditorProject() {
   if (!visualEditorProjectId.value) return
+  clearVisualReferenceImages()
   try {
     activeJob.value = await api.job(visualEditorProjectId.value)
   } catch {
@@ -2218,14 +2418,88 @@ async function toggleVisualEditor() {
 }
 
 async function redrawVisualImage(item) {
-  if (!visualEditorProjectId.value || !item.prompt.trim()) return
+  if (!visualEditorProjectId.value) {
+    visualEditor.value.task = { status: 'failed', message: '请先选择要编辑的项目。' }
+    return
+  }
+  if (!item.prompt.trim()) {
+    item.task = { status: 'failed', action: 'redraw', message: '提示词为空，无法重绘。' }
+    visualEditor.value.task = { status: 'failed', message: `${item.id} 的提示词为空，无法重绘。` }
+    return
+  }
+  const usesCurrentReference = visualReferenceOwnerMacroId.value === item.id
+  const referenceCount = usesCurrentReference
+    ? (visualSelfReferenceMacroId.value ? 1 : 0) + visualReferenceUploads.value.length
+    : 0
+  const referenceNote = referenceCount ? `，使用 ${referenceCount} 张参考图` : ''
+  // Mark the card before the request completes. This gives immediate feedback
+  // and prevents repeat clicks while the browser is waiting for the API.
+  item.task = { status: 'running', action: 'redraw', message: `正在提交重绘${referenceNote}` }
   try {
     activeJob.value = await api.job(visualEditorProjectId.value)
-    await api.redrawVisualImage(visualEditorProjectId.value, item.id, item.prompt)
-    item.task = { status: 'running', action: 'redraw', message: '重绘中' }
+    await api.redrawVisualImage(
+      visualEditorProjectId.value,
+      item.id,
+      item.prompt,
+      usesCurrentReference && visualSelfReferenceMacroId.value ? [visualSelfReferenceMacroId.value] : [],
+      usesCurrentReference ? visualReferenceUploads.value.map((asset) => asset.id) : [],
+    )
+    item.task = { status: 'running', action: 'redraw', message: `重绘中${referenceNote}` }
+    visualEditor.value.task = { status: 'running', action: 'redraw', message: `${item.id} 已开始重绘${referenceNote}。` }
     startVisualEditorTaskPolling()
   } catch (error) {
     item.task = { status: 'failed', action: 'redraw', message: error.message || '图片重绘失败' }
+    visualEditor.value.task = { status: 'failed', action: 'redraw', message: `${item.id} 重绘未启动：${error.message || '未知错误'}` }
+  }
+}
+
+function beginVisualReferenceSelection(itemId) {
+  if (visualReferenceOwnerMacroId.value && visualReferenceOwnerMacroId.value !== itemId) {
+    clearVisualReferenceImages()
+  }
+  visualReferenceOwnerMacroId.value = itemId
+}
+
+function toggleVisualSelfReferenceImage(itemId) {
+  beginVisualReferenceSelection(itemId)
+  visualSelfReferenceMacroId.value = visualSelfReferenceMacroId.value === itemId ? '' : itemId
+}
+
+function clearVisualReferenceImages() {
+  visualSelfReferenceMacroId.value = ''
+  visualReferenceUploads.value = []
+  visualReferenceOwnerMacroId.value = ''
+}
+
+async function uploadVisualReferenceImages(event, itemId) {
+  const input = event.target
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (!files.length) return
+  beginVisualReferenceSelection(itemId)
+  const slots = 3 - visualReferenceUploads.value.length
+  if (slots <= 0) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'idle', message: '本地重绘参考图最多上传 3 张。' }
+    return
+  }
+  const selected = files.slice(0, slots)
+  if (selected.some((file) => !['jpg', 'jpeg', 'png', 'webp'].includes(file.name.split('.').pop()?.toLowerCase()))) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'failed', message: '重绘参考图仅支持 JPG、JPEG、PNG 或 WebP。' }
+    return
+  }
+  visualReferenceUploading.value = true
+  try {
+    const uploaded = await Promise.all(selected.map((file) => api.uploadEditorAsset(file)))
+    if (uploaded.some((payload) => payload.asset?.kind !== 'image')) throw new Error('上传文件不是可用图片。')
+    visualReferenceUploads.value = [
+      ...visualReferenceUploads.value,
+      ...uploaded.map((payload, index) => ({ id: payload.asset.id, name: payload.asset.name || selected[index].name })),
+    ].slice(0, 3)
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'idle', message: `已添加 ${selected.length} 张本地重绘参考图。` }
+  } catch (error) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'failed', message: error.message || '重绘参考图上传失败。' }
+  } finally {
+    visualReferenceUploading.value = false
   }
 }
 
@@ -2322,6 +2596,56 @@ async function uploadSourceAudio(event) {
   }
 }
 
+async function uploadReferenceImages(event) {
+  const input = event.target
+  const files = Array.from(input.files || [])
+  input.value = ''
+  protagonistReferenceImageError.value = ''
+  if (!files.length) return
+  const availableSlots = 3 - form.reference_image_ids.length
+  if (availableSlots <= 0) {
+    protagonistReferenceImageError.value = '最多只能保留 3 张角色参考图。'
+    return
+  }
+  const selectedFiles = files.slice(0, availableSlots)
+  if (files.length > availableSlots) {
+    protagonistReferenceImageError.value = `最多只能保留 3 张，本次仅添加前 ${availableSlots} 张。`
+  }
+  if (selectedFiles.some((file) => !['jpg', 'jpeg', 'png', 'webp'].includes(file.name.split('.').pop()?.toLowerCase()))) {
+    protagonistReferenceImageError.value = '参考图仅支持 JPG、JPEG、PNG 或 WebP。'
+    return
+  }
+  if (selectedFiles.some((file) => file.size > 30 * 1024 * 1024)) {
+    protagonistReferenceImageError.value = '参考图不能超过 30 MB。'
+    return
+  }
+  protagonistReferenceUploading.value = true
+  try {
+    const uploaded = await Promise.all(selectedFiles.map((file) => api.uploadEditorAsset(file)))
+    if (uploaded.some((payload) => payload.asset?.kind !== 'image')) throw new Error('上传文件不是可用的图片。')
+    form.reference_image_ids = [
+      ...form.reference_image_ids,
+      ...uploaded.map((payload) => payload.asset.id),
+    ].slice(0, 3)
+    form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
+    referenceImageNames.value = [
+      ...referenceImageNames.value,
+      ...uploaded.map((payload, index) => payload.asset.name || selectedFiles[index].name),
+    ].slice(0, 3)
+  } catch (error) {
+    protagonistReferenceImageError.value = error.message || '角色参考图上传失败。'
+  } finally {
+    protagonistReferenceUploading.value = false
+  }
+}
+
+function removeReferenceImage(index) {
+  form.reference_image_ids = form.reference_image_ids.filter((_, currentIndex) => currentIndex !== index)
+  form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
+  referenceImageNames.value = referenceImageNames.value.filter((_, currentIndex) => currentIndex !== index)
+  protagonistReferenceImageError.value = ''
+}
+
 async function submit() {
   if (!session.value.user) {
     authError.value = '请先登录后再生成视频'
@@ -2399,23 +2723,23 @@ async function uploadSubtitleAudio(event) {
   subtitleAudioError.value = ''
   if (!file) return
   const suffix = file.name.split('.').pop()?.toLowerCase()
-  if (!['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(suffix)) {
+  if (!['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'].includes(suffix)) {
     subtitleAudioName.value = ''
     subtitleForm.source_audio_id = ''
-    subtitleAudioError.value = '仅支持 MP3、WAV、M4A、AAC、FLAC 或 OGG 音频。'
+    subtitleAudioError.value = '仅支持 MP3、WAV、M4A、AAC、FLAC、OGG 音频，或 MP4、MOV、MKV、WebM、AVI、M4V 视频。'
     return
   }
   subtitleAudioUploading.value = true
   try {
     const payload = await api.uploadEditorAsset(file)
-    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    if (!['audio', 'video'].includes(payload.asset?.kind)) throw new Error('上传文件不是可识别的音频或视频。')
     subtitleForm.source_audio_id = payload.asset.id
     subtitleAudioName.value = payload.asset.name || file.name
     await refreshEditor()
   } catch (error) {
     subtitleForm.source_audio_id = ''
     subtitleAudioName.value = ''
-    subtitleAudioError.value = error.message || '音频上传失败。'
+    subtitleAudioError.value = error.message || '音频或视频上传失败。'
   } finally {
     subtitleAudioUploading.value = false
   }
@@ -2625,5 +2949,6 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
+  stopTtsVoicePreview()
 })
 </script>

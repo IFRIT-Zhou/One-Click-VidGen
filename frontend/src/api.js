@@ -46,6 +46,9 @@ export const api = {
   script: (name) => requestJSON(`/api/scripts/${encodeURIComponent(name)}`),
   parameterPresets: () => requestJSON('/api/parameter-presets'),
   parameterPreset: (name) => requestJSON(`/api/parameter-presets/${encodeURIComponent(name)}`),
+  deleteParameterPreset: (name) => requestJSON(`/api/parameter-presets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  }),
   saveParameterPreset: (payload) => requestJSON('/api/parameter-presets', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
@@ -69,8 +72,8 @@ export const api = {
   visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
   visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
   visualEditorProjects: () => requestJSON('/api/visual-editor/projects'),
-  redrawVisualImage: (id, imageId, prompt) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+  redrawVisualImage: (id, imageId, prompt, referenceMacroIds = [], referenceUploadIds = []) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, reference_macro_ids: referenceMacroIds, reference_upload_ids: referenceUploadIds }),
   }),
   uploadVisualImage: (id, imageId, file) => {
     const data = new FormData()

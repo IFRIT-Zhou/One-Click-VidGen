@@ -216,6 +216,31 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("林晚", call["system_prompt"])
         self.assertIn("黑色短发", call["system_prompt"])
 
+    def test_character_reference_marker_is_explicit_and_safe_by_default(self) -> None:
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        without_marker = visual._normalize_mapping(
+            [{"includes_slides": ["scene_001"], "image_prompt": "空走廊"}], scenes,
+        )
+        with_marker = visual._normalize_mapping(
+            [{"includes_slides": ["scene_001"], "image_prompt": "男主角：角色形象参考图1", "reference_image_ids": ["图1", "图2", "无效编号"]}], scenes,
+        )
+        self.assertEqual(without_marker[0]["reference_image_ids"], [])
+        self.assertEqual(with_marker[0]["reference_image_ids"], ["图1", "图2"])
+
+    def test_reference_catalog_preserves_uploaded_order(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"USER_REFERENCE_IMAGE_PATHS_JSON": '["male.png", "female.png", "second.png"]'},
+            clear=False,
+        ):
+            self.assertEqual(
+                visual._reference_image_catalog(),
+                {"图1": "male.png", "图2": "female.png", "图3": "second.png"},
+            )
+            prompt = visual.build_visual_prompt_system(content_mode=visual.CONTENT_MODE_GENERAL)
+        self.assertIn("角色形象参考图N", prompt)
+        self.assertIn("图1、图2、图3", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -81,6 +82,7 @@ class GenerateRequest(BaseModel):
     model: str | None = "gpt-4o-mini"
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
+    video_render_variant: Literal["subtitles", "raw", "both"] = "both"
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "auto"
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
@@ -89,6 +91,8 @@ class GenerateRequest(BaseModel):
     visual_max_slides: int | None = Field(default=None, ge=1, le=12)
     visual_style_prompt: str | None = Field(default=None, max_length=1000)
     global_character_prompt: str | None = Field(default=None, max_length=2000)
+    protagonist_reference_image_id: str | None = Field(default=None, max_length=180)
+    reference_image_ids: list[str] = Field(default_factory=list, max_length=3)
     story_environment_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
     agent1_prompt_system: str | None = Field(default=None, max_length=12000)
@@ -109,6 +113,10 @@ class AgentPromptPresetRequest(BaseModel):
 
 class VisualRedrawRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
+    # One existing project frame can be locked as reference image 1.  Local
+    # uploads follow it as images 2-4.
+    reference_macro_ids: list[str] = Field(default_factory=list, max_length=1)
+    reference_upload_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class VisualRenderRequest(BaseModel):
@@ -461,6 +469,7 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
         "agent2_director_theme": "通用视频",
     },
 }
+DEFAULT_AGENT_PROMPT_PRESET_VERSION = 2
 
 
 def _default_agent_prompt_preset_path(content_mode: str) -> Path:
@@ -471,9 +480,14 @@ def _ensure_default_agent_prompt_presets() -> None:
     for content_mode, defaults in DEFAULT_AGENT_PROMPT_PRESETS.items():
         path = _default_agent_prompt_preset_path(content_mode)
         if path.exists():
-            continue
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if int(existing.get("version", 0)) >= DEFAULT_AGENT_PROMPT_PRESET_VERSION:
+                    continue
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
         document = {
-            "version": 1,
+            "version": DEFAULT_AGENT_PROMPT_PRESET_VERSION,
             "kind": "default",
             "content_mode": content_mode,
             "name": defaults["name"],
@@ -514,7 +528,28 @@ def load_parameter_preset(name: str, request: Request) -> dict[str, Any]:
     parameters = payload.get("parameters")
     if not isinstance(parameters, dict):
         raise HTTPException(status_code=500, detail="参数文件格式无效")
+    # Keep handwritten script text independent from form-schema migrations.
+    # Older presets only have parameters.script, while newer ones also store a
+    # dedicated manual_script snapshot for reliable restore.
+    manual_script = payload.get("manual_script")
+    if isinstance(manual_script, str):
+        parameters = {**parameters, "script": manual_script}
     return {"name": str(payload.get("name") or path.stem), "parameters": parameters}
+
+
+@app.delete("/api/parameter-presets/{name}")
+def delete_parameter_preset(name: str, request: Request) -> dict[str, Any]:
+    """Delete one of the current user's saved UI parameter presets."""
+    user = require_user(request)
+    normalized_name = normalize_project_name(name)
+    path = _parameter_preset_path(int(user["id"]), normalized_name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="未找到已保存的参数")
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="参数文件删除失败") from exc
+    return {"ok": True, "name": normalized_name, "message": f"已删除参数：{normalized_name}"}
 
 
 @app.put("/api/parameter-presets")
@@ -529,9 +564,10 @@ def save_parameter_preset(payload: ParameterPresetRequest, request: Request) -> 
     name = normalize_project_name(payload.name)
     parameters["project_name"] = name
     document = {
-        "version": 1,
+        "version": 2,
         "name": name,
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "manual_script": str(payload.parameters.get("manual_script") or raw.get("script") or ""),
         "parameters": parameters,
     }
     path = _parameter_preset_path(int(user["id"]), name)
@@ -768,6 +804,15 @@ def open_job_output_folder(job_id: str, request: Request) -> dict[str, Any]:
             if possible_dir.is_dir():
                 project_dir = possible_dir
                 break
+    # Subtitle-only jobs created before output archiving was added have a valid
+    # artifact but no project_output database row. Migrate them lazily when the
+    # user asks to open their output folder, so historical jobs remain usable.
+    if project_dir is None and bool(job.request.get("subtitle_only")):
+        legacy_srt = JOBS_DIR / job_id / "artifacts" / "final_short.srt"
+        if legacy_srt.is_file():
+            project_dir = OUTPUT_DIR / job_id
+            project_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_srt, project_dir / "最终字幕.srt")
     if project_dir is None:
         raise HTTPException(status_code=404, detail="project output folder is not available yet")
     if os.name != "nt":
@@ -833,7 +878,22 @@ def redraw_visual_editor_image(
     request: Request,
 ) -> dict[str, Any]:
     job, _user_id = _owned_completed_job(job_id, request)
-    visual_editor.redraw(job=job, prompt=payload.prompt.strip(), macro_id=macro_id)
+    reference_upload_paths: list[str] = []
+    for upload_id in payload.reference_upload_ids:
+        try:
+            source = upload_path(int(job.user_id), str(upload_id))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="重绘参考图不存在，请重新上传") from exc
+        if source.suffix.lower() not in IMAGE_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="重绘参考图仅支持 JPG、JPEG、PNG 或 WebP")
+        reference_upload_paths.append(str(source))
+    visual_editor.redraw(
+        job=job,
+        prompt=payload.prompt.strip(),
+        macro_id=macro_id,
+        reference_macro_ids=payload.reference_macro_ids,
+        reference_upload_paths=reference_upload_paths,
+    )
     return {"ok": True, "message": "image redraw started"}
 
 

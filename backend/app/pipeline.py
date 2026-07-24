@@ -32,6 +32,8 @@ JOBS_DIR = WORKSPACE_DIR / "jobs"
 FINAL_DIR = WORKSPACE_DIR / "4_final_video"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{index}" for index in range(1, 10)),
@@ -613,8 +615,18 @@ def user_upload_path(user_id: int, filename: str) -> Path:
     path = (root / filename).resolve()
     if root not in path.parents or not path.is_file():
         raise FileNotFoundError("找不到上传的配音文件")
-    if path.suffix.lower() not in AUDIO_EXTENSIONS:
-        raise ValueError("已有配音只支持 mp3、wav、m4a、aac、flac、ogg")
+    if path.suffix.lower() not in AUDIO_EXTENSIONS | VIDEO_EXTENSIONS:
+        raise ValueError("上传媒体仅支持 mp3、wav、m4a、aac、flac、ogg、mp4、mov、mkv、webm、avi、m4v")
+    return path
+
+
+def user_reference_image_path(user_id: int, filename: str) -> Path:
+    root = (WORKSPACE_DIR / "editor" / f"user_{user_id}" / "uploads").resolve()
+    path = (root / filename).resolve()
+    if root not in path.parents or not path.is_file():
+        raise FileNotFoundError("找不到上传的主角参考图")
+    if path.suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ValueError("主角参考图仅支持 jpg、jpeg、png、webp")
     return path
 
 
@@ -629,6 +641,7 @@ def prepare_uploaded_audio(job: Job, store: JobStore, source_audio_id: str) -> P
         shutil.copy2(source, output)
         store.log(job, f"已导入已有 WAV 配音: {source.name}")
     else:
+        is_video = source.suffix.lower() in VIDEO_EXTENSIONS
         run_command(
             job,
             store,
@@ -642,7 +655,7 @@ def prepare_uploaded_audio(job: Job, store: JobStore, source_audio_id: str) -> P
                 "pcm_s16le",
                 str(output),
             ],
-            "转换已有配音为 WAV",
+            "从视频提取音轨为 WAV" if is_video else "转换已有配音为 WAV",
         )
     register_job_asset(job, output, "generation_artifact:audio", {"source_audio_id": source_audio_id})
     return output
@@ -1218,6 +1231,27 @@ def render_semantic_visual_video(
         global_character_prompt = str(request.get("global_character_prompt") or "").strip()
         if global_character_prompt:
             poster_env["GLOBAL_CHARACTER_PROMPT"] = global_character_prompt
+        requested_reference_ids = [
+            str(value).strip()
+            for value in request.get("reference_image_ids", [])
+            if str(value).strip()
+        ][:3]
+        legacy_reference_id = str(request.get("protagonist_reference_image_id") or "").strip()
+        if not requested_reference_ids and legacy_reference_id:
+            requested_reference_ids = [legacy_reference_id]
+        if requested_reference_ids:
+            if job.user_id is None:
+                raise ValueError("角色参考图需要用户身份")
+            reference_images = [
+                str(user_reference_image_path(int(job.user_id), image_id))
+                for image_id in dict.fromkeys(requested_reference_ids)
+            ]
+            poster_env["USER_REFERENCE_IMAGE_PATHS_JSON"] = json.dumps(reference_images, ensure_ascii=False)
+            poster_env["USER_PROTAGONIST_REFERENCE_IMAGE_PATH"] = reference_images[0]
+            store.log(
+                job,
+                f"已启用 {len(reference_images)} 张角色参考图：Agent 2 将按图 1 至图 {len(reference_images)} 标记实际出场镜头。",
+            )
         story_environment_prompt = str(request.get("story_environment_prompt") or "").strip()
         if story_environment_prompt:
             poster_env["GLOBAL_ENVIRONMENT_PROMPT"] = story_environment_prompt
@@ -1237,7 +1271,18 @@ def render_semantic_visual_video(
 
     store.raise_if_cancelled(job)
     store.update(job, step="render", progress=max(job.progress, 86), message=STEPS[5][1])
-    run_command(job, store, [sys.executable, "module5_video_render.py"], STEPS[5][1])
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    variant_label = {"subtitles": "仅字幕版", "raw": "仅无字幕版", "both": "双版本"}[render_variant]
+    store.log(job, f"模块 5 成片版本：{variant_label}")
+    run_command(
+        job,
+        store,
+        [sys.executable, "module5_video_render.py"],
+        STEPS[5][1],
+        extra_env={"VIDEO_RENDER_VARIANT": render_variant},
+    )
 
 
 def copy_part_outputs(job: Job, part_index: int) -> dict[str, Path]:
@@ -1494,6 +1539,19 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
     return final_dir
 
 
+def organize_subtitle_output(job: Job) -> Path:
+    """Archive a standalone subtitle job in a stable, user-facing output directory."""
+    source = WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
+    if not source.is_file():
+        raise FileNotFoundError("字幕识别完成后未找到最终 SRT 文件")
+    output_dir = OUTPUT_DIR / job.id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / "最终字幕.srt"
+    shutil.copy2(source, target)
+    register_job_asset(job, target, "project_output", {"subtitle_only": True})
+    return output_dir
+
+
 def concat_videos(job: Job, store: JobStore, inputs: list[Path], output: Path, label: str) -> None:
     if not inputs:
         return
@@ -1649,20 +1707,25 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     shutil.copy2(full_timeline, WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json")
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     store.update(job, step="render", progress=88, message="拼接分段视频")
-    concat_videos(
-        job,
-        store,
-        part_with_subtitles,
-        FINAL_DIR / "final_with_subtitles.mp4",
-        "拼接字幕版分段视频",
-    )
-    concat_videos(
-        job,
-        store,
-        part_raw,
-        FINAL_DIR / "final_raw_presentation.mp4",
-        "拼接纯净版分段视频",
-    )
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    if render_variant in {"subtitles", "both"}:
+        concat_videos(
+            job,
+            store,
+            part_with_subtitles,
+            FINAL_DIR / "final_with_subtitles.mp4",
+            "拼接字幕版分段视频",
+        )
+    if render_variant in {"raw", "both"}:
+        concat_videos(
+            job,
+            store,
+            part_raw,
+            FINAL_DIR / "final_raw_presentation.mp4",
+            "拼接纯净版分段视频",
+        )
     store.log(job, "分段视频已按顺序拼接完成")
 
 
@@ -1803,6 +1866,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         else:
             store.log(job, "已跳过模块 2.5：保留 ASR 原始字幕")
         artifacts = copy_artifacts(job)
+        subtitle_output_dir = organize_subtitle_output(job)
         subtitle_artifacts = {key: value for key, value in artifacts.items() if key == "subtitle"}
         store.update(
             job,
@@ -1812,7 +1876,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             message="字幕识别完成，SRT 已生成",
             artifacts=subtitle_artifacts,
         )
-        store.log(job, "模块 2 独立任务完成：已输出 SRT 字幕文件")
+        store.log(job, f"模块 2 独立任务完成：已输出 SRT 字幕文件到 {subtitle_output_dir}")
         return
 
     store.raise_if_cancelled(job)

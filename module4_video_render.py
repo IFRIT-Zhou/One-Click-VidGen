@@ -35,7 +35,11 @@ POSTER_MAPPING_PATH = VISUAL_DIR / "poster_mapping.json"
 VISUAL_PROMPT_PLAN_PATH = VISUAL_DIR / "visual_prompt_plan.json"
 RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
-VISUAL_PROMPT_AGENT_VERSION = 4
+_REFERENCE_UPLOAD_LOCK = threading.Lock()
+_REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
+VISUAL_PROMPT_AGENT_VERSION = 6
+
+REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
 
 
 def backup_poster_mapping(path: Path = POSTER_MAPPING_PATH) -> Path | None:
@@ -86,6 +90,34 @@ def normalize_content_mode(value: str | None) -> str:
     return CONTENT_MODE_STORY
 
 
+def _reference_image_catalog() -> dict[str, str]:
+    raw_value = os.getenv("USER_REFERENCE_IMAGE_PATHS_JSON", "").strip()
+    try:
+        values = json.loads(raw_value) if raw_value else []
+    except json.JSONDecodeError:
+        values = []
+    if not isinstance(values, list):
+        values = []
+    paths = [str(value).strip() for value in values if str(value).strip()][:3]
+    if not paths:
+        legacy_path = os.getenv("USER_PROTAGONIST_REFERENCE_IMAGE_PATH", "").strip()
+        paths = [legacy_path] if legacy_path else []
+    return {REFERENCE_IMAGE_LABELS[index]: path for index, path in enumerate(paths)}
+
+
+def _reference_image_instruction() -> str:
+    catalog = _reference_image_catalog()
+    if not catalog:
+        return "本次未上传角色形象参考图；reference_image_ids 必须输出 []。"
+    labels = "、".join(catalog)
+    return (
+        f"本次可用角色形象参考图为：{labels}，按上传顺序对应 Image2 的第 1 至第 {len(catalog)} 张图。"
+        "当镜头实际出现对应角色时，reference_image_ids 只能填写所需的图号；"
+        "并且 image_prompt 必须紧跟角色名称明确写出“角色形象参考图N”。"
+        "没有使用参考图的镜头必须输出 []，且 image_prompt 不得假装引用参考图。"
+    )
+
+
 def build_visual_prompt_system(
     style: str = "",
     content_mode: str = CONTENT_MODE_STORY,
@@ -96,12 +128,17 @@ def build_visual_prompt_system(
         CONTENT_MODE_SCIENCE: SCIENCE_VISUAL_STYLE,
         CONTENT_MODE_GENERAL: GENERAL_VISUAL_STYLE,
     }.get(content_mode, DEFAULT_VISUAL_STYLE)
+    character_reference = global_character_prompt.strip() or {
+        CONTENT_MODE_STORY: DEFAULT_GLOBAL_CHARACTER_PROMPT,
+        CONTENT_MODE_SCIENCE: SCIENCE_GLOBAL_CHARACTER_PROMPT,
+    }.get(content_mode, "未填写；只能依据原文建立必要的临时角色档案。")
     if content_mode == CONTENT_MODE_SCIENCE:
         return f"""你是科普科技口播视频的分镜视觉导演，也是本流水线的 Agent 2。
 
 【输出格式】
 - 只输出严格 JSON 数组，不要 Markdown，不要解释。
-- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 每项必须包含 includes_slides（slide_id 数组）、image_prompt（中文生图提示词）和 reference_image_ids（参考图编号数组）。
+- reference_image_ids 只能使用本次已上传的图号；空镜、道具镜头、环境镜头或未出现参考角色时必须输出 []。
 
 【分镜规则】
 - 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版解说漫画。
@@ -111,10 +148,12 @@ def build_visual_prompt_system(
 - 忠于原文知识，不编造数据、实验结果、产品功能或科学结论。
 - 手机、平板、书信或照片本身承载关键信息时，改用正面主体特写或插入镜头，让物件占据画面主体；只保留必要的手部或桌面边缘，不使用第一视角或越肩机位。
 
-【统一风格】
-- 默认风格为：{visual_style}
-- 主角首次及再次出现时都必须保持黑色短发、红色围巾的少女形象一致。
-- image_prompt 只写本组独有的知识场景、动作、构图、光线和色彩，不重复通用风格或固定画质句。
+【用户可控设定】
+- 当前统一画风参考为：{visual_style}
+- 用户全局人物设定为：{character_reference}
+- {_reference_image_instruction()}
+- 当画面中没有这些角色的时候，则本段人物设定不作为参考。
+- 上述设定只作为全局资料；image_prompt 只写本组独有的知识场景、动作、构图、光线和色彩，不重复通用风格或固定画质句。
 
 【画面要求】
 - 根据 text_content、visual_summary 和 Agent 1 的全文知识结构设计画面。
@@ -131,7 +170,8 @@ def build_visual_prompt_system(
 
 【输出格式】
 - 只输出严格 JSON 数组，不要 Markdown，不要解释。
-- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 每项必须包含 includes_slides（slide_id 数组）、image_prompt（中文生图提示词）和 reference_image_ids（参考图编号数组）。
+- reference_image_ids 只能使用本次已上传的图号；未出现参考角色时必须输出 []。
 - 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
 
 【分镜规则】
@@ -141,7 +181,9 @@ def build_visual_prompt_system(
 
 【用户可控设定】
 - 当前统一画风参考为：{visual_style}
-- 用户全局人物设定为：{global_character_prompt.strip() or '未填写；只能依据原文建立必要的临时角色档案。'}
+- 用户全局人物设定为：{character_reference}
+- {_reference_image_instruction()}
+- 当画面中没有这些角色的时候，则本段人物设定不作为参考。
 - 上述设定只作为全局资料；image_prompt 只写本镜头独有的主体、动作、环境、景别、机位、构图、光线和氛围，不重复整段通用画风或画质句。
 
 【画面要求】
@@ -153,7 +195,8 @@ def build_visual_prompt_system(
 
 【输出格式】
 - 只输出严格 JSON 数组，不要 Markdown，不要解释。
-- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 每项必须包含 includes_slides（slide_id 数组）、image_prompt（中文生图提示词）和 reference_image_ids（参考图编号数组）。
+- reference_image_ids 只能使用本次已上传的图号；未出现参考角色时必须输出 []。
 
 【分镜规则】
 - 严格按照系统为本次任务提供的固定 slide 分组，每组生成一张 2:1 横版电影感漫画分镜。
@@ -169,6 +212,12 @@ def build_visual_prompt_system(
 - 设计具体画面时必须遵守上述统一风格，但 image_prompt 只输出本组的具体场景、动作、构图、光线和色彩。
 - 不要在 image_prompt 中重复统一风格或固定画质要求；系统会在提交生图前统一注入一次。
 - 首次出现的人物要提炼可识别的外貌、年龄、发型、服装和标志性物件；人物再次出现时必须在 image_prompt 中直接写出这些具体特征，禁止只写姓名、关系称呼或“同一个人”。
+
+【用户可控设定】
+- 用户全局人物设定为：{character_reference}
+- {_reference_image_instruction()}
+- 当画面中没有这些角色的时候，则本段人物设定不作为参考。
+- 上述设定只作为全局资料；image_prompt 只写本镜头独有的主体、动作、环境、景别、机位、构图、光线和氛围，不重复整段通用画风或画质句。
 
 【画面要求】
 - 根据该组 slide 的 text_content 和 visual_summary 设计具体画面。
@@ -194,8 +243,14 @@ def build_visual_prompt_system(
   去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"""
 
 
-DEFAULT_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_STORY)
-SCIENCE_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_SCIENCE)
+DEFAULT_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(
+    content_mode=CONTENT_MODE_STORY,
+    global_character_prompt=DEFAULT_GLOBAL_CHARACTER_PROMPT,
+)
+SCIENCE_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(
+    content_mode=CONTENT_MODE_SCIENCE,
+    global_character_prompt=SCIENCE_GLOBAL_CHARACTER_PROMPT,
+)
 GENERAL_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_GENERAL)
 
 
@@ -485,6 +540,7 @@ def _fallback_mapping(
         {
             "macro_scene_id": f"poster_{index:03d}",
             "includes_slides": [str(scene["slide_id"]) for scene in group],
+            "reference_image_ids": [],
             "image_prompt": (
                 (
                     "2:1 横版科教手绘解说漫画，单一知识焦点，使用生活化场景、物体对比或过程示意，"
@@ -531,6 +587,11 @@ def _normalize_mapping(
                 "macro_scene_id": f"poster_{index:03d}",
                 "includes_slides": included,
                 "image_prompt": prompt,
+                "reference_image_ids": list(dict.fromkeys(
+                    value.strip()
+                    for value in item.get("reference_image_ids", item.get("character_ids", []))
+                    if isinstance(value, str) and value.strip() in REFERENCE_IMAGE_LABELS
+                ))[:3],
             }
         )
     if not normalized or remaining:
@@ -741,7 +802,9 @@ def _plan_mapping_batch(
         + "\n\n【本次任务的强制分组】\n"
         + json.dumps(required_groups, ensure_ascii=False)
         + "\n必须严格按上述顺序逐组输出：每组只生成一个对象，includes_slides 必须与对应分组完全一致，"
-        "不得合并、拆分、遗漏或调整 slide_id。image_prompt 只写该组独有的具体画面内容，"
+        "不得合并、拆分、遗漏或调整 slide_id。image_prompt 只写该组独有的具体画面内容；"
+        "reference_image_ids 必须始终输出数组，只能填写本次实际使用的图号。"
+        "角色使用参考图时，image_prompt 中必须写出“角色形象参考图N”，没有参考角色则输出 []。"
         "不要重复通用风格和固定画质句；但重复出场的角色必须使用角色的稳定姓名。"
         "必须根据当前 slide_id 选择 wardrobe_states 中唯一适用的一条造型，只写当前服装、当前头部状态和"
         "当前随身物品；严禁把‘前期/后期’、‘居家服或骑行服’等多个阶段同时写进一张图。"
@@ -828,10 +891,17 @@ def build_macro_mapping(
         print("Gemini 未配置，模块 4 使用本地分组提示词。", flush=True)
         return _finalize_mapping(_fallback_mapping(scenes, story_plan), scenes, story_plan)
 
-    custom_prompt = os.getenv("VISUAL_PROMPT_SYSTEM", "").strip()
-    system_prompt = custom_prompt or DEFAULT_VISUAL_PROMPT_SYSTEM
-    story_context = story_context_for_prompt(story_plan or {})
     global_character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
+    content_mode = normalize_content_mode(os.getenv("CONTENT_MODE", CONTENT_MODE_STORY))
+    custom_prompt = os.getenv("VISUAL_PROMPT_SYSTEM", "").strip()
+    system_prompt = custom_prompt or build_visual_prompt_system(
+        style=os.getenv("VISUAL_STYLE_PROMPT", ""),
+        content_mode=content_mode,
+        global_character_prompt=global_character_bible,
+    )
+    if custom_prompt:
+        system_prompt += f"\n\n【角色图像参考约束】\n{_reference_image_instruction()}"
+    story_context = story_context_for_prompt(story_plan or {})
     if global_character_bible:
         story_context["user_global_character_bible"] = global_character_bible
     global_environment_bible = os.getenv("GLOBAL_ENVIRONMENT_PROMPT", "").strip()
@@ -840,6 +910,7 @@ def build_macro_mapping(
     protagonist_lock = _style_protagonist_identity(os.getenv("VISUAL_STYLE_PROMPT", ""))
     if protagonist_lock:
         story_context["user_protagonist_identity_lock"] = protagonist_lock
+    story_context["user_reference_image_catalog"] = list(_reference_image_catalog())
     prompt_source = "自定义" if custom_prompt else "默认"
     print(
         f"Agent 2：使用{prompt_source}画面提示词命令（{len(system_prompt)} 字），"
@@ -1068,8 +1139,8 @@ def _find_image_url(value: Any) -> str | None:
     return None
 
 
-def _runninghub_generate_url(config: dict[str, str]) -> str:
-    endpoint = config["endpoint"]
+def _runninghub_generate_url(config: dict[str, str], endpoint: str | None = None) -> str:
+    endpoint = endpoint or config["endpoint"]
     if endpoint.startswith("http://") or endpoint.startswith("https://"):
         return endpoint
     return f"{RUNNINGHUB_HOST}/openapi/v2/{endpoint.lstrip('/')}"
@@ -1129,8 +1200,31 @@ def _submit_poster_request(
         "aspectRatio": config["ratio"],
         "resolution": config["resolution"],
     }
+    endpoint: str | None = None
+    selected_reference_paths = [
+        str(path).strip() for path in macro.get("reference_image_paths", []) if str(path).strip()
+    ][:4]
+    if not selected_reference_paths:
+        catalog = _reference_image_catalog()
+        if any(reference_id in catalog for reference_id in macro.get("reference_image_ids", [])):
+            # Keep 图 1/图 2/图 3 stable for the image model. A scene may only use 图 2,
+            # but the request still carries the catalog in original order so 图 2 never
+            # becomes the model's first input image by accident.
+            selected_reference_paths = list(catalog.values())
+    reference_urls = [
+        url for url in (_reference_image_url(config, path) for path in selected_reference_paths) if url
+    ]
+    uses_protagonist_reference = "主角" in {str(value).strip() for value in macro.get("character_ids", [])}
+    if not reference_urls and uses_protagonist_reference:
+        protagonist_url = _reference_image_url(config)
+        if protagonist_url:
+            reference_urls = [protagonist_url]
+    if reference_urls:
+        payload["imageUrls"] = reference_urls
+        endpoint = os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
+            str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
     response = session.post(
-        _runninghub_generate_url(config),
+        _runninghub_generate_url(config, endpoint),
         headers=_runninghub_headers(config),
         json=payload,
         timeout=60,
@@ -1160,7 +1254,10 @@ def _submit_poster_request(
 def _poster_output_path(macro: dict[str, Any]) -> Path:
     poster_id = macro["macro_scene_id"]
     job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip()
-    suffix_source = f"{job_id}\0{macro.get('image_prompt', '')}"
+    reference_source = "\0".join(
+        str(path).strip() for path in macro.get("reference_image_paths", []) if str(path).strip()
+    )
+    suffix_source = f"{job_id}\0{macro.get('image_prompt', '')}\0{reference_source}"
     suffix = hashlib.sha1(suffix_source.encode("utf-8")).hexdigest()[:10]
     return ASSETS_DIR / f"{poster_id}_{suffix}.jpg"
 
@@ -1567,6 +1664,38 @@ def run_online_poster_engine() -> None:
         )
     html_path = write_html(scenes, poster_timeline)
     print(f"模块 4 页面已写入: {html_path}", flush=True)
+
+
+def _reference_image_url(config: dict[str, str], raw_path: str | None = None) -> str | None:
+    raw_path = (raw_path or os.getenv("USER_PROTAGONIST_REFERENCE_IMAGE_PATH", "")).strip()
+    path = Path(raw_path)
+    if not raw_path or not path.is_file():
+        return None
+    cache_key = (config["api_key"], str(path.resolve()))
+    with _REFERENCE_UPLOAD_LOCK:
+        cached = _REFERENCE_IMAGE_URLS.get(cache_key)
+        if cached:
+            return cached
+        try:
+            with path.open("rb") as handle:
+                response = requests.post(
+                    f"{RUNNINGHUB_HOST}/openapi/v2/media/upload/binary",
+                    headers={"Authorization": f"Bearer {config['api_key']}"},
+                    files={"file": (path.name, handle, "application/octet-stream")},
+                    timeout=120,
+                )
+            payload = response.json()
+        except (OSError, requests.RequestException, ValueError) as exc:
+            raise RunningHubTransientError(f"主角参考图上传失败: {type(exc).__name__}") from exc
+        if not response.ok or not isinstance(payload, dict):
+            raise RunningHubTransientError("主角参考图上传失败")
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        url = str(data.get("download_url") or data.get("downloadUrl") or "").strip()
+        if not url:
+            raise RunningHubTransientError("主角参考图上传成功但未返回可用链接")
+        _REFERENCE_IMAGE_URLS[cache_key] = url
+        print(f"参考图已上传至 RunningHub: {path.name}", flush=True)
+        return url
 
 
 if __name__ == "__main__":

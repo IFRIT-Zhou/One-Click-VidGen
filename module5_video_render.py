@@ -186,6 +186,10 @@ def main() -> None:
 
     render_mode = str(os.getenv("VIDEO_RENDER_VARIANT", "both")).strip().lower()
     render_mode = render_mode if render_mode in {"subtitles", "raw", "both"} else "both"
+    if render_mode not in {"subtitles", "both"}:
+        (FINAL_DIR / "final_with_subtitles.mp4").unlink(missing_ok=True)
+    if render_mode not in {"raw", "both"}:
+        (FINAL_DIR / "final_raw_presentation.mp4").unlink(missing_ok=True)
     try:
         if render_mode in {"subtitles", "both"}:
             render(subtitle_html, FINAL_DIR / "final_with_subtitles.mp4", "字幕版")

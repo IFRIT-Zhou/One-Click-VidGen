@@ -17,7 +17,9 @@ from .db import list_media_assets
 from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, register_job_asset
 
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg"}
+# Reference images and local replacements share the same supported formats as
+# the main image-reference workflow.  Image2 accepts PNG/WebP as well as JPG.
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAPPING_FILENAME = "画面映射.json"
 TIMELINE_FILENAME = "画面时间线.json"
 MANIFEST_FILENAME = "画面修改清单.json"
@@ -309,14 +311,42 @@ class VisualEditor:
         from .pipeline import store
         store.log(job, f"[画面修改] {message}")
 
-    def redraw(self, *, job: Any, prompt: str, macro_id: str) -> None:
+    def redraw(
+        self,
+        *,
+        job: Any,
+        prompt: str,
+        macro_id: str,
+        reference_macro_ids: list[str] | None = None,
+        reference_upload_paths: list[str] | None = None,
+    ) -> None:
+        reference_macro_ids = list(dict.fromkeys(str(value) for value in (reference_macro_ids or []) if str(value)))[:1]
+        reference_upload_paths = list(dict.fromkeys(str(value) for value in (reference_upload_paths or []) if str(value)))[:3]
         self._start_image_task(job, macro_id, "redraw", "正在调用 Image2 重绘图片")
-        self._log(job, f"开始重绘 {macro_id}，请等待 Image2 返回图片。")
+        reference_count = len(reference_macro_ids) + len(reference_upload_paths)
+        reference_note = f"，使用 {reference_count} 张参考图" if reference_count else ""
+        self._log(job, f"开始重绘 {macro_id}{reference_note}，请等待 Image2 返回图片。")
 
         def work() -> None:
             try:
                 project_dir = self.output_dir(job.id, int(job.user_id))
                 image = self._find_image(project_dir / "image", macro_id)
+                reference_paths = [
+                    str(self._find_image(project_dir / "image", reference_id))
+                    for reference_id in reference_macro_ids
+                ]
+                if reference_upload_paths:
+                    reference_dir = project_dir / "other" / "reference_images"
+                    reference_dir.mkdir(parents=True, exist_ok=True)
+                    for index, source_value in enumerate(reference_upload_paths, start=1):
+                        source = Path(source_value)
+                        if not source.is_file():
+                            raise ValueError("uploaded redraw reference image was not found")
+                        archived = reference_dir / f"uploaded_{index:02d}_{source.name}"
+                        if not archived.exists():
+                            shutil.copy2(source, archived)
+                        reference_paths.append(str(archived))
+                reference_paths = list(dict.fromkeys(reference_paths))[:4]
                 with self._mapping_lock:
                     mapping = self._load_mapping(project_dir)
                     item = next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None)
@@ -327,7 +357,15 @@ class VisualEditor:
                     self._save_mapping(project_dir, mapping)
                     image.with_suffix(".txt").write_text(prompt, encoding="utf-8")
                 import module4_video_render as visual
-                rendered = visual.render_posters_concurrently([dict(item)], visual._provider_configs())[0]
+                render_item = dict(item)
+                if reference_paths:
+                    render_item["reference_image_paths"] = reference_paths
+                    render_item["image_prompt"] = (
+                        f"【参考图编号】本次附带的第 1 至第 {len(reference_paths)} 张图片依次对应图1至图{len(reference_paths)}；"
+                        "提示词中提及图N时，必须严格以第N张参考图作为该角色或物体的形象依据。\n"
+                        f"{prompt}"
+                    )
+                rendered = visual.render_posters_concurrently([render_item], visual._provider_configs())[0]
                 shutil.copy2(rendered, image)
                 self._set_image_task(job.id, macro_id, status="completed", action="redraw", message="图片已重绘，请检查效果")
                 self._log(job, f"{macro_id} 重绘完成。")
