@@ -71,6 +71,10 @@ class GenerationCancelled(RuntimeError):
     """The user requested that this generation job stop."""
 
 
+class GenerationPaused(RuntimeError):
+    """A step-mode checkpoint deliberately stopped the pipeline."""
+
+
 def default_project_name() -> str:
     return f"项目_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4].upper()}"
 
@@ -435,7 +439,10 @@ class JobStore:
             if job.status in {"queued", "running"}:
                 return job.snapshot()
             self._cancel_events[job.id] = threading.Event()
-        self.log(job, "收到断点续跑请求，将复用已生成的中间产物")
+        if job.status == "waiting_confirmation":
+            self.log(job, "收到分步确认，将复用已经生成的中间产物继续执行")
+        else:
+            self.log(job, "收到断点续跑请求，将复用已生成的中间产物")
         self.update(
             job,
             status="queued",
@@ -444,6 +451,32 @@ class JobStore:
             error=None,
         )
         self.run_async(job, resume=True)
+        return job.snapshot()
+
+    def retry_tts(self, job: Job) -> dict[str, Any]:
+        """Restart a step-mode job from Module 1 after its audio review."""
+        if job.status != "waiting_confirmation" or str(job.request.get("_step_mode_stage") or "") != "audio":
+            raise ValueError("only the audio review checkpoint can retry TTS")
+        if bool(job.request.get("skip_tts")):
+            raise ValueError("uploaded source audio cannot be regenerated")
+
+        with self._lock:
+            self._cancel_events[job.id] = threading.Event()
+        job.request.pop("_step_mode_stage", None)
+        job_dir = JOBS_DIR / job.id
+        shutil.rmtree(job_dir / "artifacts", ignore_errors=True)
+        shutil.rmtree(job_dir / "step_mode_preview_images", ignore_errors=True)
+        self.log(job, "收到重新配音请求：将清理本次任务的中间产物，并从模块 1 重新开始")
+        self.update(
+            job,
+            status="queued",
+            step="queued",
+            progress=0,
+            message="等待重新配音",
+            error=None,
+            artifacts={},
+        )
+        self.run_async(job, resume=False)
         return job.snapshot()
 
     def is_cancelled(self, job: Job) -> bool:
@@ -503,6 +536,9 @@ class JobStore:
             try:
                 self.raise_if_cancelled(job)
                 run_pipeline(job, self, resume=resume)
+            except GenerationPaused:
+                # The checkpoint stored the waiting state deliberately.
+                return
             except GenerationCancelled:
                 if job.status != "cancelled":
                     self.log(job, "生成已停止")
@@ -1166,6 +1202,29 @@ def slice_audio(
     )
 
 
+def pause_for_step_confirmation(job: Job, store: JobStore, stage: str, message: str) -> None:
+    """Persist an intentional, resumable pause for the guided workflow."""
+    if stage == "visual":
+        source = WORKSPACE_DIR / "3_visual_template" / "assets"
+        target = JOBS_DIR / job.id / "step_mode_preview_images"
+        if source.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            shutil.copytree(source, target)
+    request = dict(job.request)
+    request["_step_mode_stage"] = stage
+    store.update(
+        job,
+        request=request,
+        status="waiting_confirmation",
+        step=f"await_{stage}",
+        progress=30 if stage == "audio" else 85,
+        message=message,
+        error=None,
+    )
+    store.log(job, f"分步模式：{message}")
+    raise GenerationPaused(message)
+
+
 def render_semantic_visual_video(
     job: Job,
     store: JobStore,
@@ -1270,6 +1329,13 @@ def render_semantic_visual_video(
         raise ValueError(f"不支持的视觉后端: {visual_backend}")
 
     store.raise_if_cancelled(job)
+    if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") != "visual":
+        pause_for_step_confirmation(
+            job,
+            store,
+            "visual",
+            "画面已生成，请检查图片；确认后将开始渲染成片",
+        )
     store.update(job, step="render", progress=max(job.progress, 86), message=STEPS[5][1])
     render_variant = str(request.get("video_render_variant") or "both").strip().lower()
     if render_variant not in {"subtitles", "raw", "both"}:
@@ -1594,6 +1660,11 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         int(os.getenv("AGENT_HIERARCHICAL_MIN_CHARS", "6000")),
     )
     hierarchical_planning = total_chars > hierarchical_min_chars
+    if bool(request.get("step_mode")) and auto_split and total_chars > threshold:
+        # Segment rendering produces and encodes one part at a time.  Keep the
+        # existing reliable long-text path intact; the audio checkpoint still works.
+        store.log(job, "分步模式：超长文将保留配音确认；画面确认将在分段渲染流程稳定后开放。")
+        request = {**request, "step_mode": False}
     if not auto_split or total_chars <= threshold:
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
         store.update(job, step="semantic", progress=48, message=STEPS[3][1])
@@ -1729,11 +1800,51 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     store.log(job, "分段视频已按顺序拼接完成")
 
 
+def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, Any]) -> None:
+    store.raise_if_cancelled(job)
+    store.update(job, step="archive", progress=96, message=STEPS[6][1])
+    output_dir = organize_project_output(job, request)
+    store.raise_if_cancelled(job)
+    store.log(job, f"项目输出已整理: {output_dir}")
+    artifacts = copy_artifacts(job)
+    store.raise_if_cancelled(job)
+    store.update(
+        job,
+        status="completed",
+        step="completed",
+        progress=100,
+        message="视频生成完成",
+        artifacts=artifacts,
+    )
+    store.log(job, "全部完成")
+
+
+def render_from_visual_checkpoint(job: Job, store: JobStore, request: dict[str, Any]) -> None:
+    """Finish module 5 without calling Agent or Image2 again after visual approval."""
+    store.raise_if_cancelled(job)
+    store.update(job, status="running", step="render", progress=86, message=STEPS[5][1])
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    store.log(job, "分步模式：已确认画面，开始仅运行模块 5 渲染成片")
+    run_command(
+        job,
+        store,
+        [sys.executable, "module5_video_render.py"],
+        STEPS[5][1],
+        extra_env={"VIDEO_RENDER_VARIANT": render_variant},
+    )
+    finalize_completed_pipeline(job, store, request)
+
+
 def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     store.raise_if_cancelled(job)
     request = job.request
     job_dir = JOBS_DIR / job.id
     job_dir.mkdir(parents=True, exist_ok=True)
+    if resume and bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") == "visual":
+        render_from_visual_checkpoint(job, store, request)
+        return
     if not resume:
         reset_generation_workspace()
     store.log(job, "已清理本轮生成的共享 workspace 旧产物")
@@ -1826,6 +1937,14 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         )
 
     store.raise_if_cancelled(job)
+    if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") not in {"audio", "visual"}:
+        store.update(job, artifacts=copy_artifacts(job))
+        pause_for_step_confirmation(
+            job,
+            store,
+            "audio",
+            "配音已生成，请试听确认；确认后将开始字幕校对、Agent 规划与画面生成",
+        )
     if request.get("module1_only"):
         artifacts = copy_artifacts(job)
         store.update(
@@ -1892,20 +2011,4 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     store.raise_if_cancelled(job)
     render_downstream(job, store, request, resume=resume)
 
-    store.raise_if_cancelled(job)
-    store.update(job, step="archive", progress=96, message=STEPS[6][1])
-    output_dir = organize_project_output(job, request)
-    store.raise_if_cancelled(job)
-    store.log(job, f"项目输出已整理: {output_dir}")
-
-    artifacts = copy_artifacts(job)
-    store.raise_if_cancelled(job)
-    store.update(
-        job,
-        status="completed",
-        step="completed",
-        progress=100,
-        message="视频生成完成",
-        artifacts=artifacts,
-    )
-    store.log(job, "全部完成")
+    finalize_completed_pipeline(job, store, request)

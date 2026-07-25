@@ -7,6 +7,16 @@ from backend.app import pipeline
 
 
 class Module1OnlyTest(unittest.TestCase):
+    def test_step_mode_audio_checkpoint_is_waiting_not_failed(self) -> None:
+        job = pipeline.Job(id="step-audio", request={"step_mode": True})
+        store = Mock()
+        with self.assertRaises(pipeline.GenerationPaused):
+            pipeline.pause_for_step_confirmation(job, store, "audio", "试听配音")
+        update = store.update.call_args.kwargs
+        self.assertEqual(update["request"]["_step_mode_stage"], "audio")
+        self.assertEqual(update["status"], "waiting_confirmation")
+        self.assertEqual(update["step"], "await_audio")
+
     def test_pipeline_stops_after_tts_and_publishes_audio(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

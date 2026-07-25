@@ -94,6 +94,14 @@
           {{ startingTts ? '检测中...' : '重新检测' }}
         </button>
       </div>
+      <button
+        class="sidebar-secondary-entry"
+        type="button"
+        :class="{ active: activePage === 'development' }"
+        @click="activePage = 'development'"
+      >
+        待开发功能
+      </button>
     </aside>
 
     <main class="main">
@@ -112,19 +120,19 @@
           <button
             type="button"
             :class="{ active: activePage === 'workspace' }"
-            @click="activePage = 'workspace'"
+            @click="form.step_mode = false; activePage = 'workspace'"
           >
             <span>生成工作台</span>
             <small>当前可用主流程</small>
           </button>
-          <button
-            type="button"
-            :class="{ active: activePage === 'development' }"
-            @click="activePage = 'development'"
+          <label
+            class="page-tab-step-toggle"
+            :class="{ active: activePage === 'workspace' && form.step_mode }"
           >
-            <span>待开发</span>
-            <small>实验功能与高级设置</small>
-          </button>
+            <input v-model="form.step_mode" type="checkbox" @change="activePage = 'workspace'" />
+            <span class="page-tab-step-switch" aria-hidden="true"><i></i></span>
+            <span class="page-tab-step-copy"><strong>分步模式</strong><small>试听、验图后继续</small></span>
+          </label>
           <button
             type="button"
             :class="{ active: activePage === 'module1' }"
@@ -142,6 +150,28 @@
             <small>音频转 SRT 与校对</small>
           </button>
           <div class="page-tabs-actions">
+            <div v-if="activePage === 'workspace'" class="generation-top-actions">
+              <label class="main-render-variant">
+                <span>成片版本</span>
+                <select v-model="form.video_render_variant">
+                  <option value="subtitles">仅字幕版</option>
+                  <option value="raw">仅无字幕版</option>
+                  <option value="both">双版本</option>
+                </select>
+              </label>
+              <button class="ghost-btn stop-btn" type="button" :disabled="!canCancelGeneration || cancellingGeneration" @click="cancelGeneration">
+                {{ cancellingGeneration ? '正在停止...' : '停止生成' }}
+              </button>
+              <button class="ghost-btn" type="button" :disabled="!canResumeGeneration || resumingGeneration" @click="resumeGeneration">
+                {{ resumingGeneration ? '正在续跑...' : '断点续跑' }}
+              </button>
+              <button v-if="canContinueStepMode" class="primary-btn" type="button" :disabled="resumingGeneration" @click="resumeGeneration">
+                {{ stepModeContinueLabel }}
+              </button>
+              <button class="primary-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
+                {{ submitButtonText }}
+              </button>
+            </div>
             <template v-if="session.user">
               <button class="toolbar-save-button" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
                 {{ savingParameterPreset ? '保存中…' : '保存当前参数' }}
@@ -160,9 +190,6 @@
                 {{ deletingParameterPreset ? '删除中…' : '删除参数' }}
               </button>
             </template>
-            <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
-              {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
-            </span>
             <span v-if="parameterPresetMessage" class="muted small page-tabs-message">{{ parameterPresetMessage }}</span>
           </div>
         </nav>
@@ -246,7 +273,7 @@
               <div class="tts-parameter-head">
                 <div>
                   <div class="tts-engine-row">
-                    <div class="sidebar-label">{{ ttsEngine === 'indextts2' ? '官方 IndexTTS2 · 本地 GPU' : 'Qwen-TTS · 云端 API' }}</div>
+                    <div class="sidebar-label">{{ ttsEngine === 'indextts2' ? 'IndexTTS2 · 本地 GPU' : 'Qwen-TTS · 云端 API' }}</div>
                     <label class="tts-engine-switch" title="切换本地 IndexTTS2 与 Qwen-TTS 云端配音">
                       <input v-model="ttsEngine" type="checkbox" true-value="qwen" false-value="indextts2" />
                       <span class="tts-engine-track" aria-hidden="true"></span>
@@ -255,7 +282,12 @@
                   </div>
                   <h3>语音参数</h3>
                 </div>
-                <span class="muted small">{{ ttsEngine === 'indextts2' ? (settings.tts?.model || 'official IndexTTS2 2.0.0') : 'DashScope / 百炼' }}</span>
+                <div class="tts-parameter-meta">
+                  <span v-if="ttsEngine === 'indextts2'" class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
+                    {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
+                  </span>
+                  <span class="muted small">{{ ttsEngine === 'indextts2' ? (settings.tts?.model || 'official IndexTTS2 2.0.0') : 'DashScope / 百炼' }}</span>
+                </div>
               </div>
               <div v-if="ttsEngine === 'indextts2'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
@@ -372,6 +404,46 @@
                 系统会先让大模型通读全文，按主题完整性分段；该数值只是上限，不会为了凑字数硬切。分段视频完成后会按顺序自动拼接。
               </small>
             </div>
+            <section v-if="stepModeAudioUrl" class="step-audio-review-card">
+              <div>
+                <div class="sidebar-label">分步模式 · 配音试听</div>
+                <strong>确认配音后再继续配图</strong>
+              </div>
+              <div class="step-audio-controls">
+                <audio
+                  ref="stepAudioPlayer"
+                  preload="metadata"
+                  :src="stepModeAudioUrl"
+                  @loadedmetadata="syncStepAudioMetadata"
+                  @timeupdate="syncStepAudioProgress"
+                  @ended="stepAudioPlaying = false"
+                ></audio>
+                <button class="step-audio-play" type="button" @click="toggleStepAudioPlayback">
+                  {{ stepAudioPlaying ? '❚❚' : '▶' }}
+                </button>
+                <input
+                  class="step-audio-seek"
+                  type="range"
+                  min="0"
+                  :max="Math.max(stepAudioDuration, 0.01)"
+                  step="0.01"
+                  :value="stepAudioCurrentTime"
+                  aria-label="配音播放进度"
+                  @input="seekStepAudio"
+                />
+                <span class="step-audio-time">{{ formatStepAudioTime(stepAudioCurrentTime) }} / {{ formatStepAudioTime(stepAudioDuration) }}</span>
+                <button
+                  v-if="canRetryTts"
+                  class="ghost-btn compact-btn step-audio-retry"
+                  type="button"
+                  :disabled="retryingTts"
+                  @click="retryTts"
+                >
+                  {{ retryingTts ? '正在重新配音…' : '不满意，重新配音' }}
+                </button>
+              </div>
+              <small v-if="canRetryTts" class="muted">重新配音会清理本任务的当前中间产物，并再次停在试听确认。</small>
+            </section>
             </div>
             </div>
 
@@ -570,35 +642,6 @@
               </div>
             </section>
 
-            <div class="inline-actions">
-              <label class="main-render-variant">
-                <span>成片版本</span>
-                <select v-model="form.video_render_variant">
-                  <option value="subtitles">仅字幕版</option>
-                  <option value="raw">仅无字幕版</option>
-                  <option value="both">双版本</option>
-                </select>
-              </label>
-              <button
-                class="ghost-btn stop-btn"
-                type="button"
-                :disabled="!canCancelGeneration || cancellingGeneration"
-                @click="cancelGeneration"
-              >
-                {{ cancellingGeneration ? '正在停止...' : '停止生成' }}
-              </button>
-              <button
-                class="ghost-btn"
-                type="button"
-                :disabled="!canResumeGeneration || resumingGeneration"
-                @click="resumeGeneration"
-              >
-                {{ resumingGeneration ? '正在续跑...' : '断点续跑' }}
-              </button>
-              <button class="primary-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
-                {{ submitButtonText }}
-              </button>
-            </div>
           </article>
         </section>
 
@@ -618,6 +661,17 @@
               <span></span>
               <div>{{ step.label }}</div>
             </div>
+          </div>
+          <div v-if="activeJob?.status === 'waiting_confirmation'" class="step-confirmation-card">
+            <template v-if="activeJob.request?._step_mode_stage === 'audio'">
+              <strong>配音已生成，等待你的确认</strong>
+              <span class="muted small">请使用上方“分步模式 · 配音试听”播放器检查内容、音色与语气；确认后点击右上角“确认配音，开始配图”。</span>
+            </template>
+            <template v-else>
+              <strong>画面已生成，等待你的确认</strong>
+              <span class="muted small">请打开画面检查文件夹查看全部图片；确认后点击上方“确认画面，开始渲染”。</span>
+              <button class="ghost-btn compact-btn" type="button" @click="openStepModeVisualPreviewFolder">打开画面检查文件夹</button>
+            </template>
           </div>
           <div class="log-toolbar">
             <span class="muted small">后台日志</span>
@@ -789,6 +843,56 @@
                 <span>第 {{ visualEditorPage }} / {{ visualEditorPageCount }} 页</span>
                 <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorPage >= visualEditorPageCount" @click="visualEditorPage += 1">下一页</button>
               </div>
+              <section class="visual-timing-panel">
+                <div class="visual-timing-head">
+                  <div>
+                    <div class="eyebrow">画面时序</div>
+                    <h3>按字幕调整画面位置</h3>
+                    <p class="muted small">每次在相邻字幕句之间移动一格。画面始终连续，不会产生空白、重叠或影响配音。</p>
+                  </div>
+                  <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="resetEditedTiming">恢复初始时序</button>
+                </div>
+                <div v-if="!visualEditor.timing_available" class="timing-unavailable">{{ visualEditor.timing_message || '该历史项目缺少可用的字幕时间线。' }}</div>
+                <template v-else>
+                  <div class="visual-timing-track" role="list" aria-label="画面时序列表">
+                    <button
+                      v-for="item in visualEditor.items"
+                      :key="`timing-${item.id}`"
+                      type="button"
+                      class="timing-track-item"
+                      :class="{ selected: visualTimingSelectedId === item.id }"
+                      @click="visualTimingSelectedId = item.id"
+                    >
+                      <strong>{{ item.id }}</strong>
+                      <span>{{ formatTimingRange(item.timing) }}</span>
+                      <small>{{ item.timing?.sentences?.length || 0 }} 句</small>
+                    </button>
+                  </div>
+                  <div v-if="selectedVisualTimingItem" class="visual-timing-editor">
+                    <button class="timing-image" type="button" @click="visualPreviewItem = selectedVisualTimingItem">
+                      <img :src="selectedVisualTimingItem.image_url" :alt="selectedVisualTimingItem.id" />
+                    </button>
+                    <div class="timing-detail">
+                      <div class="timing-detail-title">
+                        <strong>{{ selectedVisualTimingItem.id }}</strong>
+                        <span>{{ formatTimingRange(selectedVisualTimingItem.timing) }} · {{ selectedVisualTimingItem.timing?.duration?.toFixed(1) || '0.0' }} 秒</span>
+                      </div>
+                      <div class="timing-sentences">
+                        <div v-for="sentence in selectedVisualTimingItem.timing?.sentences || []" :key="sentence.slide_id" class="timing-sentence">
+                          <span>{{ sentence.slide_id }}</span><p>{{ sentence.text }}</p>
+                        </div>
+                      </div>
+                      <div class="timing-actions">
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_prev || visualTimingAdjusting" @click="adjustEditedTiming('extend_prev')">← 前面多一句</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_prev || visualTimingAdjusting" @click="adjustEditedTiming('shrink_prev')">前面少一句 →</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_next || visualTimingAdjusting" @click="adjustEditedTiming('shrink_next')">← 后面少一句</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_next || visualTimingAdjusting" @click="adjustEditedTiming('extend_next')">后面多一句 →</button>
+                        <button class="ghost-btn compact-btn timing-remove-btn" type="button" :disabled="visualEditor.items.length <= 1 || visualTimingAdjusting" @click="removeEditedTimingPicture">移除这张画面</button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </section>
               <div class="visual-render-footer">
                 <label>渲染设置
                   <select v-model="visualRenderMode">
@@ -1244,6 +1348,11 @@ const ttsVoiceUploading = ref(false)
 const ttsVoicePreviewUrl = ref('')
 const ttsVoicePreviewPlaying = ref(false)
 let ttsVoicePreviewAudio = null
+const stepAudioPlayer = ref(null)
+const stepAudioPlaying = ref(false)
+const stepAudioCurrentTime = ref(0)
+const stepAudioDuration = ref(0)
+const retryingTts = ref(false)
 const folderOpenMessage = ref('')
 const visualEditorOpen = ref(false)
 const visualEditorLoading = ref(false)
@@ -1251,6 +1360,8 @@ const visualEditor = ref({ items: [], task: { status: 'idle', message: '' }, ver
 const visualEditorProjects = ref([])
 const visualEditorProjectId = ref('')
 const visualEditorPage = ref(1)
+const visualTimingSelectedId = ref('')
+const visualTimingAdjusting = ref(false)
 const visualSelfReferenceMacroId = ref('')
 const visualReferenceUploads = ref([])
 const visualReferenceUploading = ref(false)
@@ -1421,6 +1532,7 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   video_render_variant: 'both',
+  step_mode: false,
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'auto',
   visual_min_duration: 6,
@@ -1519,6 +1631,11 @@ const visibleVisualEditorItems = computed(() => {
   const start = (visualEditorPage.value - 1) * VISUAL_EDITOR_PAGE_SIZE
   return visualEditor.value.items.slice(start, start + VISUAL_EDITOR_PAGE_SIZE)
 })
+const selectedVisualTimingItem = computed(() => (
+  visualEditor.value.items.find((item) => item.id === visualTimingSelectedId.value)
+  || visualEditor.value.items.find((item) => item.timing)
+  || null
+))
 const visualReferenceSummary = computed(() => {
   const parts = []
   if (visualSelfReferenceMacroId.value) parts.push(`图1 ${visualSelfReferenceMacroId.value}`)
@@ -1669,6 +1786,7 @@ const subtitleLogText = computed(() => (subtitleJob.value?.logs || []).join('\n'
 const submitButtonText = computed(() => {
   if (!session.value.user) return '请先登录'
   if (submitting.value) return '任务已提交'
+  if (form.step_mode) return '开始分步生成'
   if (form.skip_tts && !form.source_audio_id) return '请先上传配音'
   if (form.skip_tts) return '从已有配音生成视频'
   if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return '请先保存 Qwen-TTS API Key'
@@ -1682,11 +1800,29 @@ const scriptPlaceholder = computed(() => {
 })
 const canCancelGeneration = computed(() => (
   session.value.user
-  && ['queued', 'running'].includes(activeJob.value?.status)
+  && ['queued', 'running', 'waiting_confirmation'].includes(activeJob.value?.status)
 ))
 const canResumeGeneration = computed(() => (
   session.value.user
   && ['failed', 'cancelled'].includes(activeJob.value?.status)
+))
+const canContinueStepMode = computed(() => Boolean(
+  session.value.user
+  && activeJob.value?.status === 'waiting_confirmation'
+))
+const stepModeContinueLabel = computed(() => {
+  const stage = activeJob.value?.request?._step_mode_stage
+  return stage === 'visual' ? '确认画面，开始渲染' : '确认配音，开始配图'
+})
+const stepModeAudioUrl = computed(() => {
+  if (!activeJob.value?.request?.step_mode) return ''
+  return activeJob.value?.artifacts?.audio || ''
+})
+const canRetryTts = computed(() => Boolean(
+  session.value.user
+  && activeJob.value?.status === 'waiting_confirmation'
+  && activeJob.value?.request?._step_mode_stage === 'audio'
+  && !activeJob.value?.request?.skip_tts
 ))
 const ttsStatusText = computed(() => {
   if (health.value.tts_online) return '在线'
@@ -2344,6 +2480,17 @@ async function openProjectOutputFolder() {
   }
 }
 
+async function openStepModeVisualPreviewFolder() {
+  if (!activeJob.value?.id) return
+  folderOpenMessage.value = ''
+  try {
+    const payload = await api.openStepModeVisualPreviewFolder(activeJob.value.id)
+    folderOpenMessage.value = `已打开画面检查文件夹：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '画面检查文件夹暂不可用'
+  }
+}
+
 async function loadVisualEditor({ preservePage = false } = {}) {
   if (!visualEditorProjectId.value) return
   visualEditorLoading.value = true
@@ -2351,10 +2498,75 @@ async function loadVisualEditor({ preservePage = false } = {}) {
     visualEditor.value = await api.visualEditor(visualEditorProjectId.value)
     if (!preservePage) visualEditorPage.value = 1
     if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
+    if (!visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
+      visualTimingSelectedId.value = visualEditor.value.items.find((item) => item.timing)?.id || ''
+    }
   } catch (error) {
     visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
   } finally {
     visualEditorLoading.value = false
+  }
+}
+
+function formatTimingRange(timing) {
+  if (!timing || !Number.isFinite(Number(timing.start)) || !Number.isFinite(Number(timing.end))) return '暂无时间'
+  const asClock = (seconds) => {
+    const value = Math.max(0, Number(seconds) || 0)
+    const minutes = Math.floor(value / 60)
+    const remainder = value - minutes * 60
+    return `${String(minutes).padStart(2, '0')}:${remainder.toFixed(1).padStart(4, '0')}`
+  }
+  return `${asClock(timing.start)} – ${asClock(timing.end)}`
+}
+
+async function adjustEditedTiming(action) {
+  const item = selectedVisualTimingItem.value
+  if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
+  const originalIndex = visualEditor.value.items.findIndex((entry) => entry.id === item.id)
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.adjustVisualTiming(visualEditorProjectId.value, item.id, action)
+    visualEditor.value = payload
+    visualTimingSelectedId.value = item.id
+    visualEditor.value.task = { status: 'completed', action: 'timing', message: '画面时序已调整；确认后点击下方“重新渲染”生成新视频。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing', message: error.message || '画面时序调整失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function resetEditedTiming() {
+  if (!visualEditorProjectId.value || visualTimingAdjusting.value) return
+  if (!window.confirm('恢复所有画面到首次调整前的字幕时序？重绘后的图片和提示词不会受影响。')) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.resetVisualTiming(visualEditorProjectId.value)
+    visualEditor.value = payload
+    visualEditor.value.task = { status: 'completed', action: 'timing', message: '已恢复初始画面时序；确认后可重新渲染视频。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing', message: error.message || '恢复初始时序失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function removeEditedTimingPicture() {
+  const item = selectedVisualTimingItem.value
+  if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
+  const sentenceCount = item.timing?.sentences?.length || 0
+  if (!window.confirm(`移除 ${item.id} 这张画面？它本身不会从磁盘删除，但覆盖的 ${sentenceCount} 句字幕会按顺序尽量平均分给相邻画面。可使用“恢复初始时序”撤销。`)) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.removeVisualTimingPicture(visualEditorProjectId.value, item.id)
+    visualEditor.value = payload
+    visualTimingSelectedId.value = visualEditor.value.items[Math.max(0, originalIndex - 1)]?.id
+      || visualEditor.value.items[0]?.id || ''
+    visualEditor.value.task = { status: 'completed', action: 'timing_remove', message: `${item.id} 已从时序移除；确认后点击下方“重新渲染”生成新视频。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing_remove', message: error.message || '移除画面失败' }
+  } finally {
+    visualTimingAdjusting.value = false
   }
 }
 
@@ -2799,8 +3011,64 @@ async function cancelSubtitleJob() {
   await refresh()
 }
 
+function syncStepAudioMetadata() {
+  const player = stepAudioPlayer.value
+  stepAudioDuration.value = Number.isFinite(player?.duration) ? player.duration : 0
+  stepAudioCurrentTime.value = Number(player?.currentTime || 0)
+}
+
+function syncStepAudioProgress() {
+  const player = stepAudioPlayer.value
+  stepAudioCurrentTime.value = Number(player?.currentTime || 0)
+}
+
+async function toggleStepAudioPlayback() {
+  const player = stepAudioPlayer.value
+  if (!player) return
+  if (player.paused) {
+    try {
+      await player.play()
+      stepAudioPlaying.value = true
+    } catch {
+      stepAudioPlaying.value = false
+    }
+  } else {
+    player.pause()
+    stepAudioPlaying.value = false
+  }
+}
+
+function seekStepAudio(event) {
+  const player = stepAudioPlayer.value
+  const target = Number(event.target.value)
+  if (!player || !Number.isFinite(target)) return
+  player.currentTime = target
+  stepAudioCurrentTime.value = target
+}
+
+function formatStepAudioTime(value) {
+  const seconds = Math.max(0, Number(value) || 0)
+  const minutes = Math.floor(seconds / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+}
+
+async function retryTts() {
+  if (!canRetryTts.value || !activeJob.value?.id || retryingTts.value) return
+  if (!window.confirm('重新配音会清理本次任务当前的中间产物，并从模块 1 重新开始。是否继续？')) return
+  stepAudioPlayer.value?.pause()
+  stepAudioPlaying.value = false
+  stepAudioCurrentTime.value = 0
+  retryingTts.value = true
+  try {
+    activeJob.value = await api.retryJobTts(activeJob.value.id)
+    await refresh()
+  } finally {
+    retryingTts.value = false
+  }
+}
+
 async function resumeGeneration() {
-  if (!canResumeGeneration.value || !activeJob.value?.id) return
+  if ((!canResumeGeneration.value && !canContinueStepMode.value) || !activeJob.value?.id) return
   resumingGeneration.value = true
   try {
     activeJob.value = await api.resumeJob(activeJob.value.id)
@@ -2872,6 +3140,7 @@ function statusLabel(status) {
     completed: '已完成',
     failed: '失败',
     cancelled: '已停止',
+    waiting_confirmation: '等待确认',
   }[status] || '未开始'
 }
 

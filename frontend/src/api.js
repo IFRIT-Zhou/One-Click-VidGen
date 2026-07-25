@@ -68,7 +68,9 @@ export const api = {
   job: (id) => requestJSON(`/api/jobs/${id}`),
   cancelJob: (id) => requestJSON(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   resumeJob: (id) => requestJSON(`/api/jobs/${id}/resume`, { method: 'POST' }),
+  retryJobTts: (id) => requestJSON(`/api/jobs/${id}/retry-tts`, { method: 'POST' }),
   openJobOutputFolder: (id) => requestJSON(`/api/jobs/${id}/output-folder`, { method: 'POST' }),
+  openStepModeVisualPreviewFolder: (id) => requestJSON(`/api/jobs/${id}/step-mode/visual-preview-folder`, { method: 'POST' }),
   visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
   visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
   visualEditorProjects: () => requestJSON('/api/visual-editor/projects'),
@@ -82,6 +84,11 @@ export const api = {
   },
   undoVisualImage: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/undo`, { method: 'POST' }),
   resetVisualPrompt: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/reset-prompt`, { method: 'POST' }),
+  adjustVisualTiming: (id, imageId, action) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+  }),
+  resetVisualTiming: (id) => requestJSON(`/api/jobs/${id}/visual-editor/timing/reset`, { method: 'POST' }),
+  removeVisualTimingPicture: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing/remove`, { method: 'POST' }),
   renderVisualEditor: (id, mode) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }),
   }),

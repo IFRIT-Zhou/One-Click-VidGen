@@ -83,6 +83,7 @@ class GenerateRequest(BaseModel):
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
+    step_mode: bool = False
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "auto"
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
@@ -121,6 +122,10 @@ class VisualRedrawRequest(BaseModel):
 
 class VisualRenderRequest(BaseModel):
     mode: Literal["subtitles", "raw", "both"] = "both"
+
+
+class VisualTimingAdjustRequest(BaseModel):
+    action: Literal["extend_prev", "extend_next", "shrink_prev", "shrink_next"]
 
 
 class RegisterRequest(BaseModel):
@@ -738,9 +743,21 @@ def resume_job(job_id: str, request: Request) -> dict[str, Any]:
     job = store.get(job_id)
     if not job or job.user_id != int(user["id"]):
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status not in {"failed", "cancelled"}:
-        raise HTTPException(status_code=400, detail="只有失败或已停止的任务可以断点续跑")
+    if job.status not in {"failed", "cancelled", "waiting_confirmation"}:
+        raise HTTPException(status_code=400, detail="只有失败、已停止或等待确认的任务可以继续")
     return store.resume(job)
+
+
+@app.post("/api/jobs/{job_id}/retry-tts")
+def retry_job_tts(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        return store.retry_tts(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs/{job_id}/logs")
@@ -822,6 +839,24 @@ def open_job_output_folder(job_id: str, request: Request) -> dict[str, Any]:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not open output folder: {exc}") from exc
     return {"ok": True, "path": str(project_dir)}
+
+
+@app.post("/api/jobs/{job_id}/step-mode/visual-preview-folder")
+def open_step_mode_visual_preview_folder(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    folder = JOBS_DIR / job_id / "step_mode_preview_images"
+    if not folder.is_dir():
+        raise HTTPException(status_code=404, detail="visual preview images are not available yet")
+    if os.name != "nt":
+        raise HTTPException(status_code=501, detail="open-folder is currently supported on Windows only")
+    try:
+        subprocess.Popen(["explorer.exe", str(folder)], close_fds=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not open visual preview folder: {exc}") from exc
+    return {"ok": True, "path": str(folder)}
 
 
 def _owned_completed_job(job_id: str, request: Request) -> tuple[Any, int]:
@@ -937,6 +972,43 @@ def reset_visual_editor_prompt(job_id: str, macro_id: str, request: Request) -> 
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"ok": True, "prompt": prompt}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/timing")
+def adjust_visual_editor_timing(
+    job_id: str,
+    macro_id: str,
+    payload: VisualTimingAdjustRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.adjust_timing(
+            job_id=job_id,
+            user_id=user_id,
+            macro_id=macro_id,
+            action=payload.action,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/timing/reset")
+def reset_visual_editor_timing(job_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.reset_timing(job_id=job_id, user_id=user_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/timing/remove")
+def remove_visual_editor_timing_picture(job_id: str, macro_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.remove_timing_picture(job_id=job_id, user_id=user_id, macro_id=macro_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/jobs/{job_id}/visual-editor/render")

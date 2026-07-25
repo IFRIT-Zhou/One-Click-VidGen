@@ -25,6 +25,7 @@ TIMELINE_FILENAME = "画面时间线.json"
 MANIFEST_FILENAME = "画面修改清单.json"
 HTML_FILENAME = "最终画面.html"
 SUBTITLE_FILENAME = "最终字幕.srt"
+TIMING_BACKUP_FILENAME = "画面映射.初始时序.json"
 
 
 class VisualEditor:
@@ -106,6 +107,11 @@ class VisualEditor:
         return project_dir / "other" / TIMELINE_FILENAME
 
     @staticmethod
+    def _timing_backup_path(project_dir: Path) -> Path:
+        """The original sentence-to-picture allocation, kept outside the workspace."""
+        return project_dir / "other" / TIMING_BACKUP_FILENAME
+
+    @staticmethod
     def _load_mapping(project_dir: Path) -> list[dict[str, Any]]:
         path = VisualEditor._mapping_path(project_dir)
         if not path.is_file():
@@ -171,6 +177,160 @@ class VisualEditor:
         )
 
     @staticmethod
+    def _load_timeline(project_dir: Path) -> list[dict[str, Any]]:
+        path = VisualEditor._timeline_path(project_dir)
+        if not path.is_file():
+            return []
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, dict) and str(item.get("slide_id") or "")]
+
+    @staticmethod
+    def _validate_timing_partition(mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> list[str]:
+        """Require a complete, ordered subtitle partition before moving a boundary.
+
+        A timing edit moves one subtitle sentence across the boundary of two adjacent
+        pictures.  Rejecting imperfect legacy mappings keeps the result gap-free and
+        prevents an accidental black frame in module 5.
+        """
+        expected = [str(item.get("slide_id") or "") for item in timeline]
+        expected = [item for item in expected if item]
+        actual: list[str] = []
+        for item in mapping:
+            slides = [str(value) for value in item.get("includes_slides", []) if str(value)]
+            if not slides:
+                raise ValueError("该项目的画面映射缺少字幕分组，暂不能安全调整时序。请使用新版任务重新生成一次视频。")
+            actual.extend(slides)
+        if not expected or actual != expected:
+            raise ValueError("该项目的画面与字幕时间线不完整或顺序不一致，暂不能安全调整时序。")
+        return expected
+
+    @staticmethod
+    def _timing_details(mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        by_slide = {str(item.get("slide_id") or ""): item for item in timeline}
+        result: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(mapping):
+            macro_id = str(item.get("macro_scene_id") or "")
+            slides = [str(value) for value in item.get("includes_slides", []) if str(value) in by_slide]
+            if not macro_id or not slides:
+                continue
+            first = by_slide[slides[0]]
+            last = by_slide[slides[-1]]
+            try:
+                start, end = float(first.get("start", 0)), float(last.get("end", 0))
+            except (TypeError, ValueError):
+                start, end = 0.0, 0.0
+            previous = mapping[index - 1] if index else None
+            following = mapping[index + 1] if index + 1 < len(mapping) else None
+            result[macro_id] = {
+                "start": start,
+                "end": end,
+                "duration": max(0.0, end - start),
+                "sentences": [
+                    {
+                        "slide_id": slide_id,
+                        "start": float(by_slide[slide_id].get("start", 0) or 0),
+                        "end": float(by_slide[slide_id].get("end", 0) or 0),
+                        "text": str(by_slide[slide_id].get("text_content") or ""),
+                    }
+                    for slide_id in slides
+                ],
+                "can_extend_prev": bool(previous and len(previous.get("includes_slides", [])) > 1),
+                "can_extend_next": bool(following and len(following.get("includes_slides", [])) > 1),
+                "can_shrink_prev": bool(previous and len(slides) > 1),
+                "can_shrink_next": bool(following and len(slides) > 1),
+            }
+        return result
+
+    @staticmethod
+    def _ensure_timing_backup(project_dir: Path, mapping: list[dict[str, Any]]) -> None:
+        path = VisualEditor._timing_backup_path(project_dir)
+        if not path.exists():
+            path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _recover_timing_from_html(project_dir: Path, mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+        """Recover legacy slide groups from the self-contained rendered HTML.
+
+        Earlier output packages sometimes archived prompts but accidentally omitted
+        ``includes_slides``.  The exported HTML still contains the authoritative
+        poster start/end ranges, so it can be converted back to sentence groups
+        without regenerating images or involving either Agent.
+        """
+        html_path = project_dir / "other" / HTML_FILENAME
+        if not html_path.is_file() or not mapping or not timeline:
+            return None
+        try:
+            html = html_path.read_text(encoding="utf-8")
+            match = re.search(r"const posterTimeline\s*=\s*(\[.*?\]);\s*let subtitleData", html, re.S)
+            posters = json.loads(match.group(1)) if match else []
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(posters, list) or len(posters) != len(mapping):
+            return None
+        recovered = [dict(item) for item in mapping]
+        expected = [str(item.get("slide_id") or "") for item in timeline]
+        for entry, poster in zip(recovered, posters, strict=True):
+            if not isinstance(poster, dict):
+                return None
+            macro_id = str(entry.get("macro_scene_id") or "")
+            filename = Path(str(poster.get("url") or "")).name
+            # Mapping and generated image filenames use the same poster_NNN prefix.
+            if not macro_id or not filename.startswith(macro_id):
+                return None
+            try:
+                start, end = float(poster["start"]), float(poster["end"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            slides = [
+                str(scene.get("slide_id") or "")
+                for scene in timeline
+                if float(scene.get("end", 0) or 0) > start and float(scene.get("start", 0) or 0) < end
+            ]
+            if not slides:
+                return None
+            entry["includes_slides"] = slides
+        actual = [str(slide) for entry in recovered for slide in entry.get("includes_slides", [])]
+        return recovered if actual == expected else None
+
+    @classmethod
+    def _mapping_with_recovered_timing(cls, project_dir: Path, mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+        try:
+            cls._validate_timing_partition(mapping, timeline)
+            return mapping, False
+        except ValueError:
+            recovered = cls._recover_timing_from_html(project_dir, mapping, timeline)
+            if recovered is None:
+                raise
+            cls._validate_timing_partition(recovered, timeline)
+            return recovered, True
+
+    @staticmethod
+    def _write_timing_html(project_dir: Path, mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> None:
+        """Regenerate only module 4's HTML timeline; pictures are never regenerated here."""
+        VisualEditor._validate_timing_partition(mapping, timeline)
+        scenes_by_id = {str(scene.get("slide_id") or ""): scene for scene in timeline}
+        poster_timeline: list[dict[str, Any]] = []
+        image_dir = project_dir / "image"
+        for item in mapping:
+            macro_id = str(item.get("macro_scene_id") or "")
+            image = VisualEditor._find_image(image_dir, macro_id)
+            included = [scenes_by_id[str(slide_id)] for slide_id in item.get("includes_slides", [])]
+            poster_timeline.append({
+                "start": min(float(scene["start"]) for scene in included),
+                "end": max(float(scene["end"]) for scene in included),
+                "url": f"../image/{image.name}",
+            })
+        import module4_video_render as visual
+        visual.write_html(
+            timeline,
+            poster_timeline,
+            html_path=project_dir / "other" / HTML_FILENAME,
+            audio_url="../input/配音.wav",
+        )
+
+    @staticmethod
     def _rebuild_mapping_from_output(project_dir: Path) -> list[dict[str, Any]]:
         """Best-effort compatibility for old outputs whose job workspace was removed."""
         mapping: list[dict[str, Any]] = []
@@ -196,7 +356,12 @@ class VisualEditor:
 
     @staticmethod
     def _backup_dir(project_dir: Path) -> Path:
-        path = project_dir / ".visual_editor_backups"
+        # Keep versions alongside each exported project so users can find and copy
+        # them directly from output, rather than hiding them in a dot-folder.
+        path = project_dir / "重绘备份"
+        legacy_path = project_dir / ".visual_editor_backups"
+        if legacy_path.is_dir() and not path.exists():
+            shutil.move(str(legacy_path), str(path))
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -217,32 +382,45 @@ class VisualEditor:
 
     def inspect(self, job_id: str, user_id: int) -> dict[str, Any]:
         project_dir = self.output_dir(job_id, user_id)
+        # Transparently migrate old hidden version folders when a project is opened.
+        self._backup_dir(project_dir)
         image_dir = project_dir / "image"
         legacy_text_by_image = self._legacy_text_by_image(project_dir)
-        timeline: dict[str, dict[str, Any]] = {}
-        if self._timeline_path(project_dir).is_file():
-            for item in json.loads(self._timeline_path(project_dir).read_text(encoding="utf-8")):
-                if isinstance(item, dict):
-                    timeline[str(item.get("slide_id") or "")] = item
+        timeline_items = self._load_timeline(project_dir)
+        timeline = {str(item.get("slide_id") or ""): item for item in timeline_items}
+        mapping = self._load_mapping(project_dir)
+        try:
+            mapping, recovered_timing = self._mapping_with_recovered_timing(project_dir, mapping, timeline_items)
+            timing_by_macro = self._timing_details(mapping, timeline_items)
+            timing_available = bool(timing_by_macro)
+            timing_message = (
+                "已从该项目成片恢复原始画面时序；首次调整时会保存到项目映射中。"
+                if recovered_timing else "按字幕句子调整画面边界；不会产生空白或重叠。"
+            )
+        except ValueError as exc:
+            timing_by_macro = {}
+            timing_available = False
+            timing_message = str(exc)
         items: list[dict[str, Any]] = []
-        for mapping in self._load_mapping(project_dir):
-            macro_id = str(mapping.get("macro_scene_id") or "")
+        for entry in mapping:
+            macro_id = str(entry.get("macro_scene_id") or "")
             if not macro_id:
                 continue
             try:
                 image = self._find_image(image_dir, macro_id)
             except FileNotFoundError:
                 continue
-            slides = [str(value) for value in mapping.get("includes_slides", [])]
+            slides = [str(value) for value in entry.get("includes_slides", [])]
             text = " ".join(str(timeline.get(value, {}).get("text_content") or "") for value in slides).strip()
             if not text:
                 text = legacy_text_by_image.get(image.name, "")
             items.append({
                 "id": macro_id,
-                "prompt": str(mapping.get("image_prompt") or ""),
+                "prompt": str(entry.get("image_prompt") or ""),
                 "slides": slides,
                 "text": text,
                 "image_url": f"/api/jobs/{job_id}/visual-images/{image.name}?v={image.stat().st_mtime_ns}",
+                "timing": timing_by_macro.get(macro_id),
             })
         with self._lock:
             task = dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
@@ -257,6 +435,8 @@ class VisualEditor:
             "task": task,
             "image_tasks": image_tasks,
             "has_active_image_tasks": any(value.get("status") == "running" for value in image_tasks.values()),
+            "timing_available": timing_available,
+            "timing_message": timing_message,
             "project_dir": str(project_dir),
             "version": int(time.time() * 1000),
         }
@@ -420,6 +600,119 @@ class VisualEditor:
         self._set_task(job_id, status="completed", action="reset_prompt", macro_id=macro_id, message="提示词已重置为初始版本")
         return prompt
 
+    def adjust_timing(
+        self, *, job_id: str, user_id: int, macro_id: str, action: str
+    ) -> dict[str, Any]:
+        actions = {"extend_prev", "extend_next", "shrink_prev", "shrink_next"}
+        if action not in actions:
+            raise ValueError("无效的时序调整操作")
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            timeline = self._load_timeline(project_dir)
+            mapping, recovered_timing = self._mapping_with_recovered_timing(project_dir, mapping, timeline)
+            index = next((i for i, item in enumerate(mapping) if str(item.get("macro_scene_id")) == macro_id), -1)
+            if index < 0:
+                raise ValueError("未找到要调整的画面")
+            current = mapping[index]
+            current_slides = current.get("includes_slides", [])
+            if not isinstance(current_slides, list):
+                raise ValueError("当前画面的字幕分组无效")
+            self._ensure_timing_backup(project_dir, mapping)
+
+            if action == "extend_prev":
+                if index == 0 or len(mapping[index - 1].get("includes_slides", [])) <= 1:
+                    raise ValueError("前一张图只剩一句字幕，不能再缩短")
+                current_slides.insert(0, mapping[index - 1]["includes_slides"].pop())
+                message = "已让当前画面向前多覆盖一句字幕"
+            elif action == "extend_next":
+                if index >= len(mapping) - 1 or len(mapping[index + 1].get("includes_slides", [])) <= 1:
+                    raise ValueError("后一张图只剩一句字幕，不能再缩短")
+                current_slides.append(mapping[index + 1]["includes_slides"].pop(0))
+                message = "已让当前画面向后多覆盖一句字幕"
+            elif action == "shrink_prev":
+                if index == 0 or len(current_slides) <= 1:
+                    raise ValueError("当前画面至少需要保留一句字幕")
+                mapping[index - 1]["includes_slides"].append(current_slides.pop(0))
+                message = "已让当前画面从前面少覆盖一句字幕"
+            else:  # shrink_next
+                if index >= len(mapping) - 1 or len(current_slides) <= 1:
+                    raise ValueError("当前画面至少需要保留一句字幕")
+                mapping[index + 1]["includes_slides"].insert(0, current_slides.pop())
+                message = "已让当前画面从后面少覆盖一句字幕"
+            self._validate_timing_partition(mapping, timeline)
+            self._save_mapping(project_dir, mapping)
+        recovery_note = "（已兼容恢复该历史项目的字幕分组）" if recovered_timing else ""
+        self._set_task(job_id, status="completed", action="timing", macro_id=macro_id, message=f"{message}{recovery_note}")
+        return self.inspect(job_id, user_id)
+
+    def reset_timing(self, *, job_id: str, user_id: int) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        backup_path = self._timing_backup_path(project_dir)
+        if not backup_path.is_file():
+            raise FileNotFoundError("尚未调整过画面时序，无需重置")
+        with self._mapping_lock:
+            current = self._load_mapping(project_dir)
+            original = json.loads(backup_path.read_text(encoding="utf-8"))
+            timeline = self._load_timeline(project_dir)
+            if not isinstance(original, list):
+                raise ValueError("初始时序备份无效")
+            current_by_id = {str(item.get("macro_scene_id")): item for item in current if isinstance(item, dict)}
+            restored: list[dict[str, Any]] = []
+            for saved in original:
+                if not isinstance(saved, dict):
+                    continue
+                entry = dict(saved)
+                # Keep prompt changes for pictures that still participate.  A removed
+                # picture intentionally comes back with the prompt it had at backup.
+                edited = current_by_id.get(str(saved.get("macro_scene_id")))
+                if edited is not None:
+                    entry.update({key: value for key, value in edited.items() if key != "includes_slides"})
+                entry["includes_slides"] = list(saved.get("includes_slides") or [])
+                restored.append(entry)
+            self._validate_timing_partition(restored, timeline)
+            self._save_mapping(project_dir, restored)
+        self._set_task(job_id, status="completed", action="timing", message="已恢复到首次调整前的画面时序")
+        return self.inspect(job_id, user_id)
+
+    def remove_timing_picture(self, *, job_id: str, user_id: int, macro_id: str) -> dict[str, Any]:
+        """Remove one frame from the timeline and redistribute its subtitles safely."""
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            timeline = self._load_timeline(project_dir)
+            mapping, recovered_timing = self._mapping_with_recovered_timing(project_dir, mapping, timeline)
+            if len(mapping) <= 1:
+                raise ValueError("至少需要保留一张画面")
+            index = next((i for i, item in enumerate(mapping) if str(item.get("macro_scene_id")) == macro_id), -1)
+            if index < 0:
+                raise ValueError("未找到要移除的画面")
+            self._ensure_timing_backup(project_dir, mapping)
+            removed = mapping.pop(index)
+            slides = list(removed.get("includes_slides") or [])
+            if index == 0:
+                mapping[0]["includes_slides"] = slides + list(mapping[0].get("includes_slides") or [])
+            elif index == len(mapping):
+                mapping[-1]["includes_slides"] = list(mapping[-1].get("includes_slides") or []) + slides
+            else:
+                previous = mapping[index - 1]
+                following = mapping[index]
+                previous_count = len(previous.get("includes_slides") or [])
+                following_count = len(following.get("includes_slides") or [])
+                # Preserve chronological order while choosing the split that makes
+                # neighbouring subtitle counts as even as possible.
+                split_at = min(
+                    range(len(slides) + 1),
+                    key=lambda value: (abs((previous_count + value) - (following_count + len(slides) - value)), abs(value - len(slides) / 2)),
+                )
+                previous["includes_slides"] = list(previous.get("includes_slides") or []) + slides[:split_at]
+                following["includes_slides"] = slides[split_at:] + list(following.get("includes_slides") or [])
+            self._validate_timing_partition(mapping, timeline)
+            self._save_mapping(project_dir, mapping)
+        recovery_note = "（已兼容恢复该历史项目的字幕分组）" if recovered_timing else ""
+        self._set_task(job_id, status="completed", action="timing_remove", macro_id=macro_id, message=f"已移除 {macro_id}，其字幕已分配给相邻画面{recovery_note}")
+        return self.inspect(job_id, user_id)
+
     def render_video(self, *, job: Any, mode: str = "both") -> None:
         with self._lock:
             has_active_image_tasks = any(
@@ -452,6 +745,17 @@ class VisualEditor:
                     audio_path = project_dir / "input" / "配音.wav"
                     if not html_path.is_file() or not subtitle_path.is_file() or not audio_path.is_file():
                         raise FileNotFoundError("输出目录缺少重新渲染所需的画面、字幕或配音资料")
+                    # Timing edits live in the mapping.  Rebuild the self-contained
+                    # HTML from that mapping immediately before module 5, while
+                    # preserving the existing images and subtitle/audio files.
+                    mapping = self._load_mapping(project_dir)
+                    timeline = self._load_timeline(project_dir)
+                    try:
+                        self._write_timing_html(project_dir, mapping, timeline)
+                    except ValueError:
+                        # Legacy projects may predate persisted slide groups. Their
+                        # original HTML remains renderable, only timing edits stay off.
+                        self._log(job, "该历史项目缺少可编辑的字幕分组，沿用原始画面时序重新渲染。")
                     html = html_path.read_text(encoding="utf-8")
                     html = html.replace("../image/", "assets/").replace("../input/配音.wav", "2_audio_srt/final_output.wav")
                     (visual.VISUAL_DIR / "index.html").write_text(html, encoding="utf-8")
