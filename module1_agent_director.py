@@ -29,8 +29,10 @@ FFMPEG = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 
 os.environ["PYTHONUNBUFFERED"] = "1"
 
-CHUNK_MIN_LEN = 15
-CHUNK_MAX_LEN = 50
+CHUNK_MIN_LEN = 25
+CHUNK_TARGET_LEN = 50
+CHUNK_SOFT_MAX_LEN = 65
+CHUNK_MAX_LEN = 85
 # The Qwen endpoint enforces a 600-unit payload ceiling.  Chinese UTF-8 text
 # can consume multiple units per displayed character, so measure payload bytes
 # (with headroom) rather than using Python character counts.
@@ -79,6 +81,177 @@ def clean_text(raw: str) -> str:
     """Remove production notes while preserving spoken parenthetical content."""
     lines = [line for line in raw.split("\n") if "此处留白" not in line]
     return re.sub(r"【[^】]*】", "", "\n".join(lines))
+
+
+def _split_sentences_preserving_closers(paragraph: str) -> list[str]:
+    """Split on true sentence endings and keep closing quotes with the sentence."""
+    endings = "。！？!?"
+    closers = "”’」』】）)]"
+    sentences: list[str] = []
+    start = 0
+    index = 0
+    while index < len(paragraph):
+        if paragraph[index] not in endings:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(paragraph) and paragraph[end] in closers:
+            end += 1
+        sentence = paragraph[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = end
+        index = end
+    tail = paragraph[start:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _split_clause_units(sentence: str) -> list[str]:
+    """Create weak/medium pause units while preserving their punctuation."""
+    boundaries = "；;：:，,"
+    units: list[str] = []
+    start = 0
+    for index, char in enumerate(sentence):
+        if char not in boundaries:
+            continue
+        unit = sentence[start:index + 1].strip()
+        if unit:
+            units.append(unit)
+        start = index + 1
+    tail = sentence[start:].strip()
+    if tail:
+        units.append(tail)
+    return units
+
+
+def _safe_hard_split(text: str, target_len: int, hard_max_len: int) -> list[str]:
+    """Bound punctuation-free text without cutting through an ASCII word/number."""
+    remaining = text.strip()
+    result: list[str] = []
+    while len(remaining) > hard_max_len:
+        split_at = min(target_len, len(remaining))
+        while (
+            split_at > 1
+            and split_at < len(remaining)
+            and remaining[split_at - 1].isascii()
+            and remaining[split_at - 1].isalnum()
+            and remaining[split_at].isascii()
+            and remaining[split_at].isalnum()
+        ):
+            split_at -= 1
+        if split_at <= 1:
+            split_at = hard_max_len
+        result.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        result.append(remaining)
+    return result
+
+
+def _merge_short_chunks(
+    chunks: list[str],
+    *,
+    min_len: int,
+    target_len: int,
+    hard_max_len: int,
+) -> list[str]:
+    """Merge a short chunk with the semantically nearest viable neighbor."""
+    chunks = [chunk for chunk in chunks if chunk]
+    index = 0
+    while len(chunks) > 1 and index < len(chunks):
+        if len(chunks[index]) >= min_len:
+            index += 1
+            continue
+        candidates: list[tuple[int, str, int]] = []
+        if index > 0:
+            combined = chunks[index - 1] + chunks[index]
+            if len(combined) <= hard_max_len:
+                candidates.append((abs(len(combined) - target_len), "previous", index - 1))
+        if index + 1 < len(chunks):
+            combined = chunks[index] + chunks[index + 1]
+            if len(combined) <= hard_max_len:
+                candidates.append((abs(len(combined) - target_len), "next", index))
+        if not candidates:
+            index += 1
+            continue
+        _, direction, target_index = min(candidates, key=lambda value: (value[0], value[1] != "previous"))
+        if direction == "previous":
+            chunks[target_index] += chunks[index]
+            chunks.pop(index)
+            index = max(0, target_index)
+        else:
+            chunks[index] += chunks[index + 1]
+            chunks.pop(index + 1)
+    return chunks
+
+
+def split_indextts2_text(
+    raw: str,
+    *,
+    min_len: int = CHUNK_MIN_LEN,
+    target_len: int = CHUNK_TARGET_LEN,
+    soft_max_len: int = CHUNK_SOFT_MAX_LEN,
+    hard_max_len: int = CHUNK_MAX_LEN,
+) -> list[str]:
+    """Prosody-aware IndexTTS2 chunks with strong sentence boundaries."""
+    cleaned = clean_text(raw)
+    # Treat line breaks as paragraph boundaries, but preserve meaningful spaces
+    # inside English/mixed-language narration.  Collapsing all whitespace here
+    # would turn e.g. "One Click VidGen" into "OneClickVidGen" before TTS.
+    paragraphs = [re.sub(r"[ \t]+", " ", value).strip() for value in re.split(r"[\r\n]+", cleaned)]
+    paragraphs = [value for value in paragraphs if value]
+    all_chunks: list[str] = []
+    for paragraph in paragraphs:
+        paragraph_chunks: list[str] = []
+        for sentence in _split_sentences_preserving_closers(paragraph):
+            if len(sentence) <= soft_max_len:
+                paragraph_chunks.append(sentence)
+                continue
+            units: list[str] = []
+            for unit in _split_clause_units(sentence):
+                if len(unit) > hard_max_len:
+                    units.extend(_safe_hard_split(unit, target_len, hard_max_len))
+                else:
+                    units.append(unit)
+            current = ""
+            for unit in units:
+                candidate = current + unit
+                if not current or len(candidate) <= soft_max_len:
+                    current = candidate
+                elif len(current) < min_len and len(candidate) <= hard_max_len:
+                    current = candidate
+                else:
+                    paragraph_chunks.append(current)
+                    current = unit
+            if current:
+                paragraph_chunks.append(current)
+        paragraph_chunks = _merge_short_chunks(
+            paragraph_chunks,
+            min_len=min_len,
+            target_len=target_len,
+            hard_max_len=hard_max_len,
+        )
+        all_chunks.extend(paragraph_chunks)
+
+    expected = "".join(paragraphs)
+    if "".join(all_chunks) != expected:
+        raise RuntimeError("IndexTTS2 语义断句完整性检查失败：断句结果未能完整覆盖文案")
+    if any(len(chunk) > hard_max_len for chunk in all_chunks):
+        raise RuntimeError("IndexTTS2 语义断句失败：仍存在超过绝对上限的片段")
+    return all_chunks
+
+
+def step1_indextts2_semantic_slicing(text_path: Path) -> list[str]:
+    print("[Step 1] Prosody-aware semantic chunk slicing...", flush=True)
+    chunks = split_indextts2_text(text_path.read_text(encoding="utf-8"))
+    print(
+        f"  -> Produced {len(chunks)} chunks "
+        f"(target {CHUNK_MIN_LEN}-{CHUNK_SOFT_MAX_LEN}, hard max {CHUNK_MAX_LEN}, no batch cap)",
+        flush=True,
+    )
+    return chunks
 
 
 def step1_dynamic_chunk_slicing(
@@ -227,6 +400,56 @@ def _run_and_stream(
         raise RuntimeError(f"官方 IndexTTS2 批处理退出码: {return_code}")
 
 
+def _watch_generated_wavs(
+    items: list[tuple[int, str, Path]],
+    report_generated: Callable[[int, str], None],
+    stop_event: threading.Event,
+    *,
+    poll_seconds: float = 0.4,
+) -> None:
+    """Report completed batch items from stable WAV files, independent of CLI buffering."""
+    baseline: dict[Path, tuple[int, int]] = {}
+    for _, _, path in items:
+        try:
+            stat = path.stat()
+            baseline[path] = (stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            continue
+
+    observed: dict[Path, tuple[tuple[int, int], int]] = {}
+    reported: set[Path] = set()
+    while not stop_event.is_set():
+        for original_index, text, path in items:
+            if path in reported:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            signature = (stat.st_size, stat.st_mtime_ns)
+            if stat.st_size <= 44 or signature == baseline.get(path):
+                continue
+            previous_signature, stable_checks = observed.get(path, ((-1, -1), 0))
+            stable_checks = stable_checks + 1 if signature == previous_signature else 1
+            observed[path] = (signature, stable_checks)
+            if stable_checks >= 2:
+                reported.add(path)
+                report_generated(original_index, text)
+        stop_event.wait(max(0.1, poll_seconds))
+
+    # Once the child has exited, every non-empty changed WAV is complete.
+    for original_index, text, path in items:
+        if path in reported:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        signature = (stat.st_size, stat.st_mtime_ns)
+        if stat.st_size > 44 and signature != baseline.get(path):
+            report_generated(original_index, text)
+
+
 def _write_manifest(path: Path, chunks: list[str]) -> None:
     path.write_text(
         "\n".join(json.dumps({"text": chunk}, ensure_ascii=False) for chunk in chunks) + "\n",
@@ -347,6 +570,9 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
 
     env = os.environ.copy()
     env.update(config.runtime_environment())
+    # The official CLI prints one Generated line per WAV without flush=True.
+    # Force unbuffered child output while the file watcher remains the fallback.
+    env["PYTHONUNBUFFERED"] = "1"
     parallelism = min(3, max(1, int(getattr(args, "tts_parallelism", 1) or 1)))
     parallelism = min(parallelism, len(chunks))
     print(
@@ -356,12 +582,16 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
     )
     progress_lock = threading.Lock()
     completed_count = 0
+    reported_indices: set[int] = set()
     synthesis_started_at = time.monotonic()
     heartbeat_stop = threading.Event()
 
     def report_generated(original_index: int, text: str) -> None:
         nonlocal completed_count
         with progress_lock:
+            if original_index in reported_indices:
+                return
+            reported_indices.add(original_index)
             completed_count += 1
             completed = completed_count
         preview = re.sub(r"\s+", " ", text).strip()
@@ -385,6 +615,36 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
             report_generated(original_index, text)
 
         return callback
+
+    def run_with_file_progress(
+        command: list[str],
+        items: list[tuple[int, str]],
+        paths: list[Path],
+        *,
+        label: str | None = None,
+    ) -> None:
+        watcher_stop = threading.Event()
+        watched_items = [
+            (original_index, text, path)
+            for (original_index, text), path in zip(items, paths)
+        ]
+        watcher = threading.Thread(
+            target=_watch_generated_wavs,
+            args=(watched_items, report_generated, watcher_stop),
+            daemon=True,
+        )
+        watcher.start()
+        try:
+            _run_and_stream(
+                command,
+                cwd=config.root,
+                env=env,
+                label=label,
+                on_generated=generated_callback(items),
+            )
+        finally:
+            watcher_stop.set()
+            watcher.join(timeout=2)
 
     def report_heartbeat() -> None:
         """Keep long GPU inference visible without forwarding noisy model bars."""
@@ -416,13 +676,8 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
                 emotion_vector=emotion_vector,
             )
             single_items = list(enumerate(chunks))
-            _run_and_stream(
-                command,
-                cwd=config.root,
-                env=env,
-                on_generated=generated_callback(single_items),
-            )
             wav_paths = [TEMP_DIR / f"chunk-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
+            run_with_file_progress(command, single_items, wav_paths)
         else:
             assignments: list[list[tuple[int, str]]] = [[] for _ in range(parallelism)]
             for index, chunk in enumerate(chunks):
@@ -445,17 +700,17 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
                     voice_path=voice_path,
                     emotion_vector=emotion_vector,
                 )
-                _run_and_stream(
-                    command,
-                    cwd=config.root,
-                    env=env,
-                    label=f"TTS-{worker_id}",
-                    on_generated=generated_callback(items),
-                )
-                return [
+                worker_outputs = [
                     (original_index, worker_dir / f"{output_prefix}-{local_index:04d}.wav")
                     for local_index, (original_index, _) in enumerate(items, 1)
                 ]
+                run_with_file_progress(
+                    command,
+                    items,
+                    [path for _, path in worker_outputs],
+                    label=f"TTS-{worker_id}",
+                )
+                return worker_outputs
 
             with ThreadPoolExecutor(max_workers=parallelism) as executor:
                 futures = [
@@ -664,7 +919,7 @@ def main() -> None:
                 measure=lambda value: len(value.encode("utf-8")),
             )
         else:
-            chunks = step1_dynamic_chunk_slicing(text_path)
+            chunks = step1_indextts2_semantic_slicing(text_path)
         if args.tts_engine == "qwen":
             wav_paths, srt_entries = step2_qwen_synthesize(chunks, args)
         else:

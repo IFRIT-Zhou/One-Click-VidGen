@@ -23,7 +23,7 @@ from .db import (
 from .html_generator import generate_visual_html
 from .semantic_timeline import generate_fine_grained_timeline
 from .gemini_client import GeminiError, gemini_configured, generate_gemini_text, parse_json_response
-from story_agents import load_or_create_segment_story_plan, load_or_create_story_plan
+from story_agents import load_or_create_story_context, load_or_create_story_plan, story_fingerprint
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -646,6 +646,87 @@ def ffmpeg_binary() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
+SUBTITLE_VIDEO_STYLES: dict[str, dict[str, str]] = {
+    "black_white_outline": {"label": "黑字白描边", "ass": "PrimaryColour=&H00000000,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=2,Shadow=0"},
+    "white_black_outline": {"label": "白字黑描边", "ass": "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0"},
+    "yellow_bg_black": {"label": "黄底黑字", "ass": "PrimaryColour=&H00000000,BackColour=&H0000FFFF,BorderStyle=3,Outline=4,Shadow=0"},
+    "white_bg_black": {"label": "白底黑字", "ass": "PrimaryColour=&H00000000,BackColour=&H00FFFFFF,BorderStyle=3,Outline=4,Shadow=0"},
+    "navy_bg_white": {"label": "默认成片样式（白字深蓝底）", "ass": "PrimaryColour=&H00FFFFFF,BackColour=&H2B341807,BorderStyle=3,Outline=3,Shadow=0"},
+}
+
+
+def system_subtitle_fonts() -> list[str]:
+    """Return a practical, stable list of locally installed Windows font families."""
+    fonts = {"Microsoft YaHei", "SimHei", "SimSun", "Arial", "Times New Roman"}
+    if os.name == "nt":
+        try:
+            import winreg  # type: ignore
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts") as key:
+                index = 0
+                while True:
+                    try:
+                        name, _value, _kind = winreg.EnumValue(key, index)
+                    except OSError:
+                        break
+                    index += 1
+                    family = str(name).split("(", 1)[0].strip()
+                    if family:
+                        fonts.add(family.split(" & ", 1)[0].strip())
+        except OSError:
+            pass
+    return sorted(font for font in fonts if font)[:300]
+
+
+def _subtitle_filter_path(path: Path) -> str:
+    # FFmpeg filter syntax needs a literal escaped drive colon on Windows.
+    return path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
+
+
+def render_standalone_subtitle_video(
+    job: Job,
+    store: JobStore,
+    source: Path,
+    srt_path: Path,
+    output: Path,
+    *,
+    style_key: str,
+    font_name: str,
+) -> None:
+    """Burn a completed Module 2 SRT into its original media without rerunning ASR."""
+    if style_key not in SUBTITLE_VIDEO_STYLES:
+        raise ValueError("未知字幕样式")
+    source = source.resolve()
+    srt_path = srt_path.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    font = str(font_name or "Microsoft YaHei").strip().replace("'", "") or "Microsoft YaHei"
+    # Keep this independent subtitle tool visually consistent with the main story-video
+    # renderer: bold white type, a deep-blue subtitle card, and bottom-centre placement.
+    force_style = (
+        f"FontName={font},FontSize=12,Bold=1,Alignment=2,MarginV=10,"
+        f"{SUBTITLE_VIDEO_STYLES[style_key]['ass']}"
+    )
+    subtitle_filter = f"subtitles=filename='{_subtitle_filter_path(srt_path)}':charenc=UTF-8:force_style='{force_style}'"
+    video_suffixes = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+    if source.suffix.lower() in video_suffixes:
+        command = [
+            ffmpeg_binary(), "-y", "-i", str(source), "-vf", subtitle_filter,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "copy", str(output),
+        ]
+        source_label = "原视频"
+    else:
+        command = [
+            ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "color=c=0x101827:s=1920x1080:r=30",
+            "-i", str(source), "-vf", subtitle_filter, "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-shortest", str(output),
+        ]
+        source_label = "音频（自动生成深色背景视频）"
+    store.log(job, f"字幕添加：使用{source_label}，样式「{SUBTITLE_VIDEO_STYLES[style_key]['label']}」，字体「{font}」")
+    store.update(job, status="running", step="subtitle_render", progress=12, message="正在添加字幕")
+    run_command(job, store, command, "字幕添加渲染")
+    if not output.is_file() or output.stat().st_size < 1024:
+        raise RuntimeError("字幕视频渲染未产生有效文件")
+
+
 def user_upload_path(user_id: int, filename: str) -> Path:
     root = (WORKSPACE_DIR / "editor" / f"user_{user_id}" / "uploads").resolve()
     path = (root / filename).resolve()
@@ -716,6 +797,18 @@ def write_original_text_from_asr(job: Job) -> None:
         target = WORKSPACE_DIR / "1_original_text.txt"
         target.write_text(text, encoding="utf-8")
         register_job_asset(job, target, "asr_transcript", {"skip_text_correction": True})
+
+
+def canonical_story_text(request: dict[str, Any], scenes: list[dict[str, Any]]) -> str:
+    """Agent 0 reads author text when supplied, otherwise corrected ASR text."""
+    authored = str(request.get("script") or "").strip()
+    if authored:
+        return authored
+    return "\n".join(
+        str(scene.get("text_content") or "").strip()
+        for scene in scenes
+        if str(scene.get("text_content") or "").strip()
+    ).strip()
 
 
 def reset_generation_workspace() -> None:
@@ -868,6 +961,7 @@ def copy_artifacts(job: Job) -> dict[str, str]:
         "scene_timeline": WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
         "fine_grained_timeline": WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json",
         "poster_mapping": WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+        "story_context": WORKSPACE_DIR / "3_visual_template" / "story_context.json",
         "story_plan": WORKSPACE_DIR / "3_visual_template" / "story_plan.json",
         "visual_prompt_plan": WORKSPACE_DIR / "3_visual_template" / "visual_prompt_plan.json",
         "html": WORKSPACE_DIR / "3_visual_template" / "index.html",
@@ -902,6 +996,10 @@ def archive_project_assets(job: Job) -> Path:
         (
             WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json",
             archive_dir / "模块3产出_剧本.json",
+        ),
+        (
+            WORKSPACE_DIR / "3_visual_template" / "story_context.json",
+            archive_dir / "Agent0产出_全文资料.json",
         ),
         (
             WORKSPACE_DIR / "3_visual_template" / "story_plan.json",
@@ -964,6 +1062,110 @@ def archive_project_assets(job: Job) -> Path:
 
 def scene_text_length(scenes: list[dict[str, Any]]) -> int:
     return sum(len(str(item.get("text_content") or "").strip()) for item in scenes)
+
+
+def _scene_boundary_after(scene: dict[str, Any]) -> str:
+    """Estimate a safe long-form cut when Agent 1 boundaries are unavailable."""
+    text = str(scene.get("text_content") or "").strip()
+    return "hard" if re.search(r"[。！？!?][”’」』】）)]?$", text) else "soft"
+
+
+def _pack_contiguous_partitions(
+    partitions: list[list[dict[str, Any]]],
+    threshold: int,
+    boundary_after: list[str] | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Balance contiguous semantic partitions without crossing the hard cap.
+
+    The previous implementation greedily filled every part to ``threshold``.
+    That was safe, but often produced a tiny final video part.  This dynamic
+    programme keeps the minimum number of parts, then chooses boundaries near
+    the average size and mildly prefers Agent 1's hard semantic boundaries.
+    """
+    partitions = [list(partition) for partition in partitions if partition]
+    if not partitions:
+        return []
+    threshold = max(1, int(threshold))
+    weights = [scene_text_length(partition) for partition in partitions]
+    boundary_after = list(boundary_after or [])
+    if len(boundary_after) < len(partitions):
+        boundary_after.extend(["soft"] * (len(partitions) - len(boundary_after)))
+
+    # A left-to-right fill gives the minimum feasible number of contiguous
+    # groups.  Oversized atomic entries are allowed only as a group of one.
+    minimum_group_count = 0
+    current_weight = 0
+    for weight in weights:
+        if current_weight and current_weight + weight > threshold:
+            minimum_group_count += 1
+            current_weight = 0
+        if weight > threshold:
+            if current_weight:
+                minimum_group_count += 1
+                current_weight = 0
+            minimum_group_count += 1
+        else:
+            current_weight += weight
+    if current_weight:
+        minimum_group_count += 1
+    minimum_group_count = max(1, minimum_group_count)
+
+    total_weight = sum(weights)
+    target = total_weight / minimum_group_count
+    count = len(partitions)
+    infinity = float("inf")
+    costs = [[infinity] * (count + 1) for _ in range(minimum_group_count + 1)]
+    previous = [[-1] * (count + 1) for _ in range(minimum_group_count + 1)]
+    costs[0][0] = 0.0
+
+    for group_index in range(1, minimum_group_count + 1):
+        for end in range(1, count + 1):
+            segment_weight = 0
+            for start in range(end - 1, -1, -1):
+                segment_weight += weights[start]
+                oversized_atomic = start == end - 1 and weights[start] > threshold
+                if segment_weight > threshold and not oversized_atomic:
+                    break
+                if costs[group_index - 1][start] == infinity:
+                    continue
+                deviation = ((segment_weight - target) / max(target, 1.0)) ** 2
+                # Strong boundaries are preferred, but never at the cost of a
+                # severely lopsided or additional render part.
+                boundary_penalty = 0.0
+                if end < count and str(boundary_after[end - 1]).lower() != "hard":
+                    boundary_penalty = 0.08
+                tiny_penalty = 0.0
+                if minimum_group_count > 1 and segment_weight < target * 0.55:
+                    tiny_penalty = ((target * 0.55 - segment_weight) / max(target, 1.0)) * 3.0
+                candidate = costs[group_index - 1][start] + deviation + boundary_penalty + tiny_penalty
+                if candidate < costs[group_index][end]:
+                    costs[group_index][end] = candidate
+                    previous[group_index][end] = start
+
+    if previous[minimum_group_count][count] < 0:
+        # Defensive fallback; this should only be reachable for malformed input.
+        groups: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for partition, weight in zip(partitions, weights):
+            if current and scene_text_length(current) + weight > threshold:
+                groups.append(current)
+                current = []
+            current.extend(partition)
+        if current:
+            groups.append(current)
+        return groups
+
+    cuts: list[tuple[int, int]] = []
+    end = count
+    for group_index in range(minimum_group_count, 0, -1):
+        start = previous[group_index][end]
+        cuts.append((start, end))
+        end = start
+    cuts.reverse()
+    return [
+        [scene for partition in partitions[start:end] for scene in partition]
+        for start, end in cuts
+    ]
 
 
 def load_scene_timeline() -> list[dict[str, Any]]:
@@ -1054,20 +1256,9 @@ def split_scenes_by_text_length(
     scenes: list[dict[str, Any]],
     threshold: int,
 ) -> list[list[dict[str, Any]]]:
-    groups: list[list[dict[str, Any]]] = []
-    current: list[dict[str, Any]] = []
-    current_len = 0
-    for scene in scenes:
-        text_len = len(str(scene.get("text_content") or "").strip())
-        if current and current_len + text_len > threshold:
-            groups.append(current)
-            current = []
-            current_len = 0
-        current.append(scene)
-        current_len += text_len
-    if current:
-        groups.append(current)
-    return groups
+    partitions = [[scene] for scene in scenes]
+    boundaries = [_scene_boundary_after(scene) for scene in scenes]
+    return _pack_contiguous_partitions(partitions, threshold, boundaries)
 
 
 def split_scenes_by_topic_with_llm(
@@ -1127,7 +1318,8 @@ def split_scenes_by_topic_with_llm(
     if not isinstance(raw, list) or not raw:
         return None
 
-    groups: list[list[dict[str, Any]]] = []
+    semantic_partitions: list[list[dict[str, Any]]] = []
+    semantic_boundaries: list[str] = []
     expected_start = 1
     for item in raw:
         if not isinstance(item, dict):
@@ -1143,13 +1335,117 @@ def split_scenes_by_topic_with_llm(
         if not group:
             return None
         if scene_text_length(group) > threshold and len(group) > 1:
-            groups.extend(split_scenes_by_text_length(group, threshold))
+            fragments = split_scenes_by_text_length(group, threshold)
+            semantic_partitions.extend(fragments)
+            semantic_boundaries.extend(["soft"] * max(0, len(fragments) - 1) + ["hard"])
         else:
-            groups.append(group)
+            semantic_partitions.append(group)
+            semantic_boundaries.append("hard")
         expected_start = end + 1
     if expected_start != len(scenes) + 1:
         return None
+    groups = _pack_contiguous_partitions(semantic_partitions, threshold, semantic_boundaries)
     return groups if len(groups) > 1 else None
+
+
+def split_scenes_by_agent1_boundaries(
+    scenes: list[dict[str, Any]],
+    threshold: int,
+    story_plan: dict[str, Any],
+) -> list[list[dict[str, Any]]] | None:
+    """Bundle full-text Agent 1 units into renderable parts without cutting an event."""
+    units = story_plan.get("semantic_units")
+    if not isinstance(units, list) or not units:
+        return None
+    positions = {str(scene.get("slide_id") or ""): index for index, scene in enumerate(scenes)}
+    partitions: list[list[dict[str, Any]]] = []
+    boundaries: list[str] = []
+    expected = 0
+    for unit in units:
+        if not isinstance(unit, dict):
+            return None
+        start = positions.get(str(unit.get("start_slide_id") or ""), -1)
+        end = positions.get(str(unit.get("end_slide_id") or ""), -1)
+        if start != expected or end < start:
+            return None
+        partition = scenes[start : end + 1]
+        boundary = str(unit.get("boundary_after") or "soft").lower()
+        if scene_text_length(partition) > threshold and len(partition) > 1:
+            # An unusually large event cannot fit inside the render/API cap.
+            # Split only at existing subtitle boundaries and mark artificial
+            # internal cuts soft; retain Agent 1's boundary on the final piece.
+            fragments = split_scenes_by_text_length(partition, threshold)
+            partitions.extend(fragments)
+            boundaries.extend(["soft"] * max(0, len(fragments) - 1) + [boundary])
+        else:
+            partitions.append(partition)
+            boundaries.append(boundary)
+        expected = end + 1
+    if expected != len(scenes):
+        return None
+
+    groups = _pack_contiguous_partitions(partitions, threshold, boundaries)
+    return groups if groups else None
+
+
+def project_global_agent1_plan_to_segment(
+    global_plan: dict[str, Any],
+    all_scenes: list[dict[str, Any]],
+    original_scenes: list[dict[str, Any]],
+    normalized_scenes: list[dict[str, Any]],
+    content_mode: str,
+) -> dict[str, Any]:
+    """Remap Agent 1's full-text unit boundaries to one locally rendered part."""
+    units = global_plan.get("semantic_units")
+    if not isinstance(units, list) or len(original_scenes) != len(normalized_scenes):
+        raise ValueError("无法将全文 Agent 1 边界投影到当前分段")
+    all_positions = {str(scene.get("slide_id") or ""): index for index, scene in enumerate(all_scenes)}
+    original_ids = [str(scene.get("slide_id") or "") for scene in original_scenes]
+    normalized_ids = [str(scene.get("slide_id") or "") for scene in normalized_scenes]
+    segment_positions = {slide_id: index for index, slide_id in enumerate(original_ids)}
+    projected_units: list[dict[str, Any]] = []
+    expected = 0
+    for source_unit in units:
+        if not isinstance(source_unit, dict):
+            continue
+        global_start = all_positions.get(str(source_unit.get("start_slide_id") or ""), -1)
+        global_end = all_positions.get(str(source_unit.get("end_slide_id") or ""), -1)
+        if global_start == -1 or global_end == -1 or global_end < global_start:
+            raise ValueError("全文 Agent 1 边界与当前分段不一致")
+        first_global = all_positions.get(original_ids[0], -1)
+        last_global = all_positions.get(original_ids[-1], -1)
+        if global_end < first_global or global_start > last_global:
+            continue
+        overlap_start = max(global_start, first_global) - first_global
+        overlap_end = min(global_end, last_global) - first_global
+        if overlap_start != expected:
+            raise ValueError("全文 Agent 1 边界没有完整覆盖当前分段")
+        projected_units.append({
+            **source_unit,
+            "unit_id": f"segment_unit_{len(projected_units) + 1:02d}",
+            "start_slide_id": normalized_ids[overlap_start],
+            "end_slide_id": normalized_ids[overlap_end],
+            # If a giant event had to be split for the render cap, do not
+            # falsely make its artificial end a hard semantic boundary.
+            "boundary_after": source_unit.get("boundary_after", "hard") if global_end <= last_global else "soft",
+        })
+        expected = overlap_end + 1
+    if expected != len(normalized_scenes):
+        raise ValueError("全文 Agent 1 投影后存在未覆盖字幕")
+    plan = dict(global_plan)
+    plan["semantic_units"] = projected_units
+    plan["story_beats"] = [{
+        "beat_id": f"segment_beat_{index:02d}",
+        "slide_ids": [unit["start_slide_id"], unit["end_slide_id"]],
+        "purpose": unit.get("purpose") or "语义推进",
+        "emotion": "依据全文上下文",
+        "visual_focus": unit.get("visual_focus") or "依据原文",
+        "visual_pacing": unit.get("visual_pacing") or "normal",
+    } for index, unit in enumerate(projected_units, 1)]
+    plan["source_fingerprint"] = story_fingerprint(normalized_scenes, content_mode)
+    plan["global_source_fingerprint"] = global_plan.get("source_fingerprint")
+    plan["planning_scope"] = "global_agent1_projection"
+    return plan
 
 
 def normalize_segment_scenes(scenes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float, float]:
@@ -1235,11 +1531,34 @@ def render_semantic_visual_video(
     story_plan_is_global: bool = True,
 ) -> None:
     store.raise_if_cancelled(job)
+    # Agent 1 must see the original subtitle timeline before Module 3 adds
+    # visual summaries.  Its semantic units become the fixed membership that
+    # Agent 2 later receives; Python still guards only hard duration limits.
+    raw_scenes = load_scene_timeline()
+    if story_plan_path is None:
+        story_plan_path = WORKSPACE_DIR / "3_visual_template" / "story_plan.json"
+        story_plan = load_or_create_story_plan(
+            raw_scenes,
+            resume=resume,
+            path=story_plan_path,
+            content_mode=str(request.get("content_mode") or "urban_suspense"),
+        )
+        store.log(job, "Agent 1：已按全文规划语义镜头单元")
+    else:
+        try:
+            story_plan = json.loads(story_plan_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            story_plan = load_or_create_story_plan(
+                raw_scenes,
+                resume=resume,
+                path=story_plan_path,
+                content_mode=str(request.get("content_mode") or "urban_suspense"),
+            )
     fine_path = WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json"
     if resume and fine_path.is_file() and fine_path.stat().st_size > 0:
         store.log(job, f"断点续跑：复用模块 3 剧本: {fine_path}")
     else:
-        fine_path = generate_fine_grained_timeline()
+        fine_path = generate_fine_grained_timeline(story_plan=story_plan)
     store.raise_if_cancelled(job)
     store.log(job, f"模块 3 剧本写入: {fine_path}")
     store.update(job, step="visual", progress=max(job.progress, 55), message=STEPS[4][1])
@@ -1284,6 +1603,9 @@ def render_semantic_visual_video(
         visual_prompt_system = str(request.get("visual_prompt_system") or "").strip()
         if visual_prompt_system:
             poster_env["VISUAL_PROMPT_SYSTEM"] = visual_prompt_system
+        agent0_prompt_system = str(request.get("agent0_prompt_system") or "").strip()
+        if agent0_prompt_system:
+            poster_env["AGENT0_PROMPT_SYSTEM"] = agent0_prompt_system
         agent1_prompt_system = str(request.get("agent1_prompt_system") or "").strip()
         if agent1_prompt_system:
             poster_env["AGENT1_PROMPT_SYSTEM"] = agent1_prompt_system
@@ -1431,21 +1753,28 @@ def _copy_visual_segment(
     output_image_dir: Path,
     file_prefix: str,
     time_offset: float,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float, list[dict[str, Any]]]:
     mapping = _json_list(mapping_path)
     scenes = _json_list(timeline_path)
     if not scenes:
-        return [], [], 0.0
+        return [], [], 0.0, []
     scenes_by_id = {str(item.get("slide_id") or ""): item for item in scenes}
+    slide_id_map = {
+        slide_id: f"{file_prefix}_{slide_id}" if file_prefix else slide_id
+        for slide_id in scenes_by_id
+    }
     adjusted_scenes = [
         {
             **item,
+            "id": f"{file_prefix}_{item.get('id')}" if file_prefix and item.get("id") else item.get("id"),
+            "slide_id": slide_id_map.get(str(item.get("slide_id") or ""), str(item.get("slide_id") or "")),
             "start": round(float(item.get("start") or 0) + time_offset, 3),
             "end": round(float(item.get("end") or 0) + time_offset, 3),
         }
         for item in scenes
     ]
     poster_timeline: list[dict[str, Any]] = []
+    archived_mapping: list[dict[str, Any]] = []
     for item in mapping:
         poster_id = str(item.get("macro_scene_id") or "").strip()
         if not poster_id or not source_image_dir.is_dir():
@@ -1461,6 +1790,16 @@ def _copy_visual_segment(
             str(item.get("image_prompt") or "").strip(),
             encoding="utf-8",
         )
+        output_macro_id = re.sub(r"_[0-9a-f]{8,}$", "", output_image.stem, flags=re.IGNORECASE)
+        archived_mapping.append({
+            **item,
+            "macro_scene_id": output_macro_id,
+            "image_prompt": str(item.get("image_prompt") or "").strip(),
+            "includes_slides": [
+                slide_id_map.get(str(value), str(value))
+                for value in item.get("includes_slides", [])
+            ],
+        })
         included = [
             scenes_by_id[slide_id]
             for slide_id in (str(value) for value in item.get("includes_slides", []))
@@ -1475,7 +1814,7 @@ def _copy_visual_segment(
                 }
             )
     duration = max(float(item.get("end") or 0) for item in scenes)
-    return adjusted_scenes, poster_timeline, duration
+    return adjusted_scenes, poster_timeline, duration, archived_mapping
 
 
 def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
@@ -1507,13 +1846,14 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
 
         combined_scenes: list[dict[str, Any]] = []
         combined_posters: list[dict[str, Any]] = []
+        combined_mapping: list[dict[str, Any]] = []
         parts_dir = JOBS_DIR / job.id / "artifacts" / "parts"
         part_mappings = sorted(parts_dir.glob("part_*_poster_mapping.json")) if parts_dir.is_dir() else []
         if part_mappings:
             time_offset = 0.0
             for mapping_path in part_mappings:
                 part_name = mapping_path.name.removesuffix("_poster_mapping.json")
-                scenes, posters, duration = _copy_visual_segment(
+                scenes, posters, duration, archived_mapping = _copy_visual_segment(
                     mapping_path=mapping_path,
                     timeline_path=parts_dir / f"{part_name}_fine_grained_timeline.json",
                     source_image_dir=parts_dir / f"{part_name}_images",
@@ -1523,9 +1863,10 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
                 )
                 combined_scenes.extend(scenes)
                 combined_posters.extend(posters)
+                combined_mapping.extend(archived_mapping)
                 time_offset += duration
         else:
-            scenes, posters, _ = _copy_visual_segment(
+            scenes, posters, _, archived_mapping = _copy_visual_segment(
                 mapping_path=WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
                 timeline_path=WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json",
                 source_image_dir=WORKSPACE_DIR / "3_visual_template" / "assets",
@@ -1535,6 +1876,34 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
             )
             combined_scenes.extend(scenes)
             combined_posters.extend(posters)
+            combined_mapping.extend(archived_mapping)
+
+        # Keep the original task reference images inside output so a completed
+        # project remains fully editable after workspace/uploads is cleaned.
+        reference_manifest: list[dict[str, Any]] = []
+        requested_reference_ids = [
+            str(value).strip()
+            for value in request.get("reference_image_ids", [])
+            if str(value).strip()
+        ][:3]
+        if job.user_id is not None:
+            reference_dir = other_dir / "reference_images"
+            for index, image_id in enumerate(dict.fromkeys(requested_reference_ids), start=1):
+                source = user_reference_image_path(int(job.user_id), image_id)
+                if not source.is_file():
+                    continue
+                reference_dir.mkdir(parents=True, exist_ok=True)
+                target = reference_dir / f"main_{index:02d}{source.suffix.lower()}"
+                shutil.copy2(source, target)
+                reference_manifest.append({
+                    "reference_id": f"图{index}",
+                    "upload_id": image_id,
+                    "filename": target.name,
+                })
+        if reference_manifest:
+            (other_dir / "参考图清单.json").write_text(
+                json.dumps(reference_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
         video_copies = {
             FINAL_DIR / "final_with_subtitles.mp4": video_dir / "最终视频_字幕版.mp4",
@@ -1567,16 +1936,24 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
 
         # Keep a self-contained post-production manifest in output.  The visual
         # editor must keep working after workspace/jobs has been cleaned up.
+        mapping_by_macro = {
+            str(item.get("macro_scene_id") or ""): item
+            for item in combined_mapping
+            if str(item.get("macro_scene_id") or "")
+        }
         output_mapping: list[dict[str, Any]] = []
         for image in sorted(image_dir.glob("*")):
             if image.suffix.lower() not in {".jpg", ".jpeg"}:
                 continue
             macro_id = re.sub(r"_[0-9a-f]{8,}$", "", image.stem, flags=re.IGNORECASE)
             prompt_file = image.with_suffix(".txt")
+            source_item = mapping_by_macro.get(macro_id, {})
             output_mapping.append({
+                **source_item,
                 "macro_scene_id": macro_id,
                 "image_prompt": prompt_file.read_text(encoding="utf-8") if prompt_file.is_file() else "",
-                "includes_slides": [],
+                "includes_slides": list(source_item.get("includes_slides") or []),
+                "reference_image_ids": list(source_item.get("reference_image_ids") or []),
             })
         (other_dir / "画面映射.json").write_text(
             json.dumps(output_mapping, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1654,6 +2031,10 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     threshold = int(request.get("split_text_threshold") or 3000)
     auto_split = bool(request.get("auto_split_long_text", True))
     scenes = load_scene_timeline()
+    content_mode = str(request.get("content_mode") or "urban_suspense")
+    full_text = canonical_story_text(request, scenes)
+    global_character_prompt = str(request.get("global_character_prompt") or "").strip()
+    world_prompt = str(request.get("story_environment_prompt") or "").strip()
     total_chars = scene_text_length(scenes)
     hierarchical_min_chars = max(
         threshold * 2,
@@ -1666,20 +2047,52 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         store.log(job, "分步模式：超长文将保留配音确认；画面确认将在分段渲染流程稳定后开放。")
         request = {**request, "step_mode": False}
     if not auto_split or total_chars <= threshold:
+        context_path = WORKSPACE_DIR / "3_visual_template" / "story_context.json"
+        store.log(job, "Agent 0：开始通读全文资料")
+        story_context = load_or_create_story_context(
+            full_text,
+            resume=resume,
+            path=context_path,
+            content_mode=content_mode,
+            global_character_prompt=global_character_prompt,
+            world_prompt=world_prompt,
+            agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+        )
+        story_plan_path = WORKSPACE_DIR / "3_visual_template" / "story_plan.json"
+        store.log(job, "Agent 1：开始按字幕时间轴规划画面边界")
+        load_or_create_story_plan(
+            scenes,
+            resume=resume,
+            path=story_plan_path,
+            content_mode=content_mode,
+            story_context=story_context,
+        )
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
         store.update(job, step="semantic", progress=48, message=STEPS[3][1])
-        render_semantic_visual_video(job, store, request, resume=resume)
+        render_semantic_visual_video(job, store, request, resume=resume, story_plan_path=story_plan_path)
         return
 
     source_dir = WORKSPACE_DIR / "temp_chunks" / "long_split_source"
     source_dir.mkdir(parents=True, exist_ok=True)
+    global_story_context = source_dir / "story_context.full.json"
     global_story_plan = source_dir / "story_plan.full.json"
+    store.log(job, "Agent 0：开始通读长文全文并建立全局资料")
+    story_context = load_or_create_story_context(
+        full_text,
+        resume=resume,
+        path=global_story_context,
+        content_mode=content_mode,
+        global_character_prompt=global_character_prompt,
+        world_prompt=world_prompt,
+        agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+    )
     store.log(job, f"Agent 1：开始通读长文全文（{len(scenes)} 个片段）")
     story_plan = load_or_create_story_plan(
         scenes,
         resume=resume,
         path=global_story_plan,
-        content_mode=str(request.get("content_mode") or "urban_suspense"),
+        content_mode=content_mode,
+        story_context=story_context,
     )
     store.log(job, f"Agent 1：全文故事上下文已保存: {global_story_plan}")
     if hierarchical_planning:
@@ -1687,9 +2100,13 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     else:
         store.log(job, f"Agent 自适应规划：普通长文模式（≤{hierarchical_min_chars} 字），各段共用全文总纲")
 
-    groups = split_scenes_by_topic_with_llm(scenes, threshold, story_plan)
+    groups = split_scenes_by_agent1_boundaries(scenes, threshold, story_plan)
     if groups:
-        store.log(job, f"Agent 1：结合全文上下文拆为 {len(groups)} 个叙事段")
+        store.log(job, f"Agent 1：按全文语义边界均衡拆为 {len(groups)} 个渲染段")
+    else:
+        groups = split_scenes_by_topic_with_llm(scenes, threshold, story_plan)
+    if groups:
+        store.log(job, f"长文渲染将严格保留全文 Agent 1 的语义边界")
     else:
         groups = split_scenes_by_text_length(scenes, threshold)
         store.log(job, "长文主题分段不可用，已回退到字幕边界字数分段")
@@ -1704,7 +2121,12 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         )
         return
 
-    store.log(job, f"长文自动分段: {total_chars} 字，最大每段 {threshold} 字，拆为 {len(groups)} 段")
+    group_lengths = [scene_text_length(group) for group in groups]
+    store.log(
+        job,
+        f"长文自动分段: {total_chars} 字，语义优先且单段不超过 {threshold} 字，"
+        f"拆为 {len(groups)} 段（{' / '.join(str(length) for length in group_lengths)} 字）",
+    )
     full_audio = source_dir / "final_output.full.wav"
     full_srt = source_dir / "final_short.full.srt"
     full_timeline = source_dir / "scene_timeline.full.json"
@@ -1725,19 +2147,16 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             message=f"长文分段渲染 {index}/{len(groups)}",
         )
         normalized, start, end = normalize_segment_scenes(group)
-        segment_plan_path = global_story_plan
-        segment_plan_is_global = True
-        if hierarchical_planning:
-            segment_plan_path = source_dir / f"story_plan.part_{index:03d}.json"
-            store.log(job, f"Agent 1B：开始细化第 {index}/{len(groups)} 个长文分段")
-            load_or_create_segment_story_plan(
-                normalized,
-                story_plan,
-                resume=resume,
-                path=segment_plan_path,
-                content_mode=str(request.get("content_mode") or "urban_suspense"),
-            )
-            segment_plan_is_global = False
+        segment_plan_path = source_dir / f"story_plan.part_{index:03d}.json"
+        segment_plan = project_global_agent1_plan_to_segment(
+            story_plan,
+            scenes,
+            group,
+            normalized,
+            str(request.get("content_mode") or "urban_suspense"),
+        )
+        segment_plan_path.write_text(json.dumps(segment_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        segment_plan_is_global = False
         shutil.rmtree(WORKSPACE_DIR / "3_visual_template", ignore_errors=True)
         shutil.rmtree(FINAL_DIR, ignore_errors=True)
         (WORKSPACE_DIR / "3_visual_template").mkdir(parents=True, exist_ok=True)
@@ -1776,6 +2195,10 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     shutil.copy2(full_audio, WORKSPACE_DIR / "2_audio_srt" / "final_output.wav")
     shutil.copy2(full_srt, WORKSPACE_DIR / "2_audio_srt" / "final_short.srt")
     shutil.copy2(full_timeline, WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json")
+    if global_story_context.is_file():
+        shutil.copy2(global_story_context, WORKSPACE_DIR / "3_visual_template" / "story_context.json")
+    if global_story_plan.is_file():
+        shutil.copy2(global_story_plan, WORKSPACE_DIR / "3_visual_template" / "story_plan.json")
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     store.update(job, step="render", progress=88, message="拼接分段视频")
     render_variant = str(request.get("video_render_variant") or "both").strip().lower()

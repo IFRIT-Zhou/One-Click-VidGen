@@ -1,7 +1,9 @@
 import json
 import os
+import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -34,7 +36,11 @@ from .editor import (
     save_upload,
     upload_path,
 )
-from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, normalize_project_name, store
+from .pipeline import (
+    JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, GenerationCancelled, SUBTITLE_VIDEO_STYLES,
+    normalize_project_name, render_standalone_subtitle_video, store, system_subtitle_fonts,
+    user_upload_path,
+)
 from .visual_editor import IMAGE_EXTENSIONS, visual_editor
 from module4_video_render import (
     CONTENT_MODE_SCIENCE,
@@ -50,7 +56,9 @@ from module4_video_render import (
     SCIENCE_VISUAL_STYLE,
     build_visual_prompt_system,
 )
-from story_agents import GENERAL_AGENT_SYSTEM_PROMPT, SCIENCE_AGENT_SYSTEM_PROMPT, STORY_AGENT_SYSTEM_PROMPT
+from story_agents import AGENT0_SYSTEM_PROMPT, TIMELINE_AGENT_SYSTEM_PROMPT
+
+MAX_SCRIPT_CHARACTERS = 12_000
 
 
 class GenerateRequest(BaseModel):
@@ -96,6 +104,7 @@ class GenerateRequest(BaseModel):
     reference_image_ids: list[str] = Field(default_factory=list, max_length=3)
     story_environment_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
+    agent0_prompt_system: str | None = Field(default=None, max_length=12000)
     agent1_prompt_system: str | None = Field(default=None, max_length=12000)
 
 
@@ -107,6 +116,7 @@ class ParameterPresetRequest(BaseModel):
 class AgentPromptPresetRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     visual_prompt_system: str = Field(min_length=1, max_length=4000)
+    agent0_prompt_system: str | None = Field(default=None, max_length=12000)
     agent1_prompt_system: str | None = Field(default=None, max_length=12000)
     agent2_director_theme: str | None = Field(default=None, max_length=40)
     content_mode: Literal["urban_suspense", "science_explainer", "general"] | None = None
@@ -120,12 +130,25 @@ class VisualRedrawRequest(BaseModel):
     reference_upload_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
+class VisualBaselineRequest(BaseModel):
+    prompt: str | None = Field(default=None, max_length=12000)
+
+
+class SubtitleRenderRequest(BaseModel):
+    style: Literal["black_white_outline", "white_black_outline", "yellow_bg_black", "white_bg_black", "navy_bg_white"] = "navy_bg_white"
+    font_name: str = Field(default="Microsoft YaHei", min_length=1, max_length=100)
+
+
 class VisualRenderRequest(BaseModel):
     mode: Literal["subtitles", "raw", "both"] = "both"
 
 
 class VisualTimingAdjustRequest(BaseModel):
     action: Literal["extend_prev", "extend_next", "shrink_prev", "shrink_next"]
+
+
+class VisualTimingHistoryRequest(BaseModel):
+    history_id: str = Field(min_length=1, max_length=260)
 
 
 class RegisterRequest(BaseModel):
@@ -142,7 +165,9 @@ class LoginRequest(BaseModel):
 class ApiKeySettingsRequest(BaseModel):
     language_api_key: str | None = Field(default=None, max_length=2048)
     image_api_key: str | None = Field(default=None, max_length=2048)
+    image_api_keys: list[str] = Field(default_factory=list, max_length=10)
     common_api_key: str | None = Field(default=None, max_length=2048)
+    common_api_keys: list[str] = Field(default_factory=list, max_length=10)
     qwen_tts_api_key: str | None = Field(default=None, max_length=2048)
 
 
@@ -348,7 +373,8 @@ def settings() -> dict[str, Any]:
                     "default_style": DEFAULT_VISUAL_STYLE,
                     "default_character": DEFAULT_GLOBAL_CHARACTER_PROMPT,
                     "default_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
-                    "default_agent1_system": STORY_AGENT_SYSTEM_PROMPT,
+                    "default_agent0_system": AGENT0_SYSTEM_PROMPT,
+                    "default_agent1_system": TIMELINE_AGENT_SYSTEM_PROMPT,
                 },
                 CONTENT_MODE_SCIENCE: {
                     "label": "口播科普",
@@ -356,7 +382,8 @@ def settings() -> dict[str, Any]:
                     "default_style": SCIENCE_VISUAL_STYLE,
                     "default_character": SCIENCE_GLOBAL_CHARACTER_PROMPT,
                     "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
-                    "default_agent1_system": SCIENCE_AGENT_SYSTEM_PROMPT,
+                    "default_agent0_system": AGENT0_SYSTEM_PROMPT,
+                    "default_agent1_system": TIMELINE_AGENT_SYSTEM_PROMPT,
                 },
                 CONTENT_MODE_GENERAL: {
                     "label": "通用自定义",
@@ -364,19 +391,49 @@ def settings() -> dict[str, Any]:
                     "default_style": GENERAL_VISUAL_STYLE,
                     "default_character": "",
                     "default_system": GENERAL_VISUAL_PROMPT_SYSTEM,
-                    "default_agent1_system": GENERAL_AGENT_SYSTEM_PROMPT,
+                    "default_agent0_system": AGENT0_SYSTEM_PROMPT,
+                    "default_agent1_system": TIMELINE_AGENT_SYSTEM_PROMPT,
                 },
             },
         },
     }
 
 
+def _unique_api_keys(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for raw_value in values:
+        for value in re.split(r"[,;\s]+", str(raw_value or "")):
+            key = value.strip()
+            if key and key not in result:
+                result.append(key)
+    return result
+
+
+def _runninghub_api_keys(values: dict[str, str]) -> list[str]:
+    candidates = [values.get("RUNNINGHUB_API_KEY", ""), values.get("RUNNINGHUB_API_KEYS", "")]
+    candidates.extend(
+        value
+        for name, value in sorted(values.items())
+        if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name)
+    )
+    return _unique_api_keys(candidates)
+
+
+def _common_api_keys(values: dict[str, str]) -> list[str]:
+    return _unique_api_keys([
+        values.get("APP_COMMON_API_KEY", ""),
+        values.get("APP_COMMON_API_KEYS", ""),
+    ])
+
+
 def _api_key_status() -> dict[str, Any]:
     values = _parse_env_lines(PROJECT_ROOT / ".env")
+    image_keys = _runninghub_api_keys(values)
+    common_keys = _common_api_keys(values)
     return {
         "language": {"configured": bool(values.get("GEMINI_API_KEY", "").strip())},
-        "image": {"configured": bool(values.get("RUNNINGHUB_API_KEY", "").strip())},
-        "common": {"configured": bool(values.get("APP_COMMON_API_KEY", "").strip())},
+        "image": {"configured": bool(image_keys), "count": len(image_keys)},
+        "common": {"configured": bool(common_keys), "count": len(common_keys)},
         "qwen_tts": {"configured": bool(values.get("DASHSCOPE_API_KEY", "").strip())},
     }
 
@@ -392,21 +449,43 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     require_user(request)
     language = str(payload.language_api_key or "").strip()
     image = str(payload.image_api_key or "").strip()
+    image_additions = _unique_api_keys(payload.image_api_keys)
     common = str(payload.common_api_key or "").strip()
+    common_additions = _unique_api_keys(payload.common_api_keys)
     qwen_tts = str(payload.qwen_tts_api_key or "").strip()
-    if not any((language, image, common, qwen_tts)):
+    all_supplied = [language, image, common, qwen_tts, *image_additions, *common_additions]
+    if not any(all_supplied):
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
-    if any("\n" in value or "\r" in value for value in (language, image, common, qwen_tts)):
+    if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
+
+    existing = _parse_env_lines(PROJECT_ROOT / ".env")
+    existing_common = _common_api_keys(existing)
+    supplied_common = _unique_api_keys([common, *common_additions])
+    common_pool = _unique_api_keys([*existing_common, *supplied_common])
+    common_primary = common or existing.get("APP_COMMON_API_KEY", "").strip() or (common_pool[0] if common_pool else "")
+
+    existing_image = _runninghub_api_keys(existing)
+    supplied_image = _unique_api_keys([image, *image_additions])
+    # Every common RunningHub-style account is also eligible for Image2 work.
+    image_pool = _unique_api_keys([*existing_image, *supplied_image, *common_pool])
+    image_primary = (
+        image
+        or common
+        or existing.get("RUNNINGHUB_API_KEY", "").strip()
+        or (image_pool[0] if image_pool else "")
+    )
 
     # A common RunningHub-style key fills either dedicated field left blank.
     updates: dict[str, str] = {}
-    if common:
-        updates["APP_COMMON_API_KEY"] = common
+    if supplied_common:
+        updates["APP_COMMON_API_KEY"] = common_primary
+        updates["APP_COMMON_API_KEYS"] = ",".join(key for key in common_pool if key != common_primary)
     if language or common:
         updates["GEMINI_API_KEY"] = language or common
-    if image or common:
-        updates["RUNNINGHUB_API_KEY"] = image or common
+    if supplied_image or supplied_common:
+        updates["RUNNINGHUB_API_KEY"] = image_primary
+        updates["RUNNINGHUB_API_KEYS"] = ",".join(key for key in image_pool if key != image_primary)
     if qwen_tts:
         updates["DASHSCOPE_API_KEY"] = qwen_tts
     try:
@@ -415,7 +494,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         raise HTTPException(status_code=500, detail=f"保存 API Key 失败: {exc}") from exc
     return {
         "keys": _api_key_status(),
-        "message": "API Key 已保存到本机 .env；通用 Key 已自动补全未单独填写的模型。",
+        "message": "API Key 已保存到本机 .env；新增账号已合并去重并加入图像并行号池。",
     }
 
 
@@ -458,23 +537,26 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
     CONTENT_MODE_STORY: {
         "name": "都市惊悚",
         "visual_prompt_system": DEFAULT_VISUAL_PROMPT_SYSTEM,
-        "agent1_prompt_system": STORY_AGENT_SYSTEM_PROMPT,
+        "agent0_prompt_system": AGENT0_SYSTEM_PROMPT,
+        "agent1_prompt_system": TIMELINE_AGENT_SYSTEM_PROMPT,
         "agent2_director_theme": "惊悚漫画",
     },
     CONTENT_MODE_SCIENCE: {
         "name": "口播科普",
         "visual_prompt_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
-        "agent1_prompt_system": SCIENCE_AGENT_SYSTEM_PROMPT,
+        "agent0_prompt_system": AGENT0_SYSTEM_PROMPT,
+        "agent1_prompt_system": TIMELINE_AGENT_SYSTEM_PROMPT,
         "agent2_director_theme": "科普科技口播视频",
     },
     CONTENT_MODE_GENERAL: {
         "name": "通用自定义",
         "visual_prompt_system": GENERAL_VISUAL_PROMPT_SYSTEM,
-        "agent1_prompt_system": GENERAL_AGENT_SYSTEM_PROMPT,
+        "agent0_prompt_system": AGENT0_SYSTEM_PROMPT,
+        "agent1_prompt_system": TIMELINE_AGENT_SYSTEM_PROMPT,
         "agent2_director_theme": "通用视频",
     },
 }
-DEFAULT_AGENT_PROMPT_PRESET_VERSION = 2
+DEFAULT_AGENT_PROMPT_PRESET_VERSION = 4
 
 
 def _default_agent_prompt_preset_path(content_mode: str) -> Path:
@@ -498,6 +580,7 @@ def _ensure_default_agent_prompt_presets() -> None:
             "name": defaults["name"],
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "visual_prompt_system": defaults["visual_prompt_system"],
+            "agent0_prompt_system": defaults["agent0_prompt_system"],
             "agent1_prompt_system": defaults["agent1_prompt_system"],
             "agent2_director_theme": defaults["agent2_director_theme"],
         }
@@ -631,6 +714,7 @@ def load_agent_prompt_preset(name: str, request: Request) -> dict[str, Any]:
     return {
         "name": str(payload.get("name") or path.stem),
         "visual_prompt_system": prompt,
+        "agent0_prompt_system": str(payload.get("agent0_prompt_system") or "").strip(),
         "agent1_prompt_system": str(payload.get("agent1_prompt_system") or "").strip(),
         "agent2_director_theme": str(payload.get("agent2_director_theme") or "").strip(),
         "content_mode": str(payload.get("content_mode") or "").strip(),
@@ -646,6 +730,7 @@ def save_agent_prompt_preset(payload: AgentPromptPresetRequest, request: Request
         "name": name,
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "visual_prompt_system": payload.visual_prompt_system.strip(),
+        "agent0_prompt_system": str(payload.agent0_prompt_system or "").strip(),
         "agent1_prompt_system": str(payload.agent1_prompt_system or "").strip(),
         "agent2_director_theme": str(payload.agent2_director_theme or "").strip(),
         "content_mode": str(payload.content_mode or "").strip(),
@@ -660,8 +745,18 @@ def save_agent_prompt_preset(payload: AgentPromptPresetRequest, request: Request
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
+    script_length = len(str(data.get("script") or ""))
+    if script_length > MAX_SCRIPT_CHARACTERS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"单次文案最多 {MAX_SCRIPT_CHARACTERS:,} 个字符（当前 {script_length:,}）。"
+                "请按完整章节拆分后分批生成，再自行拼接成片。"
+            ),
+        )
     data["project_name"] = normalize_project_name(data.get("project_name"))
     if data.get("visual_prompt_mode") != "full":
+        data["agent0_prompt_system"] = None
         data["agent1_prompt_system"] = None
     if data.get("visual_prompt_mode") == "simple":
         if not str(data.get("global_character_prompt") or "").strip() and str(data.get("content_mode") or "") != CONTENT_MODE_GENERAL:
@@ -859,6 +954,68 @@ def open_step_mode_visual_preview_folder(job_id: str, request: Request) -> dict[
     return {"ok": True, "path": str(folder)}
 
 
+@app.get("/api/subtitle-fonts")
+def list_subtitle_fonts(request: Request) -> dict[str, Any]:
+    require_user(request)
+    return {"fonts": system_subtitle_fonts()}
+
+
+@app.get("/api/jobs/{job_id}/subtitle-rendered-video")
+def get_subtitle_rendered_video(job_id: str, request: Request) -> FileResponse:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="subtitle video not found")
+    path = OUTPUT_DIR / job_id / "带字幕视频.mp4"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="subtitle video not found")
+    return FileResponse(str(path), media_type="video/mp4", filename="带字幕视频.mp4")
+
+
+@app.post("/api/jobs/{job_id}/subtitle-render")
+def render_subtitle_video(job_id: str, payload: SubtitleRenderRequest, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    if not bool(job.request.get("subtitle_only")):
+        raise HTTPException(status_code=400, detail="仅模块 2 字幕任务支持独立添加字幕")
+    if job.status not in {"completed", "failed"}:
+        raise HTTPException(status_code=409, detail="请等待当前字幕任务结束")
+    source_id = str(job.request.get("source_audio_id") or "").strip()
+    if not source_id:
+        raise HTTPException(status_code=400, detail="未找到原始音频或视频素材")
+    source = user_upload_path(int(user["id"]), source_id)
+    srt_path = OUTPUT_DIR / job_id / "最终字幕.srt"
+    if not srt_path.is_file():
+        srt_path = JOBS_DIR / job_id / "artifacts" / "final_short.srt"
+    if not source.is_file() or not srt_path.is_file():
+        raise HTTPException(status_code=404, detail="原始媒体或 SRT 字幕文件不存在")
+    output = OUTPUT_DIR / job_id / "带字幕视频.mp4"
+    store.update(job, status="running", step="subtitle_render", progress=5, message="正在准备添加字幕")
+
+    def worker() -> None:
+        try:
+            store.log(job, "收到添加字幕请求：不重新识别、不重新校对，直接开始渲染")
+            render_standalone_subtitle_video(
+                job, store, source, srt_path, output,
+                style_key=payload.style,
+                font_name=payload.font_name,
+            )
+            artifacts = dict(job.artifacts)
+            artifacts["subtitle_video"] = f"/api/jobs/{job.id}/subtitle-rendered-video"
+            store.update(job, status="completed", step="completed", progress=100, message="字幕视频已生成", artifacts=artifacts)
+            store.log(job, f"字幕添加完成：{output}")
+        except GenerationCancelled:
+            store.log(job, "字幕添加已停止")
+        except Exception as exc:
+            store.log(job, f"字幕添加失败：{type(exc).__name__}: {exc}")
+            store.update(job, status="failed", step="failed", error=str(exc), message="字幕添加失败")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return job.snapshot()
+
+
 def _owned_completed_job(job_id: str, request: Request) -> tuple[Any, int]:
     user = require_user(request)
     job = store.get(job_id)
@@ -974,6 +1131,40 @@ def reset_visual_editor_prompt(job_id: str, macro_id: str, request: Request) -> 
     return {"ok": True, "prompt": prompt}
 
 
+@app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/commit-baseline")
+def commit_visual_editor_baseline(
+    job_id: str,
+    macro_id: str,
+    payload: VisualBaselineRequest,
+    request: Request,
+) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    try:
+        visual_editor.commit_baseline(
+            job=job,
+            user_id=user_id,
+            macro_id=macro_id,
+            prompt=payload.prompt,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "message": f"{macro_id} 已确认为新的原图"}
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/commit-all-baselines")
+def commit_all_visual_editor_baselines(job_id: str, request: Request) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    try:
+        count = visual_editor.commit_all_baselines(job=job, user_id=user_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "count": count, "message": f"已将当前 {count} 张图片确认为新的原图"}
+
+
 @app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/timing")
 def adjust_visual_editor_timing(
     job_id: str,
@@ -999,6 +1190,32 @@ def reset_visual_editor_timing(job_id: str, request: Request) -> dict[str, Any]:
     try:
         return visual_editor.reset_timing(job_id=job_id, user_id=user_id)
     except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/timing/commit")
+def commit_visual_editor_timing(job_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.commit_timing_baseline(job_id=job_id, user_id=user_id)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/timing/history")
+def restore_visual_editor_timing_history(
+    job_id: str,
+    payload: VisualTimingHistoryRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return visual_editor.restore_timing_history(
+            job_id=job_id,
+            user_id=user_id,
+            history_id=payload.history_id,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -40,6 +40,7 @@ class OutputOrganizerTest(unittest.TestCase):
                             "macro_scene_id": "poster_001",
                             "includes_slides": ["scene_001"],
                             "image_prompt": prompt,
+                            "reference_image_ids": ["图1"],
                         }],
                         ensure_ascii=False,
                     ),
@@ -90,6 +91,15 @@ class OutputOrganizerTest(unittest.TestCase):
             self.assertIn("../image/part_001_poster_001_test.jpg", html_text)
             self.assertIn("../image/part_002_poster_001_test.jpg", html_text)
             self.assertNotIn('window.base64Subtitle = "";', html_text)
+            mapping = json.loads((result / "other" / "画面映射.json").read_text(encoding="utf-8"))
+            self.assertEqual(mapping[0]["includes_slides"], ["part_001_scene_001"])
+            self.assertEqual(mapping[1]["includes_slides"], ["part_002_scene_001"])
+            self.assertEqual(mapping[0]["reference_image_ids"], ["图1"])
+            timeline = json.loads((result / "other" / "画面时间线.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["slide_id"] for item in timeline],
+                ["part_001_scene_001", "part_002_scene_001"],
+            )
 
 
 if __name__ == "__main__":

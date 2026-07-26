@@ -27,11 +27,13 @@ from backend.app.gemini_client import (
 PROJECT_ROOT = Path(__file__).resolve().parent
 VISUAL_DIR = PROJECT_ROOT / "workspace" / "3_visual_template"
 STORY_PLAN_PATH = VISUAL_DIR / "story_plan.json"
+STORY_CONTEXT_PATH = VISUAL_DIR / "story_context.json"
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 4
+STORY_AGENT_VERSION = 6
 CHARACTER_CONTINUITY_VERSION = 3
+STORY_CONTEXT_VERSION = 1
 
 
 def normalize_content_mode(value: str | None) -> str:
@@ -183,7 +185,6 @@ def story_fingerprint(
         {
             "slide_id": str(scene.get("slide_id") or ""),
             "text_content": str(scene.get("text_content") or ""),
-            "visual_summary": str(scene.get("visual_summary") or ""),
         }
         for scene in scenes
     ]
@@ -199,6 +200,245 @@ def story_fingerprint(
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def story_context_fingerprint(
+    full_text: str,
+    content_mode: str = CONTENT_MODE_STORY,
+    global_character_prompt: str = "",
+    world_prompt: str = "",
+    agent0_prompt_system: str = "",
+) -> str:
+    """Agent 0 cache key.  It deliberately has no subtitle timing data."""
+    payload = json.dumps({
+        "content_mode": normalize_content_mode(content_mode),
+        "full_text": str(full_text or "").strip(),
+        "global_character_prompt": str(global_character_prompt or "").strip(),
+        "world_prompt": str(world_prompt or "").strip(),
+        "agent0_prompt": hashlib.sha1(
+            str(agent0_prompt_system or "").strip().encode("utf-8")
+        ).hexdigest(),
+        "version": STORY_CONTEXT_VERSION,
+    }, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+AGENT0_SYSTEM_PROMPT = """你是视频流水线的 Agent 0：全文内容总编。
+你只负责通读一篇完整文案，建立可复用的全局资料；不要规划字幕分组、镜头时长、slide_id，也不要写生图提示词。
+只输出严格 JSON 对象，不要 Markdown。字段必须包括：
+story_type、logline、theme、narrative_tone、characters、locations、clues_and_payoffs、continuity_rules、visual_safety。
+characters 每项只包含 name、role、appearance、wardrobe、signature_item、relationships；不要填写 wardrobe_states。
+忠于原文，不得编造人物、事件、数据或世界观。用户人物设定与世界设定优先于你的推断。
+输出应紧凑：人物最多 10 个、地点最多 10 个、连续性规则最多 10 条。"""
+
+
+def _fallback_story_context(
+    full_text: str,
+    content_mode: str,
+    global_character_prompt: str = "",
+    world_prompt: str = "",
+    agent0_prompt_system: str = "",
+) -> dict[str, Any]:
+    context = _fallback_story_plan(
+        [{"slide_id": "context_001", "text_content": full_text}],
+        content_mode,
+    )
+    for key in ("story_beats", "semantic_units", "segmentation_guidance"):
+        context.pop(key, None)
+    if global_character_prompt:
+        context["user_global_character_bible"] = global_character_prompt
+    if world_prompt:
+        context["world_bible"] = world_prompt
+    context["generation_source"] = "local_fallback"
+    return context
+
+
+def _normalize_story_context(
+    raw: Any,
+    full_text: str,
+    content_mode: str,
+    global_character_prompt: str = "",
+    world_prompt: str = "",
+) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    required = ("characters", "locations", "continuity_rules")
+    if any(not isinstance(raw.get(key), list) for key in required):
+        return None
+    fallback = _fallback_story_context(full_text, content_mode, global_character_prompt, world_prompt)
+    context = dict(fallback)
+    for key in ("story_type", "logline", "theme", "narrative_tone", "characters", "locations", "clues_and_payoffs", "continuity_rules", "visual_safety"):
+        value = raw.get(key)
+        if value not in (None, "", []):
+            context[key] = value
+    # Agent 0 intentionally has no timeline.  Stable identity is useful here;
+    # time-bounded wardrobe states remain an Agent 1 concern if needed later.
+    context["characters"] = _normalize_characters(context.get("characters"), [])
+    for character in context["characters"]:
+        character["wardrobe_states"] = []
+    context["content_mode"] = normalize_content_mode(content_mode)
+    context["source_fingerprint"] = story_context_fingerprint(full_text, content_mode, global_character_prompt, world_prompt)
+    context["agent0_version"] = STORY_CONTEXT_VERSION
+    context["user_global_character_bible"] = global_character_prompt
+    if world_prompt:
+        context["world_bible"] = world_prompt
+    return context
+
+
+def create_story_context(
+    full_text: str,
+    content_mode: str = CONTENT_MODE_STORY,
+    *,
+    global_character_prompt: str = "",
+    world_prompt: str = "",
+    agent0_prompt_system: str = "",
+) -> dict[str, Any]:
+    """Run Agent 0 once: full-text understanding without timing decisions."""
+    content_mode = normalize_content_mode(content_mode)
+    full_text = str(full_text or "").strip()
+    fallback = _fallback_story_context(full_text, content_mode, global_character_prompt, world_prompt)
+    if not gemini_configured():
+        return fallback
+    try:
+        custom_prompt = str(agent0_prompt_system or "").strip()
+        system_prompt = custom_prompt or AGENT0_SYSTEM_PROMPT
+        if custom_prompt and "continuity_rules" not in custom_prompt:
+            system_prompt += "\n\n" + AGENT0_SYSTEM_PROMPT
+        response = generate_gemini_text(
+            system_prompt=system_prompt,
+            user_prompt=json.dumps({
+                "complete_text": full_text,
+                "user_global_character_bible": global_character_prompt,
+                "user_world_bible": world_prompt,
+            }, ensure_ascii=False),
+            temperature=0.15,
+            response_mime_type="application/json",
+            max_output_tokens=4096,
+        )
+        context = _normalize_story_context(
+            parse_json_response(response), full_text, content_mode,
+            global_character_prompt, world_prompt,
+        )
+        if context is not None:
+            context["generation_source"] = "gemini"
+            return context
+    except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"Agent 0 全文资料规划失败，使用本地资料: {exc}", flush=True)
+    return fallback
+
+
+def load_or_create_story_context(
+    full_text: str,
+    *,
+    resume: bool = False,
+    path: Path = STORY_CONTEXT_PATH,
+    content_mode: str = CONTENT_MODE_STORY,
+    global_character_prompt: str = "",
+    world_prompt: str = "",
+    agent0_prompt_system: str = "",
+) -> dict[str, Any]:
+    fingerprint = story_context_fingerprint(full_text, content_mode, global_character_prompt, world_prompt, agent0_prompt_system)
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = None
+        if isinstance(existing, dict) and existing.get("source_fingerprint") == fingerprint and int(existing.get("agent0_version") or 0) >= STORY_CONTEXT_VERSION:
+            print(f"Agent 0：{'断点续跑' if resume else '全文未变化'}，复用全文资料: {path}", flush=True)
+            return existing
+    print("Agent 0：正在通读全文并建立全局资料...", flush=True)
+    context = create_story_context(
+        full_text, content_mode,
+        global_character_prompt=global_character_prompt,
+        world_prompt=world_prompt,
+        agent0_prompt_system=agent0_prompt_system,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _backup_json(path)
+    path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Agent 0：全文资料已保存: {path}", flush=True)
+    return context
+
+
+SEMANTIC_UNIT_RULES = """
+
+【语义镜头单元（必须输出）】
+额外输出 semantic_units 数组。它是 Agent 1 为后续画面分组提供的连续叙事单元，而不是逐图提示词。
+每项仅包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing。
+所有单元必须严格按原文顺序首尾相接，完整覆盖每一个输入 slide_id，不能遗漏、重叠或倒序。
+把同一动作、同一环境建立镜头、同一段对话或同一件事的连续描述放在同一单元；
+不要因为一个长句中的分号、列举物件或修饰语就切开。只有事件、人物、地点、时间或叙事焦点明显变化时才新建单元。
+visual_pacing 只能是 hold、normal、fast。单元应尽量精炼，最多 96 项。
+"""
+
+
+def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Deterministic coverage used when a custom/failed Agent 1 omits units."""
+    if not scenes:
+        return []
+    units: list[dict[str, str]] = []
+    # Prefer complete sentences as boundaries, but avoid producing hundreds of
+    # tiny units when subtitle recognition has already split a sentence.
+    start = 0
+    for index, scene in enumerate(scenes, 1):
+        text = str(scene.get("text_content") or "").strip()
+        is_sentence_end = bool(text and text[-1:] in "。！？!?；;")
+        if (is_sentence_end and index - start >= 2) or index - start >= 5:
+            first = scenes[start]
+            units.append({
+                "unit_id": f"unit_{len(units) + 1:02d}",
+                "start_slide_id": str(first.get("slide_id") or ""),
+                "end_slide_id": str(scene.get("slide_id") or ""),
+                "purpose": "连续叙事单元",
+                "visual_focus": "依据原文保持同一事件完整呈现",
+                "visual_pacing": "normal",
+                "boundary_after": "hard",
+            })
+            start = index
+    if start < len(scenes):
+        units.append({
+            "unit_id": f"unit_{len(units) + 1:02d}",
+            "start_slide_id": str(scenes[start].get("slide_id") or ""),
+            "end_slide_id": str(scenes[-1].get("slide_id") or ""),
+            "purpose": "连续叙事单元",
+            "visual_focus": "依据原文保持同一事件完整呈现",
+            "visual_pacing": "normal",
+            "boundary_after": "hard",
+        })
+    return units
+
+
+def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Accept only a complete, ordered, non-overlapping semantic partition."""
+    if not isinstance(raw_units, list) or not scenes:
+        return []
+    ordered_ids = [str(scene.get("slide_id") or "") for scene in scenes]
+    positions = {slide_id: index for index, slide_id in enumerate(ordered_ids) if slide_id}
+    expected_start = 0
+    normalized: list[dict[str, str]] = []
+    for index, unit in enumerate(raw_units[:96], 1):
+        if not isinstance(unit, dict):
+            return []
+        start_id = str(unit.get("start_slide_id") or "").strip()
+        end_id = str(unit.get("end_slide_id") or "").strip()
+        if start_id not in positions or end_id not in positions:
+            return []
+        start, end = positions[start_id], positions[end_id]
+        if start != expected_start or end < start:
+            return []
+        pacing = str(unit.get("visual_pacing") or "normal").strip().lower()
+        boundary_after = str(unit.get("boundary_after") or "hard").strip().lower()
+        normalized.append({
+            "unit_id": str(unit.get("unit_id") or f"unit_{index:02d}").strip(),
+            "start_slide_id": start_id,
+            "end_slide_id": end_id,
+            "purpose": str(unit.get("purpose") or "连续叙事单元").strip()[:160],
+            "visual_focus": str(unit.get("visual_focus") or "依据原文呈现").strip()[:240],
+            "visual_pacing": pacing if pacing in {"hold", "normal", "fast"} else "normal",
+            "boundary_after": boundary_after if boundary_after in {"hard", "soft"} else "hard",
+        })
+        expected_start = end + 1
+    return normalized if normalized and expected_start == len(ordered_ids) else []
 
 
 def _backup_json(path: Path) -> Path | None:
@@ -256,6 +496,7 @@ def _fallback_story_plan(
         }] if science_mode else []),
         "locations": [],
         "story_beats": beats,
+        "semantic_units": _fallback_semantic_units(scenes),
         "clues_and_payoffs": [],
         "continuity_rules": (
             ["科普少女始终保持黑色短发和红色围巾", "术语、物体外观、数据关系与原文保持一致"]
@@ -379,6 +620,10 @@ def _normalize_story_plan(
         if value not in (None, "", []):
             plan[key] = value
     plan["story_beats"] = normalized_beats
+    plan["semantic_units"] = (
+        _normalize_semantic_units(raw.get("semantic_units"), scenes)
+        or _fallback_semantic_units(scenes)
+    )
     plan["characters"] = _normalize_characters(raw.get("characters"), scenes)
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
     plan["content_mode"] = content_mode
@@ -387,12 +632,102 @@ def _normalize_story_plan(
     return plan
 
 
+TIMELINE_AGENT_SYSTEM_PROMPT = """你是视频流水线的 Agent 1：时间轴分镜导演。
+Agent 0 已经完成全文理解、人物与世界观资料整理；你不需要重新总结全文、创建人物档案或改写世界观。
+你的唯一任务是根据每条字幕的 slide_id、start、end、text，以及 Agent 0 资料，划分连续的具体画面事件。
+只输出严格 JSON 对象：{\"story_beats\":[...],\"semantic_units\":[...]}，不要 Markdown。
+semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after。
+所有 semantic_units 必须按顺序完整覆盖全部 slide_id，不能遗漏、重叠、倒序或跳过。
+一个单元等于一个具体画面事件，不是章节、观点大类或整段口播：同一动作、同一环境建立镜头、同一段连续论证可保持在一起；
+结论收束、话题转折、互动引导、人物/地点/时间改变、镜头关注对象改变时必须新起单元。
+必须参考 start/end 的实际时长：通常以约 8-16 秒为宜；超过约 18 秒时，除非确实是同一个连续事件，否则应在自然语义边界拆开。
+boundary_after 只能是 hard 或 soft：人物、地点、时间、事件、结论或话题明确切换时必须为 hard，后续程序绝不会跨过去合并画面；只有可有可无的补充、语气承接或画面主体不变的短过渡才可为 soft。
+例如“很难靠它翻身”与其后的“省流结束/点赞引导”是两个单元，且前者 boundary_after 必须是 hard。visual_pacing 只能是 hold、normal、fast。
+story_beats 仅用于概括较高层节奏，每项包含 beat_id、slide_ids、purpose、emotion、visual_focus、visual_pacing。"""
+
+
+def _beats_from_semantic_units(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "beat_id": f"beat_{index:02d}",
+            "slide_ids": [unit["start_slide_id"], unit["end_slide_id"]],
+            "purpose": unit.get("purpose") or "叙事推进",
+            "emotion": "依据原文情绪",
+            "visual_focus": unit.get("visual_focus") or "依据原文场景",
+            "visual_pacing": unit.get("visual_pacing") or "normal",
+        }
+        for index, unit in enumerate(units, 1)
+    ]
+
+
+def _create_timeline_story_plan(
+    scenes: list[dict[str, Any]],
+    story_context: dict[str, Any],
+    content_mode: str,
+) -> dict[str, Any]:
+    """Agent 1: a narrow timed segmentation pass built on Agent 0 context."""
+    fallback = _fallback_story_plan(scenes, content_mode)
+    if not gemini_configured():
+        plan = {**dict(story_context), **fallback}
+        plan["generation_source"] = "local_fallback"
+        return plan
+    compact_scenes = [
+        {
+            "slide_id": str(scene.get("slide_id") or ""),
+            "start": round(float(scene.get("start") or 0), 3),
+            "end": round(float(scene.get("end") or 0), 3),
+            "text": str(scene.get("text_content") or ""),
+        }
+        for scene in scenes
+    ]
+    custom_prompt = os.getenv("AGENT1_PROMPT_SYSTEM", "").strip()
+    try:
+        system_prompt = custom_prompt or TIMELINE_AGENT_SYSTEM_PROMPT
+        if custom_prompt and "semantic_units" not in custom_prompt:
+            system_prompt += "\n\n" + TIMELINE_AGENT_SYSTEM_PROMPT
+        response = generate_gemini_text(
+            system_prompt=system_prompt,
+            user_prompt=json.dumps({
+                "agent0_context": story_context_for_prompt(story_context),
+                "subtitle_timeline": compact_scenes,
+            }, ensure_ascii=False),
+            temperature=0.12,
+            response_mime_type="application/json",
+            max_output_tokens=8192,
+        )
+        raw = parse_json_response(response)
+        if not isinstance(raw, dict):
+            raise ValueError("Agent 1 response is not an object")
+        units = _normalize_semantic_units(raw.get("semantic_units"), scenes)
+        if not units:
+            raise ValueError("Agent 1 semantic_units are incomplete")
+        combined = dict(story_context)
+        combined["semantic_units"] = units
+        combined["story_beats"] = raw.get("story_beats") or _beats_from_semantic_units(units)
+        plan = _normalize_story_plan(combined, scenes, content_mode)
+        if plan is None:
+            raise ValueError("Agent 1 plan normalization failed")
+        plan["generation_source"] = "gemini"
+        plan["agent0_source_fingerprint"] = story_context.get("source_fingerprint")
+        return plan
+    except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"Agent 1 时间轴规划失败，使用本地分镜边界: {exc}", flush=True)
+        plan = {**dict(story_context), **fallback}
+        plan["generation_source"] = "local_fallback"
+        plan["agent0_source_fingerprint"] = story_context.get("source_fingerprint")
+        return plan
+
+
 def create_story_plan(
     scenes: list[dict[str, Any]],
     content_mode: str = CONTENT_MODE_STORY,
+    *,
+    story_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run Agent 1 once, with a deterministic local fallback."""
     content_mode = normalize_content_mode(content_mode)
+    if story_context is not None:
+        return _create_timeline_story_plan(scenes, story_context, content_mode)
     science_mode = content_mode == CONTENT_MODE_SCIENCE
     general_mode = content_mode == CONTENT_MODE_GENERAL
     generation_source = "local_fallback"
@@ -437,6 +772,10 @@ def create_story_plan(
                 "\n【用户世界与环境设定】user_world_bible 若非空，必须作为地点、时代、天气、空间、常驻道具与环境连续性的最高优先级；"
                 "将可复用内容整理到 locations、continuity_rules 和 world_bible，不得擅自替换用户指定的时代或地域。"
             )
+            # Apply this structural contract even for an expert's custom
+            # prompt.  The normalizer still has a local fallback for older
+            # presets that do not return the new field.
+            system_prompt += SEMANTIC_UNIT_RULES
             retry_prompt = custom_agent1_prompt or (
                 SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode
                 else GENERAL_AGENT_COMPACT_RETRY_PROMPT if general_mode
@@ -447,6 +786,7 @@ def create_story_plan(
                 "user_global_character_bible 为最高优先级，必须拆成固定 appearance 和明确 wardrobe_states；"
                 "user_world_bible 为环境连续性的最高优先级。"
             )
+            retry_prompt += SEMANTIC_UNIT_RULES
             try:
                 response = generate_gemini_text(
                     system_prompt=system_prompt,
@@ -490,6 +830,7 @@ def load_or_create_story_plan(
     path: Path = STORY_PLAN_PATH,
     allow_source_mismatch: bool = False,
     content_mode: str = CONTENT_MODE_STORY,
+    story_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reuse a matching Agent 1 artifact or create and persist a new one."""
     content_mode = normalize_content_mode(content_mode)
@@ -509,14 +850,18 @@ def load_or_create_story_plan(
         )
         plan_is_ai = isinstance(existing, dict) and existing.get("generation_source") == "gemini"
         may_reuse_fallback = not gemini_configured()
-        if source_matches and plan_is_current and (plan_is_ai or may_reuse_fallback):
+        context_matches = story_context is None or (
+            isinstance(existing, dict)
+            and existing.get("agent0_source_fingerprint") == story_context.get("source_fingerprint")
+        )
+        if source_matches and context_matches and plan_is_current and (plan_is_ai or may_reuse_fallback):
             reason = "断点续跑" if resume else "上下文未变化"
             print(f"Agent 1：{reason}，复用故事规划: {path}", flush=True)
             return existing
         if source_matches and gemini_configured():
             print("Agent 1：发现旧版或本地降级规划，Gemini 已配置，将重新生成。", flush=True)
 
-    plan = create_story_plan(scenes, content_mode)
+    plan = create_story_plan(scenes, content_mode, story_context=story_context) if story_context is not None else create_story_plan(scenes, content_mode)
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = _backup_json(path)
     if backup:
@@ -593,6 +938,7 @@ def merge_global_and_segment_plan(
     merged["characters"] = _merge_named_records(global_plan.get("characters"), segment_plan.get("characters"))
     merged["locations"] = _merge_named_records(global_plan.get("locations"), segment_plan.get("locations"))
     merged["story_beats"] = list(segment_plan.get("story_beats") or [])
+    merged["semantic_units"] = list(segment_plan.get("semantic_units") or _fallback_semantic_units(scenes))
     merged["clues_and_payoffs"] = _unique_text_items(
         global_plan.get("clues_and_payoffs"), segment_plan.get("clues_and_payoffs"), limit=12
     )
@@ -618,6 +964,14 @@ def create_segment_story_plan(
 ) -> dict[str, Any]:
     """Run Agent 1B for one long-text segment, constrained by the global plan."""
     content_mode = normalize_content_mode(content_mode)
+    # New two-agent pipeline: Agent 0 data is already embedded in the global
+    # plan, so the local pass only needs the same narrow time-axis duty.
+    if global_plan.get("agent0_source_fingerprint"):
+        result = _create_timeline_story_plan(scenes, global_plan, content_mode)
+        result["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+        result["global_source_fingerprint"] = global_plan.get("source_fingerprint")
+        result["planning_scope"] = "hierarchical_segment"
+        return result
     generation_source = "local_fallback"
     local_plan: dict[str, Any] | None = None
     if gemini_configured():

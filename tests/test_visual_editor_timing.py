@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,6 +63,41 @@ class VisualEditorTimingTest(unittest.TestCase):
         self.assertEqual(restored[0]["includes_slides"], ["scene_001", "scene_002"])
         self.assertEqual(restored[0]["image_prompt"], "redrawn prompt remains")
 
+    def test_saved_current_timing_becomes_new_reset_baseline_and_archives_old_one(self) -> None:
+        self.editor.adjust_timing(
+            job_id="job", user_id=1, macro_id="poster_001", action="extend_next"
+        )
+        saved_groups = [list(item["includes_slides"]) for item in VisualEditor._load_mapping(self.project)]
+        self.editor.commit_timing_baseline(job_id="job", user_id=1)
+        self.assertTrue(any((self.project / "other" / "时序历史基准").rglob("画面映射.初始时序.json")))
+
+        self.editor.adjust_timing(
+            job_id="job", user_id=1, macro_id="poster_001", action="shrink_next"
+        )
+        self.editor.reset_timing(job_id="job", user_id=1)
+        restored_groups = [list(item["includes_slides"]) for item in VisualEditor._load_mapping(self.project)]
+        self.assertEqual(restored_groups, saved_groups)
+
+    def test_selecting_history_restores_it_without_replacing_current_baseline(self) -> None:
+        original_groups = [list(item["includes_slides"]) for item in self.mapping]
+        self.editor.adjust_timing(
+            job_id="job", user_id=1, macro_id="poster_001", action="extend_next"
+        )
+        saved_groups = [list(item["includes_slides"]) for item in VisualEditor._load_mapping(self.project)]
+        self.editor.commit_timing_baseline(job_id="job", user_id=1)
+        history = VisualEditor._timing_history_entries(self.project)
+        self.assertEqual(len(history), 1)
+
+        self.editor.restore_timing_history(
+            job_id="job", user_id=1, history_id=history[0]["id"]
+        )
+        historical_groups = [list(item["includes_slides"]) for item in VisualEditor._load_mapping(self.project)]
+        self.assertEqual(historical_groups, original_groups)
+
+        self.editor.reset_timing(job_id="job", user_id=1)
+        reset_groups = [list(item["includes_slides"]) for item in VisualEditor._load_mapping(self.project)]
+        self.assertEqual(reset_groups, saved_groups)
+
     def test_html_is_rebuilt_from_adjusted_sentence_ranges(self) -> None:
         self.editor.adjust_timing(
             job_id="job", user_id=1, macro_id="poster_001", action="extend_next"
@@ -95,6 +131,73 @@ class VisualEditorTimingTest(unittest.TestCase):
         restored = VisualEditor._load_mapping(self.project)
         self.assertEqual([item["macro_scene_id"] for item in restored], ["poster_001", "poster_002", "poster_003"])
         self.assertEqual(restored[1]["includes_slides"], ["scene_003", "scene_004"])
+
+    def test_archived_main_references_keep_original_numbering(self) -> None:
+        reference_dir = self.project / "other" / "reference_images"
+        reference_dir.mkdir()
+        for index in (1, 2, 3):
+            (reference_dir / f"main_{index:02d}.png").write_bytes(b"image")
+        (self.project / "other" / "参考图清单.json").write_text(
+            json.dumps([
+                {"reference_id": f"图{index}", "filename": f"main_{index:02d}.png"}
+                for index in (1, 2, 3)
+            ], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        paths = VisualEditor._archived_main_reference_paths(self.project)
+        self.assertEqual([Path(path).name for path in paths], ["main_01.png", "main_02.png", "main_03.png"])
+
+    def test_confirm_current_picture_becomes_new_baseline_without_deleting_history(self) -> None:
+        image = self.project / "image" / "poster_001.jpg"
+        image.write_bytes(b"first image")
+        image.with_suffix(".txt").write_text("first prompt", encoding="utf-8")
+        VisualEditor._backup_current(self.project, image, "poster_001")
+        image.write_bytes(b"satisfied redraw")
+
+        job = SimpleNamespace(id="job", user_id=1)
+        with patch.object(self.editor, "_log"):
+            self.editor.commit_baseline(
+                job=job,
+                user_id=1,
+                macro_id="poster_001",
+                prompt="satisfied prompt",
+            )
+
+        backup_dir = VisualEditor._backup_dir(self.project)
+        self.assertEqual((backup_dir / "poster_001.original.jpg").read_bytes(), b"satisfied redraw")
+        self.assertEqual((backup_dir / "poster_001.original.txt").read_text(encoding="utf-8"), "satisfied prompt")
+        self.assertTrue(any((backup_dir / "历史基准").rglob("poster_001.original.jpg")))
+        self.assertEqual(VisualEditor._load_mapping(self.project)[0]["image_prompt"], "satisfied prompt")
+
+        # A later redraw first backs up the confirmed baseline, then replaces it.
+        VisualEditor._backup_current(self.project, image, "poster_001")
+        image.write_bytes(b"later redraw")
+        self.editor.undo(job_id="job", user_id=1, macro_id="poster_001")
+        self.assertEqual(image.read_bytes(), b"satisfied redraw")
+
+    def test_legacy_segmented_output_namespaces_duplicate_slide_ids(self) -> None:
+        mapping = [
+            {"macro_scene_id": "part_001_poster_001", "includes_slides": ["scene_001", "scene_002"], "image_prompt": "one"},
+            {"macro_scene_id": "part_002_poster_001", "includes_slides": ["scene_001", "scene_002"], "image_prompt": "two"},
+        ]
+        timeline = [
+            {"id": "segment_001", "slide_id": "scene_001", "start": 0, "end": 1, "text_content": "part one a"},
+            {"id": "segment_002", "slide_id": "scene_002", "start": 1, "end": 2, "text_content": "part one b"},
+            {"id": "segment_001", "slide_id": "scene_001", "start": 2, "end": 3, "text_content": "part two a"},
+            {"id": "segment_002", "slide_id": "scene_002", "start": 3, "end": 4, "text_content": "part two b"},
+        ]
+        VisualEditor._save_mapping(self.project, mapping)
+        VisualEditor._timeline_path(self.project).write_text(json.dumps(timeline), encoding="utf-8")
+        self.assertTrue(VisualEditor._migrate_segmented_slide_ids(self.project))
+        migrated_mapping = VisualEditor._load_mapping(self.project)
+        migrated_timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(migrated_mapping[0]["includes_slides"], ["part_001_scene_001", "part_001_scene_002"])
+        self.assertEqual(migrated_mapping[1]["includes_slides"], ["part_002_scene_001", "part_002_scene_002"])
+        self.assertEqual(
+            [item["slide_id"] for item in migrated_timeline],
+            ["part_001_scene_001", "part_001_scene_002", "part_002_scene_001", "part_002_scene_002"],
+        )
+        self.assertTrue((self.project / "other" / "画面映射.分段编号修复前.json").is_file())
 
 
 if __name__ == "__main__":

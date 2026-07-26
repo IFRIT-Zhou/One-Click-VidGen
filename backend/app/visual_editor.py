@@ -26,6 +26,7 @@ MANIFEST_FILENAME = "画面修改清单.json"
 HTML_FILENAME = "最终画面.html"
 SUBTITLE_FILENAME = "最终字幕.srt"
 TIMING_BACKUP_FILENAME = "画面映射.初始时序.json"
+REFERENCE_MANIFEST_FILENAME = "参考图清单.json"
 
 
 class VisualEditor:
@@ -97,6 +98,7 @@ class VisualEditor:
             json.dumps({"job_id": job_id, "project_name": output_dir.name}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        VisualEditor._migrate_segmented_slide_ids(output_dir)
 
     @staticmethod
     def _mapping_path(project_dir: Path) -> Path:
@@ -107,9 +109,133 @@ class VisualEditor:
         return project_dir / "other" / TIMELINE_FILENAME
 
     @staticmethod
+    def _migrate_segmented_slide_ids(project_dir: Path) -> bool:
+        """Namespace repeated local slide IDs in legacy long-text exports.
+
+        Each old render part restarted at scene_001.  Once the parts were joined,
+        later entries overwrote earlier ones in the editor's slide lookup, making
+        pictures show another part's narration.  Prefix both sides of the mapping
+        with part_NNN while preserving prompts, images and edited timing.
+        """
+        mapping_path = VisualEditor._mapping_path(project_dir)
+        timeline_path = VisualEditor._timeline_path(project_dir)
+        if not mapping_path.is_file() or not timeline_path.is_file():
+            return False
+        try:
+            mapping_payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+            timeline_payload = json.loads(timeline_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(mapping_payload, list) or not isinstance(timeline_payload, list):
+            return False
+        timeline = [dict(item) for item in timeline_payload if isinstance(item, dict)]
+        mapping = [dict(item) for item in mapping_payload if isinstance(item, dict)]
+        slide_ids = [str(item.get("slide_id") or "") for item in timeline]
+        if not slide_ids or len(set(slide_ids)) == len(slide_ids):
+            return False
+
+        part_prefixes: list[str] = []
+        for item in mapping:
+            match = re.match(r"^(part_\d+)_poster_", str(item.get("macro_scene_id") or ""))
+            if match and match.group(1) not in part_prefixes:
+                part_prefixes.append(match.group(1))
+        if not part_prefixes:
+            return False
+
+        section_index = 0
+        previous_number = -1
+        for item in timeline:
+            slide_id = str(item.get("slide_id") or "")
+            match = re.search(r"(\d+)$", slide_id)
+            number = int(match.group(1)) if match else previous_number + 1
+            if previous_number >= 0 and number <= previous_number:
+                section_index += 1
+            if section_index >= len(part_prefixes):
+                return False
+            prefix = part_prefixes[section_index]
+            item["slide_id"] = f"{prefix}_{slide_id}"
+            if item.get("id"):
+                item["id"] = f"{prefix}_{item['id']}"
+            previous_number = number
+
+        valid_prefixes = set(part_prefixes)
+        for item in mapping:
+            match = re.match(r"^(part_\d+)_poster_", str(item.get("macro_scene_id") or ""))
+            if not match or match.group(1) not in valid_prefixes:
+                return False
+            prefix = match.group(1)
+            item["includes_slides"] = [
+                value if str(value).startswith(f"{prefix}_") else f"{prefix}_{value}"
+                for value in item.get("includes_slides", [])
+            ]
+
+        expected = [str(item.get("slide_id") or "") for item in timeline]
+        actual = [str(value) for item in mapping for value in item.get("includes_slides", [])]
+        if actual != expected:
+            return False
+        other_dir = project_dir / "other"
+        mapping_backup = other_dir / "画面映射.分段编号修复前.json"
+        timeline_backup = other_dir / "画面时间线.分段编号修复前.json"
+        if not mapping_backup.exists():
+            shutil.copy2(mapping_path, mapping_backup)
+        if not timeline_backup.exists():
+            shutil.copy2(timeline_path, timeline_backup)
+        mapping_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+        timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+
+    @staticmethod
+    def _archived_main_reference_paths(project_dir: Path) -> list[str]:
+        """Return the task's original reference images in stable 图1/图2/图3 order."""
+        manifest_path = project_dir / "other" / REFERENCE_MANIFEST_FILENAME
+        if not manifest_path.is_file():
+            return []
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        entries = payload if isinstance(payload, list) else []
+        ordered: list[tuple[int, str]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            match = re.fullmatch(r"图([1-3])", str(entry.get("reference_id") or "").strip())
+            filename = Path(str(entry.get("filename") or "")).name
+            path = project_dir / "other" / "reference_images" / filename
+            if match and filename and path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                ordered.append((int(match.group(1)), str(path)))
+        return [path for _, path in sorted(ordered)]
+
+    @staticmethod
     def _timing_backup_path(project_dir: Path) -> Path:
         """The original sentence-to-picture allocation, kept outside the workspace."""
         return project_dir / "other" / TIMING_BACKUP_FILENAME
+
+    @staticmethod
+    def _timing_history_entries(project_dir: Path) -> list[dict[str, str]]:
+        history_root = project_dir / "other" / "时序历史基准"
+        entries: list[dict[str, str]] = []
+        if not history_root.is_dir():
+            return entries
+        for path in history_root.glob("*/画面映射.初始时序*.json"):
+            if not path.is_file():
+                continue
+            key = f"{path.parent.name}:{path.name}"
+            stamp = path.parent.name.split("_", 2)
+            label = path.parent.name
+            if len(stamp) >= 2 and len(stamp[0]) == 8 and len(stamp[1]) >= 6:
+                date_value, time_value = stamp[0], stamp[1][:6]
+                label = f"{date_value[:4]}-{date_value[4:6]}-{date_value[6:8]} {time_value[:2]}:{time_value[2:4]}:{time_value[4:6]}"
+            entries.append({"id": key, "label": label})
+        return sorted(entries, key=lambda item: item["id"], reverse=True)
+
+    @staticmethod
+    def _timing_history_path(project_dir: Path, history_id: str) -> Path:
+        history_root = project_dir / "other" / "时序历史基准"
+        for path in history_root.glob("*/画面映射.初始时序*.json"):
+            if path.is_file() and f"{path.parent.name}:{path.name}" == str(history_id):
+                return path
+        raise FileNotFoundError("所选历史时序不存在")
 
     @staticmethod
     def _load_mapping(project_dir: Path) -> list[dict[str, Any]]:
@@ -380,8 +506,123 @@ class VisualEditor:
         if prompt_path.is_file() and not original_prompt.exists():
             shutil.copy2(prompt_path, original_prompt)
 
+    @classmethod
+    def _commit_baseline_locked(
+        cls,
+        project_dir: Path,
+        mapping: list[dict[str, Any]],
+        macro_id: str,
+        *,
+        prompt: str | None = None,
+        history_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Promote the current picture and prompt to the editor's new baseline.
+
+        Existing originals and undo versions are moved into a visible history
+        directory first.  Nothing is deleted, while normal undo/reset can no
+        longer cross the newly confirmed baseline.
+        """
+        image = cls._find_image(project_dir / "image", macro_id)
+        item = next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None)
+        if item is None:
+            raise ValueError("image mapping was not found")
+
+        if prompt is not None:
+            clean_prompt = str(prompt).strip()
+            if not clean_prompt:
+                raise ValueError("prompt is empty")
+            item["image_prompt"] = clean_prompt
+        current_prompt = str(item.get("image_prompt") or "")
+        prompt_path = image.with_suffix(".txt")
+        prompt_path.write_text(current_prompt, encoding="utf-8")
+
+        backup_dir = cls._backup_dir(project_dir)
+        if history_dir is None:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            history_dir = backup_dir / "历史基准" / stamp
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        # Archive both the previous immutable baseline and the undo chain.  The
+        # root backup folder is then deliberately clean for this picture, making
+        # the current version the earliest version reachable by Undo/Reset.
+        for previous in sorted(backup_dir.glob(f"{macro_id}.*")):
+            if not previous.is_file():
+                continue
+            destination = history_dir / previous.name
+            if destination.exists():
+                destination = history_dir / f"{previous.stem}_{time.time_ns()}{previous.suffix}"
+            shutil.move(str(previous), str(destination))
+
+        baseline_image = backup_dir / f"{macro_id}.original{image.suffix.lower()}"
+        baseline_prompt = backup_dir / f"{macro_id}.original.txt"
+        shutil.copy2(image, baseline_image)
+        shutil.copy2(prompt_path, baseline_prompt)
+        return item
+
+    def commit_baseline(
+        self,
+        *,
+        job: Any,
+        user_id: int,
+        macro_id: str,
+        prompt: str | None = None,
+    ) -> None:
+        project_dir = self.output_dir(job.id, user_id)
+        with self._lock:
+            current = self._image_tasks.get(job.id, {}).get(macro_id) or {}
+            if current.get("status") == "running":
+                raise RuntimeError("请等待该图片重绘或替换完成后再确认")
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            self._commit_baseline_locked(project_dir, mapping, macro_id, prompt=prompt)
+            self._save_mapping(project_dir, mapping)
+        self._set_image_task(
+            job.id,
+            macro_id,
+            status="completed",
+            action="commit_baseline",
+            message="已确认为新的原图基准",
+        )
+        self._set_task(job.id, status="completed", action="commit_baseline", macro_id=macro_id, message=f"{macro_id} 已确认为新的原图")
+        self._log(job, f"{macro_id} 已确认为新的原图；旧原图与撤回记录已归档到重绘备份。")
+
+    def commit_all_baselines(self, *, job: Any, user_id: int) -> int:
+        project_dir = self.output_dir(job.id, user_id)
+        with self._lock:
+            if any(
+                value.get("status") == "running"
+                for value in self._image_tasks.get(job.id, {}).values()
+            ):
+                raise RuntimeError("请等待所有正在重绘或替换的图片完成后再确认全部")
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        history_dir = self._backup_dir(project_dir) / "历史基准" / stamp
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            count = 0
+            for item in mapping:
+                macro_id = str(item.get("macro_scene_id") or "")
+                if not macro_id:
+                    continue
+                try:
+                    self._commit_baseline_locked(
+                        project_dir,
+                        mapping,
+                        macro_id,
+                        history_dir=history_dir,
+                    )
+                except FileNotFoundError:
+                    continue
+                count += 1
+            if not count:
+                raise ValueError("没有找到可确认的当前图片")
+            self._save_mapping(project_dir, mapping)
+        self._set_task(job.id, status="completed", action="commit_all_baselines", message=f"已将当前 {count} 张图片确认为新的原图")
+        self._log(job, f"已将当前 {count} 张图片全部确认为新的原图；旧原图与撤回记录已归档到重绘备份。")
+        return count
+
     def inspect(self, job_id: str, user_id: int) -> dict[str, Any]:
         project_dir = self.output_dir(job_id, user_id)
+        self._migrate_segmented_slide_ids(project_dir)
         # Transparently migrate old hidden version folders when a project is opened.
         self._backup_dir(project_dir)
         image_dir = project_dir / "image"
@@ -437,6 +678,7 @@ class VisualEditor:
             "has_active_image_tasks": any(value.get("status") == "running" for value in image_tasks.values()),
             "timing_available": timing_available,
             "timing_message": timing_message,
+            "timing_history": self._timing_history_entries(project_dir),
             "project_dir": str(project_dir),
             "version": int(time.time() * 1000),
         }
@@ -508,6 +750,7 @@ class VisualEditor:
         self._log(job, f"开始重绘 {macro_id}{reference_note}，请等待 Image2 返回图片。")
 
         def work() -> None:
+            redraw_output: Path | None = None
             try:
                 project_dir = self.output_dir(job.id, int(job.user_id))
                 image = self._find_image(project_dir / "image", macro_id)
@@ -538,6 +781,13 @@ class VisualEditor:
                     image.with_suffix(".txt").write_text(prompt, encoding="utf-8")
                 import module4_video_render as visual
                 render_item = dict(item)
+                if not reference_paths and (
+                    item.get("reference_image_ids")
+                    or re.search(r"角色形象参考图[1-3]", prompt)
+                ):
+                    # Module 4 sends the complete catalog whenever a prompt uses
+                    # any task reference, preserving the original 图N numbering.
+                    reference_paths = self._archived_main_reference_paths(project_dir)
                 if reference_paths:
                     render_item["reference_image_paths"] = reference_paths
                     render_item["image_prompt"] = (
@@ -545,13 +795,28 @@ class VisualEditor:
                         "提示词中提及图N时，必须严格以第N张参考图作为该角色或物体的形象依据。\n"
                         f"{prompt}"
                     )
-                rendered = visual.render_posters_concurrently([render_item], visual._provider_configs())[0]
+                provider_configs = visual._provider_configs()
+                account_pool = visual.shared_runninghub_account_pool(
+                    provider_configs,
+                    namespace="visual_editor_redraw",
+                )
+                render_item["progress_label"] = f"{macro_id}（重绘）"
+                redraw_dir = JOBS_DIR / job.id / "visual_editor" / "redraw_results"
+                redraw_dir.mkdir(parents=True, exist_ok=True)
+                redraw_output = redraw_dir / f"{macro_id}_{time.time_ns()}.jpg"
+                render_item["_output_path"] = str(redraw_output)
+                rendered = visual._render_poster_with_retry(render_item, account_pool)
+                if not rendered.is_file() or rendered.stat().st_size <= 0:
+                    raise FileNotFoundError(f"Image2 返回完成，但没有找到下载后的重绘图片: {rendered}")
                 shutil.copy2(rendered, image)
                 self._set_image_task(job.id, macro_id, status="completed", action="redraw", message="图片已重绘，请检查效果")
                 self._log(job, f"{macro_id} 重绘完成。")
             except Exception as exc:
                 self._set_image_task(job.id, macro_id, status="failed", action="redraw", message=str(exc))
                 self._log(job, f"{macro_id} 重绘失败：{exc}")
+            finally:
+                if redraw_output is not None:
+                    redraw_output.unlink(missing_ok=True)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -675,6 +940,79 @@ class VisualEditor:
         self._set_task(job_id, status="completed", action="timing", message="已恢复到首次调整前的画面时序")
         return self.inspect(job_id, user_id)
 
+    def commit_timing_baseline(self, *, job_id: str, user_id: int) -> dict[str, Any]:
+        """Promote the current sentence-to-picture allocation to the reset baseline."""
+        project_dir = self.output_dir(job_id, user_id)
+        backup_path = self._timing_backup_path(project_dir)
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            timeline = self._load_timeline(project_dir)
+            mapping, _recovered_timing = self._mapping_with_recovered_timing(project_dir, mapping, timeline)
+            self._validate_timing_partition(mapping, timeline)
+
+            if backup_path.is_file():
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                history_dir = project_dir / "other" / "时序历史基准" / stamp
+                history_dir.mkdir(parents=True, exist_ok=True)
+                history_path = history_dir / TIMING_BACKUP_FILENAME
+                if history_path.exists():
+                    history_path = history_dir / f"画面映射.初始时序_{time.time_ns()}.json"
+                shutil.copy2(backup_path, history_path)
+
+            self._save_mapping(project_dir, mapping)
+            backup_path.write_text(
+                json.dumps(mapping, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        self._set_task(
+            job_id,
+            status="completed",
+            action="commit_timing_baseline",
+            message="当前画面时序已保存为新的初始时序",
+        )
+        return self.inspect(job_id, user_id)
+
+    def restore_timing_history(
+        self,
+        *,
+        job_id: str,
+        user_id: int,
+        history_id: str,
+    ) -> dict[str, Any]:
+        """Load a selected archived timing version without changing the reset baseline."""
+        project_dir = self.output_dir(job_id, user_id)
+        history_path = self._timing_history_path(project_dir, history_id)
+        with self._mapping_lock:
+            current = self._load_mapping(project_dir)
+            archived = json.loads(history_path.read_text(encoding="utf-8"))
+            timeline = self._load_timeline(project_dir)
+            if not isinstance(archived, list):
+                raise ValueError("历史时序文件无效")
+            current_by_id = {
+                str(item.get("macro_scene_id")): item
+                for item in current
+                if isinstance(item, dict)
+            }
+            restored: list[dict[str, Any]] = []
+            for saved in archived:
+                if not isinstance(saved, dict):
+                    continue
+                entry = dict(saved)
+                edited = current_by_id.get(str(saved.get("macro_scene_id")))
+                if edited is not None:
+                    entry.update({key: value for key, value in edited.items() if key != "includes_slides"})
+                entry["includes_slides"] = list(saved.get("includes_slides") or [])
+                restored.append(entry)
+            self._validate_timing_partition(restored, timeline)
+            self._save_mapping(project_dir, restored)
+        self._set_task(
+            job_id,
+            status="completed",
+            action="restore_timing_history",
+            message="已切换到所选历史时序",
+        )
+        return self.inspect(job_id, user_id)
+
     def remove_timing_picture(self, *, job_id: str, user_id: int, macro_id: str) -> dict[str, Any]:
         """Remove one frame from the timeline and redistribute its subtitles safely."""
         project_dir = self.output_dir(job_id, user_id)
@@ -731,6 +1069,7 @@ class VisualEditor:
             try:
                 with job_store_lock(job):
                     project_dir = self.output_dir(job.id, int(job.user_id))
+                    self._migrate_segmented_slide_ids(project_dir)
                     import module4_video_render as visual
                     import module5_video_render as renderer
 

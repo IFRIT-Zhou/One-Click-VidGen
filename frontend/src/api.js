@@ -70,6 +70,10 @@ export const api = {
   resumeJob: (id) => requestJSON(`/api/jobs/${id}/resume`, { method: 'POST' }),
   retryJobTts: (id) => requestJSON(`/api/jobs/${id}/retry-tts`, { method: 'POST' }),
   openJobOutputFolder: (id) => requestJSON(`/api/jobs/${id}/output-folder`, { method: 'POST' }),
+  subtitleFonts: () => requestJSON('/api/subtitle-fonts'),
+  renderSubtitleVideo: (id, payload) => requestJSON(`/api/jobs/${id}/subtitle-render`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   openStepModeVisualPreviewFolder: (id) => requestJSON(`/api/jobs/${id}/step-mode/visual-preview-folder`, { method: 'POST' }),
   visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
   visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
@@ -84,10 +88,18 @@ export const api = {
   },
   undoVisualImage: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/undo`, { method: 'POST' }),
   resetVisualPrompt: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/reset-prompt`, { method: 'POST' }),
+  commitVisualBaseline: (id, imageId, prompt) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/commit-baseline`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+  }),
+  commitAllVisualBaselines: (id) => requestJSON(`/api/jobs/${id}/visual-editor/commit-all-baselines`, { method: 'POST' }),
   adjustVisualTiming: (id, imageId, action) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
   }),
   resetVisualTiming: (id) => requestJSON(`/api/jobs/${id}/visual-editor/timing/reset`, { method: 'POST' }),
+  commitVisualTiming: (id) => requestJSON(`/api/jobs/${id}/visual-editor/timing/commit`, { method: 'POST' }),
+  restoreVisualTimingHistory: (id, historyId) => requestJSON(`/api/jobs/${id}/visual-editor/timing/history`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
+  }),
   removeVisualTimingPicture: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing/remove`, { method: 'POST' }),
   renderVisualEditor: (id, mode) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }),

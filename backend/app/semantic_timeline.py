@@ -54,7 +54,7 @@ def normalize_scene(item: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
-def generate_fine_grained_timeline() -> Path:
+def generate_fine_grained_timeline(story_plan: dict[str, Any] | None = None) -> Path:
     source = VISUAL_DIR / "scene_timeline.json"
     if not source.exists():
         raise FileNotFoundError(f"找不到模块 2 分镜资产: {source}")
@@ -74,7 +74,18 @@ def generate_fine_grained_timeline() -> Path:
             "忠于原文事实，原文没有鬼怪、凶案或暴力时不得擅自添加；"
             "重复人物的身份与外观线索要前后一致，每条尽量控制在 60 个中文字符以内。"
         )
-        user_prompt = json.dumps(fine, ensure_ascii=False)
+        # Agent 1 has already read the full text.  Module 3 only needs a small
+        # continuity excerpt, not a second full-story planning call.
+        plan_context = {
+            "characters": (story_plan or {}).get("characters", [])[:10],
+            "locations": (story_plan or {}).get("locations", [])[:10],
+            "continuity_rules": (story_plan or {}).get("continuity_rules", [])[:10],
+            "semantic_units": (story_plan or {}).get("semantic_units", [])[:36],
+        }
+        user_prompt = json.dumps(
+            {"agent1_context": plan_context, "timeline": fine},
+            ensure_ascii=False,
+        )
         try:
             result = generate_gemini_text(
                 system_prompt=system_prompt,

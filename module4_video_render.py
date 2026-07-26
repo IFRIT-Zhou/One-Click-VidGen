@@ -37,7 +37,9 @@ RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
-VISUAL_PROMPT_AGENT_VERSION = 6
+# v7: fixed groups are now calculated from the full Agent 1 plan before
+# batching, so an Agent 2 request can never bridge a hard semantic boundary.
+VISUAL_PROMPT_AGENT_VERSION = 10
 
 REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
 
@@ -116,6 +118,38 @@ def _reference_image_instruction() -> str:
         "并且 image_prompt 必须紧跟角色名称明确写出“角色形象参考图N”。"
         "没有使用参考图的镜头必须输出 []，且 image_prompt 不得假装引用参考图。"
     )
+
+
+def _strip_dynamic_reference_image_instructions(prompt: str) -> str:
+    """Remove saved task-state lines before appending the current reference catalog."""
+    kept: list[str] = []
+    for line in str(prompt or "").splitlines():
+        stripped = line.strip()
+        if stripped == "【角色图像参考约束】":
+            continue
+        if "reference_image_ids" in stripped and any(
+            marker in stripped
+            for marker in ("本次未上传", "本次可用角色形象参考图", "本次已上传角色形象参考图")
+        ):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _character_reference_label(name: str) -> str:
+    """Resolve a user-authored `角色名：图N` binding against the uploaded catalog."""
+    character_name = str(name or "").strip()
+    if not character_name:
+        return ""
+    character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "")
+    match = re.search(
+        re.escape(character_name) + r"\s*[：:,，]?\s*(?:角色形象参考)?图\s*([1-4])",
+        character_bible,
+    )
+    if not match:
+        return ""
+    label = f"图{match.group(1)}"
+    return label if label in _reference_image_catalog() else ""
 
 
 def build_visual_prompt_system(
@@ -383,6 +417,37 @@ class RunningHubAccountPool:
             return config
 
 
+_SHARED_ACCOUNT_POOLS: dict[tuple[str, tuple[tuple[str, str, str, str], ...]], RunningHubAccountPool] = {}
+_SHARED_ACCOUNT_POOLS_LOCK = threading.Lock()
+
+
+def shared_runninghub_account_pool(
+    configs: list[dict[str, str]], *, namespace: str = "default"
+) -> RunningHubAccountPool:
+    """Reuse one round-robin cursor across independently started image tasks.
+
+    The main batch renderer already shares a pool inside one call. Visual-editor
+    redraws arrive as separate calls/threads, so without this registry every
+    redraw starts from account 1 and the extra accounts are only used after 421.
+    """
+    signature = tuple(
+        (
+            str(config.get("api_key") or ""),
+            str(config.get("endpoint") or ""),
+            str(config.get("ratio") or ""),
+            str(config.get("resolution") or ""),
+        )
+        for config in configs
+    )
+    key = (str(namespace or "default"), signature)
+    with _SHARED_ACCOUNT_POOLS_LOCK:
+        pool = _SHARED_ACCOUNT_POOLS.get(key)
+        if pool is None:
+            pool = RunningHubAccountPool(configs)
+            _SHARED_ACCOUNT_POOLS[key] = pool
+        return pool
+
+
 def _load_runninghub_env_from_file() -> None:
     """Use the current .env as the source of truth for RunningHub settings."""
     env_path = PROJECT_ROOT / ".env"
@@ -480,6 +545,84 @@ def _visual_groups(
         "normal": (target_duration, max_slides),
         "fast": (max(min_duration, min(target_duration, 6.0)), min(max_slides, 3)),
     }
+    scene_ids = [str(scene.get("slide_id") or "") for scene in scenes]
+    positions = {slide_id: index for index, slide_id in enumerate(scene_ids) if slide_id}
+
+    def semantic_partitions() -> list[tuple[list[dict[str, Any]], str]]:
+        units = (story_plan or {}).get("semantic_units")
+        if not isinstance(units, list) or not units:
+            return []
+        partitions: list[tuple[list[dict[str, Any]], str]] = []
+        expected = 0
+        for unit in units:
+            if not isinstance(unit, dict):
+                return []
+            start = positions.get(str(unit.get("start_slide_id") or ""), -1)
+            end = positions.get(str(unit.get("end_slide_id") or ""), -1)
+            if start != expected or end < start:
+                return []
+            boundary_after = str(unit.get("boundary_after") or "hard").strip().lower()
+            partitions.append((scenes[start : end + 1], boundary_after if boundary_after in {"hard", "soft"} else "hard"))
+            expected = end + 1
+        return partitions if expected == len(scenes) else []
+
+    def split_semantic_partition(partition: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        """Split inside one semantic event, never by crossing into the next event."""
+        if not partition:
+            return []
+        result: list[list[dict[str, Any]]] = []
+        current: list[dict[str, Any]] = []
+        for scene in partition:
+            candidate = current + [scene]
+            candidate_duration = float(candidate[-1].get("end") or 0) - float(candidate[0].get("start") or 0)
+            current_duration = (
+                float(current[-1].get("end") or 0) - float(current[0].get("start") or 0)
+                if current else 0.0
+            )
+            if current and (
+                candidate_duration > max_duration
+                or len(current) >= max_slides
+                or (candidate_duration > target_duration and current_duration >= min_duration)
+            ):
+                result.append(current)
+                current = []
+            current.append(scene)
+        if current:
+            result.append(current)
+        # A short tail may merge only with its previous frame in the same event.
+        if len(result) >= 2:
+            tail = result[-1]
+            tail_duration = float(tail[-1].get("end") or 0) - float(tail[0].get("start") or 0)
+            previous = result[-2]
+            previous_duration = float(previous[-1].get("end") or 0) - float(previous[0].get("start") or 0)
+            if tail_duration < min_duration and previous_duration + tail_duration <= max_duration:
+                previous.extend(tail)
+                result.pop()
+        return result
+
+    semantic_groups = semantic_partitions()
+    if semantic_groups:
+        # Agent 1 decides event membership. Python only controls picture density
+        # inside an event. A hard boundary is never crossed; a soft boundary is
+        # eligible for one minimum-duration merge.
+        result: list[list[dict[str, Any]]] = []
+        pending_soft_boundary = False
+        for partition, boundary_after in semantic_groups:
+            split_groups = split_semantic_partition(partition)
+            if pending_soft_boundary and result and split_groups:
+                previous = result[-1]
+                first = split_groups[0]
+                previous_duration = float(previous[-1].get("end") or 0) - float(previous[0].get("start") or 0)
+                first_duration = float(first[-1].get("end") or 0) - float(first[0].get("start") or 0)
+                if previous_duration < min_duration and previous_duration + first_duration <= max_duration:
+                    previous.extend(first)
+                    split_groups = split_groups[1:]
+            result.extend(split_groups)
+            pending_soft_boundary = boundary_after == "soft"
+        return result
+
+    # Safe backward-compatible grouping for old plans and custom Agent 1
+    # presets that omit semantic_units.
     pacing_by_slide = _pacing_by_slide(story_plan)
     groups: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
@@ -491,21 +634,14 @@ def _visual_groups(
         group_target, group_slides = pacing_limits[group_pacing]
         current_duration = float(current[-1].get("end") or 0) - candidate_start if current else 0.0
         candidate_duration = scene_end - candidate_start
-        if current and (
-            len(current) >= group_slides
-            or candidate_duration > max_duration
-            or (candidate_duration > group_target and current_duration >= min_duration)
-            or (scene_pacing != group_pacing and current_duration >= min_duration)
-        ):
+        if current and (len(current) >= group_slides or candidate_duration > max_duration or (candidate_duration > group_target and current_duration >= min_duration) or (scene_pacing != group_pacing and current_duration >= min_duration)):
             groups.append(current)
             current = []
         current.append(scene)
     if current:
         groups.append(current)
-
-    # A last sentence or a pacing-boundary must not yield a 1--3 second image.
-    # Prefer merging backwards, unless that would exceed the hard maximum and
-    # the next group is a better fit.  A single short overall video is allowed.
+    # Legacy/custom plans without semantic_units retain the established
+    # minimum-dwell behavior.
     index = 0
     while index < len(groups):
         group = groups[index]
@@ -531,8 +667,9 @@ def _visual_groups(
 def _fallback_mapping(
     scenes: list[dict[str, Any]],
     story_plan: dict[str, Any] | None = None,
+    required_groups: list[list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
-    groups = _visual_groups(scenes, story_plan)
+    groups = required_groups if required_groups is not None else _visual_groups(scenes, story_plan)
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE"))
     science_mode = content_mode == CONTENT_MODE_SCIENCE
     general_mode = content_mode == CONTENT_MODE_GENERAL
@@ -603,6 +740,29 @@ def _normalize_mapping(
     return normalized
 
 
+def _multi_moment_prompt_risk(prompt: str) -> bool:
+    """Detect prompts likely to make an image model invent comic panels."""
+    text = str(prompt or "")
+    if re.search(r"对照|对比|差异展示|前后变化比较", text):
+        return False
+    return bool(re.search(
+        r"随后|依次|先.+再|镜头拉开|镜头转向|画面左侧|画面右侧|上半部分|下半部分|"
+        r"分屏|多格|拼贴|四格|三格|多个时间点",
+        text,
+    ))
+
+
+def _single_scene_guard(prompt: str) -> str:
+    if not _multi_moment_prompt_risk(prompt):
+        return prompt
+    return (
+        "【单镜头构图硬约束】只定格下述内容中最有代表性的一个瞬间；"
+        "保持单一连续场景、单一机位和单一时间点，不使用多格漫画、分屏、拼贴，"
+        "不让同一角色重复出现在画面中。\n"
+        + prompt
+    )
+
+
 def _apply_visual_safety_guard(prompt: str) -> str:
     """Turn commonly blocked explicit imagery into indirect cinematic language."""
     guarded = str(prompt or "").strip()
@@ -657,7 +817,7 @@ def _style_protagonist_identity(style: str) -> str:
 def _character_descriptions(
     story_plan: dict[str, Any] | None,
     forced_style: str = "",
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, str]]:
     """Build name -> immutable identity replacements without multi-stage wardrobe summaries."""
     generic_names = {"她", "他", "主角", "女人", "男人", "女孩", "男孩", "少女", "妈妈", "母亲", "父亲"}
     replacements: list[tuple[str, str]] = []
@@ -671,14 +831,17 @@ def _character_descriptions(
         if len(name) < 2 or name in generic_names:
             continue
         protagonist_override = _style_protagonist_identity(forced_style)
-        role = str(character.get("role") or "")
+        role = str(character.get("role") or "").strip()
         description = (
             protagonist_override
             if protagonist_override and "主角" in role
             else str(character.get("appearance") or "").strip(" ，。；")
         )
         if description:
-            replacements.append((name, description))
+            identity_label = f"{role}{name}" if role and role not in name else name
+            reference_label = _character_reference_label(name)
+            reference_clause = f"，角色形象参考{reference_label}" if reference_label else ""
+            replacements.append((name, role, f"{identity_label}（{description}{reference_clause}）"))
     return sorted(replacements, key=lambda pair: len(pair[0]), reverse=True)
 
 
@@ -689,10 +852,37 @@ def _expand_character_names(
 ) -> tuple[str, int]:
     expanded = str(prompt or "")
     count = 0
-    for name, description in _character_descriptions(story_plan, forced_style):
+    for name, role, description in _character_descriptions(story_plan, forced_style):
         if name not in expanded:
             continue
-        expanded, replacements = re.subn(re.escape(name), description, expanded)
+        identity_label = f"{role}{name}" if role and role not in name else name
+        if role:
+            expanded = re.sub(
+                rf"(?:{re.escape(role)}){{2,}}(?={re.escape(name)})",
+                role,
+                expanded,
+            )
+        canonical_inside = description.removeprefix(identity_label).strip()
+        if canonical_inside.startswith("（") and canonical_inside.endswith("）"):
+            canonical_inside = canonical_inside[1:-1]
+        pattern = re.compile(
+            rf"(?:{re.escape(role)})?{re.escape(name)}(?P<parens>(?:（[^（）]*）)*)"
+            if role else rf"{re.escape(name)}(?P<parens>(?:（[^（）]*）)*)"
+        )
+
+        def replace_character(match: re.Match[str]) -> str:
+            parts = [value.strip() for value in re.split(r"[，,；;]", canonical_inside) if value.strip()]
+            for group in re.findall(r"（([^（）]*)）", match.group("parens") or ""):
+                for value in re.split(r"[，,；;]", group):
+                    value = value.strip()
+                    if not value or re.fullmatch(r"角色形象(?:严格)?参考图[1-3]", value):
+                        continue
+                    if any(value == existing or value in existing for existing in parts):
+                        continue
+                    parts.append(value)
+            return f"{identity_label}（{'，'.join(dict.fromkeys(parts))}）"
+
+        expanded, replacements = pattern.subn(replace_character, expanded)
         count += replacements
     return expanded, count
 
@@ -789,18 +979,24 @@ def _plan_mapping_batch(
     system_prompt: str,
     batch_label: str,
     story_context: dict[str, Any] | None = None,
+    required_groups: list[list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]] | None:
-    required_groups = [
+    required_slide_groups = [
         [str(scene["slide_id"]) for scene in group]
-        for group in _visual_groups(scenes, story_context)
+        for group in (required_groups if required_groups is not None else _visual_groups(scenes, story_context))
     ]
     runtime_prompt = (
         system_prompt
+        + "\n\n【单镜头构图优先级（适用于所有模式）】\n"
+        + "- 默认每张图只呈现一个连续场景、一个机位和一个明确时间点，定格最能代表本组内容的瞬间。\n"
+        + "- 不要把动作的前后过程同时画出；避免‘随后、依次、先……再……、镜头拉开后’等多时刻描述。\n"
+        + "- 禁止漫画多格、分屏、拼贴、上下左右并列画面，以及同一角色在一张图中重复出现。\n"
+        + "- 只有原文明示要做两项对照，且单一场景无法表达时，才可使用最多双区的统一构图；不得超过两区。"
         + "\n\n【Agent 1 提供的全文故事上下文】\n"
         + json.dumps(story_context or {}, ensure_ascii=False)
         + "\n必须把这份上下文视为跨批次共享的角色、地点、线索和连续性档案。"
         + "\n\n【本次任务的强制分组】\n"
-        + json.dumps(required_groups, ensure_ascii=False)
+        + json.dumps(required_slide_groups, ensure_ascii=False)
         + "\n必须严格按上述顺序逐组输出：每组只生成一个对象，includes_slides 必须与对应分组完全一致，"
         "不得合并、拆分、遗漏或调整 slide_id。image_prompt 只写该组独有的具体画面内容；"
         "reference_image_ids 必须始终输出数组，只能填写本次实际使用的图号。"
@@ -813,11 +1009,34 @@ def _plan_mapping_batch(
     try:
         response = generate_gemini_text(
             system_prompt=runtime_prompt,
-            user_prompt=json.dumps({"scenes": scenes, "required_groups": required_groups}, ensure_ascii=False),
+            user_prompt=json.dumps({"scenes": scenes, "required_groups": required_slide_groups}, ensure_ascii=False),
             temperature=0.3,
             response_mime_type="application/json",
         )
-        mapping = _normalize_mapping(parse_json_response(response), scenes, required_groups)
+        mapping = _normalize_mapping(parse_json_response(response), scenes, required_slide_groups)
+        if mapping and any(_multi_moment_prompt_risk(item["image_prompt"]) for item in mapping):
+            print(f"Gemini {batch_label} 检测到多时刻/多格构图风险，正在自动收束为单镜头。", flush=True)
+            revision = generate_gemini_text(
+                system_prompt=runtime_prompt,
+                user_prompt=json.dumps({
+                    "scenes": scenes,
+                    "required_groups": required_slide_groups,
+                    "previous_output": mapping,
+                    "revision_instruction": (
+                        "保持 includes_slides 和角色连续性不变，重写所有有‘随后、依次、先后过程、分屏或多格’风险的 image_prompt；"
+                        "每组只保留一个最具代表性的瞬间、一个机位、一个连续场景。"
+                    ),
+                }, ensure_ascii=False),
+                temperature=0.2,
+                response_mime_type="application/json",
+            )
+            revised_mapping = _normalize_mapping(
+                parse_json_response(revision),
+                scenes,
+                required_slide_groups,
+            )
+            if revised_mapping:
+                mapping = revised_mapping
         if mapping:
             print(f"Gemini {batch_label} 已规划 {len(mapping)} 张海报。", flush=True)
             return mapping
@@ -825,6 +1044,38 @@ def _plan_mapping_batch(
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
         print(f"Gemini {batch_label} 规划失败: {exc}", flush=True)
     return None
+
+
+def _synchronized_reference_image_ids(
+    item: dict[str, Any],
+    prompt: str,
+    original_prompt: str,
+    story_plan: dict[str, Any] | None,
+) -> list[str]:
+    """Recover reference IDs deterministically from prompt markers and named characters."""
+    catalog = _reference_image_catalog()
+    if not catalog:
+        return []
+    selected = {
+        str(value).strip()
+        for value in item.get("reference_image_ids", [])
+        if str(value).strip() in catalog
+    }
+    for label in catalog:
+        number = re.escape(label.removeprefix("图"))
+        if re.search(rf"角色形象参考图\s*{number}(?!\d)", prompt):
+            selected.add(label)
+    characters = (story_plan or {}).get("characters")
+    if isinstance(characters, list):
+        for character in characters:
+            if not isinstance(character, dict):
+                continue
+            name = str(character.get("name") or "").strip()
+            if name and name in original_prompt:
+                label = _character_reference_label(name)
+                if label:
+                    selected.add(label)
+    return [label for label in catalog if label in selected][:3]
 
 
 def _finalize_mapping(
@@ -836,9 +1087,10 @@ def _finalize_mapping(
     quality_requirement = "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
     clean_forced_style = _clean_style_for_image_prompt(forced_style, quality_requirement)
     expanded_character_names = 0
+    recovered_reference_ids = 0
     for index, item in enumerate(mapping, 1):
         item["macro_scene_id"] = f"poster_{index:03d}"
-        prompt = _apply_visual_safety_guard(str(item.get("image_prompt") or ""))
+        prompt = _single_scene_guard(_apply_visual_safety_guard(str(item.get("image_prompt") or "")))
         if forced_style:
             prompt = prompt.replace(f"默认风格为：{forced_style}", "")
             prompt = prompt.replace(forced_style, "")
@@ -863,9 +1115,22 @@ def _finalize_mapping(
             prompt = f"【统一画面风格】{clean_forced_style}\n{prompt}"
         prompt = f"{prompt}\n{quality_requirement}"
         item["image_prompt"] = prompt
+        previous_reference_ids = [
+            str(value).strip() for value in item.get("reference_image_ids", []) if str(value).strip()
+        ]
+        synchronized_ids = _synchronized_reference_image_ids(
+            item,
+            prompt,
+            original_prompt,
+            story_plan,
+        )
+        recovered_reference_ids += len(set(synchronized_ids) - set(previous_reference_ids))
+        item["reference_image_ids"] = synchronized_ids
 
     if expanded_character_names:
         print(f"角色实体展开已应用：共替换 {expanded_character_names} 处人物姓名或关系称呼。", flush=True)
+    if recovered_reference_ids:
+        print(f"参考图绑定保护已应用：自动补齐 {recovered_reference_ids} 个角色参考图编号。", flush=True)
 
     scenes_by_id = {str(scene["slide_id"]): scene for scene in scenes}
     durations = []
@@ -894,7 +1159,7 @@ def build_macro_mapping(
     global_character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE", CONTENT_MODE_STORY))
     custom_prompt = os.getenv("VISUAL_PROMPT_SYSTEM", "").strip()
-    system_prompt = custom_prompt or build_visual_prompt_system(
+    system_prompt = _strip_dynamic_reference_image_instructions(custom_prompt) or build_visual_prompt_system(
         style=os.getenv("VISUAL_STYLE_PROMPT", ""),
         content_mode=content_mode,
         global_character_prompt=global_character_bible,
@@ -918,10 +1183,23 @@ def build_macro_mapping(
         flush=True,
     )
 
-    # Rich poster prompts make large one-shot responses easy to truncate.
-    # Every bounded batch receives the exact same style instruction.
+    # Rich poster prompts make large one-shot responses easy to truncate. Split only
+    # between fixed visual groups: a raw scene-count split could cut an Agent 1
+    # semantic event in half and silently re-enable the old local grouping logic.
     batch_size = _positive_env_int("VISUAL_PROMPT_BATCH_SCENES", 28)
-    batches = [scenes[index : index + batch_size] for index in range(0, len(scenes), batch_size)]
+    fixed_groups = _visual_groups(scenes, story_plan)
+    batches: list[list[list[dict[str, Any]]]] = []
+    current_batch: list[list[dict[str, Any]]] = []
+    current_size = 0
+    for group in fixed_groups:
+        if current_batch and current_size + len(group) > batch_size:
+            batches.append(current_batch)
+            current_batch = []
+            current_size = 0
+        current_batch.append(group)
+        current_size += len(group)
+    if current_batch:
+        batches.append(current_batch)
     if len(batches) > 1:
         print(
             f"画面规划共 {len(scenes)} 个字幕片段，拆为 {len(batches)} 批调用 Gemini，"
@@ -930,12 +1208,19 @@ def build_macro_mapping(
         )
 
     combined: list[dict[str, Any]] = []
-    for index, batch in enumerate(batches, 1):
+    for index, batch_groups in enumerate(batches, 1):
+        batch = [scene for group in batch_groups for scene in group]
         batch_label = f"画面规划批次 {index}/{len(batches)}"
-        mapping = _plan_mapping_batch(batch, system_prompt, batch_label, story_context)
+        mapping = _plan_mapping_batch(
+            batch,
+            system_prompt,
+            batch_label,
+            story_context,
+            required_groups=batch_groups,
+        )
         if mapping is None:
             print(f"{batch_label} 已降级为本地分组提示词。", flush=True)
-            mapping = _fallback_mapping(batch, story_plan)
+            mapping = _fallback_mapping(batch, story_plan, required_groups=batch_groups)
         combined.extend(mapping)
 
     return _finalize_mapping(combined, scenes, story_plan)
@@ -1252,6 +1537,13 @@ def _submit_poster_request(
 
 
 def _poster_output_path(macro: dict[str, Any]) -> Path:
+    explicit_output = str(macro.get("_output_path") or "").strip()
+    if explicit_output:
+        candidate = Path(explicit_output).resolve()
+        redraw_root = (PROJECT_ROOT / "workspace" / "jobs").resolve()
+        if redraw_root not in candidate.parents:
+            raise ValueError("重绘输出路径必须位于当前项目的独立任务目录中")
+        return candidate
     poster_id = macro["macro_scene_id"]
     job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip()
     reference_source = "\0".join(
@@ -1278,7 +1570,8 @@ def _submit_poster(macro: dict[str, Any], config: dict[str, str]) -> PosterTask:
             f"{poster_id} 提交图像任务网络异常: {type(exc).__name__}"
         ) from exc
 
-    print(f"海报任务已提交: {progress_label} ({task_id})", flush=True)
+    account_label = str(config.get("account_label") or "当前账号")
+    print(f"海报任务已提交: {progress_label} [{account_label}] ({task_id})", flush=True)
     return PosterTask(macro=macro, output=output, task_id=task_id)
 
 
@@ -1654,6 +1947,7 @@ def run_online_poster_engine() -> None:
     assets = render_posters_concurrently(mapping, provider_configs)
     poster_timeline: list[dict[str, Any]] = []
     for macro, asset in zip(mapping, assets, strict=True):
+        macro["asset_filename"] = asset.name
         included = [scenes_by_id[slide_id] for slide_id in macro["includes_slides"]]
         poster_timeline.append(
             {
@@ -1662,6 +1956,14 @@ def run_online_poster_engine() -> None:
                 "url": f"./assets/{asset.name}",
             }
         )
+    # Persist the concrete asset name so the FFmpeg renderer and archived visual
+    # editor can resolve replacements without parsing the generated HTML.
+    POSTER_MAPPING_PATH.write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+    visual_prompt_plan["mapping"] = mapping
+    VISUAL_PROMPT_PLAN_PATH.write_text(
+        json.dumps(visual_prompt_plan, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     html_path = write_html(scenes, poster_timeline)
     print(f"模块 4 页面已写入: {html_path}", flush=True)
 

@@ -123,6 +123,45 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertIn("红色围巾", plan["characters"][0]["appearance"])
         self.assertIn("知识", story_agents.SCIENCE_AGENT_SYSTEM_PROMPT)
 
+    def test_agent0_reads_plain_full_text_without_subtitle_timing(self) -> None:
+        response = json.dumps({
+            "story_type": "other", "logline": "test", "theme": "test", "narrative_tone": "calm",
+            "characters": [], "locations": [], "clues_and_payoffs": [],
+            "continuity_rules": [], "visual_safety": [],
+        })
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(story_agents, "generate_gemini_text", return_value=response) as generate,
+        ):
+            context = story_agents.create_story_context("first paragraph\nsecond paragraph")
+        payload = json.loads(generate.call_args.kwargs["user_prompt"])
+        self.assertEqual(payload["complete_text"], "first paragraph\nsecond paragraph")
+        self.assertNotIn("subtitle_timeline", payload)
+        self.assertEqual(context["generation_source"], "gemini")
+
+    def test_agent1_uses_timestamps_and_only_returns_timeline_plan(self) -> None:
+        scenes = sample_scenes()[:3]
+        context = story_agents._fallback_story_context("full text", story_agents.CONTENT_MODE_STORY)
+        response = json.dumps({
+            "story_beats": [{
+                "slide_ids": [scene["slide_id"] for scene in scenes], "purpose": "advance",
+                "emotion": "calm", "visual_focus": "scene", "visual_pacing": "normal",
+            }],
+            "semantic_units": [
+                {"unit_id": "u1", "start_slide_id": "scene_001", "end_slide_id": "scene_002", "purpose": "event one", "visual_focus": "shot one", "visual_pacing": "normal"},
+                {"unit_id": "u2", "start_slide_id": "scene_003", "end_slide_id": "scene_003", "purpose": "transition", "visual_focus": "shot two", "visual_pacing": "hold"},
+            ],
+        })
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(story_agents, "generate_gemini_text", return_value=response) as generate,
+        ):
+            plan = story_agents.create_story_plan(scenes, story_context=context)
+        payload = json.loads(generate.call_args.kwargs["user_prompt"])
+        self.assertEqual(payload["subtitle_timeline"][0]["start"], 0.0)
+        self.assertEqual(payload["subtitle_timeline"][0]["end"], 5.0)
+        self.assertEqual(plan["semantic_units"][1]["start_slide_id"], "scene_003")
+
     def test_segment_plan_keeps_global_character_identity_and_local_beats(self) -> None:
         scenes = sample_scenes()[:3]
         global_plan = story_agents._fallback_story_plan(sample_scenes())

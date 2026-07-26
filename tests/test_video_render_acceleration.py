@@ -39,6 +39,44 @@ class VideoRenderAccelerationTest(unittest.TestCase):
         with patch.dict(os.environ, {"VIDEO_RENDER_WORKERS": "99"}, clear=True):
             self.assertEqual(module5_video_render.render_workers(), "16")
 
+    def test_dual_version_subtitle_pass_uses_ffmpeg_and_optional_nvenc(self) -> None:
+        command = module5_video_render.build_subtitle_burn_command(
+            Path("raw.mp4"),
+            Path("final_short.srt"),
+            Path("subtitle.mp4"),
+            use_nvenc=True,
+        )
+        self.assertIn("subtitles=filename=", command[command.index("-vf") + 1])
+        self.assertIn("FontSize=12", command[command.index("-vf") + 1])
+        self.assertEqual(command[command.index("-c:v") + 1], "h264_nvenc")
+        self.assertIn("-c:a", command)
+
+    def test_dual_version_subtitle_pass_has_x264_fallback_command(self) -> None:
+        command = module5_video_render.build_subtitle_burn_command(
+            Path("raw.mp4"),
+            Path("final_short.srt"),
+            Path("subtitle.mp4"),
+            use_nvenc=False,
+        )
+        self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+
+    def test_direct_filter_preserves_timeline_starts_and_crossfade(self) -> None:
+        timeline = [
+            {"start": 0.0, "path": Path("one.jpg")},
+            {"start": 7.0, "path": Path("two.jpg")},
+            {"start": 15.0, "path": Path("three.jpg")},
+        ]
+        script, output_label = module5_video_render.build_direct_filter_script(
+            timeline,
+            24.0,
+            fps=30,
+            fade_duration=0.8,
+        )
+        self.assertIn("offset=7.000000", script)
+        self.assertIn("offset=15.000000", script)
+        self.assertIn("pad=1920:1080:42:54", script)
+        self.assertEqual(output_label, "x2")
+
 
 if __name__ == "__main__":
     unittest.main()

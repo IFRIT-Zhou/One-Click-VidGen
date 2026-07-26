@@ -5,6 +5,91 @@ import sys
 import difflib
 
 
+def clean_alignment_text(text):
+    return re.sub(r'[^\w\u4e00-\u9fff]', '', str(text or ''))
+
+
+def correct_scene_texts_to_original(scene_data, orig_text):
+    """Map ASR segment boundaries onto the original text without losing characters.
+
+    Character-by-character mappings drop an original-only ``insert`` opcode when
+    Whisper omits a whole phrase. Boundary mapping instead partitions the original
+    into contiguous slices, so every original character belongs to exactly one
+    subtitle segment and no neighboring segment overlaps it.
+    """
+    clean_orig = clean_alignment_text(orig_text)
+    orig_map = [index for index, char in enumerate(orig_text) if clean_alignment_text(char)]
+    if not clean_orig or not orig_map:
+        raise ValueError("原始文案不含可校准文字")
+
+    clean_asr = ""
+    segment_ends = []
+    for segment in scene_data:
+        clean_asr += clean_alignment_text(segment.get('text_content', ''))
+        segment_ends.append(len(clean_asr))
+    if not clean_asr or not segment_ends:
+        raise ValueError("ASR 字幕不含可校准文字")
+
+    matcher = difflib.SequenceMatcher(None, clean_asr, clean_orig, autojunk=False)
+    boundary_map = {}
+    original_only_boundaries = {}
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            for offset in range(i2 - i1 + 1):
+                boundary_map[i1 + offset] = j1 + offset
+        elif tag == 'replace':
+            asr_length = i2 - i1
+            original_length = j2 - j1
+            if asr_length:
+                for offset in range(asr_length + 1):
+                    boundary_map[i1 + offset] = j1 + round(offset * original_length / asr_length)
+        elif tag == 'delete':
+            for boundary in range(i1, i2 + 1):
+                boundary_map[boundary] = j1
+        elif tag == 'insert':
+            # Assign an ASR-omitted original phrase to the segment on its right.
+            # The final boundary is forced to EOF below, so trailing omissions
+            # naturally remain with the final segment.
+            original_only_boundaries[i1] = j1
+
+    def mapped_boundary(asr_boundary):
+        if asr_boundary in original_only_boundaries:
+            return original_only_boundaries[asr_boundary]
+        if asr_boundary in boundary_map:
+            return boundary_map[asr_boundary]
+        lower = max((value for value in boundary_map if value < asr_boundary), default=0)
+        upper = min((value for value in boundary_map if value > asr_boundary), default=len(clean_asr))
+        if upper == lower:
+            return boundary_map.get(lower, 0)
+        ratio = (asr_boundary - lower) / (upper - lower)
+        return round(boundary_map[lower] + ratio * (boundary_map[upper] - boundary_map[lower]))
+
+    clean_boundaries = [0] + [mapped_boundary(end) for end in segment_ends]
+    clean_boundaries[0] = 0
+    clean_boundaries[-1] = len(clean_orig)
+    for index in range(1, len(clean_boundaries)):
+        clean_boundaries[index] = max(
+            clean_boundaries[index - 1],
+            min(len(clean_orig), clean_boundaries[index]),
+        )
+
+    def original_boundary(clean_index):
+        if clean_index <= 0:
+            return 0
+        if clean_index >= len(clean_orig):
+            return len(orig_text)
+        return orig_map[clean_index]
+
+    real_boundaries = [original_boundary(value) for value in clean_boundaries]
+    corrected = [
+        orig_text[real_boundaries[index]:real_boundaries[index + 1]].strip()
+        for index in range(len(scene_data))
+    ]
+    if clean_alignment_text(''.join(corrected)) != clean_orig:
+        raise RuntimeError("字幕校准完整性检查失败：校准结果未能 100% 覆盖原始文案")
+    return corrected
+
+
 def split_subtitle_text(text, max_chars=24):
     normalized = re.sub(r'\s+', ' ', str(text or '')).strip()
     if not normalized:
@@ -91,72 +176,11 @@ def run_correction():
     with open(json_file, 'r', encoding='utf-8') as f:
         scene_data = json.load(f)
 
-    def clean_text(text):
-        return re.sub(r'[^\w\u4e00-\u9fff]', '', text)
-
-    clean_orig = clean_text(orig_text)
-    orig_map = [i for i, char in enumerate(orig_text) if clean_text(char)]
-    if not clean_orig or not orig_map:
-        print("❌ 原始文案不含可校准文字")
+    try:
+        corrected_texts = correct_scene_texts_to_original(scene_data, orig_text)
+    except (ValueError, RuntimeError) as exc:
+        print(f"❌ {exc}")
         sys.exit(1)
-
-    clean_asr_full = ""
-    segment_bounds = []
-
-    # 步骤 1：拼接全部 ASR 文本获取全局坐标
-    for segment in scene_data:
-        c_text = clean_text(segment['text_content'])
-        start_idx = len(clean_asr_full)
-        clean_asr_full += c_text
-        end_idx = len(clean_asr_full)
-        segment_bounds.append((start_idx, end_idx, segment['text_content']))
-
-    # 步骤 2：生成全局字符级绝对映射字典
-    sm = difflib.SequenceMatcher(None, clean_asr_full, clean_orig)
-    asr_to_orig_map = {}
-
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == 'equal':
-            for k in range(i2 - i1):
-                asr_to_orig_map[i1 + k] = j1 + k
-        elif tag == 'replace':
-            asr_len = i2 - i1
-            orig_len = j2 - j1
-            for k in range(asr_len):
-                asr_to_orig_map[i1 + k] = min(j1 + int(k * orig_len / asr_len), j2 - 1)
-        elif tag == 'delete':
-            for k in range(i1, i2):
-                asr_to_orig_map[k] = j1
-
-    corrected_texts = []
-
-    # 步骤 3：根据绝对映射表强行切割原始文案
-    for idx, (start_idx, end_idx, original_asr) in enumerate(segment_bounds):
-        if start_idx == end_idx:
-            corrected_texts.append(original_asr)
-            continue
-
-        mapped_start = asr_to_orig_map.get(start_idx, asr_to_orig_map.get(start_idx+1, 0))
-        mapped_end = asr_to_orig_map.get(end_idx - 1, asr_to_orig_map.get(end_idx - 2, len(clean_orig) - 1))
-
-        if idx == len(segment_bounds) - 1:
-            mapped_end = len(clean_orig) - 1
-
-        if mapped_start > mapped_end:
-            mapped_start = mapped_end
-
-        safe_start = min(mapped_start, len(orig_map) - 1)
-        safe_end = min(mapped_end, len(orig_map) - 1)
-
-        real_start = orig_map[safe_start]
-        real_end = orig_map[safe_end]
-
-        # 智能标点穿透：将句子末尾的非中文字符（标点）完整包裹
-        while real_end + 1 < len(orig_text) and not clean_text(orig_text[real_end + 1]):
-            real_end += 1
-
-        best_text = orig_text[real_start:real_end + 1].strip()
-        corrected_texts.append(best_text)
 
     # 步骤 4：校对后再次按屏幕可读长度断句，并同步重建 JSON 与 SRT。
     scene_data = split_corrected_scenes(scene_data, corrected_texts, max_chars=24)

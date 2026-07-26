@@ -116,7 +116,7 @@ class VisualConstraintsTest(unittest.TestCase):
         with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": style}, clear=False):
             result = visual._finalize_mapping(mapping, scenes, story_plan)
         prompt = result[0]["image_prompt"]
-        self.assertNotIn("萱萱妈妈", prompt)
+        self.assertIn("主角萱萱妈妈（35岁中年女性", prompt)
         self.assertGreaterEqual(prompt.count("35岁中年女性，黑色长发，随时都戴着红色鸭舌帽"), 2)
         self.assertIn("本镜头服装=磨旧的深灰色骑行服", prompt)
         self.assertNotIn("前期居家服，后期骑行服或运动装", prompt)
@@ -240,6 +240,78 @@ class VisualConstraintsTest(unittest.TestCase):
             prompt = visual.build_visual_prompt_system(content_mode=visual.CONTENT_MODE_GENERAL)
         self.assertIn("角色形象参考图N", prompt)
         self.assertIn("图1、图2、图3", prompt)
+
+    def test_stale_reference_state_is_removed_from_saved_expert_prompt(self) -> None:
+        prompt = (
+            "只输出严格 JSON。\n"
+            "- 本次未上传角色形象参考图；reference_image_ids 必须输出 []。\n"
+            "保留这一条创作规则。"
+        )
+        cleaned = visual._strip_dynamic_reference_image_instructions(prompt)
+        self.assertNotIn("本次未上传", cleaned)
+        self.assertIn("保留这一条创作规则", cleaned)
+
+    def test_named_characters_recover_reference_ids_and_keep_clear_boundaries(self) -> None:
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        mapping = [{
+            "macro_scene_id": "poster_001",
+            "includes_slides": ["scene_001"],
+            "image_prompt": "莱恩正向艾德里安严肃地讲述情况",
+            "reference_image_ids": [],
+        }]
+        story_plan = {"characters": [
+            {"name": "艾德里安", "role": "王国骑士", "appearance": "年轻，身着银色胸甲"},
+            {"name": "莱恩", "role": "精灵弓手", "appearance": "金色长发束在脑后"},
+        ]}
+        with patch.dict(os.environ, {
+            "GLOBAL_CHARACTER_PROMPT": "艾德里安：图1，深蓝披风\n莱恩：图3，白银铠甲",
+            "USER_REFERENCE_IMAGE_PATHS_JSON": '["knight.png", "witch.png", "elf.png"]',
+            "VISUAL_STYLE_PROMPT": "",
+        }, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)
+        prompt = result[0]["image_prompt"]
+        self.assertIn("精灵弓手莱恩（金色长发束在脑后，角色形象参考图3）正向", prompt)
+        self.assertIn("王国骑士艾德里安（年轻，身着银色胸甲，角色形象参考图1）", prompt)
+        self.assertEqual(result[0]["reference_image_ids"], ["图1", "图3"])
+
+    def test_character_expansion_is_idempotent_and_deduplicates_role_and_reference(self) -> None:
+        story_plan = {"characters": [{
+            "name": "艾德里安",
+            "role": "王国骑士",
+            "appearance": "年轻，身着银色胸甲",
+        }]}
+        with patch.dict(os.environ, {
+            "GLOBAL_CHARACTER_PROMPT": "艾德里安：图1，深蓝色旧披风",
+            "USER_REFERENCE_IMAGE_PATHS_JSON": '["knight.png"]',
+        }, clear=False):
+            once, _ = visual._expand_character_names(
+                "年轻的王国骑士艾德里安（角色形象参考图1，深蓝色旧披风）站在城门前",
+                story_plan,
+            )
+            twice, _ = visual._expand_character_names(once, story_plan)
+        self.assertEqual(once, twice)
+        self.assertNotIn("王国骑士王国骑士", once)
+        self.assertEqual(once.count("角色形象参考图1"), 1)
+        self.assertIn("王国骑士艾德里安（年轻，身着银色胸甲，角色形象参考图1，深蓝色旧披风）", once)
+
+    def test_visual_editor_redraws_share_one_round_robin_account_pool(self) -> None:
+        configs = [
+            {"api_key": "redraw-key-1", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k", "account_label": "账号 1"},
+            {"api_key": "redraw-key-2", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k", "account_label": "账号 2"},
+        ]
+        namespace = f"test-redraw-{id(self)}"
+        first_call_pool = visual.shared_runninghub_account_pool(configs, namespace=namespace)
+        second_call_pool = visual.shared_runninghub_account_pool(list(configs), namespace=namespace)
+        self.assertIs(first_call_pool, second_call_pool)
+        self.assertEqual(first_call_pool.acquire()["account_label"], "账号 1")
+        self.assertEqual(second_call_pool.acquire()["account_label"], "账号 2")
+
+    def test_multi_moment_prompt_gets_single_scene_guard_but_comparison_is_allowed(self) -> None:
+        risky = visual._single_scene_guard("村民从窗后窥视，随后男人走出浓雾并忘记名字")
+        comparison = visual._single_scene_guard("同一器材使用前后效果对比")
+        self.assertIn("单镜头构图硬约束", risky)
+        self.assertIn("不使用多格漫画", risky)
+        self.assertEqual(comparison, "同一器材使用前后效果对比")
 
 
 if __name__ == "__main__":

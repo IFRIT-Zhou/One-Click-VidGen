@@ -64,21 +64,35 @@
         <div class="api-key-status" :class="{ configured: apiKeyStatus.language?.configured }">
           {{ apiKeyStatus.language?.configured ? '已配置' : '未配置' }}
         </div>
-        <label>
+        <label class="api-key-pool-field">
           <span>图像模型 API Key</span>
           <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" placeholder="RunningHub Image2" />
+          <div v-for="(_, index) in apiKeyForm.image_api_keys" :key="`image-key-${index}`" class="api-key-extra-row">
+            <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增图像账号 ${index + 2}`" />
+            <button type="button" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
+          </div>
+          <div class="api-key-field-footer">
+            <span class="api-key-status" :class="{ configured: apiKeyStatus.image?.configured }">
+              {{ apiKeyStatus.image?.configured ? `已配置 ${apiKeyStatus.image?.count || 1} 个账号` : '未配置' }}
+            </span>
+            <button class="api-key-add-btn" type="button" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
+          </div>
         </label>
-        <div class="api-key-status" :class="{ configured: apiKeyStatus.image?.configured }">
-          {{ apiKeyStatus.image?.configured ? '已配置' : '未配置' }}
-        </div>
-        <label>
+        <label class="api-key-pool-field">
           <span>通用 API Key</span>
           <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" placeholder="仅填此项会同时用于语言和图像" />
+          <div v-for="(_, index) in apiKeyForm.common_api_keys" :key="`common-key-${index}`" class="api-key-extra-row">
+            <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增通用账号 ${index + 2}`" />
+            <button type="button" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
+          </div>
+          <div class="api-key-field-footer">
+            <span class="api-key-status" :class="{ configured: apiKeyStatus.common?.configured }">
+              {{ apiKeyStatus.common?.configured ? `已配置 ${apiKeyStatus.common?.count || 1} 个账号` : '未配置' }}
+            </span>
+            <button class="api-key-add-btn" type="button" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
+          </div>
         </label>
-        <div class="api-key-status" :class="{ configured: apiKeyStatus.common?.configured }">
-          {{ apiKeyStatus.common?.configured ? '已配置' : '未配置' }}
-        </div>
-        <div class="muted small">填写通用 Key 时，会自动补全未单独填写的语言与图像 Key。</div>
+        <div class="muted small">填写通用 Key 时，会自动补全未单独填写的语言与图像 Key；追加账号用于 Image2 轮换与并发，Agent 仍使用主语言 Key。</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
         <button class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
           {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
@@ -106,13 +120,9 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn" type="button" @click="sidebarOpen = !sidebarOpen" aria-label="切换侧边栏">
-          <span></span><span></span><span></span>
+        <button class="product-title" type="button" @click="sidebarOpen = !sidebarOpen" aria-label="一键成片，点击切换侧边栏">
+          一键成片 <span>/</span> One-Click VidGen
         </button>
-        <div class="topbar-copy">
-          <div class="eyebrow">工作台</div>
-          <div class="topbar-title">{{ activePage === 'workspace' ? '故事视频生成工作台' : activePage === 'development' ? '待开发功能' : activePage === 'subtitle' ? '模块 2 · 字幕识别' : '模块 1 · 仅配音' }}</div>
-        </div>
       </header>
 
       <section class="content stack">
@@ -168,7 +178,7 @@
               <button v-if="canContinueStepMode" class="primary-btn" type="button" :disabled="resumingGeneration" @click="resumeGeneration">
                 {{ stepModeContinueLabel }}
               </button>
-              <button class="primary-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
+              <button class="primary-btn launch-generation-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
                 {{ submitButtonText }}
               </button>
             </div>
@@ -264,6 +274,10 @@
                 :disabled="form.skip_text_correction"
                 :placeholder="scriptPlaceholder"
               ></textarea>
+              <small class="script-character-count" :class="{ error: scriptTooLong }">
+                {{ scriptCharacterCount.toLocaleString() }} / {{ MAX_SCRIPT_CHARACTERS.toLocaleString() }} 字符
+                <template v-if="scriptTooLong"> · 超出单次上限，请按完整章节拆分后分批生成</template>
+              </small>
             </label>
             </div>
 
@@ -406,8 +420,8 @@
             </div>
             <section v-if="stepModeAudioUrl" class="step-audio-review-card">
               <div>
-                <div class="sidebar-label">分步模式 · 配音试听</div>
-                <strong>确认配音后再继续配图</strong>
+                <div class="sidebar-label">{{ activeJob?.request?.step_mode ? '分步模式 · 配音试听' : '配音试听' }}</div>
+                <strong>{{ activeJob?.request?.step_mode ? '确认配音后再继续配图' : '本次任务的配音已生成，可随时试听' }}</strong>
               </div>
               <div class="step-audio-controls">
                 <audio
@@ -445,6 +459,25 @@
               <small v-if="canRetryTts" class="muted">重新配音会清理本任务的当前中间产物，并再次停在试听确认。</small>
             </section>
             </div>
+            </div>
+
+            <div class="content-mode-bar content-mode-full-row">
+              <div class="content-mode-copy">
+                <div class="sidebar-label">作品风格</div>
+                <strong>选择内容与画面模式</strong>
+              </div>
+              <div class="content-mode-options">
+                <button
+                  v-for="mode in contentModeOptions"
+                  :key="mode.key"
+                  type="button"
+                  :class="{ active: form.content_mode === mode.key && form.visual_prompt_mode !== 'full' }"
+                  @click="setContentMode(mode.key)"
+                >
+                  <span>{{ mode.label }}</span>
+                  <small>{{ mode.description }}</small>
+                </button>
+              </div>
             </div>
 
             <div class="tts-parameter-panel visual-pacing-standalone">
@@ -565,25 +598,6 @@
               </div>
             </div>
 
-            <div class="content-mode-bar content-mode-full-row">
-              <div class="content-mode-copy">
-                <div class="sidebar-label">作品风格</div>
-                <strong>选择内容与画面模式</strong>
-              </div>
-              <div class="content-mode-options">
-                <button
-                  v-for="mode in contentModeOptions"
-                  :key="mode.key"
-                  type="button"
-                  :class="{ active: form.content_mode === mode.key && form.visual_prompt_mode !== 'full' }"
-                  @click="setContentMode(mode.key)"
-                >
-                  <span>{{ mode.label }}</span>
-                  <small>{{ mode.description }}</small>
-                </button>
-              </div>
-            </div>
-
             <section class="agent-prompt-full-row advanced-agent-console">
               <div class="advanced-agent-console-header">
                 <div class="sidebar-label">高级创作控制台</div>
@@ -629,13 +643,20 @@
                     ? '在这里补充镜头语言、叙事节奏、画面构图、风格执行或特殊限制。系统输出格式与固定分组规则已锁定。'
                     : '需保留 JSON 输出格式、includes_slides 与 image_prompt 字段约定。'"
                 ></textarea>
-                <small class="muted">此处编辑 Agent 2 的画面规划指令；下方可按需展开 Agent 1 的全文规划指令。</small>
+                <small class="muted">此处编辑 Agent 2 的画面规划指令；下方可按执行顺序调整 Agent 0 与 Agent 1。</small>
               </label>
+              <p v-if="form.visual_prompt_mode === 'full'" class="agent1-danger-note">以下两项均为高危参数：Agent 0 负责全文资料，Agent 1 负责字幕时间轴与画面节奏。必须保留各自严格 JSON 输出约定和字段结构，否则可能导致任务失败、连续性错误或严重画面错乱。</p>
               <details v-if="form.visual_prompt_mode === 'full'" class="agent1-prompt-editor">
-                <summary>Agent 1 全文规划指令 <span class="agent1-risk-label">（高危参数）</span></summary>
-                <p class="agent1-danger-note">修改后会直接影响全文理解、人物档案、场景关系与画面节奏规划。必须保留严格 JSON 对象输出与既有字段结构，否则可能导致任务失败或严重画面错乱。</p>
+                <summary>Agent 0 全文资料指令 <span class="agent1-risk-label">（高危参数）</span></summary>
                 <label class="stack">
-                  <span>完整 Agent 1 指令</span>
+                  <span>完整 Agent 0 全文指令</span>
+                  <textarea v-model="form.agent0_prompt_system" @input="rememberVisualPrompt" rows="14" maxlength="12000" placeholder="保留默认内容即可；此项不应出现字幕时间、slide_id 或生图提示词。"></textarea>
+                </label>
+              </details>
+              <details v-if="form.visual_prompt_mode === 'full'" class="agent1-prompt-editor">
+                <summary>Agent 1 时间轴分镜指令 <span class="agent1-risk-label">（高危参数）</span></summary>
+                <label class="stack">
+                  <span>完整 Agent 1 时间轴指令</span>
                   <textarea v-model="form.agent1_prompt_system" @input="rememberVisualPrompt" rows="18" maxlength="12000" placeholder="保留默认内容即可；仅建议熟悉 JSON 输出结构和全文规划流程的用户修改。"></textarea>
                 </label>
               </details>
@@ -798,6 +819,7 @@
                   重绘参考图：{{ visualReferenceSummary }}
                 </span>
                 <button v-if="visualReferenceSummary" class="ghost-btn compact-btn" type="button" @click="clearVisualReferenceImages">清空参考图</button>
+                <button class="ghost-btn compact-btn commit-all-baselines" type="button" :disabled="visualEditorLoading || visualEditor.has_active_image_tasks" @click="commitAllVisualBaselines">✅ 确认全部为原图</button>
                 <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorLoading" @click="loadVisualEditor({ preservePage: true })">刷新图片</button>
               </div>
               <div class="visual-image-grid">
@@ -822,6 +844,7 @@
                     <label class="icon-action replace-action" title="替换本地 JPG 图片" aria-label="替换本地 JPG 图片">
                       ↕<input type="file" accept="image/jpeg" @change="uploadVisualImage($event, item)" />
                     </label>
+                    <button type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
                   </div>
                   <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
                     <img :src="item.image_url" :alt="item.id" />
@@ -850,7 +873,14 @@
                     <h3>按字幕调整画面位置</h3>
                     <p class="muted small">每次在相邻字幕句之间移动一格。画面始终连续，不会产生空白、重叠或影响配音。</p>
                   </div>
-                  <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="resetEditedTiming">恢复初始时序</button>
+                  <div class="visual-timing-head-actions">
+                    <select v-model="selectedVisualTimingHistory" class="timing-history-select" :disabled="visualTimingAdjusting || !visualEditor.timing_history?.length" @change="restoreSelectedVisualTimingHistory">
+                      <option value="">历史时序</option>
+                      <option v-for="entry in visualEditor.timing_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
+                    </select>
+                    <button class="ghost-btn compact-btn timing-save-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="commitEditedTiming">✅ 保存当前时序</button>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="resetEditedTiming">恢复初始时序</button>
+                  </div>
                 </div>
                 <div v-if="!visualEditor.timing_available" class="timing-unavailable">{{ visualEditor.timing_message || '该历史项目缺少可用的字幕时间线。' }}</div>
                 <template v-else>
@@ -1240,6 +1270,42 @@
             </div>
           </article>
 
+          <article class="panel subtitle-style-panel">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">字幕后处理</div>
+                <h2>添加字幕</h2>
+                <p class="muted create-summary">不重新识别字幕：直接把本次 SRT 烧录进原视频；若上传的是音频，则自动生成深色背景字幕视频。</p>
+              </div>
+              <label class="inline-switch">
+                <input v-model="subtitleAddEnabled" type="checkbox" @change="subtitleAddEnabled && loadSubtitleFonts()" />
+                <span class="switch-track"><span></span></span>
+                <strong>启动字幕添加</strong>
+              </label>
+            </div>
+            <div v-if="subtitleAddEnabled" class="subtitle-style-body">
+              <div class="subtitle-style-grid">
+                <button v-for="style in subtitleStyleOptions" :key="style.key" class="subtitle-style-option" :class="[{ active: subtitleRenderForm.style === style.key }, style.key]" type="button" @click="subtitleRenderForm.style = style.key">
+                  <span class="subtitle-style-sample">先说在前头</span>
+                  <small>{{ style.label }}</small>
+                </button>
+              </div>
+              <label class="stack subtitle-font-field">
+                <span>字幕字体（本机字体）</span>
+                <select v-model="subtitleRenderForm.font_name" :disabled="subtitleFontsLoading">
+                  <option v-if="!subtitleFonts.length" value="Microsoft YaHei">Microsoft YaHei</option>
+                  <option v-for="font in subtitleFonts" :key="font" :value="font">{{ font }}</option>
+                </select>
+              </label>
+              <div class="inline-actions">
+                <button class="ghost-btn stop-btn" type="button" :disabled="!subtitleJobRunning" @click="cancelSubtitleJob">停止渲染</button>
+                <button class="primary-btn" type="button" :disabled="!canRenderSubtitleVideo" @click="renderSubtitleVideo">{{ subtitleJobRunning ? '正在渲染…' : '添加字幕并渲染视频' }}</button>
+              </div>
+              <small v-if="!subtitleJob?.artifacts?.subtitle" class="muted">请先完成一次字幕识别，生成 SRT 后再添加字幕。</small>
+              <div v-if="subtitleRenderMessage" class="muted small">{{ subtitleRenderMessage }}</div>
+            </div>
+          </article>
+
           <article class="panel progress-panel">
             <div class="panel-head">
               <div>
@@ -1259,6 +1325,13 @@
               <button class="ghost-btn" type="button" @click="openSubtitleOutputFolder">
                 打开产物所在目录
               </button>
+            </div>
+            <div v-if="subtitleJob?.artifacts?.subtitle_video" class="subtitle-output-result">
+              <div>
+                <div class="artifact-label">带字幕视频</div>
+                <video class="subtitle-preview-video" :src="subtitleJob.artifacts.subtitle_video" controls></video>
+              </div>
+              <a class="ghost-btn" :href="subtitleJob.artifacts.subtitle_video" download="带字幕视频.mp4">下载视频</a>
             </div>
             <div v-if="folderOpenMessage" class="folder-open-message">{{ folderOpenMessage }}</div>
           </article>
@@ -1299,6 +1372,7 @@ const AGENT2_DIRECTOR_THEME_DEFAULTS = {
 const VISUAL_PROMPT_STYLE_STORAGE_KEY = 'visual_prompt_style_story_v3'
 const GLOBAL_CHARACTER_STORAGE_KEY = 'global_character_prompt_v1'
 const STORY_ENVIRONMENT_STORAGE_KEY = 'story_environment_prompt_v1'
+const AGENT0_PROMPT_STORAGE_KEY = 'agent0_prompt_system_v1'
 const AGENT1_PROMPT_STORAGE_KEY = 'agent1_prompt_system_v1'
 const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
 const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
@@ -1361,6 +1435,7 @@ const visualEditorProjects = ref([])
 const visualEditorProjectId = ref('')
 const visualEditorPage = ref(1)
 const visualTimingSelectedId = ref('')
+const selectedVisualTimingHistory = ref('')
 const visualTimingAdjusting = ref(false)
 const visualSelfReferenceMacroId = ref('')
 const visualReferenceUploads = ref([])
@@ -1475,7 +1550,16 @@ const qwenVoiceGroups = [
 let apiKeyStatusLoaded = false
 let timer = null
 let visualEditorTaskTimer = null
+let completionAudioContext = null
+let completionFlashTimer = null
+let completionFlashState = false
+let completionFaviconLink = null
+let completionFaviconCreated = false
+let originalFaviconHref = ''
+let originalDocumentTitle = ''
+let lastCompletionAlertAt = 0
 const MAX_SCRIPT_FILE_SIZE = 2 * 1024 * 1024
+const MAX_SCRIPT_CHARACTERS = 12_000
 
 const loginForm = reactive({
   email: '',
@@ -1497,13 +1581,30 @@ const subtitleAudioError = ref('')
 const subtitleAudioUploading = ref(false)
 const subtitleReferenceName = ref('')
 const subtitleReferenceError = ref('')
+const subtitleAddEnabled = ref(false)
+const subtitleFonts = ref([])
+const subtitleFontsLoading = ref(false)
+const subtitleRenderMessage = ref('')
+const subtitleRenderForm = reactive({
+  style: 'navy_bg_white',
+  font_name: 'Microsoft YaHei',
+})
+const subtitleStyleOptions = [
+  { key: 'black_white_outline', label: '黑字白描边' },
+  { key: 'white_black_outline', label: '白字黑描边' },
+  { key: 'yellow_bg_black', label: '黄底黑字' },
+  { key: 'white_bg_black', label: '白底黑字' },
+  { key: 'navy_bg_white', label: '默认成片样式' },
+]
 const referenceImageNames = ref([])
 const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
   language_api_key: '',
   image_api_key: '',
+  image_api_keys: [],
   common_api_key: '',
+  common_api_keys: [],
   qwen_tts_api_key: '',
 })
 const parameterPresets = ref([])
@@ -1545,6 +1646,7 @@ const form = reactive({
   reference_image_ids: [],
   story_environment_prompt: '',
   visual_prompt_system: '',
+  agent0_prompt_system: '',
   agent1_prompt_system: '',
   agent2_director_theme: '',
   auto_split_long_text: true,
@@ -1754,6 +1856,7 @@ const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.v
 const canSubmitGeneration = computed(() => {
   if (!session.value.user) return false
   if (!form.project_name.trim()) return false
+  if (scriptTooLong.value) return false
   if (form.skip_tts) {
     if (!form.source_audio_id) return false
     return form.skip_text_correction || form.script.trim().length > 0
@@ -1767,8 +1870,11 @@ const canSubmitModule1 = computed(() => Boolean(
   && health.value.tts_online
   && form.project_name.trim()
   && form.script.trim().length >= 5
+  && !scriptTooLong.value
   && !module1JobRunning.value
 ))
+const scriptCharacterCount = computed(() => String(form.script || '').length)
+const scriptTooLong = computed(() => scriptCharacterCount.value > MAX_SCRIPT_CHARACTERS)
 const module1JobRunning = computed(() => ['queued', 'running'].includes(module1Job.value?.status))
 const module1ArtifactEntries = computed(() => Object.entries(module1Job.value?.artifacts || {})
   .filter(([key]) => ['audio', 'module1_subtitle'].includes(key))
@@ -1781,6 +1887,11 @@ const canSubmitSubtitle = computed(() => Boolean(
   && subtitleForm.source_audio_id
   && !subtitleJobRunning.value
   && (!subtitleForm.use_correction || subtitleForm.reference_text || apiKeyStatus.value.language?.configured),
+))
+const canRenderSubtitleVideo = computed(() => Boolean(
+  subtitleJob.value?.id
+  && subtitleJob.value?.artifacts?.subtitle
+  && !subtitleJobRunning.value,
 ))
 const subtitleLogText = computed(() => (subtitleJob.value?.logs || []).join('\n') || '字幕识别日志会显示在这里。')
 const submitButtonText = computed(() => {
@@ -1815,7 +1926,6 @@ const stepModeContinueLabel = computed(() => {
   return stage === 'visual' ? '确认画面，开始渲染' : '确认配音，开始配图'
 })
 const stepModeAudioUrl = computed(() => {
-  if (!activeJob.value?.request?.step_mode) return ''
   return activeJob.value?.artifacts?.audio || ''
 })
 const canRetryTts = computed(() => Boolean(
@@ -1831,7 +1941,117 @@ const ttsStatusText = computed(() => {
   return '未连接'
 })
 
+const COMPLETION_FAVICON_BLUE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#62c8ff"/><path d="M17 33l10 10 21-24" fill="none" stroke="#0b1728" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`
+const COMPLETION_FAVICON_GREEN = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#55e6bd"/><path d="M17 33l10 10 21-24" fill="none" stroke="#0b1728" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`
+
+function prepareCompletionAlerts(requestNotificationPermission = false) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+  if (AudioContextClass && !completionAudioContext) {
+    try {
+      completionAudioContext = new AudioContextClass()
+    } catch {
+      completionAudioContext = null
+    }
+  }
+  if (completionAudioContext?.state === 'suspended') {
+    completionAudioContext.resume().catch(() => {})
+  }
+  if (requestNotificationPermission && 'Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {})
+  }
+}
+
+function playCompletionSound() {
+  prepareCompletionAlerts(false)
+  const context = completionAudioContext
+  if (!context || context.state === 'closed') return
+  context.resume().then(() => {
+    const start = context.currentTime + 0.03
+    ;[659.25, 783.99, 1046.5].forEach((frequency, index) => {
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const noteStart = start + index * 0.16
+      oscillator.type = 'sine'
+      oscillator.frequency.value = frequency
+      gain.gain.setValueAtTime(0.0001, noteStart)
+      gain.gain.exponentialRampToValueAtTime(0.16, noteStart + 0.025)
+      gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.34)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(noteStart)
+      oscillator.stop(noteStart + 0.36)
+    })
+  }).catch(() => {})
+}
+
+function stopCompletionFlash() {
+  if (completionFlashTimer) window.clearInterval(completionFlashTimer)
+  completionFlashTimer = null
+  completionFlashState = false
+  if (originalDocumentTitle) document.title = originalDocumentTitle
+  if (completionFaviconLink) {
+    if (completionFaviconCreated) completionFaviconLink.remove()
+    else completionFaviconLink.href = originalFaviconHref
+  }
+  completionFaviconLink = null
+  completionFaviconCreated = false
+  originalFaviconHref = ''
+}
+
+function startCompletionFlash() {
+  if (!document.hidden) return
+  stopCompletionFlash()
+  originalDocumentTitle = document.title || '一键成片 / One-Click VidGen'
+  completionFaviconLink = document.querySelector('link[rel~="icon"]')
+  if (!completionFaviconLink) {
+    completionFaviconLink = document.createElement('link')
+    completionFaviconLink.rel = 'icon'
+    document.head.appendChild(completionFaviconLink)
+    completionFaviconCreated = true
+  } else {
+    originalFaviconHref = completionFaviconLink.href
+  }
+  const flash = () => {
+    completionFlashState = !completionFlashState
+    document.title = completionFlashState ? '✅ 视频生成完成！' : originalDocumentTitle
+    completionFaviconLink.href = completionFlashState ? COMPLETION_FAVICON_GREEN : COMPLETION_FAVICON_BLUE
+  }
+  flash()
+  completionFlashTimer = window.setInterval(flash, 700)
+}
+
+function notifyVideoCompleted(job, message = '视频已经生成完成，可以回来检查成片了。') {
+  const now = Date.now()
+  if (now - lastCompletionAlertAt < 5000) return
+  lastCompletionAlertAt = now
+  playCompletionSound()
+  startCompletionFlash()
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const projectName = job?.project_name || job?.request?.project_name || 'One-Click VidGen'
+    const notification = new Notification('一键成片 · 视频生成完成', {
+      body: `${projectName}\n${message}`,
+      tag: `vidgen-completed-${job?.id || 'current'}`,
+    })
+    notification.onclick = () => {
+      window.focus()
+      stopCompletionFlash()
+      notification.close()
+    }
+  }
+}
+
+function handleActiveJobCompletion(previous, current) {
+  if (!previous || !current || previous.id !== current.id) return
+  if (!['queued', 'running', 'waiting_confirmation'].includes(previous.status)) return
+  if (current.status !== 'completed') return
+  if (current.request?.module1_only || current.request?.subtitle_only) return
+  notifyVideoCompleted(current)
+}
+
 async function refresh() {
+  const previousActiveJob = activeJob.value
+    ? { id: activeJob.value.id, status: activeJob.value.status }
+    : null
   try {
     health.value = await api.health()
   } catch {
@@ -1871,6 +2091,7 @@ async function refresh() {
       subtitleJob.value = await api.job(subtitleJob.value.id)
     }
     await refreshEditor()
+    handleActiveJobCompletion(previousActiveJob, activeJob.value)
   } catch {
     jobs.value = []
     jobTotal.value = 0
@@ -1959,6 +2180,10 @@ async function saveApiKeySettings() {
     const value = String(apiKeyForm[key] || '').trim()
     if (value) payload[key] = value
   }
+  for (const key of ['image_api_keys', 'common_api_keys']) {
+    const values = apiKeyForm[key].map((value) => String(value || '').trim()).filter(Boolean)
+    if (values.length) payload[key] = values
+  }
   if (!Object.keys(payload).length) {
     apiKeyMessage.value = '请至少填写一个 API Key。'
     return
@@ -1972,12 +2197,26 @@ async function saveApiKeySettings() {
     apiKeyMessage.value = result.message || 'API Key 已保存。'
     apiKeyForm.language_api_key = ''
     apiKeyForm.image_api_key = ''
+    apiKeyForm.image_api_keys = []
     apiKeyForm.common_api_key = ''
+    apiKeyForm.common_api_keys = []
   } catch (error) {
     apiKeyMessage.value = error.message || '保存 API Key 失败。'
   } finally {
     savingApiKeys.value = false
   }
+}
+
+function addApiKeyField(key) {
+  if (apiKeyForm[key].length >= 9) {
+    apiKeyMessage.value = '单次最多可追加 9 个账号。'
+    return
+  }
+  apiKeyForm[key].push('')
+}
+
+function removeApiKeyField(key, index) {
+  apiKeyForm[key].splice(index, 1)
 }
 
 async function saveQwenTtsKey() {
@@ -2044,6 +2283,9 @@ async function loadSettings() {
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY))
     || modeDefaults.default_system
     || ''
+  form.agent0_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY))
+    || modeDefaults.default_agent0_system
+    || ''
   form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY))
     || modeDefaults.default_agent1_system
     || ''
@@ -2095,6 +2337,7 @@ async function loadSelectedAgentPromptPreset() {
       setContentMode(payload.content_mode)
     }
     form.visual_prompt_system = payload.visual_prompt_system || ''
+    form.agent0_prompt_system = payload.agent0_prompt_system || contentModeDefaults().default_agent0_system || ''
     form.agent1_prompt_system = payload.agent1_prompt_system || contentModeDefaults().default_agent1_system || ''
     form.agent2_director_theme = payload.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode] || ''
     form.visual_prompt_mode = 'full'
@@ -2118,6 +2361,7 @@ async function saveCurrentAgentPromptPreset() {
     const payload = await api.saveAgentPromptPreset({
       name: name.trim(),
       visual_prompt_system: prompt,
+      agent0_prompt_system: form.agent0_prompt_system,
       agent1_prompt_system: form.agent1_prompt_system,
       agent2_director_theme: form.agent2_director_theme,
       content_mode: form.content_mode,
@@ -2228,6 +2472,9 @@ async function uploadLocalScript(event) {
     if (!content.trim()) {
       throw new Error('文案文件内容为空。')
     }
+    if (content.length > MAX_SCRIPT_CHARACTERS) {
+      throw new Error(`单次文案最多 ${MAX_SCRIPT_CHARACTERS.toLocaleString()} 个字符，当前 ${content.length.toLocaleString()}。请按完整章节拆分后分批生成。`)
+    }
     form.script = content
     scriptUploadName.value = file.name
   } catch (error) {
@@ -2280,6 +2527,9 @@ function setContentMode(mode) {
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY, mode))
     || modeDefaults.default_system
     || ''
+  form.agent0_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY, mode))
+    || modeDefaults.default_agent0_system
+    || ''
   form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY, mode))
     || modeDefaults.default_agent1_system
     || ''
@@ -2292,6 +2542,9 @@ function setContentMode(mode) {
 
 function setVisualPromptMode(mode) {
   form.visual_prompt_mode = mode
+  if (mode === 'full' && !String(form.agent0_prompt_system || '').trim()) {
+    form.agent0_prompt_system = contentModeDefaults().default_agent0_system || ''
+  }
   if (mode === 'full' && !String(form.agent1_prompt_system || '').trim()) {
     form.agent1_prompt_system = contentModeDefaults().default_agent1_system || ''
   }
@@ -2306,6 +2559,7 @@ function rememberVisualPrompt() {
   window.localStorage.setItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY), form.global_character_prompt || '')
   window.localStorage.setItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY), form.story_environment_prompt || '')
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY), form.visual_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY), form.agent0_prompt_system || '')
   window.localStorage.setItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY), form.agent1_prompt_system || '')
   window.localStorage.setItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY), form.agent2_director_theme || '')
 }
@@ -2501,6 +2755,9 @@ async function loadVisualEditor({ preservePage = false } = {}) {
     if (!visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
       visualTimingSelectedId.value = visualEditor.value.items.find((item) => item.timing)?.id || ''
     }
+    if (!visualEditor.value.timing_history?.some((item) => item.id === selectedVisualTimingHistory.value)) {
+      selectedVisualTimingHistory.value = ''
+    }
   } catch (error) {
     visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
   } finally {
@@ -2551,9 +2808,45 @@ async function resetEditedTiming() {
   }
 }
 
+async function commitEditedTiming() {
+  if (!visualEditorProjectId.value || visualTimingAdjusting.value) return
+  if (!window.confirm('将当前所有画面与字幕的分配保存为新的初始时序？\n\n以后点击“恢复初始时序”将恢复到这次保存的状态；旧基准仍会归档保留。')) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.commitVisualTiming(visualEditorProjectId.value)
+    visualEditor.value = payload
+    visualEditor.value.task = { status: 'completed', action: 'commit_timing_baseline', message: '当前画面时序已保存为新的初始时序。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'commit_timing_baseline', message: error.message || '保存当前时序失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function restoreSelectedVisualTimingHistory() {
+  if (!visualEditorProjectId.value || !selectedVisualTimingHistory.value || visualTimingAdjusting.value) return
+  const selected = visualEditor.value.timing_history?.find((item) => item.id === selectedVisualTimingHistory.value)
+  if (!window.confirm(`切换到历史时序“${selected?.label || selectedVisualTimingHistory.value}”？\n\n当前保存的初始时序不会被覆盖，仍可点击“恢复初始时序”返回。`)) {
+    selectedVisualTimingHistory.value = ''
+    return
+  }
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.restoreVisualTimingHistory(visualEditorProjectId.value, selectedVisualTimingHistory.value)
+    visualEditor.value = payload
+    visualEditor.value.task = { status: 'completed', action: 'restore_timing_history', message: '已切换到所选历史时序；满意后可保存为新的初始时序。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'restore_timing_history', message: error.message || '读取历史时序失败' }
+    selectedVisualTimingHistory.value = ''
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
 async function removeEditedTimingPicture() {
   const item = selectedVisualTimingItem.value
   if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
+  const originalIndex = visualEditor.value.items.findIndex((entry) => entry.id === item.id)
   const sentenceCount = item.timing?.sentences?.length || 0
   if (!window.confirm(`移除 ${item.id} 这张画面？它本身不会从磁盘删除，但覆盖的 ${sentenceCount} 句字幕会按顺序尽量平均分给相邻画面。可使用“恢复初始时序”撤销。`)) return
   visualTimingAdjusting.value = true
@@ -2749,8 +3042,38 @@ async function resetVisualImagePrompt(item) {
   }
 }
 
+async function commitVisualBaseline(item) {
+  if (!visualEditorProjectId.value) return
+  if (!window.confirm(`将 ${item.id} 当前显示的图片和提示词确认为新的原图？\n\n以后重置提示词会回到此版本，撤回也不会越过此版本；旧版本仍会归档保留。`)) return
+  try {
+    item.task = { status: 'running', action: 'commit_baseline', message: '正在确认新原图' }
+    const payload = await api.commitVisualBaseline(visualEditorProjectId.value, item.id, item.prompt)
+    visualEditor.value.task = { status: 'completed', action: 'commit_baseline', message: payload.message || `${item.id} 已确认为新的原图。` }
+    await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    item.task = { status: 'failed', action: 'commit_baseline', message: error.message || '确认新原图失败' }
+    visualEditor.value.task = { status: 'failed', action: 'commit_baseline', message: error.message || '确认新原图失败' }
+  }
+}
+
+async function commitAllVisualBaselines() {
+  if (!visualEditorProjectId.value) return
+  if (!window.confirm('将该项目当前全部图片及其提示词确认为新的原图？\n\n适合在全部重绘满意后使用。旧原图和撤回记录仍会归档保留。')) return
+  try {
+    visualEditorLoading.value = true
+    const payload = await api.commitAllVisualBaselines(visualEditorProjectId.value)
+    await loadVisualEditor({ preservePage: true })
+    visualEditor.value.task = { status: 'completed', action: 'commit_all_baselines', message: payload.message || '已确认全部当前图片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'commit_all_baselines', message: error.message || '确认全部新原图失败' }
+  } finally {
+    visualEditorLoading.value = false
+  }
+}
+
 async function renderEditedVideo() {
   if (!visualEditorProjectId.value) return
+  prepareCompletionAlerts(true)
   try {
     await api.renderVisualEditor(visualEditorProjectId.value, visualRenderMode.value)
     activeJob.value = await api.job(visualEditorProjectId.value)
@@ -2864,6 +3187,7 @@ async function submit() {
     return
   }
   if (!canSubmitGeneration.value) return
+  prepareCompletionAlerts(true)
   submitting.value = true
   try {
     activeJob.value = await api.createJob({
@@ -2872,7 +3196,6 @@ async function submit() {
       tts_emotion: form.tts_emotion || null,
       tts_pronunciation: form.tts_pronunciation || null,
     })
-    form.project_name = randomProjectName()
     jobPage.value = 1
     await refresh()
   } finally {
@@ -2985,6 +3308,36 @@ async function loadSubtitleReference(event) {
   }
 }
 
+async function loadSubtitleFonts() {
+  if (subtitleFontsLoading.value || subtitleFonts.value.length) return
+  subtitleFontsLoading.value = true
+  try {
+    const payload = await api.subtitleFonts()
+    subtitleFonts.value = Array.isArray(payload.fonts) ? payload.fonts : []
+    if (subtitleFonts.value.length && !subtitleFonts.value.includes(subtitleRenderForm.font_name)) {
+      subtitleRenderForm.font_name = subtitleFonts.value.includes('Microsoft YaHei')
+        ? 'Microsoft YaHei'
+        : subtitleFonts.value[0]
+    }
+  } catch (error) {
+    subtitleRenderMessage.value = error.message || '读取本机字体失败，将使用默认字体。'
+  } finally {
+    subtitleFontsLoading.value = false
+  }
+}
+
+async function renderSubtitleVideo() {
+  if (!canRenderSubtitleVideo.value || !subtitleJob.value?.id) return
+  subtitleRenderMessage.value = ''
+  try {
+    subtitleJob.value = await api.renderSubtitleVideo(subtitleJob.value.id, { ...subtitleRenderForm })
+    subtitleRenderMessage.value = '已开始渲染，进度会显示在下方字幕任务日志中。'
+    await refresh()
+  } catch (error) {
+    subtitleRenderMessage.value = error.message || '字幕渲染启动失败。'
+  }
+}
+
 async function submitSubtitleJob() {
   if (!canSubmitSubtitle.value) return
   submittingSubtitle.value = true
@@ -3069,6 +3422,7 @@ async function retryTts() {
 
 async function resumeGeneration() {
   if ((!canResumeGeneration.value && !canContinueStepMode.value) || !activeJob.value?.id) return
+  prepareCompletionAlerts(true)
   resumingGeneration.value = true
   try {
     activeJob.value = await api.resumeJob(activeJob.value.id)
@@ -3191,7 +3545,8 @@ function artifactLabel(key) {
     scene_timeline: '分镜 JSON',
     fine_grained_timeline: '语义剧本',
     module1_subtitle: '模块 1 原始字幕',
-    story_plan: 'Agent 1 全文规划',
+    story_context: 'Agent 0 全文资料',
+    story_plan: 'Agent 1 时间轴分镜',
     visual_prompt_plan: 'Agent 2 分镜提示词',
     poster_mapping: '海报映射',
     html: 'HTML 模板',
@@ -3208,6 +3563,9 @@ function kindLabel(kind) {
 }
 
 onMounted(async () => {
+  originalDocumentTitle = document.title || '一键成片 / One-Click VidGen'
+  window.addEventListener('focus', stopCompletionFlash)
+  document.addEventListener('visibilitychange', stopCompletionFlash)
   await loadSettings()
   await refresh()
   await refreshParameterPresets()
@@ -3219,5 +3577,11 @@ onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
   stopTtsVoicePreview()
+  stopCompletionFlash()
+  window.removeEventListener('focus', stopCompletionFlash)
+  document.removeEventListener('visibilitychange', stopCompletionFlash)
+  if (completionAudioContext && completionAudioContext.state !== 'closed') {
+    completionAudioContext.close().catch(() => {})
+  }
 })
 </script>
