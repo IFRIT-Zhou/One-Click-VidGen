@@ -55,7 +55,9 @@ class VisualConstraintsTest(unittest.TestCase):
         )
         self.assertIn("科普科技口播视频", system_prompt)
         self.assertIn("知识点", system_prompt)
-        self.assertIn("正面主体特写", system_prompt)
+        self.assertIn("设备交互", system_prompt)
+        self.assertIn("屏幕背向镜头、虚化或不可读", system_prompt)
+        self.assertIn("设备正面屏幕插入特写", system_prompt)
         self.assertNotIn("设备使用者第一视角", system_prompt)
 
     def test_default_style_and_object_closeup_rule_match_story_profile(self) -> None:
@@ -64,11 +66,24 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("薄雾与局部轮廓光", visual.DEFAULT_VISUAL_STYLE)
         self.assertIn("夸张血腥", visual.DEFAULT_VISUAL_STYLE)
         system_prompt = visual.build_visual_prompt_system()
-        self.assertIn("手机、平板、书信或照片", system_prompt)
-        self.assertIn("正面主体特写", system_prompt)
-        self.assertIn("不使用第一视角或越肩机位", system_prompt)
+        self.assertIn("手机、平板、电脑显示器", system_prompt)
+        self.assertIn("屏幕背向镜头、虚化或不可读", system_prompt)
+        self.assertIn("设备正面屏幕插入特写", system_prompt)
         self.assertNotIn("红色鸭舌帽", visual.DEFAULT_VISUAL_STYLE)
         self.assertIn("红色鸭舌帽", visual.DEFAULT_GLOBAL_CHARACTER_PROMPT)
+
+    def test_device_creative_guidance_is_present_in_every_default_mode(self) -> None:
+        for content_mode in (
+            visual.CONTENT_MODE_STORY,
+            visual.CONTENT_MODE_SCIENCE,
+            visual.CONTENT_MODE_GENERAL,
+        ):
+            with self.subTest(content_mode=content_mode):
+                system_prompt = visual.build_visual_prompt_system(content_mode=content_mode)
+                self.assertIn("仅有查看、拿取、操作或接听动作", system_prompt)
+                self.assertIn("屏幕背向镜头、虚化或不可读", system_prompt)
+                self.assertIn("只有原文明示具体文字、照片、监控、网页或文件内容", system_prompt)
+                self.assertIn("不并列人物脸部特写", system_prompt)
 
     def test_explicit_screen_content_becomes_device_only_and_clears_character_reference(self) -> None:
         scenes = [{

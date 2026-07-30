@@ -865,7 +865,7 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
         "agent2_director_theme": "通用视频",
     },
 }
-DEFAULT_AGENT_PROMPT_PRESET_VERSION = 5
+DEFAULT_AGENT_PROMPT_PRESET_VERSION = 6
 
 
 def _default_agent_prompt_preset_path(content_mode: str) -> Path:
