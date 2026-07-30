@@ -596,6 +596,24 @@ def load_generation_jobs(limit: int = 100) -> list[dict[str, Any]]:
     return rows
 
 
+def delete_generation_job(job_id: str, user_id: int | None = None) -> bool:
+    """Delete one finished generation job and its database-only companions."""
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            clauses = ["id=%s"]
+            values: list[Any] = [job_id]
+            if user_id is not None:
+                clauses.append("user_id=%s")
+                values.append(int(user_id))
+            cursor.execute(f"DELETE FROM generation_jobs WHERE {' AND '.join(clauses)}", tuple(values))
+            deleted = cursor.rowcount > 0
+            if deleted:
+                # These rows only describe files owned by this task.  The actual
+                # files are removed by JobStore after ownership was verified.
+                cursor.execute("DELETE FROM media_assets WHERE generation_job_id=%s", (job_id,))
+    return deleted
+
+
 def upsert_editor_job(snapshot: dict[str, Any]) -> None:
     with connection() as conn:
         with conn.cursor() as cursor:

@@ -5,10 +5,12 @@ import shutil
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Literal
 
 import pymysql
+import requests
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -17,6 +19,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .config import _parse_env_lines, save_project_env_values
+from .diagnostics import create_diagnostic_package
 from .db import (
     authenticate_user,
     create_user,
@@ -26,8 +29,8 @@ from .db import (
     list_media_assets,
     sole_user_id,
 )
-from .gemini_client import DEFAULT_GEMINI_MODEL, gemini_configured
-from .indextts2_local import EMOTIONS, load_indextts2_config
+from .gemini_client import LANGUAGE_PROVIDER_OPTIONS, language_provider_status
+from .indextts2_local import EMOTIONS, load_indextts2_config, resolve_voice_reference
 from .qwen_tts import DEFAULT_VOICE as DEFAULT_QWEN_VOICE, voice_supports_instructions
 from .editor import (
     edit_store,
@@ -39,9 +42,10 @@ from .editor import (
 from .pipeline import (
     JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, GenerationCancelled, SUBTITLE_VIDEO_STYLES,
     normalize_project_name, render_standalone_subtitle_video, store, system_subtitle_fonts,
-    user_upload_path,
+    user_reference_image_path, user_upload_path,
 )
 from .visual_editor import IMAGE_EXTENSIONS, visual_editor
+from .tts_editor import tts_editor
 from module4_video_render import (
     CONTENT_MODE_SCIENCE,
     CONTENT_MODE_GENERAL,
@@ -56,9 +60,43 @@ from module4_video_render import (
     SCIENCE_VISUAL_STYLE,
     build_visual_prompt_system,
 )
+from bgm_mixer import mix_bgm_into_videos
 from story_agents import AGENT0_SYSTEM_PROMPT, TIMELINE_AGENT_SYSTEM_PROMPT
 
 MAX_SCRIPT_CHARACTERS = 12_000
+SERVER_STARTED_AT = time.time()
+
+
+def _open_windows_explorer(path: Path, *, select_file: bool = False) -> None:
+    """Open Explorer visibly even when the backend itself was launched hidden."""
+    if os.name != "nt":
+        raise OSError("Windows Explorer is only available on Windows")
+    target = path.resolve()
+    if not target.exists():
+        raise FileNotFoundError(str(target))
+    # The portable launcher starts backend consoles with a hidden window.
+    # A child created with Popen can inherit that hidden startup state.  Ask the
+    # Windows shell explicitly for SW_SHOWNORMAL so Explorer is actually shown,
+    # and validate ShellExecuteW's documented <= 32 failure result.
+    import ctypes
+
+    shell_execute = ctypes.windll.shell32.ShellExecuteW
+    shell_execute.restype = ctypes.c_void_p
+    if select_file:
+        executable = "explorer.exe"
+        parameters = f'/select,"{target}"'
+    else:
+        executable = str(target)
+        parameters = None
+    result = shell_execute(None, "open", executable, parameters, None, 1)
+    result_code = int(result or 0)
+    if result_code <= 32:
+        raise OSError(f"Windows ShellExecuteW failed with code {result_code}")
+
+
+class BgmTrackRequest(BaseModel):
+    asset_id: str = Field(min_length=1, max_length=180)
+    volume_db: float = Field(default=-10, ge=-60, le=6)
 
 
 class GenerateRequest(BaseModel):
@@ -91,6 +129,10 @@ class GenerateRequest(BaseModel):
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
+    bgm_enabled: bool = False
+    bgm_tracks: list[BgmTrackRequest] = Field(default_factory=list)
+    bgm_fade_enabled: bool = False
+    bgm_fade_duration: float = Field(default=1, ge=0.1, le=30)
     step_mode: bool = False
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "auto"
@@ -137,10 +179,27 @@ class VisualBaselineRequest(BaseModel):
 class SubtitleRenderRequest(BaseModel):
     style: Literal["black_white_outline", "white_black_outline", "yellow_bg_black", "white_bg_black", "navy_bg_white"] = "navy_bg_white"
     font_name: str = Field(default="Microsoft YaHei", min_length=1, max_length=100)
+    bgm_enabled: bool = False
+    bgm_tracks: list[BgmTrackRequest] = Field(default_factory=list)
+    bgm_fade_enabled: bool = False
+    bgm_fade_duration: float = Field(default=1, ge=0.1, le=30)
 
 
 class VisualRenderRequest(BaseModel):
     mode: Literal["subtitles", "raw", "both"] = "both"
+    # None means "keep using the BGM already archived with this project".
+    # Supplying True/False explicitly replaces or clears that archive.
+    bgm_enabled: bool | None = None
+    bgm_tracks: list["VisualBgmTrackRequest"] = Field(default_factory=list)
+    bgm_fade_enabled: bool = False
+    bgm_fade_duration: float = Field(default=1, ge=0.1, le=30)
+
+
+class VisualBgmTrackRequest(BaseModel):
+    asset_id: str | None = Field(default=None, max_length=180)
+    archived_filename: str | None = Field(default=None, max_length=180)
+    volume_db: float = Field(default=-10, ge=-60, le=6)
+    duration_seconds: float | None = Field(default=None, ge=0, le=86400)
 
 
 class VisualTimingAdjustRequest(BaseModel):
@@ -149,6 +208,10 @@ class VisualTimingAdjustRequest(BaseModel):
 
 class VisualTimingHistoryRequest(BaseModel):
     history_id: str = Field(min_length=1, max_length=260)
+
+
+class TtsSegmentRegenerateRequest(BaseModel):
+    indices: list[int] = Field(min_length=1, max_length=20)
 
 
 class RegisterRequest(BaseModel):
@@ -163,6 +226,7 @@ class LoginRequest(BaseModel):
 
 
 class ApiKeySettingsRequest(BaseModel):
+    language_provider: Literal["gemini", "runninghub", "deepseek", "openai", "kimi", "glm"] | None = None
     language_api_key: str | None = Field(default=None, max_length=2048)
     image_api_key: str | None = Field(default=None, max_length=2048)
     image_api_keys: list[str] = Field(default_factory=list, max_length=10)
@@ -245,11 +309,14 @@ def health() -> dict[str, Any]:
         "tts_device": indextts2.device,
         "tts_missing": indextts2.missing_resources(),
         "mysql": db_status(),
-        "gemini": {
-            "configured": gemini_configured(),
-            "model": os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-        },
+        # Keep the old response key for frontend compatibility, but report the
+        # currently selected language provider rather than assuming Gemini.
+        "gemini": language_provider_status(),
         "backend_port": 8010,
+        # The Windows launcher compares this timestamp with backend source files.
+        # If code was updated while an old background process remained alive, it
+        # can restart that stale process instead of silently reusing it.
+        "server_started_at": SERVER_STARTED_AT,
     }
 
 
@@ -430,11 +497,243 @@ def _api_key_status() -> dict[str, Any]:
     values = _parse_env_lines(PROJECT_ROOT / ".env")
     image_keys = _runninghub_api_keys(values)
     common_keys = _common_api_keys(values)
+    provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
+    if provider not in LANGUAGE_PROVIDER_OPTIONS:
+        legacy = str(values.get("GEMINI_PROVIDER") or "google").strip().lower()
+        provider = "gemini" if legacy in {"", "google", "gemini"} else (
+            "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+        )
+    if provider not in LANGUAGE_PROVIDER_OPTIONS:
+        provider = "gemini"
+    selected = LANGUAGE_PROVIDER_OPTIONS[provider]
     return {
-        "language": {"configured": bool(values.get("GEMINI_API_KEY", "").strip())},
+        "language": {
+            "configured": bool(values.get(selected["key_env"], "").strip()),
+            "provider": provider,
+            "provider_label": selected["label"],
+            "model": str(values.get(selected["model_env"]) or selected["default_model"]),
+            "providers": [
+                {"value": name, "label": config["label"], "configured": bool(values.get(config["key_env"], "").strip())}
+                for name, config in LANGUAGE_PROVIDER_OPTIONS.items()
+            ],
+        },
         "image": {"configured": bool(image_keys), "count": len(image_keys)},
         "common": {"configured": bool(common_keys), "count": len(common_keys)},
         "qwen_tts": {"configured": bool(values.get("DASHSCOPE_API_KEY", "").strip())},
+    }
+
+
+def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
+    provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
+    if provider not in LANGUAGE_PROVIDER_OPTIONS:
+        legacy = str(values.get("GEMINI_PROVIDER") or "google").strip().lower()
+        provider = "gemini" if legacy in {"", "google", "gemini"} else (
+            "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+        )
+    if provider not in LANGUAGE_PROVIDER_OPTIONS:
+        provider = "gemini"
+    config = LANGUAGE_PROVIDER_OPTIONS[provider]
+    api_key = str(values.get(config["key_env"]) or "").strip()
+    if not api_key:
+        return "error", f"未配置 {config['label']} API Key"
+    try:
+        if config["protocol"] == "openai":
+            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            response = requests.get(
+                f"{base_url}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=(3, 6),
+            )
+        else:
+            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            response = requests.get(
+                f"{base_url}/models",
+                headers={"x-goog-api-key": api_key},
+                timeout=(3, 6),
+            )
+    except requests.RequestException as exc:
+        return "warning", f"Key 已配置，但联网验证失败：{type(exc).__name__}；仍可尝试启动"
+    if response.status_code == 200:
+        return "passed", "语言模型接口可访问，Key 验证通过"
+    if response.status_code in {401, 403}:
+        return "error", f"语言模型拒绝了当前 Key（HTTP {response.status_code}）"
+    if response.status_code == 429:
+        return "warning", "语言模型当前限流或额度紧张（HTTP 429）"
+    return "warning", f"语言模型探测返回 HTTP {response.status_code}；未阻止启动"
+
+
+def _probe_one_image_key(api_key: str) -> tuple[str, str]:
+    try:
+        response = requests.post(
+            "https://www.runninghub.cn/uc/openapi/accountStatus",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"apikey": api_key},
+            timeout=(3, 6),
+        )
+    except requests.RequestException as exc:
+        return "network", type(exc).__name__
+    if response.status_code in {401, 403}:
+        return "invalid", f"HTTP {response.status_code}"
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if response.status_code == 200 and body.get("code") == 0 and isinstance(body.get("data"), dict):
+        active = body["data"].get("currentTaskCounts", 0)
+        return "valid", str(active)
+    if response.status_code == 429:
+        return "limited", "HTTP 429"
+    return "invalid", f"HTTP {response.status_code} / code {body.get('code', 'unknown')}"
+
+
+def _probe_image_api_pool(api_keys: list[str]) -> tuple[str, str]:
+    if not api_keys:
+        return "error", "未配置图像模型 API Key"
+    results: list[tuple[str, str]] = []
+    with ThreadPoolExecutor(max_workers=min(5, len(api_keys))) as executor:
+        futures = [executor.submit(_probe_one_image_key, key) for key in api_keys]
+        for future in as_completed(futures):
+            results.append(future.result())
+    valid = [detail for status, detail in results if status == "valid"]
+    invalid = [detail for status, detail in results if status == "invalid"]
+    limited = [detail for status, detail in results if status == "limited"]
+    network = [detail for status, detail in results if status == "network"]
+    if valid:
+        suffix = f"；另有 {len(invalid)} 个无效账号" if invalid else ""
+        return ("warning" if invalid or limited else "passed", f"{len(valid)}/{len(api_keys)} 个图像账号验证可用{suffix}")
+    if network and not invalid and not limited:
+        return "warning", f"已配置 {len(api_keys)} 个图像账号，但网络探测失败；仍可尝试启动"
+    if limited and not invalid:
+        return "warning", f"{len(limited)} 个图像账号当前限流，建议稍后启动"
+    return "error", f"没有验证到可用的图像账号（{len(invalid)} 个被拒绝）"
+
+
+@app.post("/api/jobs/preflight")
+def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    data = payload.model_dump()
+    items: list[dict[str, str]] = []
+
+    def add(check_id: str, label: str, status: str, message: str) -> None:
+        items.append({"id": check_id, "label": label, "status": status, "message": message})
+
+    script = str(data.get("script") or "").strip()
+    main_workflow = not bool(data.get("module1_only")) and not bool(data.get("subtitle_only"))
+    if str(data.get("project_name") or "").strip():
+        add("project", "任务参数", "passed", f"项目名称与参数格式正常，文案 {len(script):,} 字")
+    else:
+        add("project", "任务参数", "error", "请填写项目名称")
+    if len(script) > MAX_SCRIPT_CHARACTERS:
+        add("script_limit", "文案长度", "error", f"文案超过单次上限 {MAX_SCRIPT_CHARACTERS:,} 字")
+    elif not data.get("skip_tts") and len(script) < 5:
+        add("script_limit", "文案长度", "error", "需要配音时，请至少输入 5 个字")
+    else:
+        add("script_limit", "文案长度", "passed", "文案长度处于安全范围")
+
+    source_audio_id = str(data.get("source_audio_id") or "").strip()
+    if data.get("skip_tts"):
+        try:
+            source = user_upload_path(int(user["id"]), source_audio_id)
+            add("source_audio", "已有配音", "passed", f"已找到上传媒体：{source.name}")
+        except (FileNotFoundError, ValueError) as exc:
+            add("source_audio", "已有配音", "error", str(exc))
+    elif str(data.get("tts_engine") or "indextts2") == "qwen":
+        if _api_key_status()["qwen_tts"]["configured"]:
+            add("tts", "Qwen-TTS", "passed", "DashScope API Key 已配置；实际额度将在合成时由服务端确认")
+        else:
+            add("tts", "Qwen-TTS", "error", "尚未配置 DashScope API Key")
+    else:
+        config = load_indextts2_config()
+        if not config.ready:
+            missing = "、".join(config.missing_resources()) or "运行资源不完整"
+            add("tts", "IndexTTS2", "error", f"本地 TTS 未就绪：{missing}")
+        else:
+            try:
+                voice = resolve_voice_reference(config, data.get("tts_voice_id"), user_id=int(user["id"]))
+                add("tts", "IndexTTS2", "passed", f"本地模型和参考音色已就绪：{voice.name}")
+            except (FileNotFoundError, ValueError) as exc:
+                add("tts", "IndexTTS2", "error", str(exc))
+        try:
+            gpu = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name,memory.free,memory.total", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=4,
+            )
+            if gpu.returncode == 0 and gpu.stdout.strip():
+                first = [part.strip() for part in gpu.stdout.splitlines()[0].split(",")]
+                free_mb = int(float(first[1]))
+                status = "warning" if int(data.get("tts_parallelism") or 1) > 1 and free_mb < 9000 else "passed"
+                add("gpu", "GPU 显存", status, f"{first[0]}，当前可用 {free_mb / 1024:.1f} GB；并行数 {data.get('tts_parallelism', 2)}")
+            else:
+                add("gpu", "GPU 显存", "warning", "无法读取 NVIDIA 显存；IndexTTS2 仍可尝试启动")
+        except (OSError, subprocess.SubprocessError, ValueError):
+            add("gpu", "GPU 显存", "warning", "未找到 nvidia-smi，无法提前评估显存")
+
+    if main_workflow:
+        values = _parse_env_lines(PROJECT_ROOT / ".env")
+        language_required = True
+        image_required = str(data.get("visual_backend") or "poster").lower() in {"poster", "online-poster", "runninghub"}
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            language_future = executor.submit(_probe_language_api, values) if language_required else None
+            image_keys = _runninghub_api_keys(values)
+            image_future = executor.submit(_probe_image_api_pool, image_keys) if image_required else None
+            if language_future:
+                status, message = language_future.result()
+                add("language_api", "语言模型 API", status, message)
+            if image_future:
+                status, message = image_future.result()
+                add("image_api", "图像模型 API", status, message)
+
+        for index, image_id in enumerate(data.get("reference_image_ids") or [], 1):
+            try:
+                reference = user_reference_image_path(int(user["id"]), str(image_id))
+                add(f"reference_{index}", f"参考图 {index}", "passed", reference.name)
+            except (FileNotFoundError, ValueError) as exc:
+                add(f"reference_{index}", f"参考图 {index}", "error", str(exc))
+        if data.get("bgm_enabled"):
+            if not data.get("bgm_tracks"):
+                add("bgm", "背景音乐", "error", "已开启 BGM，但还没有上传音乐")
+            else:
+                bgm_errors: list[str] = []
+                for track in data.get("bgm_tracks") or []:
+                    try:
+                        bgm = user_upload_path(int(user["id"]), str(track.get("asset_id") or ""))
+                        if bgm.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+                            raise ValueError(f"{bgm.name} 不是支持的音频格式")
+                    except (FileNotFoundError, ValueError) as exc:
+                        bgm_errors.append(str(exc))
+                add("bgm", "背景音乐", "error" if bgm_errors else "passed", bgm_errors[0] if bgm_errors else f"{len(data['bgm_tracks'])} 首 BGM 可用，将按列表循环")
+
+        ffmpeg = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+        ffprobe = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe.exe"
+        if ffmpeg.is_file() and ffprobe.is_file():
+            add("ffmpeg", "视频渲染环境", "passed", "便携 FFmpeg 与 FFprobe 完整")
+        else:
+            add("ffmpeg", "视频渲染环境", "error", "整合包缺少 FFmpeg 或 FFprobe")
+        node = PROJECT_ROOT / "runtime" / "node" / "node.exe"
+        hyperframes = PROJECT_ROOT / "node_modules" / "hyperframes" / "dist" / "cli.js"
+        browser_root = PROJECT_ROOT / "runtime" / "hyperframes" / ".cache" / "hyperframes" / "chrome"
+        browser = next(browser_root.rglob("chrome-headless-shell.exe"), None) if browser_root.is_dir() else None
+        if node.is_file() and hyperframes.is_file() and browser is not None:
+            add("render_fallback", "兼容渲染后备", "passed", "Node、Hyperframes 与便携浏览器完整")
+        else:
+            add("render_fallback", "兼容渲染后备", "warning", "FFmpeg 直出可用，但 Hyperframes 后备环境不完整")
+
+        free_bytes = shutil.disk_usage(PROJECT_ROOT).free
+        estimated_minutes = max(1.0, len(script) / 240.0) if script else 10.0
+        variant_factor = 1.35 if data.get("video_render_variant") == "both" else 1.0
+        required_gb = max(3.0, min(20.0, estimated_minutes * 0.24 * variant_factor + 2.0))
+        free_gb = free_bytes / (1024 ** 3)
+        disk_status = "passed" if free_gb >= required_gb else "error"
+        add("disk", "磁盘空间", disk_status, f"当前可用 {free_gb:.1f} GB；本任务建议至少保留 {required_gb:.1f} GB")
+
+    error_count = sum(item["status"] == "error" for item in items)
+    warning_count = sum(item["status"] == "warning" for item in items)
+    return {
+        "ok": error_count == 0,
+        "items": items,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "message": "体检通过，可以启动" if error_count == 0 else f"发现 {error_count} 项必须处理的问题",
     }
 
 
@@ -447,6 +746,7 @@ def get_api_key_settings(request: Request) -> dict[str, Any]:
 @app.put("/api/api-keys")
 def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> dict[str, Any]:
     require_user(request)
+    language_provider = payload.language_provider
     language = str(payload.language_api_key or "").strip()
     image = str(payload.image_api_key or "").strip()
     image_additions = _unique_api_keys(payload.image_api_keys)
@@ -454,7 +754,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     common_additions = _unique_api_keys(payload.common_api_keys)
     qwen_tts = str(payload.qwen_tts_api_key or "").strip()
     all_supplied = [language, image, common, qwen_tts, *image_additions, *common_additions]
-    if not any(all_supplied):
+    if not any(all_supplied) and not language_provider:
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
     if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
@@ -477,11 +777,20 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     )
 
     # A common RunningHub-style key fills either dedicated field left blank.
+    # It intentionally never fills third-party providers such as DeepSeek.
     updates: dict[str, str] = {}
+    if language_provider:
+        provider_config = LANGUAGE_PROVIDER_OPTIONS[language_provider]
+        updates["LANGUAGE_PROVIDER"] = language_provider
+        if language:
+            updates[provider_config["key_env"]] = language
+    elif language:
+        # Preserve the old behavior for callers which do not send a provider.
+        updates["GEMINI_API_KEY"] = language
     if supplied_common:
         updates["APP_COMMON_API_KEY"] = common_primary
         updates["APP_COMMON_API_KEYS"] = ",".join(key for key in common_pool if key != common_primary)
-    if language or common:
+    if (language_provider in {None, "gemini"} and (language or common)):
         updates["GEMINI_API_KEY"] = language or common
     if supplied_image or supplied_common:
         updates["RUNNINGHUB_API_KEY"] = image_primary
@@ -494,7 +803,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         raise HTTPException(status_code=500, detail=f"保存 API Key 失败: {exc}") from exc
     return {
         "keys": _api_key_status(),
-        "message": "API Key 已保存到本机 .env；新增账号已合并去重并加入图像并行号池。",
+        "message": "API Key 已保存到本机 .env；语言模型将按当前选择的提供商调用。",
     }
 
 
@@ -556,7 +865,7 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
         "agent2_director_theme": "通用视频",
     },
 }
-DEFAULT_AGENT_PROMPT_PRESET_VERSION = 4
+DEFAULT_AGENT_PROMPT_PRESET_VERSION = 5
 
 
 def _default_agent_prompt_preset_path(content_mode: str) -> Path:
@@ -755,6 +1064,17 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             ),
         )
     data["project_name"] = normalize_project_name(data.get("project_name"))
+    if data.get("bgm_enabled"):
+        if not data.get("bgm_tracks"):
+            data["bgm_enabled"] = False
+        else:
+            for track in data["bgm_tracks"]:
+                try:
+                    source = user_upload_path(int(user["id"]), str(track.get("asset_id") or ""))
+                except (FileNotFoundError, ValueError) as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if source.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+                    raise HTTPException(status_code=400, detail=f"BGM 只支持常规音频文件：{source.name}")
     if data.get("visual_prompt_mode") != "full":
         data["agent0_prompt_system"] = None
         data["agent1_prompt_system"] = None
@@ -793,6 +1113,9 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="所选 Qwen 系统音色仅支持基础合成；请清空配音描述，或改选支持配音描述的音色")
     elif data.get("skip_text_correction"):
         raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
+    block_reason = store.new_job_block_reason(int(user["id"]))
+    if block_reason:
+        raise HTTPException(status_code=409, detail=block_reason)
     job = store.create(data, user_id=int(user["id"]))
     store.run_async(job)
     return job.snapshot()
@@ -832,6 +1155,19 @@ def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
     return store.cancel(job)
 
 
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        store.delete(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "message": "任务及其专属 workspace、归档产物已删除"}
+
+
 @app.post("/api/jobs/{job_id}/resume")
 def resume_job(job_id: str, request: Request) -> dict[str, Any]:
     user = require_user(request)
@@ -864,6 +1200,25 @@ def get_job_logs(job_id: str, request: Request) -> dict[str, Any]:
     if job.user_id != int(user["id"]):
         raise HTTPException(status_code=404, detail="job not found")
     return {"logs": job.logs}
+
+
+@app.get("/api/jobs/{job_id}/diagnostic-package")
+def download_job_diagnostic_package(job_id: str, request: Request) -> FileResponse:
+    """Export a privacy-filtered support package for one owned job."""
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        package_path = create_diagnostic_package(job)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"无法创建问题诊断包: {exc}") from exc
+    return FileResponse(
+        str(package_path),
+        media_type="application/zip",
+        filename=package_path.name,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/jobs/{job_id}/assets")
@@ -930,8 +1285,8 @@ def open_job_output_folder(job_id: str, request: Request) -> dict[str, Any]:
     if os.name != "nt":
         raise HTTPException(status_code=501, detail="open-folder is currently supported on Windows only")
     try:
-        subprocess.Popen(["explorer.exe", str(project_dir)], close_fds=True)
-    except OSError as exc:
+        _open_windows_explorer(project_dir)
+    except (OSError, FileNotFoundError) as exc:
         raise HTTPException(status_code=500, detail=f"could not open output folder: {exc}") from exc
     return {"ok": True, "path": str(project_dir)}
 
@@ -948,8 +1303,8 @@ def open_step_mode_visual_preview_folder(job_id: str, request: Request) -> dict[
     if os.name != "nt":
         raise HTTPException(status_code=501, detail="open-folder is currently supported on Windows only")
     try:
-        subprocess.Popen(["explorer.exe", str(folder)], close_fds=True)
-    except OSError as exc:
+        _open_windows_explorer(folder)
+    except (OSError, FileNotFoundError) as exc:
         raise HTTPException(status_code=500, detail=f"could not open visual preview folder: {exc}") from exc
     return {"ok": True, "path": str(folder)}
 
@@ -992,6 +1347,18 @@ def render_subtitle_video(job_id: str, payload: SubtitleRenderRequest, request: 
     if not source.is_file() or not srt_path.is_file():
         raise HTTPException(status_code=404, detail="原始媒体或 SRT 字幕文件不存在")
     output = OUTPUT_DIR / job_id / "带字幕视频.mp4"
+    subtitle_bgm_tracks: list[dict[str, Any]] = []
+    if payload.bgm_enabled:
+        if not payload.bgm_tracks:
+            raise HTTPException(status_code=400, detail="已开启 BGM，请至少上传一首音乐")
+        for item in payload.bgm_tracks:
+            try:
+                bgm_source = user_upload_path(int(user["id"]), item.asset_id)
+            except (FileNotFoundError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if bgm_source.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+                raise HTTPException(status_code=400, detail=f"BGM 只支持常规音频文件：{bgm_source.name}")
+            subtitle_bgm_tracks.append({"path": str(bgm_source), "volume_db": item.volume_db})
     store.update(job, status="running", step="subtitle_render", progress=5, message="正在准备添加字幕")
 
     def worker() -> None:
@@ -1002,6 +1369,37 @@ def render_subtitle_video(job_id: str, payload: SubtitleRenderRequest, request: 
                 style_key=payload.style,
                 font_name=payload.font_name,
             )
+            bgm_archive_dir = output.parent / "BGM"
+            bgm_manifest_path = output.parent / "BGM设置.json"
+            if subtitle_bgm_tracks:
+                store.update(job, status="running", step="subtitle_render", progress=92, message="正在添加背景音乐")
+                store.log(job, f"BGM：按顺序添加 {len(subtitle_bgm_tracks)} 首音乐，播放完后列表循环")
+                mix_bgm_into_videos(
+                    [output],
+                    subtitle_bgm_tracks,
+                    fade_enabled=payload.bgm_fade_enabled,
+                    fade_duration=payload.bgm_fade_duration,
+                )
+                if bgm_archive_dir.exists():
+                    shutil.rmtree(bgm_archive_dir)
+                bgm_archive_dir.mkdir(parents=True, exist_ok=True)
+                archived_tracks: list[dict[str, Any]] = []
+                for index, item in enumerate(subtitle_bgm_tracks, 1):
+                    bgm_source = Path(str(item["path"]))
+                    target = bgm_archive_dir / f"{index:03d}{bgm_source.suffix.lower()}"
+                    shutil.copy2(bgm_source, target)
+                    archived_tracks.append({"filename": target.name, "volume_db": item["volume_db"]})
+                bgm_manifest_path.write_text(json.dumps({
+                    "enabled": True,
+                    "tracks": archived_tracks,
+                    "fade_enabled": payload.bgm_fade_enabled,
+                    "fade_duration": payload.bgm_fade_duration,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+                store.log(job, "BGM 添加完成，音乐及设置已归档到字幕任务输出目录。")
+            else:
+                if bgm_archive_dir.exists():
+                    shutil.rmtree(bgm_archive_dir)
+                bgm_manifest_path.unlink(missing_ok=True)
             artifacts = dict(job.artifacts)
             artifacts["subtitle_video"] = f"/api/jobs/{job.id}/subtitle-rendered-video"
             store.update(job, status="completed", step="completed", progress=100, message="字幕视频已生成", artifacts=artifacts)
@@ -1060,6 +1458,19 @@ def get_visual_editor_image(job_id: str, filename: str, request: Request) -> Fil
     except OSError as exc:
         raise HTTPException(status_code=404, detail="image not found") from exc
     return FileResponse(str(path), media_type="image/jpeg")
+
+
+@app.get("/api/jobs/{job_id}/visual-bgm/{filename}")
+def get_visual_editor_bgm(job_id: str, filename: str, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        path = visual_editor.bgm_path(job_id, user_id, filename)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="BGM not found") from exc
+    return FileResponse(
+        str(path),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.post("/api/jobs/{job_id}/visual-editor/{macro_id}/redraw")
@@ -1228,10 +1639,95 @@ def remove_visual_editor_timing_picture(job_id: str, macro_id: str, request: Req
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/jobs/{job_id}/tts-editor")
+def get_tts_editor(job_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    return tts_editor.inspect(job_id, user_id)
+
+
+@app.get("/api/jobs/{job_id}/tts-editor/status")
+def get_tts_editor_status(job_id: str, request: Request) -> dict[str, Any]:
+    _owned_completed_job(job_id, request)
+    return {"task": tts_editor.status(job_id)}
+
+
+@app.get("/api/jobs/{job_id}/tts-editor/audio/{index}")
+def get_tts_editor_audio(job_id: str, index: int, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        path = tts_editor.audio_path(job_id, user_id, index)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=path.name,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+@app.post("/api/jobs/{job_id}/tts-editor/regenerate")
+def regenerate_tts_segments(
+    job_id: str,
+    payload: TtsSegmentRegenerateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再重配音")
+    try:
+        tts_editor.regenerate(job=job, user_id=user_id, indices=payload.indices)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message": "selected TTS regeneration started"}
+
+
 @app.post("/api/jobs/{job_id}/visual-editor/render")
 def render_visual_editor_video(job_id: str, payload: VisualRenderRequest, request: Request) -> dict[str, Any]:
-    job, _user_id = _owned_completed_job(job_id, request)
-    visual_editor.render_video(job=job, mode=payload.mode)
+    job, user_id = _owned_completed_job(job_id, request)
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="请等待单句重配音完成后再重新渲染")
+    bgm_override: dict[str, Any] | None = None
+    if payload.bgm_enabled is not None:
+        resolved_tracks: list[dict[str, Any]] = []
+        project_dir = visual_editor.output_dir(job_id, user_id)
+        archived_root = (project_dir / "input" / "BGM").resolve()
+        try:
+            for item in payload.bgm_tracks:
+                if item.asset_id:
+                    source = user_upload_path(user_id, item.asset_id)
+                elif item.archived_filename:
+                    if Path(item.archived_filename).name != item.archived_filename:
+                        raise ValueError("归档 BGM 文件名无效")
+                    source = (archived_root / item.archived_filename).resolve()
+                    if archived_root not in source.parents or not source.is_file():
+                        raise FileNotFoundError("找不到项目归档的 BGM 文件")
+                else:
+                    raise ValueError("BGM 条目缺少音频文件")
+                if source.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+                    raise ValueError(f"BGM 只支持常规音频文件：{source.name}")
+                resolved_tracks.append({
+                    "path": str(source),
+                    "volume_db": item.volume_db,
+                    "duration_seconds": item.duration_seconds,
+                })
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if payload.bgm_enabled and not resolved_tracks:
+            raise HTTPException(status_code=400, detail="已开启 BGM，但没有可用的音乐文件")
+        bgm_override = {
+            "tracks": resolved_tracks,
+            "fade_enabled": payload.bgm_fade_enabled,
+            "fade_duration": payload.bgm_fade_duration,
+        }
+    visual_editor.render_video(job=job, mode=payload.mode, bgm_override=bgm_override)
     return {"ok": True, "message": "module 5 render started"}
 
 
@@ -1254,8 +1750,8 @@ def open_artifact_folder(job_id: str, filename: str, request: Request) -> dict[s
     if os.name != "nt":
         raise HTTPException(status_code=501, detail="打开文件夹功能目前只支持 Windows 便携版")
     try:
-        subprocess.Popen(["explorer.exe", f"/select,{path}"], close_fds=True)
-    except OSError as exc:
+        _open_windows_explorer(path, select_file=True)
+    except (OSError, FileNotFoundError) as exc:
         raise HTTPException(status_code=500, detail=f"无法打开资源管理器: {exc}") from exc
     return {"ok": True, "path": str(path.parent)}
 

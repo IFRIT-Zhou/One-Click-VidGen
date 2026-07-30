@@ -1,6 +1,7 @@
 import mimetypes
 import json
 import os
+import queue
 import re
 import signal
 import shutil
@@ -16,6 +17,7 @@ from typing import Any
 
 from .db import (
     append_generation_job_log,
+    delete_generation_job,
     load_generation_jobs,
     record_media_asset,
     upsert_generation_job,
@@ -31,6 +33,7 @@ WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 JOBS_DIR = WORKSPACE_DIR / "jobs"
 FINAL_DIR = WORKSPACE_DIR / "4_final_video"
 OUTPUT_DIR = PROJECT_ROOT / "output"
+TTS_OUTPUT_DIR = PROJECT_ROOT / "TTS_Output"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -199,6 +202,7 @@ class JobStore:
         self._last_progress_log: dict[str, tuple[str, int]] = {}
         self._lock = threading.Lock()
         self._pipeline_lock = threading.Lock()
+        self._pipeline_owner_id: str | None = None
 
     def create(self, request: dict[str, Any], user_id: int | None = None) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], user_id=user_id, request=request)
@@ -434,6 +438,25 @@ class JobStore:
         thread = threading.Thread(target=self._run_guarded, args=(job, resume), daemon=True)
         thread.start()
 
+    def new_job_block_reason(self, user_id: int) -> str | None:
+        """The pipeline owns shared workspace/GPU state, so it is intentionally single-job."""
+        with self._lock:
+            if self._pipeline_owner_id:
+                owner = self._jobs.get(self._pipeline_owner_id)
+                if owner and owner.status == "cancelled":
+                    return "上一个任务正在停止并释放 TTS/GPU 资源，请稍候再开始新任务"
+                return "当前已有任务正在运行，请先等待完成或停止后再开始新任务"
+            pending = next(
+                (
+                    item for item in self._jobs.values()
+                    if item.user_id == user_id and item.status in {"queued", "running", "waiting_confirmation"}
+                ),
+                None,
+            )
+        if pending:
+            return "当前已有任务正在等待或运行中，请先完成、停止或断点续跑该任务"
+        return None
+
     def resume(self, job: Job) -> dict[str, Any]:
         with self._lock:
             if job.status in {"queued", "running"}:
@@ -499,7 +522,10 @@ class JobStore:
             if not cancelled:
                 self._processes[job.id] = process
         if cancelled:
-            _terminate_process_tree(process)
+            if job.step == "tts":
+                _request_graceful_tts_stop(process)
+            else:
+                _terminate_process_tree(process)
             raise GenerationCancelled("用户已停止生成")
 
     def detach_process(
@@ -519,20 +545,74 @@ class JobStore:
             event.set()
             process = self._processes.get(job.id)
 
+        is_tts = job.step == "tts"
         self.log(job, "收到停止生成请求")
         self.update(
             job,
             status="cancelled",
-            step="cancelled",
-            message="已停止生成",
+            # Keep the phase visible until run_command observes the graceful
+            # shutdown; it also tells that loop this is a CUDA-safe stop.
+            step="tts" if is_tts else "cancelled",
+            message="正在安全停止配音，等待当前 GPU 推理释放资源" if is_tts else "已停止生成",
             error=None,
         )
         if process is not None:
-            _terminate_process_tree(process)
+            if is_tts:
+                self.log(job, "安全停止：已请求 IndexTTS2 在当前推理点退出，不再强制杀死 CUDA 进程")
+                _request_graceful_tts_stop(process)
+            else:
+                _terminate_process_tree(process)
         return job.snapshot()
+
+    def delete(self, job: Job) -> None:
+        """Remove a terminal task and only the files explicitly owned by it."""
+        if job.status not in TERMINAL_JOB_STATUSES:
+            raise ValueError("运行中的任务不能删除，请先停止并等待它完全结束")
+        with self._lock:
+            process = self._processes.get(job.id)
+            still_stopping = self._pipeline_owner_id == job.id or (
+                process is not None and process.poll() is None
+            )
+        if still_stopping:
+            raise ValueError("该任务仍在停止并释放资源，请等待日志显示已安全停止后再删除")
+
+        # All task-local work is namespaced by the immutable job id.
+        shutil.rmtree(JOBS_DIR / job.id, ignore_errors=True)
+        shutil.rmtree(WORKSPACE_DIR / "temp_chunks" / job.id, ignore_errors=True)
+
+        # Output folders have user-editable names, so never infer ownership from
+        # the folder name.  Only delete archives whose own metadata names this job.
+        for root in (OUTPUT_DIR, TTS_OUTPUT_DIR):
+            if not root.is_dir():
+                continue
+            for candidate in root.iterdir():
+                if not candidate.is_dir() or candidate.name.startswith("."):
+                    continue
+                owned = False
+                for metadata in candidate.rglob("*.json"):
+                    try:
+                        content = json.loads(metadata.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        continue
+                    if isinstance(content, dict) and str(content.get("job_id") or "") == job.id:
+                        owned = True
+                        break
+                if owned:
+                    shutil.rmtree(candidate, ignore_errors=True)
+
+        with self._lock:
+            self._jobs.pop(job.id, None)
+            self._cancel_events.pop(job.id, None)
+            self._processes.pop(job.id, None)
+            self._last_progress_log.pop(job.id, None)
+            if self._pipeline_owner_id == job.id:
+                self._pipeline_owner_id = None
+        delete_generation_job(job.id, job.user_id)
 
     def _run_guarded(self, job: Job, resume: bool = False) -> None:
         with self._pipeline_lock:
+            with self._lock:
+                self._pipeline_owner_id = job.id
             try:
                 self.raise_if_cancelled(job)
                 run_pipeline(job, self, resume=resume)
@@ -549,6 +629,12 @@ class JobStore:
                         message="已停止生成",
                         error=None,
                     )
+                elif job.step == "tts":
+                    # `cancel()` deliberately keeps the TTS phase while CUDA
+                    # is winding down.  Once run_command returns here, it is
+                    # safe to mark the stop as fully complete.
+                    self.log(job, "IndexTTS2 已安全退出，显存释放完成")
+                    self.update(job, step="cancelled", message="已安全停止生成", error=None)
             except Exception as exc:
                 if self.is_cancelled(job):
                     if job.status != "cancelled":
@@ -562,6 +648,10 @@ class JobStore:
                 else:
                     self.log(job, f"失败: {exc}")
                     self.update(job, status="failed", error=str(exc), message="生成失败")
+            finally:
+                with self._lock:
+                    if self._pipeline_owner_id == job.id:
+                        self._pipeline_owner_id = None
 
 
 store = JobStore()
@@ -590,6 +680,27 @@ def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
             except (OSError, ProcessLookupError):
                 pass
+
+
+def _request_graceful_tts_stop(process: subprocess.Popen[Any]) -> None:
+    """Ask the outer TTS Python process to unwind without taskkill /T /F.
+
+    A hard taskkill while two IndexTTS2 CUDA children are mid-kernel can leave
+    the Windows display driver in a bad state.  Ctrl+Break lets Python unwind
+    normally; `run_command` then waits for the process tree to release GPU
+    resources instead of escalating automatically.
+    """
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            process.send_signal(signal.SIGINT)
+    except (OSError, ProcessLookupError, AttributeError):
+        # The process may already be completing its current inference.  In that
+        # case waiting is safer than falling back to a forced tree kill.
+        pass
 
 
 def project_storage_path(path: Path) -> str:
@@ -745,6 +856,59 @@ def user_reference_image_path(user_id: int, filename: str) -> Path:
     if path.suffix.lower() not in IMAGE_EXTENSIONS:
         raise ValueError("主角参考图仅支持 jpg、jpeg、png、webp")
     return path
+
+
+def bgm_tracks_for_job(job: Job, request: dict[str, Any]) -> list[dict[str, Any]]:
+    if not bool(request.get("bgm_enabled")) or job.user_id is None:
+        return []
+    tracks: list[dict[str, Any]] = []
+    for item in request.get("bgm_tracks") or []:
+        asset_id = str(item.get("asset_id") or "").strip()
+        if not asset_id:
+            continue
+        source = user_upload_path(int(job.user_id), asset_id)
+        if source.suffix.lower() not in AUDIO_EXTENSIONS:
+            raise ValueError(f"BGM 只支持音频文件：{source.name}")
+        tracks.append({
+            "path": str(source),
+            "asset_id": asset_id,
+            "volume_db": max(-60.0, min(6.0, float(item.get("volume_db", -10)))),
+        })
+    return tracks
+
+
+def bgm_render_env(job: Job, request: dict[str, Any]) -> dict[str, str]:
+    tracks = bgm_tracks_for_job(job, request)
+    if not tracks:
+        return {}
+    return {
+        "BGM_TRACKS_JSON": json.dumps(tracks, ensure_ascii=False),
+        "BGM_FADE_ENABLED": "1" if bool(request.get("bgm_fade_enabled")) else "0",
+        "BGM_FADE_DURATION": str(float(request.get("bgm_fade_duration") or 1)),
+    }
+
+
+def mix_final_videos_with_bgm(job: Job, store: JobStore, request: dict[str, Any]) -> None:
+    tracks = bgm_tracks_for_job(job, request)
+    if not tracks:
+        return
+    videos = [
+        path for path in (
+            FINAL_DIR / "final_with_subtitles.mp4",
+            FINAL_DIR / "final_raw_presentation.mp4",
+        ) if path.is_file()
+    ]
+    if not videos:
+        return
+    command = [sys.executable, "bgm_mixer.py"]
+    for video in videos:
+        command.extend(["--video", str(video)])
+    command.extend(["--tracks-json", json.dumps(tracks, ensure_ascii=False)])
+    if bool(request.get("bgm_fade_enabled")):
+        command.append("--fade")
+    command.extend(["--fade-duration", str(float(request.get("bgm_fade_duration") or 1))])
+    store.log(job, f"BGM：按上传顺序混合 {len(tracks)} 首音乐，长度不足时从第一首开始列表循环")
+    run_command(job, store, command, "添加背景音乐")
 
 
 def prepare_uploaded_audio(job: Job, store: JobStore, source_audio_id: str) -> Path:
@@ -936,9 +1100,47 @@ def run_command(
         ),
     )
     store.attach_process(job, process)
+    output_queue: queue.Queue[str | None] = queue.Queue()
+
+    def read_output() -> None:
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                output_queue.put(line)
+        finally:
+            output_queue.put(None)
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
     try:
-        assert process.stdout is not None
-        for line in process.stdout:
+        stream_closed = False
+        safe_stop_requested = False
+        safe_stop_notice_at = 0.0
+        while not stream_closed:
+            if store.is_cancelled(job):
+                if job.step != "tts":
+                    _terminate_process_tree(process)
+                    raise GenerationCancelled("用户已停止生成")
+                # IndexTTS2 owns one or more CUDA child processes.  Do not use
+                # taskkill here: wait for Ctrl+Break to let those processes
+                # release their CUDA contexts cleanly.
+                if not safe_stop_requested:
+                    safe_stop_requested = True
+                    safe_stop_notice_at = time.monotonic()
+                    store.log(job, "安全停止进行中：等待当前 IndexTTS2 推理结束并释放显存…")
+                    _request_graceful_tts_stop(process)
+                elif time.monotonic() - safe_stop_notice_at >= 30:
+                    safe_stop_notice_at = time.monotonic()
+                    store.log(job, "仍在安全停止：CUDA 进程尚在退出，继续等待以避免显卡驱动异常…")
+            try:
+                line = output_queue.get(timeout=0.2)
+            except queue.Empty:
+                if process.poll() is not None:
+                    break
+                continue
+            if line is None:
+                stream_closed = True
+                continue
             store.log(job, line)
         return_code = process.wait()
     finally:
@@ -1529,6 +1731,7 @@ def render_semantic_visual_video(
     resume: bool = False,
     story_plan_path: Path | None = None,
     story_plan_is_global: bool = True,
+    apply_bgm: bool = True,
 ) -> None:
     store.raise_if_cancelled(job)
     # Agent 1 must see the original subtitle timeline before Module 3 adds
@@ -1664,12 +1867,15 @@ def render_semantic_visual_video(
         render_variant = "both"
     variant_label = {"subtitles": "仅字幕版", "raw": "仅无字幕版", "both": "双版本"}[render_variant]
     store.log(job, f"模块 5 成片版本：{variant_label}")
+    render_env = {"VIDEO_RENDER_VARIANT": render_variant}
+    if apply_bgm:
+        render_env.update(bgm_render_env(job, request))
     run_command(
         job,
         store,
         [sys.executable, "module5_video_render.py"],
         STEPS[5][1],
-        extra_env={"VIDEO_RENDER_VARIANT": render_variant},
+        extra_env=render_env,
     )
 
 
@@ -1735,14 +1941,71 @@ def _json_list(path: Path) -> list[dict[str, Any]]:
 
 
 def _available_output_path(project_name: str) -> Path:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    base = OUTPUT_DIR / normalize_project_name(project_name)
+    return _available_named_output_path(OUTPUT_DIR, project_name)
+
+
+def _available_named_output_path(root: Path, project_name: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    base = root / normalize_project_name(project_name)
     candidate = base
     suffix = 2
     while candidate.exists():
-        candidate = OUTPUT_DIR / f"{base.name}_{suffix}"
+        candidate = root / f"{base.name}_{suffix}"
         suffix += 1
     return candidate
+
+
+def organize_tts_output(job: Job, request: dict[str, Any]) -> Path:
+    """Publish a module-1-only task outside disposable workspace folders."""
+    final_dir = _available_named_output_path(
+        TTS_OUTPUT_DIR,
+        str(request.get("project_name") or f"TTS_{job.id}"),
+    )
+    temp_dir = TTS_OUTPUT_DIR / f".{final_dir.name}.{job.id}.building"
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        artifact_dir = JOBS_DIR / job.id / "artifacts"
+        archived_audio = artifact_dir / "final_output.wav"
+        archived_subtitle = artifact_dir / "final_output.srt"
+        audio_source = archived_audio if archived_audio.is_file() else WORKSPACE_DIR / "2_audio_srt" / "final_output.wav"
+        subtitle_source = archived_subtitle if archived_subtitle.is_file() else WORKSPACE_DIR / "2_audio_srt" / "final_output.srt"
+        if not audio_source.is_file() or audio_source.stat().st_size <= 0:
+            raise FileNotFoundError("模块 1 完成后没有找到有效配音文件，已保留 workspace 以便排查")
+        shutil.copy2(audio_source, temp_dir / "配音.wav")
+        if subtitle_source.is_file() and subtitle_source.stat().st_size > 0:
+            shutil.copy2(subtitle_source, temp_dir / "配音字幕.srt")
+        script_source = JOBS_DIR / job.id / "script.txt"
+        if script_source.is_file() and script_source.stat().st_size > 0:
+            shutil.copy2(script_source, temp_dir / "文案.txt")
+        elif str(request.get("script") or "").strip():
+            (temp_dir / "文案.txt").write_text(str(request["script"]).strip(), encoding="utf-8")
+        (temp_dir / "任务信息.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "job_id": job.id,
+                    "project_name": final_dir.name,
+                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "tts_engine": request.get("tts_engine") or "indextts2",
+                    "tts_voice_id": request.get("tts_voice_id"),
+                    "tts_speed": request.get("tts_speed"),
+                    "tts_volume": request.get("tts_volume"),
+                    "tts_pitch": request.get("tts_pitch"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        temp_dir.rename(final_dir)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    for path in final_dir.iterdir():
+        if path.is_file():
+            register_job_asset(job, path, "tts_output", {"project_name": final_dir.name})
+    return final_dir
 
 
 def _copy_visual_segment(
@@ -1817,6 +2080,64 @@ def _copy_visual_segment(
     return adjusted_scenes, poster_timeline, duration, archived_mapping
 
 
+def validate_and_write_output_manifest(
+    output_root: Path,
+    job: Job,
+    request: dict[str, Any],
+    *,
+    project_name: str | None = None,
+) -> Path:
+    """Refuse to publish an incomplete project, then persist its portable file inventory."""
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    required = [
+        output_root / "input" / "配音.wav",
+        output_root / "other" / "最终字幕.srt",
+        output_root / "other" / "最终画面.html",
+        output_root / "other" / "画面映射.json",
+        output_root / "other" / "画面时间线.json",
+    ]
+    if render_variant in {"subtitles", "both"}:
+        required.append(output_root / "video" / "最终视频_字幕版.mp4")
+    if render_variant in {"raw", "both"}:
+        required.append(output_root / "video" / "最终视频_纯净版.mp4")
+    missing = [path.relative_to(output_root).as_posix() for path in required if not path.is_file() or path.stat().st_size <= 0]
+    images = [
+        path for path in (output_root / "image").glob("*")
+        if path.suffix.lower() in IMAGE_EXTENSIONS and path.is_file() and path.stat().st_size > 0
+    ]
+    if not images:
+        missing.append("image/<至少一张有效画面>")
+    if missing:
+        raise RuntimeError("项目归档不完整，已保留 workspace 以便恢复：" + "、".join(missing))
+
+    files = []
+    for path in sorted((value for value in output_root.rglob("*") if value.is_file()), key=lambda value: value.as_posix()):
+        files.append({
+            "path": path.relative_to(output_root).as_posix(),
+            "size": path.stat().st_size,
+        })
+    manifest = output_root / "other" / "归档清单.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "job_id": job.id,
+                "project_name": project_name or output_root.name,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "render_variant": render_variant,
+                "editable_from_output": True,
+                "files": files,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
     project_name = normalize_project_name(str(request.get("project_name") or ""))
     final_dir = _available_output_path(project_name)
@@ -1840,9 +2161,49 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
         final_audio = WORKSPACE_DIR / "2_audio_srt" / "final_output.wav"
         if final_audio.is_file():
             shutil.copy2(final_audio, input_dir / "配音.wav")
+        segment_archive = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+        if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
+            shutil.copytree(segment_archive, other_dir / "tts_segments", dirs_exist_ok=True)
+        if str(request.get("tts_engine") or "indextts2") == "indextts2" and job.user_id is not None:
+            try:
+                from .indextts2_local import load_indextts2_config, resolve_voice_reference
+                voice_source = resolve_voice_reference(
+                    load_indextts2_config(),
+                    str(request.get("tts_voice_id") or "voice_05.wav"),
+                    user_id=int(job.user_id),
+                )
+                shutil.copy2(voice_source, input_dir / f"TTS参考音色{voice_source.suffix.lower()}")
+            except (OSError, ValueError):
+                # Built-in voices remain resolvable from the portable runtime;
+                # a missing custom reference should not invalidate the archive.
+                pass
         if request.get("skip_tts") and job.user_id is not None and request.get("source_audio_id"):
             source_audio = user_upload_path(int(job.user_id), str(request["source_audio_id"]))
             shutil.copy2(source_audio, input_dir / f"原始配音{source_audio.suffix.lower()}")
+
+        bgm_manifest: dict[str, Any] | None = None
+        bgm_tracks = bgm_tracks_for_job(job, request)
+        if bgm_tracks:
+            bgm_dir = input_dir / "BGM"
+            bgm_dir.mkdir(parents=True, exist_ok=True)
+            archived_tracks: list[dict[str, Any]] = []
+            for index, item in enumerate(bgm_tracks, 1):
+                source = Path(str(item["path"]))
+                target = bgm_dir / f"{index:03d}{source.suffix.lower()}"
+                shutil.copy2(source, target)
+                archived_tracks.append({
+                    "filename": target.name,
+                    "volume_db": float(item["volume_db"]),
+                })
+            bgm_manifest = {
+                "enabled": True,
+                "tracks": archived_tracks,
+                "fade_enabled": bool(request.get("bgm_fade_enabled")),
+                "fade_duration": float(request.get("bgm_fade_duration") or 1),
+            }
+            (other_dir / "BGM设置.json").write_text(
+                json.dumps(bgm_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
 
         combined_scenes: list[dict[str, Any]] = []
         combined_posters: list[dict[str, Any]] = []
@@ -1965,6 +2326,23 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
             json.dumps({"job_id": job.id, "project_name": final_dir.name}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+        support_copies = {
+            "scene_timeline.json": "模块2.5_校对后字幕场景.json",
+            "story_context.json": "Agent0_全文资料.json",
+            "story_plan.json": "Agent1_分镜规划.json",
+            "visual_prompt_plan.json": "Agent2_画面提示词规划.json",
+        }
+        visual_workspace = WORKSPACE_DIR / "3_visual_template"
+        for source_name, target_name in support_copies.items():
+            source = visual_workspace / source_name
+            if source.is_file() and source.stat().st_size > 0:
+                shutil.copy2(source, other_dir / target_name)
+        (other_dir / "任务参数.json").write_text(
+            json.dumps(request, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        validate_and_write_output_manifest(temp_dir, job, request, project_name=final_dir.name)
 
         temp_dir.rename(final_dir)
     except Exception:
@@ -2183,6 +2561,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             resume=resume,
             story_plan_path=segment_plan_path,
             story_plan_is_global=segment_plan_is_global,
+            apply_bgm=False,
         )
         copied = copy_part_outputs(job, index)
         if "video_with_subtitles" in copied:
@@ -2220,6 +2599,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             FINAL_DIR / "final_raw_presentation.mp4",
             "拼接纯净版分段视频",
         )
+    mix_final_videos_with_bgm(job, store, request)
     store.log(job, "分段视频已按顺序拼接完成")
 
 
@@ -2239,6 +2619,13 @@ def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, An
         message="视频生成完成",
         artifacts=artifacts,
     )
+    manifest = output_dir / "other" / "归档清单.json"
+    if manifest.is_file():
+        try:
+            reset_generation_workspace()
+            store.log(job, "归档完整性校验通过，已清理本次共享 workspace 临时产物；后续编辑将只读取 output。")
+        except OSError as exc:
+            store.log(job, f"项目已完整归档，但自动清理 workspace 失败，可稍后手动清理：{exc}")
     store.log(job, "全部完成")
 
 
@@ -2250,12 +2637,14 @@ def render_from_visual_checkpoint(job: Job, store: JobStore, request: dict[str, 
     if render_variant not in {"subtitles", "raw", "both"}:
         render_variant = "both"
     store.log(job, "分步模式：已确认画面，开始仅运行模块 5 渲染成片")
+    render_env = {"VIDEO_RENDER_VARIANT": render_variant}
+    render_env.update(bgm_render_env(job, request))
     run_command(
         job,
         store,
         [sys.executable, "module5_video_render.py"],
         STEPS[5][1],
-        extra_env={"VIDEO_RENDER_VARIANT": render_variant},
+        extra_env=render_env,
     )
     finalize_completed_pipeline(job, store, request)
 
@@ -2317,6 +2706,8 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             job.id,
             "--tts-engine",
             tts_engine,
+            "--segment-archive-dir",
+            str(JOBS_DIR / job.id / "artifacts" / "tts_segments"),
         ]
         if job.user_id is not None:
             tts_command.extend(["--user-id", str(job.user_id)])
@@ -2370,6 +2761,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         )
     if request.get("module1_only"):
         artifacts = copy_artifacts(job)
+        tts_output_dir = organize_tts_output(job, request)
         store.update(
             job,
             status="completed",
@@ -2378,7 +2770,12 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             message="模块 1 配音生成完成",
             artifacts=artifacts,
         )
-        store.log(job, "模块 1 独立任务完成：已跳过 ASR、Agent、出图和视频合成")
+        store.log(job, f"模块 1 独立任务完成：产物已整理到 {tts_output_dir}")
+        try:
+            reset_generation_workspace()
+            store.log(job, "TTS 独立产物已安全归档，已清理共享 workspace 临时文件")
+        except OSError as exc:
+            store.log(job, f"TTS 已归档，但自动清理 workspace 失败：{exc}")
         return
 
     if resume and scene_timeline_path.is_file() and scene_timeline_path.stat().st_size > 0:

@@ -139,6 +139,33 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertNotIn("subtitle_timeline", payload)
         self.assertEqual(context["generation_source"], "gemini")
 
+    def test_agent0_repairs_duplicate_person_labels_into_unique_registry(self) -> None:
+        ambiguous = json.dumps({
+            "story_type": "family", "logline": "夫妻争执", "theme": "沟通", "narrative_tone": "calm",
+            "characters": [
+                {"character_id": "wife", "name": "家庭经营者", "aliases": [], "group_aliases": [], "role": "妻子", "appearance": "黑色中长发"},
+                {"character_id": "husband", "name": "家庭经营者", "aliases": [], "group_aliases": [], "role": "丈夫", "appearance": "短黑发"},
+            ],
+            "locations": [], "clues_and_payoffs": [], "continuity_rules": [], "visual_safety": [],
+        }, ensure_ascii=False)
+        repaired = json.dumps({
+            "story_type": "family", "logline": "夫妻争执", "theme": "沟通", "narrative_tone": "calm",
+            "characters": [
+                {"character_id": "wife", "name": "妻子", "aliases": [], "group_aliases": ["家庭经营者"], "role": "家庭经营者", "appearance": "黑色中长发"},
+                {"character_id": "husband", "name": "丈夫", "aliases": [], "group_aliases": ["家庭经营者"], "role": "家庭经营者", "appearance": "短黑发"},
+            ],
+            "locations": [], "clues_and_payoffs": [], "continuity_rules": [], "visual_safety": [],
+        }, ensure_ascii=False)
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(story_agents, "generate_gemini_text", side_effect=[ambiguous, repaired]) as generate,
+        ):
+            context = story_agents.create_story_context("妻子和丈夫都在经营这个家庭。")
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual([item["name"] for item in context["characters"]], ["妻子", "丈夫"])
+        self.assertEqual([item["character_id"] for item in context["characters"]], ["wife", "husband"])
+        self.assertIn("系统固定角色身份结构", generate.call_args_list[0].kwargs["system_prompt"])
+
     def test_agent1_uses_timestamps_and_only_returns_timeline_plan(self) -> None:
         scenes = sample_scenes()[:3]
         context = story_agents._fallback_story_context("full text", story_agents.CONTENT_MODE_STORY)
@@ -161,6 +188,69 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertEqual(payload["subtitle_timeline"][0]["start"], 0.0)
         self.assertEqual(payload["subtitle_timeline"][0]["end"], 5.0)
         self.assertEqual(plan["semantic_units"][1]["start_slide_id"], "scene_003")
+
+    def test_agent1_device_modes_are_normalized_and_screen_insert_hides_people(self) -> None:
+        scenes = sample_scenes()[:2]
+        raw_units = [
+            {
+                "unit_id": "u1",
+                "start_slide_id": "scene_001",
+                "end_slide_id": "scene_001",
+                "purpose": "展示匿名短信",
+                "visual_focus": "手机屏幕",
+                "visual_pacing": "hold",
+                "boundary_after": "hard",
+                "character_ids": ["wife"],
+                "device_shot_mode": "screen_insert",
+                "device_type": "手机",
+                "screen_content": "今晚别回家",
+            },
+            {
+                "unit_id": "u2",
+                "start_slide_id": "scene_002",
+                "end_slide_id": "scene_002",
+                "purpose": "人物查看手机",
+                "visual_focus": "妻子低头查看手机",
+                "visual_pacing": "normal",
+                "boundary_after": "hard",
+                "character_ids": ["wife"],
+                "device_shot_mode": "device_interaction",
+                "device_type": "手机",
+                "screen_content": "模型不应保留的虚构文字",
+            },
+        ]
+        normalized = story_agents._normalize_semantic_units(raw_units, scenes)
+        self.assertEqual(normalized[0]["device_shot_mode"], "screen_insert")
+        self.assertEqual(normalized[0]["screen_content"], "今晚别回家")
+        self.assertEqual(normalized[1]["device_shot_mode"], "device_interaction")
+        self.assertEqual(normalized[1]["screen_content"], "")
+
+    def test_agent0_exposes_source_backed_device_information_contract(self) -> None:
+        self.assertIn("key_information_objects", story_agents.AGENT0_SYSTEM_PROMPT)
+        self.assertIn("不得猜测或补写", story_agents.AGENT0_SYSTEM_PROMPT)
+        self.assertIn("screen_insert", story_agents.DEVICE_SHOT_CONTRACT)
+        self.assertIn("device_interaction", story_agents.DEVICE_SHOT_CONTRACT)
+
+    def test_agent0_device_information_survives_agent1_plan_normalization(self) -> None:
+        scenes = sample_scenes()[:1]
+        raw = story_agents._fallback_story_plan(scenes)
+        raw["key_information_objects"] = [{
+            "object_id": "anonymous_message",
+            "device_type": "手机",
+            "content": "今晚别回家",
+            "first_context": "匿名短信",
+            "later_references": ["那条消息"],
+        }]
+        plan = story_agents._normalize_story_plan(raw, scenes)
+        self.assertEqual(plan["key_information_objects"][0]["content"], "今晚别回家")
+        self.assertEqual(plan["key_information_objects"][0]["later_references"], ["那条消息"])
+
+    def test_phone_dialogue_is_not_mistaken_for_screen_content_by_local_fallback(self) -> None:
+        scenes = [{"text_content": "她拿着手机说：“我已经到家了。”"}]
+        mode, device_type, content = story_agents._fallback_device_shot(scenes)
+        self.assertEqual(mode, "device_interaction")
+        self.assertEqual(device_type, "手机")
+        self.assertEqual(content, "")
 
     def test_segment_plan_keeps_global_character_identity_and_local_beats(self) -> None:
         scenes = sample_scenes()[:3]
@@ -257,6 +347,23 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertEqual(len(states), 1)
         self.assertEqual(states[0]["wardrobe"], "起球的灰色旧居家服")
         self.assertEqual(plan["character_continuity_version"], story_agents.CHARACTER_CONTINUITY_VERSION)
+
+    def test_agent1_character_ids_survive_plan_normalization(self) -> None:
+        scenes = sample_scenes()[:2]
+        raw = story_agents._fallback_story_plan(scenes)
+        raw["characters"] = [
+            {"character_id": "wife", "name": "妻子", "appearance": "黑色中长发"},
+            {"character_id": "husband", "name": "丈夫", "appearance": "短黑发"},
+        ]
+        raw["story_beats"][0]["character_ids"] = ["wife", "unknown"]
+        raw["semantic_units"] = [{
+            "unit_id": "unit_01", "start_slide_id": "scene_001", "end_slide_id": "scene_002",
+            "purpose": "夫妻交谈", "visual_focus": "客厅", "visual_pacing": "hold",
+            "boundary_after": "hard", "character_ids": ["wife", "husband", "unknown"],
+        }]
+        plan = story_agents._normalize_story_plan(raw, scenes)
+        self.assertEqual(plan["story_beats"][0]["character_ids"], ["wife"])
+        self.assertEqual(plan["semantic_units"][0]["character_ids"], ["wife", "husband"])
 
 
 if __name__ == "__main__":

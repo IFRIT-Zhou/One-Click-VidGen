@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -7,6 +8,15 @@ import module5_video_render
 
 
 class VideoRenderAccelerationTest(unittest.TestCase):
+    def test_configured_render_workspace_accepts_output_scoped_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            configured = Path(temporary) / "output" / "project" / "other" / ".render_runtime"
+            with patch.dict(os.environ, {"TEST_RENDER_PATH": str(configured)}):
+                self.assertEqual(
+                    module5_video_render.configured_path("TEST_RENDER_PATH", Path("unused")),
+                    configured.resolve(),
+                )
+
     def build(self) -> list[str]:
         return module5_video_render.build_render_command(
             "node",

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,6 +24,7 @@ class Module1OnlyTest(unittest.TestCase):
             workspace = root / "workspace"
             jobs = workspace / "jobs"
             final = workspace / "4_final_video"
+            tts_output = root / "TTS_Output"
             workspace.mkdir(parents=True)
             job = pipeline.Job(
                 id="module1test",
@@ -48,6 +50,7 @@ class Module1OnlyTest(unittest.TestCase):
                 patch.object(pipeline, "WORKSPACE_DIR", workspace),
                 patch.object(pipeline, "JOBS_DIR", jobs),
                 patch.object(pipeline, "FINAL_DIR", final),
+                patch.object(pipeline, "TTS_OUTPUT_DIR", tts_output),
                 patch.object(pipeline, "reset_generation_workspace"),
                 patch.object(pipeline, "run_command", side_effect=fake_run_command),
                 patch.object(pipeline, "register_job_asset"),
@@ -61,6 +64,14 @@ class Module1OnlyTest(unittest.TestCase):
             self.assertIn("audio", completed[0]["artifacts"])
             self.assertIn("module1_subtitle", completed[0]["artifacts"])
             self.assertTrue((jobs / job.id / "artifacts" / "final_output.wav").is_file())
+            published = tts_output / "单独配音"
+            self.assertEqual((published / "配音.wav").read_bytes(), b"RIFF-test")
+            self.assertTrue((published / "配音字幕.srt").is_file())
+            self.assertEqual((published / "文案.txt").read_text(encoding="utf-8"), job.request["script"])
+            self.assertEqual(
+                json.loads((published / "任务信息.json").read_text(encoding="utf-8"))["job_id"],
+                job.id,
+            )
 
 
 if __name__ == "__main__":

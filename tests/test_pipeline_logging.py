@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.app.pipeline import Job, JobStore, parse_noisy_progress_log
 
@@ -51,6 +51,35 @@ class PipelineLoggingTest(unittest.TestCase):
         )
         self.assertEqual(subtitle, ("字幕版 1/2 Streaming frame", 36))
         self.assertEqual(clean, ("纯净版 2/2 Streaming frame", 12))
+
+    def test_new_job_is_blocked_while_pipeline_is_stopping_or_pending(self) -> None:
+        store = JobStore()
+        stopping = Job(id="stopping", user_id=7, status="cancelled")
+        pending = Job(id="pending", user_id=7, status="queued")
+        store._jobs = {stopping.id: stopping, pending.id: pending}
+        store._pipeline_owner_id = stopping.id
+
+        self.assertIn("正在停止", store.new_job_block_reason(7) or "")
+
+        store._pipeline_owner_id = None
+        self.assertIn("等待或运行中", store.new_job_block_reason(7) or "")
+
+    def test_tts_cancel_requests_graceful_stop_without_taskkill(self) -> None:
+        job = Job(id="safe-tts-stop", status="running", step="tts")
+        process = Mock()
+        store = JobStore()
+        store._processes[job.id] = process
+        with (
+            patch("backend.app.pipeline.append_generation_job_log"),
+            patch("backend.app.pipeline.upsert_generation_job"),
+            patch("backend.app.pipeline._request_graceful_tts_stop") as graceful_stop,
+            patch("backend.app.pipeline._terminate_process_tree") as hard_stop,
+        ):
+            snapshot = store.cancel(job)
+        graceful_stop.assert_called_once_with(process)
+        hard_stop.assert_not_called()
+        self.assertEqual(snapshot["status"], "cancelled")
+        self.assertEqual(snapshot["step"], "tts")
 
 
 if __name__ == "__main__":

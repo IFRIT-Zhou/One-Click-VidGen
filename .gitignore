@@ -18,10 +18,16 @@ runtime/
 runtime_logs/
 Archives/
 output/
+TTS_Output/
 saved_parameters/
 saved_agent_prompts/
 Vocal/
-tools/
+# Keep source-deployment helper scripts in Git. Bundled FFmpeg, IndexTTS2
+# checkpoints and other portable binaries stay in the downloadable package.
+tools/*
+!tools/portable_preflight.py
+!tools/local_service_watchdog.py
+Sound Material/
 venv_audio_vedio/
 .agents/
 
@@ -39,3 +45,4 @@ venv_audio_vedio/
 
 # Root-level scripts and media used as local generation inputs.
 /*.txt
+/*.zip

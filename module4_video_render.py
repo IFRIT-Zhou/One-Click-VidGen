@@ -37,11 +37,19 @@ RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
-# v7: fixed groups are now calculated from the full Agent 1 plan before
-# batching, so an Agent 2 request can never bridge a hard semantic boundary.
-VISUAL_PROMPT_AGENT_VERSION = 10
+# v12: Agent 1 device-shot modes are enforced again after Agent 2, so an
+# information screen cannot silently become a face-and-phone split portrait.
+VISUAL_PROMPT_AGENT_VERSION = 12
 
 REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
+
+
+AGENT2_DEVICE_SHOT_CONTRACT = """【设备画面三态硬约束（适用于所有模式）】
+- Agent 1 的 semantic_units 会提供 device_shot_mode、device_type、screen_content，必须以这些结构化字段为准。
+- screen_insert：只设计设备正面屏幕或显示内容的插入特写，屏幕占据主体；不得出现人物脸部、人物肖像、半身或反应特写，只允许必要的手指、设备边框或桌面边缘。character_ids 和 reference_image_ids 必须为 []。screen_content 只能使用 Agent 1 给出的原文内容，不得补写聊天、照片、网页、文件或界面信息。
+- device_interaction：表现人物正在查看、拿取、操作或接听设备；屏幕背向镜头、虚化或不可读，不得编造任何屏幕文字、照片、网页、文件或界面信息。人物动作和环境是唯一视觉重点。
+- none：按普通镜头处理，不因背景里存在设备而突出屏幕。
+- 禁止折中成“人物脸部特写 + 可读设备屏幕”两个并列主体。"""
 
 
 def backup_poster_mapping(path: Path = POSTER_MAPPING_PATH) -> Path | None:
@@ -137,13 +145,18 @@ def _strip_dynamic_reference_image_instructions(prompt: str) -> str:
 
 
 def _character_reference_label(name: str) -> str:
-    """Resolve a user-authored `角色名：图N` binding against the uploaded catalog."""
+    """Resolve common user-authored character-to-image bindings."""
     character_name = str(name or "").strip()
     if not character_name:
         return ""
     character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "")
+    # Users naturally write this relationship in several equivalent forms:
+    # ``林晚：图1`` / ``林晚参考图1`` / ``林晚形象参考图1`` /
+    # ``林晚角色形象参考图1``.  Keep the parser permissive here while still
+    # requiring the character name and an explicit image number.
     match = re.search(
-        re.escape(character_name) + r"\s*[：:,，]?\s*(?:角色形象参考)?图\s*([1-4])",
+        re.escape(character_name)
+        + r"\s*[：:,，]?\s*(?:(?:角色)?形象参考|角色参考|参考)?\s*图\s*([1-4])",
         character_bible,
     )
     if not match:
@@ -198,7 +211,7 @@ def build_visual_prompt_system(
 
 【固定画质要求】
 - 系统会在每条 image_prompt 末尾统一加入：
-  去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"""
+  避免噪点、脏污糊抹和无意义涂抹；保留所选画风需要的线稿、色块或可控绘制笔触，画面干净清晰。"""
     if content_mode == CONTENT_MODE_GENERAL:
         return f"""你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
 
@@ -274,7 +287,7 @@ def build_visual_prompt_system(
 
 【固定画质要求】
 - 系统会在每条 image_prompt 末尾统一加入以下内容，模型不要重复输出：
-  去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"""
+  避免噪点、脏污糊抹和无意义涂抹；保留所选画风需要的线稿、色块或可控绘制笔触，画面干净清晰。"""
 
 
 DEFAULT_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(
@@ -336,7 +349,14 @@ class RunningHubAccountPool:
 
     def __init__(self, configs: list[dict[str, str]]) -> None:
         self._configs = configs
-        self._power_exhausted: set[str] = set()
+        # A quota failure is deterministic for the current backend session.
+        # Seed every new batch/redraw pool with it so a newly-created task does
+        # not waste another 90 retries on an account already known to be empty.
+        with _ACCOUNT_STATE_LOCK:
+            self._power_exhausted = {
+                str(config.get("api_key") or "") for config in configs
+                if str(config.get("api_key") or "") in _POWER_EXHAUSTED_ACCOUNT_KEYS
+            }
         self._access_denied: set[str] = set()
         self._queue_full: set[str] = set()
         self._next_index = 0
@@ -377,6 +397,8 @@ class RunningHubAccountPool:
         with self._lock:
             self._power_exhausted.add(config["api_key"])
             self._queue_full.discard(config["api_key"])
+        with _ACCOUNT_STATE_LOCK:
+            _POWER_EXHAUSTED_ACCOUNT_KEYS.add(config["api_key"])
 
     def mark_access_denied(self, config: dict[str, str]) -> None:
         with self._lock:
@@ -417,6 +439,8 @@ class RunningHubAccountPool:
             return config
 
 
+_ACCOUNT_STATE_LOCK = threading.Lock()
+_POWER_EXHAUSTED_ACCOUNT_KEYS: set[str] = set()
 _SHARED_ACCOUNT_POOLS: dict[tuple[str, tuple[tuple[str, str, str, str], ...]], RunningHubAccountPool] = {}
 _SHARED_ACCOUNT_POOLS_LOCK = threading.Lock()
 
@@ -724,9 +748,14 @@ def _normalize_mapping(
                 "macro_scene_id": f"poster_{index:03d}",
                 "includes_slides": included,
                 "image_prompt": prompt,
+                "character_ids": list(dict.fromkeys(
+                    value.strip()
+                    for value in item.get("character_ids", [])
+                    if isinstance(value, str) and value.strip()
+                ))[:10],
                 "reference_image_ids": list(dict.fromkeys(
                     value.strip()
-                    for value in item.get("reference_image_ids", item.get("character_ids", []))
+                    for value in item.get("reference_image_ids", [])
                     if isinstance(value, str) and value.strip() in REFERENCE_IMAGE_LABELS
                 ))[:3],
             }
@@ -806,6 +835,21 @@ def _clean_style_for_image_prompt(style: str, quality_requirement: str) -> str:
     for directive in STYLE_META_DIRECTIVES:
         cleaned = cleaned.replace(directive, "")
     return cleaned.strip()
+
+
+def _illustration_medium_lock(style: str) -> str:
+    """Strengthen an explicitly illustrated medium without changing the user's subject matter."""
+    text = str(style or "").strip()
+    if not text:
+        return ""
+    illustration_markers = ("插画", "漫画", "绘本", "手绘", "条漫", "平涂", "厚涂", "水彩", "国画")
+    photo_markers = ("摄影风", "真人实拍", "照片级", "纪实摄影", "写实摄影")
+    if any(marker in text for marker in illustration_markers) and not any(marker in text for marker in photo_markers):
+        return (
+            "【视觉媒介锁】明确采用绘制类视觉媒介，保留与所选画风一致的线条、色块或可控笔触；"
+            "不是摄影，不是真人实拍，不做照片级皮肤和镜头质感。"
+        )
+    return ""
 
 
 def _style_protagonist_identity(style: str) -> str:
@@ -918,25 +962,123 @@ def _active_wardrobe_state(
     return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
+def _character_reference_for_record(character: dict[str, Any]) -> str:
+    for token in [
+        str(character.get("name") or "").strip(),
+        *[str(value).strip() for value in character.get("aliases", []) if str(value).strip()],
+    ]:
+        label = _character_reference_label(token)
+        if label:
+            return label
+    return ""
+
+
+def _shot_character_ids(
+    item: dict[str, Any],
+    prompt: str,
+    story_plan: dict[str, Any] | None,
+    scenes: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Resolve active people from structured IDs, Agent 1 units, then safe name matching."""
+    characters = [
+        character for character in (story_plan or {}).get("characters", [])
+        if isinstance(character, dict) and str(character.get("character_id") or "").strip()
+    ]
+    valid = {str(character["character_id"]): character for character in characters}
+    selected = [
+        str(value).strip() for value in item.get("character_ids", [])
+        if str(value).strip() in valid
+    ]
+    included = {str(value) for value in item.get("includes_slides", [])}
+    scene_order = [
+        str(scene.get("slide_id") or "")
+        for scene in (scenes or [])
+        if isinstance(scene, dict)
+    ]
+    positions = {slide_id: index for index, slide_id in enumerate(scene_order) if slide_id}
+    included_positions = [positions[value] for value in included if value in positions]
+    if included:
+        for unit in (story_plan or {}).get("semantic_units", []):
+            if not isinstance(unit, dict):
+                continue
+            start_id = str(unit.get("start_slide_id") or "")
+            end_id = str(unit.get("end_slide_id") or "")
+            overlaps = start_id in included or end_id in included
+            if not overlaps and included_positions and start_id in positions and end_id in positions:
+                unit_start, unit_end = sorted((positions[start_id], positions[end_id]))
+                overlaps = any(unit_start <= value <= unit_end for value in included_positions)
+            if overlaps:
+                selected.extend(
+                    str(value).strip() for value in unit.get("character_ids", [])
+                    if str(value).strip() in valid
+                )
+        for beat in (story_plan or {}).get("story_beats", []):
+            if not isinstance(beat, dict):
+                continue
+            if included.intersection(str(value) for value in beat.get("slide_ids", [])):
+                selected.extend(
+                    str(value).strip() for value in beat.get("character_ids", [])
+                    if str(value).strip() in valid
+                )
+    if not selected:
+        for character_id, character in valid.items():
+            tokens = [
+                str(character.get("name") or "").strip(),
+                *[str(value).strip() for value in character.get("aliases", []) if str(value).strip()],
+            ]
+            if any(len(token) >= 2 and token in prompt for token in tokens):
+                selected.append(character_id)
+    return list(dict.fromkeys(selected))
+
+
+def _compact_character_mentions(
+    prompt: str,
+    characters: list[dict[str, Any]],
+) -> tuple[str, int]:
+    """Keep identity details in the role card and names/actions in the scene body."""
+    compacted = str(prompt or "")
+    changes = 0
+    for character in characters:
+        name = str(character.get("name") or "").strip()
+        if not name:
+            continue
+        role = str(character.get("role") or "").strip()
+        aliases = [str(value).strip() for value in character.get("aliases", []) if str(value).strip()]
+        tokens = sorted(set([name, *aliases]), key=len, reverse=True)
+        for token in tokens:
+            optional_role = rf"(?:{re.escape(role)})?" if role and role not in token else ""
+            pattern = re.compile(
+                optional_role + re.escape(token) + r"(?P<details>(?:（[^（）]*）)+)?"
+            )
+            compacted, count = pattern.subn(name, compacted)
+            changes += count
+    return compacted, changes
+
+
 def _character_continuity_block(
     original_prompt: str,
     story_plan: dict[str, Any] | None,
     forced_style: str,
     included_slides: list[str],
     scenes: list[dict[str, Any]],
+    selected_character_ids: list[str] | None = None,
 ) -> str:
     characters = (story_plan or {}).get("characters")
     if not isinstance(characters, list):
         return ""
     protagonist_override = _style_protagonist_identity(forced_style)
+    selected = set(selected_character_ids or [])
     lines: list[str] = []
     for character in characters:
         if not isinstance(character, dict):
             continue
         name = str(character.get("name") or "").strip()
+        character_id = str(character.get("character_id") or "").strip()
         role = str(character.get("role") or "").strip()
-        explicitly_present = bool(name and name in original_prompt)
+        explicitly_present = bool(character_id in selected) if selected else bool(name and name in original_prompt)
         generic_protagonist = (
+            not selected
+            and
             "主角" in role
             and not explicitly_present
             and bool(re.search(r"主角|女主|她|女人|女性|妈妈", original_prompt))
@@ -948,8 +1090,10 @@ def _character_continuity_block(
             if protagonist_override and "主角" in role
             else str(character.get("appearance") or "").strip(" ，。；")
         )
-        label = role or "人物"
-        parts = [f"{label}：固定身份={identity}"] if identity else [label]
+        parts = [f"{name}：{identity}"] if identity else [name]
+        reference_label = _character_reference_for_record(character)
+        if reference_label:
+            parts.append(f"角色形象参考{reference_label}")
         state = _active_wardrobe_state(character, included_slides, scenes)
         if state:
             wardrobe = str(state.get("wardrobe") or "").strip(" ，。；")
@@ -965,11 +1109,15 @@ def _character_continuity_block(
                 parts.append(f"本镜头头部状态={headwear}")
             if carried:
                 parts.append(f"本镜头随身物品={carried}")
+        else:
+            wardrobe = str(character.get("wardrobe") or "").strip(" ，。；")
+            if wardrobe:
+                parts.append(f"本镜头服装={wardrobe}")
         lines.append("；".join(parts))
     if not lines:
         return ""
     return (
-        "【本镜头角色造型硬约束：若正文有冲突，以本块为最高优先级；不得自行换装、摘帽或增加头饰】\n"
+        "【本镜头唯一角色卡：身份与造型只在本块出现一次；正文中的姓名仅表示动作关系】\n"
         + "\n".join(lines)
     )
 
@@ -987,6 +1135,12 @@ def _plan_mapping_batch(
     ]
     runtime_prompt = (
         system_prompt
+        + "\n\n"
+        + AGENT2_DEVICE_SHOT_CONTRACT
+        + "\n\n【唯一角色 ID（适用于所有模式）】\n"
+        + "- 每项除 includes_slides、image_prompt、reference_image_ids 外，必须输出 character_ids 数组。\n"
+        + "- character_ids 只能使用 Agent 0 characters 中已有的 character_id，只列实际出镜人物；空镜、物件和仅被旁白提及的人物输出 []。\n"
+        + "- image_prompt 使用角色的稳定 name，不得用可能属于多人的职业或群体称呼代替姓名，也不要重复角色完整外貌；程序会统一注入一次角色卡。\n"
         + "\n\n【单镜头构图优先级（适用于所有模式）】\n"
         + "- 默认每张图只呈现一个连续场景、一个机位和一个明确时间点，定格最能代表本组内容的瞬间。\n"
         + "- 不要把动作的前后过程同时画出；避免‘随后、依次、先……再……、镜头拉开后’等多时刻描述。\n"
@@ -1051,8 +1205,18 @@ def _synchronized_reference_image_ids(
     prompt: str,
     original_prompt: str,
     story_plan: dict[str, Any] | None,
+    explicit_character_ids: list[str] | None = None,
 ) -> list[str]:
-    """Recover reference IDs deterministically from prompt markers and named characters."""
+    """Recover reference IDs without turning broad story context into image input.
+
+    ``item['character_ids']`` is enriched later with Agent 1 semantic context so
+    continuity cards can survive pronouns.  That enriched list is deliberately
+    *not* sufficient evidence that a person is visible in the shot: a prop or
+    environment shot may belong to a semantic unit involving the protagonist.
+    Reference images are therefore bound only when Agent 2 explicitly selected
+    the character, or when the original shot prompt names that character (or an
+    explicit reference marker).
+    """
     catalog = _reference_image_catalog()
     if not catalog:
         return []
@@ -1061,21 +1225,142 @@ def _synchronized_reference_image_ids(
         for value in item.get("reference_image_ids", [])
         if str(value).strip() in catalog
     }
+    # Inspect the original Agent 2 prompt rather than ``prompt``.  The finalized
+    # prompt can contain a continuity card added from Agent 1 context, which must
+    # not by itself switch an empty/environment shot to image-to-image.
     for label in catalog:
         number = re.escape(label.removeprefix("图"))
-        if re.search(rf"角色形象参考图\s*{number}(?!\d)", prompt):
+        if re.search(rf"(?:角色)?形象参考图\s*{number}(?!\d)", original_prompt):
             selected.add(label)
     characters = (story_plan or {}).get("characters")
     if isinstance(characters, list):
+        active_ids = {
+            str(value).strip() for value in (explicit_character_ids or []) if str(value).strip()
+        }
         for character in characters:
             if not isinstance(character, dict):
                 continue
             name = str(character.get("name") or "").strip()
-            if name and name in original_prompt:
-                label = _character_reference_label(name)
+            character_id = str(character.get("character_id") or "").strip()
+            if (character_id and character_id in active_ids) or (name and name in original_prompt):
+                label = _character_reference_for_record(character)
                 if label:
                     selected.add(label)
     return [label for label in catalog if label in selected][:3]
+
+
+def _extract_explicit_screen_content(text: str) -> tuple[str, str]:
+    """Return a conservative device type/content pair from explicit source text."""
+    source = str(text or "").strip()
+    device_type = next(
+        (name for name in ("手机", "平板", "电脑显示器", "电脑", "显示器") if name in source),
+        "设备",
+    )
+    device_pattern = r"手机|平板|电脑|显示器|屏幕|笔记本电脑|监控画面|网页|短信|聊天记录"
+    explicit = re.search(
+        rf"(?:{device_pattern})(?:上|里|中|内容)?(?:清楚)?(?:显示|写着|出现|弹出|呈现|是|为|内容是)",
+        source,
+    )
+    quoted = re.search(
+        r"(?:短信|消息|聊天记录)(?:内容)?(?:是|为|写着|显示为|[:：]).{0,12}?"
+        r"[“「『‘\"]([^”」』’\"]{1,160})[”」』’\"]",
+        source,
+    )
+    if quoted:
+        return device_type, quoted.group(1).strip()
+    if explicit:
+        return device_type, source[explicit.start():].strip(" ，。；")[:240]
+    return device_type, ""
+
+
+def _device_shot_for_item(
+    item: dict[str, Any],
+    story_plan: dict[str, Any] | None,
+    scenes: list[dict[str, Any]],
+) -> tuple[str, str, str]:
+    """Resolve Agent 1's structured device direction for one fixed image group."""
+    included = {str(value) for value in item.get("includes_slides", [])}
+    scene_ids = [str(scene.get("slide_id") or "") for scene in scenes]
+    positions = {slide_id: index for index, slide_id in enumerate(scene_ids) if slide_id}
+    included_positions = [positions[value] for value in included if value in positions]
+    candidates: list[tuple[int, str, str, str]] = []
+    for unit in (story_plan or {}).get("semantic_units", []):
+        if not isinstance(unit, dict):
+            continue
+        start = positions.get(str(unit.get("start_slide_id") or ""))
+        end = positions.get(str(unit.get("end_slide_id") or ""))
+        if start is None or end is None or not included_positions:
+            continue
+        start, end = sorted((start, end))
+        if not any(start <= value <= end for value in included_positions):
+            continue
+        mode = str(unit.get("device_shot_mode") or "none").strip().lower()
+        priority = {"none": 0, "device_interaction": 1, "screen_insert": 2}.get(mode, 0)
+        candidates.append((
+            priority,
+            mode if priority else "none",
+            str(unit.get("device_type") or "").strip()[:40],
+            str(unit.get("screen_content") or "").strip()[:300],
+        ))
+
+    group_text = "".join(
+        str(scene.get("text_content") or "")
+        for scene in scenes
+        if str(scene.get("slide_id") or "") in included
+    )
+    source_device_type, explicit_source_content = _extract_explicit_screen_content(group_text)
+    if candidates:
+        _priority, mode, device_type, screen_content = max(candidates, key=lambda value: value[0])
+    else:
+        mode, device_type, screen_content = "none", "", ""
+
+    # A verbatim explicit screen statement is safe to elevate even if a custom
+    # Agent 1 preset forgot the new field. Conversely, screen_insert without any
+    # source-backed content is downgraded so downstream models cannot invent UI.
+    if explicit_source_content:
+        mode = "screen_insert"
+        device_type = device_type or source_device_type
+        screen_content = screen_content or explicit_source_content
+    if mode == "screen_insert" and not screen_content:
+        mode = "device_interaction"
+    if mode == "device_interaction" and not device_type:
+        device_type = source_device_type
+    if mode == "none":
+        device_type = ""
+        screen_content = ""
+    elif mode != "screen_insert":
+        screen_content = ""
+    return mode, device_type or "设备", screen_content
+
+
+def _apply_device_shot_guard(
+    prompt: str,
+    mode: str,
+    device_type: str,
+    screen_content: str,
+) -> str:
+    body = str(prompt or "").strip()
+    if mode == "screen_insert":
+        # Keep only global medium/style headers. The Agent 2 scene body may still
+        # contain a face or reaction even after being told not to; retaining it
+        # would give the image model two contradictory subjects.
+        style_lines = [
+            line.strip() for line in body.splitlines()
+            if line.strip().startswith(("【统一画面风格】", "【视觉媒介锁】"))
+        ]
+        guarded = (
+            f"【设备内容镜头硬约束】本镜头只展示{device_type}正面屏幕及其内容，屏幕占据画面主体；"
+            "不出现人物脸部、人物肖像、半身、反应特写或人物与屏幕并列构图，只允许必要的手指、设备边框或桌面边缘；"
+            f"屏幕内容严格依据原文：{screen_content}；不得补写或虚构其他界面信息。"
+        )
+        return "\n".join([*style_lines, guarded])
+    if mode == "device_interaction":
+        return (
+            f"【设备使用镜头硬约束】表现人物正在使用{device_type}，人物动作、状态和环境是唯一视觉重点；"
+            "屏幕必须背向镜头、虚化或不可读，不出现可辨识的聊天、照片、网页、文件或界面文字，"
+            f"不得采用人物脸部与可读屏幕并列的双主体构图。\n{body}"
+        )
+    return body
 
 
 def _finalize_mapping(
@@ -1084,8 +1369,14 @@ def _finalize_mapping(
     story_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     forced_style = os.getenv("VISUAL_STYLE_PROMPT", "").strip()
-    quality_requirement = "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
+    quality_requirement = (
+        "避免噪点、脏污糊抹和无意义涂抹；保留所选画风需要的线稿、色块或可控绘制笔触，"
+        "画面干净清晰。"
+    )
+    legacy_quality_requirement = "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
     clean_forced_style = _clean_style_for_image_prompt(forced_style, quality_requirement)
+    clean_forced_style = clean_forced_style.replace(legacy_quality_requirement, "").strip(" \n，。；")
+    medium_lock = _illustration_medium_lock(clean_forced_style)
     expanded_character_names = 0
     recovered_reference_ids = 0
     for index, item in enumerate(mapping, 1):
@@ -1098,31 +1389,82 @@ def _finalize_mapping(
             prompt = prompt.replace(clean_forced_style, "")
         for directive in STYLE_META_DIRECTIVES:
             prompt = prompt.replace(directive, "")
-        prompt = prompt.replace(quality_requirement, "").strip(" \n，。")
+        prompt = prompt.replace(quality_requirement, "")
+        prompt = prompt.replace(legacy_quality_requirement, "").strip(" \n，。")
         original_prompt = prompt
-        continuity_block = _character_continuity_block(
+        device_shot_mode, device_type, screen_content = _device_shot_for_item(
+            item, story_plan, scenes
+        )
+        explicit_character_ids = [
+            str(value).strip()
+            for value in item.get("character_ids", [])
+            if str(value).strip()
+        ]
+        if device_shot_mode == "screen_insert":
+            explicit_character_ids = []
+            shot_character_ids = []
+        else:
+            shot_character_ids = _shot_character_ids(item, original_prompt, story_plan, scenes)
+        characters_by_id = {
+            str(character.get("character_id") or ""): character
+            for character in (story_plan or {}).get("characters", [])
+            if isinstance(character, dict)
+        }
+        active_characters = [
+            characters_by_id[character_id]
+            for character_id in shot_character_ids
+            if character_id in characters_by_id
+        ]
+        continuity_block = "" if device_shot_mode == "screen_insert" else _character_continuity_block(
             original_prompt,
             story_plan,
             forced_style,
             [str(value) for value in item.get("includes_slides", [])],
             scenes,
+            shot_character_ids,
         )
-        prompt, replacement_count = _expand_character_names(prompt, story_plan, forced_style)
+        if continuity_block:
+            prompt, replacement_count = _compact_character_mentions(prompt, active_characters)
+        else:
+            prompt, replacement_count = _expand_character_names(prompt, story_plan, forced_style)
         expanded_character_names += replacement_count
         if continuity_block:
             prompt = f"{continuity_block}\n{prompt}"
-        if clean_forced_style:
-            prompt = f"【统一画面风格】{clean_forced_style}\n{prompt}"
+        style_for_prompt = clean_forced_style
+        if continuity_block and _style_protagonist_identity(forced_style):
+            # Legacy presets sometimes mixed the protagonist profile into the
+            # style field. Once a character card exists, keep that identity in
+            # exactly one place instead of repeating it in the style header.
+            style_for_prompt = re.sub(
+                r"主角\s*(?:为|是)\s*[^。；\n]+[。；]?",
+                "",
+                style_for_prompt,
+            ).strip(" \n，。；")
+        if style_for_prompt:
+            prompt = f"【统一画面风格】{style_for_prompt}\n{prompt}"
+        if medium_lock:
+            prompt = f"{medium_lock}\n{prompt}"
+        prompt = _apply_device_shot_guard(
+            prompt,
+            device_shot_mode,
+            device_type,
+            screen_content,
+        )
         prompt = f"{prompt}\n{quality_requirement}"
         item["image_prompt"] = prompt
+        item["character_ids"] = shot_character_ids
+        item["device_shot_mode"] = device_shot_mode
+        item["device_type"] = device_type if device_shot_mode != "none" else ""
+        item["screen_content"] = screen_content if device_shot_mode == "screen_insert" else ""
         previous_reference_ids = [
             str(value).strip() for value in item.get("reference_image_ids", []) if str(value).strip()
         ]
-        synchronized_ids = _synchronized_reference_image_ids(
+        synchronized_ids = [] if device_shot_mode == "screen_insert" else _synchronized_reference_image_ids(
             item,
             prompt,
             original_prompt,
             story_plan,
+            explicit_character_ids,
         )
         recovered_reference_ids += len(set(synchronized_ids) - set(previous_reference_ids))
         item["reference_image_ids"] = synchronized_ids
@@ -1350,6 +1692,24 @@ def _runninghub_error_message(payload: dict[str, Any]) -> str:
     return str(message).strip()
 
 
+def _looks_like_power_insufficient(code: int | None, message: str) -> bool:
+    """Recognize quota exhaustion from both submit and asynchronous task results.
+
+    RunningHub can report a depleted account as a normal task failure instead of
+    returning 414 at submit time.  That must retire the account immediately;
+    retrying the same key cannot ever succeed and starves the remaining pool.
+    """
+    if code == 414:
+        return True
+    normalized = str(message or "").lower()
+    markers = (
+        "power value", "powervalue", "insufficient power", "insufficient balance",
+        "insufficient credit", "quota exceeded", "余额不足", "积分不足", "算力不足",
+        "算力值不足", "点数不足", "额度不足", "余额已不足",
+    )
+    return any(marker in normalized for marker in markers)
+
+
 def _runninghub_result_error_code(payload: dict[str, Any]) -> int | None:
     raw_code = _find_first_key(payload, {"errorCode"})
     try:
@@ -1443,7 +1803,7 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
     message = _runninghub_error_message(payload)
     if code == 421:
         raise RunningHubQueueFull("RunningHub 队列已满（421）")
-    if code == 414:
+    if _looks_like_power_insufficient(code, message):
         raise RunningHubPowerInsufficient(
             "当前 RunningHub 工作流的 power value 不足（414）。"
             "请为该工作流充值/补充算力值后再试。"
@@ -1620,6 +1980,12 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
         else:
             message = _runninghub_error_message(result)
             error_code = _runninghub_result_error_code(result)
+            if error_code is None:
+                error_code = _runninghub_error_code(result)
+            if _looks_like_power_insufficient(error_code, message):
+                raise RunningHubPowerInsufficient(
+                    f"{poster_id} 的账号算力/余额不足（{error_code or '云端返回'}）: {message or status}"
+                )
             if error_code == 1516:
                 raise RunningHubResultRetryableError(
                     f"{poster_id} 云端返图文件异常（1516）: {message or status}"

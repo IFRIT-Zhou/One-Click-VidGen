@@ -1,10 +1,11 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
 set "ROOT_PATH=%ROOT_DIR:~0,-1%"
 cd /d "%ROOT_DIR%"
 set "BACKEND_PYTHON=%ROOT_DIR%runtime\python\python.exe"
+set "WATCHDOG_PYTHON=%ROOT_DIR%runtime\python\pythonw.exe"
 set "ASR_PYTHON=%BACKEND_PYTHON%"
 set "NPM=%ROOT_DIR%runtime\node\npm.cmd"
 set "NODE=%ROOT_DIR%runtime\node\node.exe"
@@ -34,6 +35,12 @@ echo Checking runtime commands...
 if not exist "%BACKEND_PYTHON%" (
     echo [ERROR] Backend Python venv was not found:
     echo %BACKEND_PYTHON%
+    pause
+    exit /b 1
+)
+if not exist "%WATCHDOG_PYTHON%" (
+    echo [ERROR] Portable Python windowless runtime was not found:
+    echo %WATCHDOG_PYTHON%
     pause
     exit /b 1
 )
@@ -94,12 +101,21 @@ if not exist "frontend\node_modules" (
 
 if not exist "%ROOT_DIR%runtime_logs" mkdir "%ROOT_DIR%runtime_logs"
 
-call :check_url "http://127.0.0.1:8010/api/session"
-if errorlevel 1 (
+call :check_backend_state
+set "BACKEND_STATE=%errorlevel%"
+if "%BACKEND_STATE%"=="2" (
+    echo [RESTART] Backend source files changed; stopping stale service on port 8010...
+    call :stop_port 8010
+    if errorlevel 1 goto :startup_failed
+    call :wait_port_closed 8010
+    if errorlevel 1 goto :startup_failed
+    set "BACKEND_STATE=1"
+)
+if "%BACKEND_STATE%"=="1" (
     echo [START] Backend in unified console...
     start "" /b "%BACKEND_PYTHON%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010 1>>"%ROOT_DIR%runtime_logs\backend.stdout.log" 2>>"%ROOT_DIR%runtime_logs\backend.stderr.log"
 ) else (
-    echo [OK] Backend is already running.
+    echo [OK] Backend is already running and source is current.
 )
 
 call :check_url "http://127.0.0.1:5173"
@@ -120,9 +136,30 @@ echo Open this URL:
 echo   http://127.0.0.1:5173
 echo.
 echo Backend and frontend are running without extra windows.
-echo To stop them, run stop_dev.bat.
-pause
-exit /b 0
+echo Keep this window open while using the app.
+echo Closing this window will automatically stop both local services.
+echo You can also run stop_dev.bat for manual cleanup.
+echo.
+
+set "BACKEND_PID="
+set "FRONTEND_PID="
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8010 .*LISTENING"') do if not defined BACKEND_PID set "BACKEND_PID=%%P"
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":5173 .*LISTENING"') do if not defined FRONTEND_PID set "FRONTEND_PID=%%P"
+if not defined BACKEND_PID goto :startup_failed
+if not defined FRONTEND_PID goto :startup_failed
+
+set "LIFETIME_HEARTBEAT=%ROOT_DIR%runtime_logs\launcher_%RANDOM%_%RANDOM%.heartbeat"
+>"!LIFETIME_HEARTBEAT!" echo alive
+start "" /b "%WATCHDOG_PYTHON%" "%ROOT_DIR%tools\local_service_watchdog.py" --heartbeat "!LIFETIME_HEARTBEAT!" --pid "!BACKEND_PID!" --pid "!FRONTEND_PID!" --log "%ROOT_DIR%runtime_logs\service_watchdog.log"
+if errorlevel 1 (
+    echo [ERROR] Could not start the service lifetime watchdog.
+    goto :startup_failed
+)
+
+:keep_services_alive
+>"!LIFETIME_HEARTBEAT!" echo alive
+ping 127.0.0.1 -n 3 >nul
+goto :keep_services_alive
 
 :startup_failed
 echo.
@@ -134,6 +171,28 @@ exit /b 1
 :check_url
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri '%~1'; if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) { exit 0 } } catch {}; exit 1" >nul 2>nul
+exit /b %errorlevel%
+
+:check_backend_state
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri 'http://127.0.0.1:8010/api/health'; $data = $response.Content | ConvertFrom-Json; if (-not $data.server_started_at) { exit 2 }; $started = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]([double]$data.server_started_at * 1000)).UtcDateTime; $files = @(); $files += Get-ChildItem -LiteralPath '%ROOT_DIR%backend\app' -Recurse -File -Filter '*.py'; $files += Get-ChildItem -LiteralPath '%ROOT_DIR%' -File -Filter '*.py'; $latest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if ($latest -and $latest.LastWriteTimeUtc -gt $started.AddSeconds(2)) { exit 2 }; exit 0 } catch { exit 1 }" >nul 2>nul
+exit /b %errorlevel%
+
+:stop_port
+set "STOP_FAILED=0"
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%~1 .*LISTENING"') do (
+    taskkill /PID %%P /T /F >nul 2>nul
+    if errorlevel 1 set "STOP_FAILED=1"
+)
+if "!STOP_FAILED!"=="1" (
+    echo [ERROR] Could not stop the stale service on port %~1. Please run stop_dev.bat as administrator once.
+    exit /b 1
+)
+exit /b 0
+
+:wait_port_closed
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$deadline = [DateTime]::UtcNow.AddSeconds(10); while ([DateTime]::UtcNow -lt $deadline) { $listening = netstat -ano | Select-String -Pattern ('^\s*TCP\s+\S+:' + %~1 + '\s+\S+\s+LISTENING\s+\d+\s*$'); if (-not $listening) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1" >nul 2>nul
 exit /b %errorlevel%
 
 :wait_url

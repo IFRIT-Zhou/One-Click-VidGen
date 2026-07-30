@@ -1,7 +1,11 @@
 import re
 import unittest
 
-from module1_agent_director import CHUNK_MAX_LEN, split_indextts2_text
+from module1_agent_director import (
+    CHUNK_MAX_LEN,
+    _split_sentences_preserving_closers,
+    split_indextts2_text,
+)
 
 
 class TtsSemanticChunkingTest(unittest.TestCase):
@@ -45,6 +49,17 @@ class TtsSemanticChunkingTest(unittest.TestCase):
         chunks = split_indextts2_text(source)
         self.assert_complete(source, chunks)
         self.assertTrue(any(chunk.endswith("。”") for chunk in chunks))
+
+    def test_wrapper_marks_never_create_sentence_boundaries(self) -> None:
+        source = "“沟通”《关系修复》<重点>【温柔表达】都属于同一个完整句子"
+        self.assertEqual(_split_sentences_preserving_closers(source), [source])
+        self.assertEqual(split_indextts2_text(source), [source])
+
+    def test_spoken_square_bracket_content_is_not_treated_as_production_note(self) -> None:
+        source = "今天要讲的是【关系修复】，这些内容应当正常保留并参与配音。"
+        chunks = split_indextts2_text(source)
+        self.assert_complete(source, chunks)
+        self.assertIn("【关系修复】", "".join(chunks))
 
     def test_production_notes_are_removed_before_integrity_check(self) -> None:
         source = "【镜头说明】第一句需要被朗读。\n此处留白三秒\n第二句同样需要被朗读。"

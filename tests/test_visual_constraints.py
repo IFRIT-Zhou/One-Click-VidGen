@@ -70,6 +70,68 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertNotIn("红色鸭舌帽", visual.DEFAULT_VISUAL_STYLE)
         self.assertIn("红色鸭舌帽", visual.DEFAULT_GLOBAL_CHARACTER_PROMPT)
 
+    def test_explicit_screen_content_becomes_device_only_and_clears_character_reference(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001", "start": 0, "end": 6,
+            "text_content": "她举起手机，屏幕上写着“今晚别回家”。",
+        }]
+        mapping = [{
+            "includes_slides": ["scene_001"],
+            "image_prompt": "林晚举着手机贴近脸部，角色形象参考图1，惊恐地看向镜头。",
+            "character_ids": ["lin_wan"],
+            "reference_image_ids": ["图1"],
+        }]
+        story_plan = {
+            "characters": [{
+                "character_id": "lin_wan", "name": "林晚", "role": "主角",
+                "appearance": "35岁黑色长发女性",
+            }],
+            "semantic_units": [{
+                "start_slide_id": "scene_001", "end_slide_id": "scene_001",
+                "character_ids": [], "device_shot_mode": "screen_insert",
+                "device_type": "手机", "screen_content": "今晚别回家",
+            }],
+        }
+        with patch.dict(os.environ, {"USER_REFERENCE_IMAGE_PATHS_JSON": '["lin.png"]'}, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)[0]
+        self.assertEqual(result["device_shot_mode"], "screen_insert")
+        self.assertEqual(result["character_ids"], [])
+        self.assertEqual(result["reference_image_ids"], [])
+        self.assertIn("只展示手机正面屏幕", result["image_prompt"])
+        self.assertIn("今晚别回家", result["image_prompt"])
+        self.assertNotIn("林晚举着手机贴近脸部", result["image_prompt"])
+        self.assertNotIn("本镜头唯一角色卡", result["image_prompt"])
+
+    def test_unspecified_screen_content_keeps_person_but_forbids_readable_ui(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001", "start": 0, "end": 6,
+            "text_content": "林晚坐在床边，低头看了很久手机。",
+        }]
+        mapping = [{
+            "includes_slides": ["scene_001"],
+            "image_prompt": "林晚坐在床边低头查看手机，神情疲惫。",
+            "character_ids": ["lin_wan"],
+            "reference_image_ids": ["图1"],
+        }]
+        story_plan = {
+            "characters": [{
+                "character_id": "lin_wan", "name": "林晚", "role": "主角",
+                "appearance": "35岁黑色长发女性",
+            }],
+            "semantic_units": [{
+                "start_slide_id": "scene_001", "end_slide_id": "scene_001",
+                "character_ids": ["lin_wan"], "device_shot_mode": "device_interaction",
+                "device_type": "手机", "screen_content": "不应保留",
+            }],
+        }
+        with patch.dict(os.environ, {"USER_REFERENCE_IMAGE_PATHS_JSON": '["lin.png"]'}, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)[0]
+        self.assertEqual(result["device_shot_mode"], "device_interaction")
+        self.assertEqual(result["reference_image_ids"], ["图1"])
+        self.assertEqual(result["screen_content"], "")
+        self.assertIn("屏幕必须背向镜头、虚化或不可读", result["image_prompt"])
+        self.assertIn("林晚", result["image_prompt"])
+
     def test_pacing_groups_use_agent_one_recommendation_and_real_timestamps(self) -> None:
         scenes = [
             {"slide_id": f"scene_{index:03d}", "start": (index - 1) * 3, "end": index * 3}
@@ -116,14 +178,15 @@ class VisualConstraintsTest(unittest.TestCase):
         with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": style}, clear=False):
             result = visual._finalize_mapping(mapping, scenes, story_plan)
         prompt = result[0]["image_prompt"]
-        self.assertIn("主角萱萱妈妈（35岁中年女性", prompt)
-        self.assertGreaterEqual(prompt.count("35岁中年女性，黑色长发，随时都戴着红色鸭舌帽"), 2)
+        self.assertIn("萱萱妈妈：35岁中年女性", prompt)
+        self.assertEqual(prompt.count("35岁中年女性，黑色长发，随时都戴着红色鸭舌帽"), 1)
         self.assertIn("本镜头服装=磨旧的深灰色骑行服", prompt)
         self.assertNotIn("前期居家服，后期骑行服或运动装", prompt)
         self.assertNotIn("本镜头头部状态=白色骑行头盔", prompt)
         self.assertNotIn("同一角色的脸型、发型、年龄、服装和标志性物件", prompt)
-        self.assertIn("本镜头角色造型硬约束", prompt)
+        self.assertIn("本镜头唯一角色卡", prompt)
         self.assertIn("【统一画面风格】", prompt)
+        self.assertIn("【视觉媒介锁】", prompt)
 
     def test_duration_and_character_style_are_enforced(self) -> None:
         scenes = [
@@ -149,10 +212,10 @@ class VisualConstraintsTest(unittest.TestCase):
             included = [scenes_by_id[slide_id] for slide_id in item["includes_slides"]]
             duration = max(scene["end"] for scene in included) - min(scene["start"] for scene in included)
             self.assertLessEqual(duration, 15.0)
-            self.assertIn(style, item["image_prompt"])
-            self.assertIn("去除燥波燥点", item["image_prompt"])
-            self.assertEqual(item["image_prompt"].count(style), 1)
-            self.assertEqual(item["image_prompt"].count("去除燥波燥点"), 1)
+            self.assertIn(style.rstrip("。"), item["image_prompt"])
+            self.assertIn("保留所选画风需要的线稿", item["image_prompt"])
+            self.assertEqual(item["image_prompt"].count(style.rstrip("。")), 1)
+            self.assertEqual(item["image_prompt"].count("保留所选画风需要的线稿"), 1)
             covered.extend(item["includes_slides"])
         self.assertEqual(covered, list(scenes_by_id))
 
@@ -168,8 +231,9 @@ class VisualConstraintsTest(unittest.TestCase):
         with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": style}, clear=False):
             result = visual._finalize_mapping(mapping, scenes)
         prompt = result[0]["image_prompt"]
-        self.assertEqual(prompt.count(style), 1)
-        self.assertEqual(prompt.count("去除燥波燥点"), 1)
+        self.assertEqual(prompt.count(style.rstrip("。")), 1)
+        self.assertNotIn("去除燥波燥点", prompt)
+        self.assertEqual(prompt.count("保留所选画风需要的线稿"), 1)
         self.assertIn("少女站在讲台前", prompt)
 
     def test_quality_is_not_duplicated_when_forced_style_already_contains_it(self) -> None:
@@ -183,7 +247,8 @@ class VisualConstraintsTest(unittest.TestCase):
         }]
         with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": style}, clear=False):
             result = visual._finalize_mapping(mapping, scenes)
-        self.assertEqual(result[0]["image_prompt"].count("去除燥波燥点"), 1)
+        self.assertNotIn("去除燥波燥点", result[0]["image_prompt"])
+        self.assertEqual(result[0]["image_prompt"].count("保留所选画风需要的线稿"), 1)
 
     def test_explicit_imagery_is_rewritten_before_submission(self) -> None:
         prompt = "走廊里出现腐烂尸体，满地鲜血，画面血肉模糊。"
@@ -270,9 +335,111 @@ class VisualConstraintsTest(unittest.TestCase):
         }, clear=False):
             result = visual._finalize_mapping(mapping, scenes, story_plan)
         prompt = result[0]["image_prompt"]
-        self.assertIn("精灵弓手莱恩（金色长发束在脑后，角色形象参考图3）正向", prompt)
-        self.assertIn("王国骑士艾德里安（年轻，身着银色胸甲，角色形象参考图1）", prompt)
+        self.assertIn("莱恩：金色长发束在脑后；角色形象参考图3", prompt)
+        self.assertIn("艾德里安：年轻，身着银色胸甲；角色形象参考图1", prompt)
+        self.assertIn("莱恩正向艾德里安严肃地讲述情况", prompt)
         self.assertEqual(result[0]["reference_image_ids"], ["图1", "图3"])
+
+    def test_natural_character_reference_wording_is_supported(self) -> None:
+        with patch.dict(os.environ, {
+            "GLOBAL_CHARACTER_PROMPT": "林晚形象参考图1\n男主角参考图2\n女主角角色形象参考图3",
+            "USER_REFERENCE_IMAGE_PATHS_JSON": '["lin.png", "male.png", "female.png"]',
+        }, clear=False):
+            self.assertEqual(visual._character_reference_label("林晚"), "图1")
+            self.assertEqual(visual._character_reference_label("男主角"), "图2")
+            self.assertEqual(visual._character_reference_label("女主角"), "图3")
+
+    def test_agent_one_context_does_not_bind_reference_to_environment_shot(self) -> None:
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        mapping = [{
+            "macro_scene_id": "poster_001",
+            "includes_slides": ["scene_001"],
+            "character_ids": [],
+            "image_prompt": "阳台上一条洗得发白的旧毛巾特写",
+            "reference_image_ids": [],
+        }]
+        story_plan = {
+            "characters": [{
+                "character_id": "lin_wan",
+                "name": "林晚",
+                "role": "主角",
+                "appearance": "三十岁，黑色中长发",
+            }],
+            "semantic_units": [{
+                "start_slide_id": "scene_001",
+                "end_slide_id": "scene_001",
+                "character_ids": ["lin_wan"],
+            }],
+        }
+        with patch.dict(os.environ, {
+            "GLOBAL_CHARACTER_PROMPT": "林晚形象参考图1",
+            "USER_REFERENCE_IMAGE_PATHS_JSON": '["lin.png"]',
+            "VISUAL_STYLE_PROMPT": "",
+        }, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)
+        self.assertEqual(result[0]["reference_image_ids"], [])
+
+    def test_named_visible_character_recovers_reference_from_natural_wording(self) -> None:
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        mapping = [{
+            "macro_scene_id": "poster_001",
+            "includes_slides": ["scene_001"],
+            "character_ids": [],
+            "image_prompt": "林晚站在水槽前安静地洗碗",
+            "reference_image_ids": [],
+        }]
+        story_plan = {"characters": [{
+            "character_id": "lin_wan",
+            "name": "林晚",
+            "role": "主角",
+            "appearance": "三十岁，黑色中长发",
+        }]}
+        with patch.dict(os.environ, {
+            "GLOBAL_CHARACTER_PROMPT": "林晚形象参考图1",
+            "USER_REFERENCE_IMAGE_PATHS_JSON": '["lin.png"]',
+            "VISUAL_STYLE_PROMPT": "",
+        }, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)
+        self.assertEqual(result[0]["reference_image_ids"], ["图1"])
+        self.assertIn("角色形象参考图1", result[0]["image_prompt"])
+
+    def test_shared_role_characters_get_one_unique_card_and_no_duplicate_appearance(self) -> None:
+        scenes = [
+            {"slide_id": "scene_001", "start": 0, "end": 5},
+            {"slide_id": "scene_002", "start": 5, "end": 10},
+        ]
+        wife_appearance = "31岁左右，黑色中长发，气质温和但略显疲惫"
+        husband_appearance = "33岁左右，短黑发，面容朴实，工作后略显疲惫"
+        mapping = [{
+            "macro_scene_id": "poster_001",
+            "includes_slides": ["scene_001", "scene_002"],
+            "character_ids": ["wife", "husband"],
+            "image_prompt": (
+                f"家庭经营者妻子（{wife_appearance}）站在窗边，"
+                f"家庭经营者丈夫（{husband_appearance}）坐在沙发上。"
+            ),
+        }]
+        story_plan = {
+            "characters": [
+                {"character_id": "wife", "name": "妻子", "role": "家庭经营者", "appearance": wife_appearance, "wardrobe": "米白针织衫"},
+                {"character_id": "husband", "name": "丈夫", "role": "家庭经营者", "appearance": husband_appearance, "wardrobe": "深蓝衬衫"},
+            ],
+            "semantic_units": [{
+                "start_slide_id": "scene_001", "end_slide_id": "scene_002",
+                "character_ids": ["wife", "husband"],
+            }],
+        }
+        with patch.dict(os.environ, {"VISUAL_STYLE_PROMPT": "温暖治愈的都市情感口播插画风"}, clear=False):
+            result = visual._finalize_mapping(mapping, scenes, story_plan)
+        prompt = result[0]["image_prompt"]
+        self.assertIn(f"妻子：{wife_appearance}", prompt)
+        self.assertIn(f"丈夫：{husband_appearance}", prompt)
+        self.assertEqual(prompt.count(wife_appearance), 1)
+        self.assertEqual(prompt.count(husband_appearance), 1)
+        self.assertNotIn("家庭经营者：", prompt)
+        self.assertIn("妻子站在窗边", prompt)
+        self.assertIn("丈夫坐在沙发上", prompt)
+        self.assertIn("【视觉媒介锁】", prompt)
 
     def test_character_expansion_is_idempotent_and_deduplicates_role_and_reference(self) -> None:
         story_plan = {"characters": [{
@@ -305,6 +472,21 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIs(first_call_pool, second_call_pool)
         self.assertEqual(first_call_pool.acquire()["account_label"], "账号 1")
         self.assertEqual(second_call_pool.acquire()["account_label"], "账号 2")
+
+    def test_power_exhausted_account_is_skipped_by_new_pool(self) -> None:
+        configs = [
+            {"api_key": "quota-key-1", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k", "account_label": "账号 1"},
+            {"api_key": "quota-key-2", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k", "account_label": "账号 2"},
+        ]
+        try:
+            first = visual.RunningHubAccountPool(configs)
+            first.mark_power_exhausted(configs[0])
+            next_batch = visual.RunningHubAccountPool(configs)
+            self.assertEqual(next_batch.acquire()["account_label"], "账号 2")
+            self.assertTrue(visual._looks_like_power_insufficient(None, "账户余额不足"))
+        finally:
+            with visual._ACCOUNT_STATE_LOCK:
+                visual._POWER_EXHAUSTED_ACCOUNT_KEYS.difference_update({"quota-key-1", "quota-key-2"})
 
     def test_multi_moment_prompt_gets_single_scene_guard_but_comparison_is_allowed(self) -> None:
         risky = visual._single_scene_guard("村民从窗后窥视，随后男人走出浓雾并忘记名字")

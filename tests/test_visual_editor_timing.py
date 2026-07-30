@@ -10,6 +10,56 @@ from backend.app.visual_editor import VisualEditor
 
 
 class VisualEditorTimingTest(unittest.TestCase):
+    def test_new_bgm_selection_is_archived_for_visual_rerender(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = root / "output" / "demo"
+            source_a = root / "warm.mp3"
+            source_b = root / "ending.wav"
+            source_a.write_bytes(b"music-a")
+            source_b.write_bytes(b"music-b")
+            count = VisualEditor._archive_bgm_override(project, {
+                "tracks": [
+                    {"path": str(source_a), "volume_db": -10},
+                    {"path": str(source_b), "volume_db": -8},
+                ],
+                "fade_enabled": True,
+                "fade_duration": 2.5,
+            })
+            self.assertEqual(count, 2)
+            manifest_path = project / "other" / "BGM设置.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual([item["filename"] for item in manifest["tracks"]], ["001.mp3", "002.wav"])
+            self.assertEqual([item["volume_db"] for item in manifest["tracks"]], [-10.0, -8.0])
+            self.assertTrue(manifest["fade_enabled"])
+            self.assertEqual(manifest["fade_duration"], 2.5)
+            self.assertEqual((project / "input" / "BGM" / "001.mp3").read_bytes(), b"music-a")
+            inspected = VisualEditor._inspect_bgm_settings("job-1", project)
+            self.assertTrue(inspected["enabled"])
+            self.assertEqual(len(inspected["tracks"]), 2)
+            self.assertIn("/api/jobs/job-1/visual-bgm/001.mp3", inspected["tracks"][0]["url"])
+
+            # Reordering an already archived track must stage it before the old
+            # BGM directory is cleaned, rather than deleting its own source.
+            archived_source = project / "input" / "BGM" / "001.mp3"
+            replaced = VisualEditor._archive_bgm_override(project, {
+                "tracks": [{"path": str(archived_source), "volume_db": -6}],
+                "fade_enabled": False,
+                "fade_duration": 1,
+            })
+            self.assertEqual(replaced, 1)
+            self.assertEqual((project / "input" / "BGM" / "001.mp3").read_bytes(), b"music-a")
+
+    def test_prepare_render_workspace_recreates_cleaned_module_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = VisualEditor._prepare_render_workspace(root / "output" / "other" / ".render_runtime")
+
+            self.assertTrue(paths["visual"].is_dir())
+            self.assertTrue(paths["assets"].is_dir())
+            self.assertTrue(paths["audio"].is_dir())
+            self.assertTrue(paths["final"].is_dir())
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.project = Path(self.tmp.name)

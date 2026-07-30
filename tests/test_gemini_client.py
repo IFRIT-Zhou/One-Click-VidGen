@@ -5,6 +5,30 @@ from backend.app import gemini_client
 
 
 class GeminiClientTest(unittest.TestCase):
+    def test_deepseek_uses_its_own_key_model_and_openai_endpoint(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "deepseek",
+                "DEEPSEEK_API_KEY": "deepseek-key",
+                "DEEPSEEK_MODEL": "deepseek-test",
+            }, clear=False),
+        ):
+            text = gemini_client.generate_gemini_text(
+                system_prompt="system",
+                user_prompt="user",
+                response_mime_type="application/json",
+            )
+        self.assertEqual(text, "[]")
+        self.assertEqual(request_post.call_args.args[0], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer deepseek-key")
+        self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek-test")
+
     def test_openai_compatible_length_finish_is_reported_as_truncation(self) -> None:
         response = Mock()
         response.ok = True

@@ -20,6 +20,7 @@ from .pipeline import JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, register_job_asset
 # Reference images and local replacements share the same supported formats as
 # the main image-reference workflow.  Image2 accepts PNG/WebP as well as JPG.
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 MAPPING_FILENAME = "画面映射.json"
 TIMELINE_FILENAME = "画面时间线.json"
 MANIFEST_FILENAME = "画面修改清单.json"
@@ -107,6 +108,22 @@ class VisualEditor:
     @staticmethod
     def _timeline_path(project_dir: Path) -> Path:
         return project_dir / "other" / TIMELINE_FILENAME
+
+    @staticmethod
+    def _prepare_render_workspace(render_root: Path) -> dict[str, Path]:
+        """Create a job-local module 4/5 cache below the archived output project."""
+        visual_dir = render_root / "3_visual_template"
+        paths = {
+            "root": render_root,
+            "visual": visual_dir,
+            "assets": visual_dir / "assets",
+            "audio": render_root / "2_audio_srt",
+            "final": render_root / "4_final_video",
+        }
+        for key, directory in paths.items():
+            if key != "root":
+                directory.mkdir(parents=True, exist_ok=True)
+        return paths
 
     @staticmethod
     def _migrate_segmented_slide_ids(project_dir: Path) -> bool:
@@ -671,6 +688,7 @@ class VisualEditor:
             }
         for item in items:
             item["task"] = image_tasks.get(item["id"], {"status": "idle", "message": ""})
+        bgm_settings = self._inspect_bgm_settings(job_id, project_dir)
         return {
             "items": items,
             "task": task,
@@ -679,8 +697,40 @@ class VisualEditor:
             "timing_available": timing_available,
             "timing_message": timing_message,
             "timing_history": self._timing_history_entries(project_dir),
+            "bgm": bgm_settings,
             "project_dir": str(project_dir),
             "version": int(time.time() * 1000),
+        }
+
+    @staticmethod
+    def _inspect_bgm_settings(job_id: str, project_dir: Path) -> dict[str, Any]:
+        manifest_path = project_dir / "other" / "BGM设置.json"
+        empty = {"enabled": False, "tracks": [], "fade_enabled": False, "fade_duration": 1}
+        if not manifest_path.is_file():
+            return empty
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return empty
+        root = (project_dir / "input" / "BGM").resolve()
+        tracks: list[dict[str, Any]] = []
+        for item in manifest.get("tracks") or []:
+            filename = Path(str(item.get("filename") or "")).name
+            path = (root / filename).resolve()
+            if not filename or root not in path.parents or not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
+                continue
+            tracks.append({
+                "archived_filename": filename,
+                "name": filename,
+                "volume_db": float(item.get("volume_db", -10)),
+                "duration_seconds": item.get("duration_seconds"),
+                "url": f"/api/jobs/{job_id}/visual-bgm/{filename}?v={path.stat().st_mtime_ns}",
+            })
+        return {
+            "enabled": bool(tracks),
+            "tracks": tracks,
+            "fade_enabled": bool(manifest.get("fade_enabled")),
+            "fade_duration": float(manifest.get("fade_duration") or 1),
         }
 
     def status(self, job_id: str) -> dict[str, Any]:
@@ -705,6 +755,16 @@ class VisualEditor:
         image_root = (VisualEditor.output_dir(job_id, user_id) / "image").resolve()
         if image_root not in path.parents or not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
             raise FileNotFoundError("image not found")
+        return path
+
+    @staticmethod
+    def bgm_path(job_id: str, user_id: int, filename: str) -> Path:
+        if Path(filename).name != filename:
+            raise FileNotFoundError("invalid BGM filename")
+        root = (VisualEditor.output_dir(job_id, user_id) / "input" / "BGM").resolve()
+        path = (root / filename).resolve()
+        if root not in path.parents or not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
+            raise FileNotFoundError("BGM file not found")
         return path
 
     def _set_task(self, job_id: str, **changes: Any) -> None:
@@ -1051,7 +1111,67 @@ class VisualEditor:
         self._set_task(job_id, status="completed", action="timing_remove", macro_id=macro_id, message=f"已移除 {macro_id}，其字幕已分配给相邻画面{recovery_note}")
         return self.inspect(job_id, user_id)
 
-    def render_video(self, *, job: Any, mode: str = "both") -> None:
+    @staticmethod
+    def _archive_bgm_override(project_dir: Path, settings: dict[str, Any]) -> int:
+        """Replace a completed project's portable BGM archive for future renders."""
+        input_dir = project_dir / "input"
+        bgm_dir = input_dir / "BGM"
+        other_dir = project_dir / "other"
+        bgm_dir.mkdir(parents=True, exist_ok=True)
+        other_dir.mkdir(parents=True, exist_ok=True)
+        # The directory is project-scoped and contains only archived BGM copies.
+        # Delete files individually so an unrelated project folder can never be
+        # removed by a malformed/computed path.
+        staged_sources: list[tuple[Path, float, float | None]] = []
+        for index, item in enumerate(settings.get("tracks") or [], 1):
+            source = Path(str(item.get("path") or "")).resolve()
+            if not source.is_file() or source.suffix.lower() not in AUDIO_EXTENSIONS:
+                raise ValueError(f"BGM 文件不可用：{source.name or '未知文件'}")
+            # An existing archived track lives inside the directory that is about
+            # to be replaced. Stage it beside the manifest before cleaning.
+            if bgm_dir.resolve() in source.parents:
+                staged = other_dir / f".bgm_stage_{time.time_ns()}_{index}{source.suffix.lower()}"
+                shutil.copy2(source, staged)
+                source = staged
+            raw_duration = item.get("duration_seconds")
+            duration = float(raw_duration) if raw_duration is not None else None
+            staged_sources.append((source, float(item.get("volume_db", -10)), duration))
+        for existing in bgm_dir.iterdir():
+            if existing.is_file():
+                existing.unlink()
+        manifest_path = other_dir / "BGM设置.json"
+        if manifest_path.is_file():
+            manifest_path.unlink()
+
+        archived_tracks: list[dict[str, Any]] = []
+        for index, (source, volume_db, duration) in enumerate(staged_sources, 1):
+            target = bgm_dir / f"{index:03d}{source.suffix.lower()}"
+            shutil.copy2(source, target)
+            archived_tracks.append({
+                "filename": target.name,
+                "volume_db": max(-60.0, min(6.0, volume_db)),
+                "duration_seconds": duration,
+            })
+            if source.name.startswith(".bgm_stage_") and source.parent == other_dir:
+                source.unlink(missing_ok=True)
+        if not archived_tracks:
+            return 0
+        manifest = {
+            "enabled": True,
+            "tracks": archived_tracks,
+            "fade_enabled": bool(settings.get("fade_enabled")),
+            "fade_duration": max(0.1, min(30.0, float(settings.get("fade_duration") or 1))),
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        return len(archived_tracks)
+
+    def render_video(
+        self,
+        *,
+        job: Any,
+        mode: str = "both",
+        bgm_override: dict[str, Any] | None = None,
+    ) -> None:
         with self._lock:
             has_active_image_tasks = any(
                 value.get("status") == "running"
@@ -1066,19 +1186,25 @@ class VisualEditor:
         self._set_task(job.id, status="running", action="render", message="正在仅运行模块 5 重新合成视频")
 
         def work() -> None:
+            render_root: Path | None = None
             try:
                 with job_store_lock(job):
                     project_dir = self.output_dir(job.id, int(job.user_id))
+                    if bgm_override is not None:
+                        bgm_count = self._archive_bgm_override(project_dir, bgm_override)
+                        if bgm_count:
+                            self._log(job, f"已将当前选择的 {bgm_count} 首 BGM 保存到项目，并用于本次重新渲染。")
+                        else:
+                            self._log(job, "已清除该项目归档的 BGM，本次重新渲染不添加背景音乐。")
                     self._migrate_segmented_slide_ids(project_dir)
-                    import module4_video_render as visual
-                    import module5_video_render as renderer
-
+                    render_root = project_dir / "other" / f".render_runtime_{job.id}_{time.time_ns()}"
+                    render_paths = self._prepare_render_workspace(render_root)
                     mapping_path = self._mapping_path(project_dir)
                     timeline_path = self._timeline_path(project_dir)
                     if mapping_path.is_file():
-                        shutil.copy2(mapping_path, visual.POSTER_MAPPING_PATH)
+                        shutil.copy2(mapping_path, render_paths["visual"] / "poster_mapping.json")
                     if timeline_path.is_file():
-                        shutil.copy2(timeline_path, visual.TIMELINE_PATH)
+                        shutil.copy2(timeline_path, render_paths["visual"] / "fine_grained_timeline.json")
                     html_path = project_dir / "other" / HTML_FILENAME
                     subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
                     audio_path = project_dir / "input" / "配音.wav"
@@ -1097,16 +1223,33 @@ class VisualEditor:
                         self._log(job, "该历史项目缺少可编辑的字幕分组，沿用原始画面时序重新渲染。")
                     html = html_path.read_text(encoding="utf-8")
                     html = html.replace("../image/", "assets/").replace("../input/配音.wav", "2_audio_srt/final_output.wav")
-                    (visual.VISUAL_DIR / "index.html").write_text(html, encoding="utf-8")
-                    visual.ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+                    (render_paths["visual"] / "index.html").write_text(html, encoding="utf-8")
                     for image in (project_dir / "image").glob("*"):
                         if image.suffix.lower() in IMAGE_EXTENSIONS:
-                            shutil.copy2(image, visual.ASSETS_DIR / image.name)
-                    shutil.copy2(audio_path, renderer.AUDIO_DIR / "final_output.wav")
-                    shutil.copy2(subtitle_path, renderer.AUDIO_DIR / "final_short.srt")
+                            shutil.copy2(image, render_paths["assets"] / image.name)
+                    shutil.copy2(audio_path, render_paths["audio"] / "final_output.wav")
+                    shutil.copy2(subtitle_path, render_paths["audio"] / "final_short.srt")
                     render_env = os.environ.copy()
                     render_env["VIDEO_RENDER_VARIANT"] = mode
                     render_env["PYTHONUTF8"] = "1"
+                    render_env["OCV_RENDER_WORKSPACE_DIR"] = str(render_root)
+                    bgm_manifest_path = project_dir / "other" / "BGM设置.json"
+                    if bgm_manifest_path.is_file():
+                        bgm_manifest = json.loads(bgm_manifest_path.read_text(encoding="utf-8"))
+                        archived_bgm_tracks: list[dict[str, Any]] = []
+                        bgm_root = (project_dir / "input" / "BGM").resolve()
+                        for item in bgm_manifest.get("tracks") or []:
+                            bgm_path = (bgm_root / str(item.get("filename") or "")).resolve()
+                            if bgm_root in bgm_path.parents and bgm_path.is_file():
+                                archived_bgm_tracks.append({
+                                    "path": str(bgm_path),
+                                    "volume_db": float(item.get("volume_db", -15)),
+                                })
+                        if archived_bgm_tracks:
+                            render_env["BGM_TRACKS_JSON"] = json.dumps(archived_bgm_tracks, ensure_ascii=False)
+                            render_env["BGM_FADE_ENABLED"] = "1" if bool(bgm_manifest.get("fade_enabled")) else "0"
+                            render_env["BGM_FADE_DURATION"] = str(float(bgm_manifest.get("fade_duration") or 1))
+                            self._log(job, f"重新渲染将沿用项目归档的 {len(archived_bgm_tracks)} 首 BGM。")
                     command = [sys.executable, str(PROJECT_ROOT / "module5_video_render.py")]
                     self._log(job, f"开始重新渲染（{mode}），模块 5 的实时输出将持续写入主后台日志。")
                     process = subprocess.Popen(
@@ -1142,14 +1285,10 @@ class VisualEditor:
                         raise RuntimeError(f"模块 5 重新渲染失败，退出码 {return_code}")
                     video_dir = project_dir / "video"
                     video_dir.mkdir(parents=True, exist_ok=True)
-                    copies = {
-                        renderer.FINAL_DIR / "final_with_subtitles.mp4": video_dir / "最终视频_字幕版.mp4",
-                        renderer.FINAL_DIR / "final_raw_presentation.mp4": video_dir / "最终视频_纯净版.mp4",
-                    }
                     selected = {"subtitles", "raw"} if mode == "both" else {mode}
                     for variant, (source, target) in {
-                        "subtitles": (renderer.FINAL_DIR / "final_with_subtitles.mp4", video_dir / "最终视频_字幕版.mp4"),
-                        "raw": (renderer.FINAL_DIR / "final_raw_presentation.mp4", video_dir / "最终视频_纯净版.mp4"),
+                        "subtitles": (render_paths["final"] / "final_with_subtitles.mp4", video_dir / "最终视频_字幕版.mp4"),
+                        "raw": (render_paths["final"] / "final_raw_presentation.mp4", video_dir / "最终视频_纯净版.mp4"),
                     }.items():
                         if variant not in selected:
                             continue
@@ -1168,6 +1307,8 @@ class VisualEditor:
                 self._set_task(job.id, status="failed", action="render", message=str(exc))
                 self._log(job, f"重新渲染失败：{exc}")
             finally:
+                if render_root is not None:
+                    shutil.rmtree(render_root, ignore_errors=True)
                 if hasattr(job, "_visual_editor_render_mode"):
                     delattr(job, "_visual_editor_render_mode")
 

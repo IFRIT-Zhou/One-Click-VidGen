@@ -11,9 +11,24 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from bgm_mixer import mix_bgm_into_videos, tracks_from_env
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-WORKSPACE_DIR = PROJECT_ROOT / "workspace"
+
+
+def configured_path(name: str, default: Path) -> Path:
+    """Resolve an optional portable render path without changing normal defaults."""
+    value = str(os.getenv(name) or "").strip()
+    if not value:
+        return default.resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+WORKSPACE_DIR = configured_path("OCV_RENDER_WORKSPACE_DIR", PROJECT_ROOT / "workspace")
 VISUAL_DIR = WORKSPACE_DIR / "3_visual_template"
 AUDIO_DIR = WORKSPACE_DIR / "2_audio_srt"
 FINAL_DIR = WORKSPACE_DIR / "4_final_video"
@@ -432,6 +447,7 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
 
 
 def main() -> None:
+    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     html_path = VISUAL_DIR / "index.html"
     srt_path = AUDIO_DIR / "final_short.srt"
     if not html_path.exists():
@@ -493,6 +509,21 @@ def main() -> None:
         subtitle_html.unlink(missing_ok=True)
         raw_html.unlink(missing_ok=True)
 
+    bgm_tracks = tracks_from_env()
+    if bgm_tracks:
+        bgm_outputs = [
+            path for path in (
+                FINAL_DIR / "final_with_subtitles.mp4",
+                FINAL_DIR / "final_raw_presentation.mp4",
+            ) if path.is_file()
+        ]
+        print(f"[BGM] 开始按顺序添加 {len(bgm_tracks)} 首背景音乐", flush=True)
+        mix_bgm_into_videos(
+            bgm_outputs,
+            bgm_tracks,
+            fade_enabled=env_flag("BGM_FADE_ENABLED", False),
+            fade_duration=float(os.getenv("BGM_FADE_DURATION", "1") or 1),
+        )
     print(f"视频压制完毕: {FINAL_DIR}", flush=True)
 
 

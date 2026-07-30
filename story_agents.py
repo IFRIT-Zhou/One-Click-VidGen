@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,9 @@ STORY_CONTEXT_PATH = VISUAL_DIR / "story_context.json"
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 6
-CHARACTER_CONTINUITY_VERSION = 3
-STORY_CONTEXT_VERSION = 1
+STORY_AGENT_VERSION = 8
+CHARACTER_CONTINUITY_VERSION = 4
+STORY_CONTEXT_VERSION = 3
 
 
 def normalize_content_mode(value: str | None) -> str:
@@ -226,10 +227,43 @@ def story_context_fingerprint(
 AGENT0_SYSTEM_PROMPT = """你是视频流水线的 Agent 0：全文内容总编。
 你只负责通读一篇完整文案，建立可复用的全局资料；不要规划字幕分组、镜头时长、slide_id，也不要写生图提示词。
 只输出严格 JSON 对象，不要 Markdown。字段必须包括：
-story_type、logline、theme、narrative_tone、characters、locations、clues_and_payoffs、continuity_rules、visual_safety。
-characters 每项只包含 name、role、appearance、wardrobe、signature_item、relationships；不要填写 wardrobe_states。
+story_type、logline、theme、narrative_tone、characters、locations、key_information_objects、clues_and_payoffs、continuity_rules、visual_safety。
+characters 每项只包含 character_id、name、aliases、group_aliases、role、appearance、wardrobe、signature_item、relationships；不要填写 wardrobe_states。
+character_id 必须是唯一且稳定的英文小写 ID（例如 wife、husband、lin_wan）；name 必须是能唯一指向一个人的姓名或稳定代称。
+aliases 只能放该人物独占的姓名或称呼；“家庭经营者、同事、村民”等可能同时指向多人的职业或群体称呼只能放进 group_aliases，禁止当作个人 name 或独占 aliases。
+不同人物不得使用相同 name、character_id 或独占 alias。夫妻、父母、兄妹等没有姓名的人，必须分别命名为“妻子/丈夫”“母亲/父亲”等可区分的稳定代称。
 忠于原文，不得编造人物、事件、数据或世界观。用户人物设定与世界设定优先于你的推断。
-输出应紧凑：人物最多 10 个、地点最多 10 个、连续性规则最多 10 条。"""
+key_information_objects 只登记会被手机、平板、电脑显示器等设备展示并影响剧情理解的信息载体；
+每项仅包含 object_id、device_type、content、first_context、later_references。content 必须忠于原文，原文没有明确内容时不得猜测或补写。
+输出应紧凑：人物最多 10 个、地点最多 10 个、关键信息载体最多 10 个、连续性规则最多 10 条。"""
+
+AGENT0_IDENTITY_CONTRACT = """【系统固定角色身份结构】
+- characters 中每个自然人必须拥有唯一 character_id、唯一 name；character_id 使用英文小写字母、数字或下划线。
+- aliases 只允许该人物独占的姓名或称呼；多人共用的职业、关系类别或群体称呼只能写入 group_aliases。
+- 不得用“家庭经营者、同事、村民、主角”等可能指向多人的词作为不同人物共同的 name 或 aliases。
+- 即使用户使用共同职业描述人物，也必须分别建立可区分的稳定人物，例如“妻子/wife”“丈夫/husband”。"""
+
+
+AGENT0_DEVICE_INFORMATION_CONTRACT = """【系统固定设备信息结构】
+- 必须输出 key_information_objects 数组，只登记原文明确给出的手机、平板、电脑显示器等屏幕内容，以及后文对同一内容的稳定指代。
+- content 只能摘录或忠实概括原文已经明确说明的文字、照片、监控、网页或文件内容；只有“看手机、收到消息、打开电脑”等动作而内容不明时，不得登记虚构内容。
+- 不规划具体镜头；该资料仅供 Agent 1 判断后文“那条消息、那张照片、那个文件”是否已有明确内容。"""
+
+
+def _normalize_key_information_objects(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    return [
+        {
+            "object_id": str(item.get("object_id") or f"device_info_{index:02d}").strip()[:80],
+            "device_type": str(item.get("device_type") or "device").strip()[:40],
+            "content": str(item.get("content") or "").strip()[:300],
+            "first_context": str(item.get("first_context") or "").strip()[:160],
+            "later_references": _string_list(item.get("later_references"), limit=8),
+        }
+        for index, item in enumerate(raw[:10], 1)
+        if isinstance(item, dict) and str(item.get("content") or "").strip()
+    ]
 
 
 def _fallback_story_context(
@@ -267,7 +301,7 @@ def _normalize_story_context(
         return None
     fallback = _fallback_story_context(full_text, content_mode, global_character_prompt, world_prompt)
     context = dict(fallback)
-    for key in ("story_type", "logline", "theme", "narrative_tone", "characters", "locations", "clues_and_payoffs", "continuity_rules", "visual_safety"):
+    for key in ("story_type", "logline", "theme", "narrative_tone", "characters", "locations", "key_information_objects", "clues_and_payoffs", "continuity_rules", "visual_safety"):
         value = raw.get(key)
         if value not in (None, "", []):
             context[key] = value
@@ -277,6 +311,9 @@ def _normalize_story_context(
     for character in context["characters"]:
         character["wardrobe_states"] = []
     context["content_mode"] = normalize_content_mode(content_mode)
+    context["key_information_objects"] = _normalize_key_information_objects(
+        context.get("key_information_objects")
+    )
     context["source_fingerprint"] = story_context_fingerprint(full_text, content_mode, global_character_prompt, world_prompt)
     context["agent0_version"] = STORY_CONTEXT_VERSION
     context["user_global_character_bible"] = global_character_prompt
@@ -304,6 +341,10 @@ def create_story_context(
         system_prompt = custom_prompt or AGENT0_SYSTEM_PROMPT
         if custom_prompt and "continuity_rules" not in custom_prompt:
             system_prompt += "\n\n" + AGENT0_SYSTEM_PROMPT
+        # Expert prompts may change creative analysis, but may not remove the
+        # machine-readable identity contract required by downstream stages.
+        system_prompt += "\n\n" + AGENT0_IDENTITY_CONTRACT
+        system_prompt += "\n\n" + AGENT0_DEVICE_INFORMATION_CONTRACT
         response = generate_gemini_text(
             system_prompt=system_prompt,
             user_prompt=json.dumps({
@@ -315,11 +356,49 @@ def create_story_context(
             response_mime_type="application/json",
             max_output_tokens=4096,
         )
+        raw_context = parse_json_response(response)
         context = _normalize_story_context(
-            parse_json_response(response), full_text, content_mode,
+            raw_context, full_text, content_mode,
             global_character_prompt, world_prompt,
         )
         if context is not None:
+            issues = character_registry_issues(context.get("characters"))
+            if issues:
+                print(f"Agent 0：角色档案发现 {len(issues)} 个身份冲突，正在自动修订一次。", flush=True)
+                repaired_response = generate_gemini_text(
+                    system_prompt=system_prompt + (
+                        "\n\n【角色档案修订】必须修正程序列出的身份冲突。"
+                        "每个自然人使用唯一 character_id 和 name；共同职业只能放 group_aliases。"
+                        "保留原故事事实及除 characters 外的全部字段。"
+                    ),
+                    user_prompt=json.dumps({
+                        "complete_text": full_text,
+                        "user_global_character_bible": global_character_prompt,
+                        "previous_output": raw_context,
+                        "validation_errors": issues,
+                    }, ensure_ascii=False),
+                    temperature=0.05,
+                    response_mime_type="application/json",
+                    max_output_tokens=4096,
+                )
+                repaired = _normalize_story_context(
+                    parse_json_response(repaired_response), full_text, content_mode,
+                    global_character_prompt, world_prompt,
+                )
+                if repaired is not None and not character_registry_issues(repaired.get("characters")):
+                    context = repaired
+                else:
+                    # Safe fallback: keep the story context, but drop ambiguous
+                    # duplicate identities instead of sending conflicting cards downstream.
+                    seen_names: set[str] = set()
+                    safe_characters: list[dict[str, Any]] = []
+                    for character in context.get("characters", []):
+                        name = str(character.get("name") or "").strip()
+                        if name and name not in seen_names:
+                            seen_names.add(name)
+                            safe_characters.append(character)
+                    context["characters"] = safe_characters
+                    context["character_registry_warning"] = issues
             context["generation_source"] = "gemini"
             return context
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -364,12 +443,48 @@ SEMANTIC_UNIT_RULES = """
 
 【语义镜头单元（必须输出）】
 额外输出 semantic_units 数组。它是 Agent 1 为后续画面分组提供的连续叙事单元，而不是逐图提示词。
-每项仅包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing。
+每项仅包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有单元必须严格按原文顺序首尾相接，完整覆盖每一个输入 slide_id，不能遗漏、重叠或倒序。
 把同一动作、同一环境建立镜头、同一段对话或同一件事的连续描述放在同一单元；
 不要因为一个长句中的分号、列举物件或修饰语就切开。只有事件、人物、地点、时间或叙事焦点明显变化时才新建单元。
 visual_pacing 只能是 hold、normal、fast。单元应尽量精炼，最多 96 项。
 """
+
+
+DEVICE_SHOT_CONTRACT = """【设备画面三态（系统固定，必须执行）】
+- 每个 semantic_units 项必须输出 device_shot_mode，只能是 none、device_interaction、screen_insert。
+- screen_insert：原文或 Agent 0 的 key_information_objects 已明确给出手机、平板、电脑显示器中的文字、照片、监控、网页或文件内容，而且该内容是本单元的视觉重点。此时 device_type 写具体设备，screen_content 只写原文已有内容；character_ids 必须为 []，后续只拍设备正面内容，不拍人物脸部或人物特写。
+- device_interaction：人物正在看、拿、操作、接听设备，但屏幕内容没有明确给出或并非本镜头重点。screen_content 必须为空；人物可以出镜，但屏幕必须不可读，不得编造聊天、照片、网页、文件或界面文字。
+- none：设备未出现，或只是与核心画面无关的普通背景道具。screen_content 必须为空。
+- 不能仅因出现“消息、手机、电脑”等词就选择 screen_insert；必须能够从原文或 Agent 0 已登记的信息载体中指出具体内容。后文出现“那条消息、那张照片、那个文件”等指代时，应结合 Agent 0 全文资料判断。"""
+
+
+_DEVICE_MARKERS = re.compile(r"手机|平板|电脑|显示器|屏幕|笔记本电脑|监控画面|网页|短信|聊天记录")
+_EXPLICIT_SCREEN_MARKERS = re.compile(
+    r"(?:屏幕|手机|平板|电脑|显示器|网页|短信|消息|聊天记录|监控画面)"
+    r"(?:上|里|中|内容)?(?:清楚)?(?:显示|写着|出现|弹出|呈现|是|为|内容是)"
+)
+
+
+def _fallback_device_shot(scenes: list[dict[str, Any]]) -> tuple[str, str, str]:
+    """Conservative local fallback; Agent 1 remains the semantic authority."""
+    text = "".join(str(scene.get("text_content") or "") for scene in scenes).strip()
+    if not _DEVICE_MARKERS.search(text):
+        return "none", "", ""
+    device_type = next(
+        (name for name in ("手机", "平板", "电脑显示器", "电脑", "显示器") if name in text),
+        "设备",
+    )
+    quoted = re.search(
+        r"(?:短信|消息|聊天记录)(?:内容)?(?:是|为|写着|显示为|[:：]).{0,12}?"
+        r"[“「『‘\"]([^”」』’\"]{1,120})[”」』’\"]",
+        text,
+    )
+    explicit = _EXPLICIT_SCREEN_MARKERS.search(text)
+    if explicit or quoted:
+        content = quoted.group(1).strip() if quoted else text[explicit.start():].strip(" ，。；")[:180]
+        return "screen_insert", device_type, content
+    return "device_interaction", device_type, ""
 
 
 def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -385,6 +500,8 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
         is_sentence_end = bool(text and text[-1:] in "。！？!?；;")
         if (is_sentence_end and index - start >= 2) or index - start >= 5:
             first = scenes[start]
+            unit_scenes = scenes[start:index]
+            device_mode, device_type, screen_content = _fallback_device_shot(unit_scenes)
             units.append({
                 "unit_id": f"unit_{len(units) + 1:02d}",
                 "start_slide_id": str(first.get("slide_id") or ""),
@@ -393,9 +510,14 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
                 "visual_focus": "依据原文保持同一事件完整呈现",
                 "visual_pacing": "normal",
                 "boundary_after": "hard",
+                "device_shot_mode": device_mode,
+                "device_type": device_type,
+                "screen_content": screen_content,
             })
             start = index
     if start < len(scenes):
+        unit_scenes = scenes[start:]
+        device_mode, device_type, screen_content = _fallback_device_shot(unit_scenes)
         units.append({
             "unit_id": f"unit_{len(units) + 1:02d}",
             "start_slide_id": str(scenes[start].get("slide_id") or ""),
@@ -404,6 +526,9 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
             "visual_focus": "依据原文保持同一事件完整呈现",
             "visual_pacing": "normal",
             "boundary_after": "hard",
+            "device_shot_mode": device_mode,
+            "device_type": device_type,
+            "screen_content": screen_content,
         })
     return units
 
@@ -428,6 +553,12 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             return []
         pacing = str(unit.get("visual_pacing") or "normal").strip().lower()
         boundary_after = str(unit.get("boundary_after") or "hard").strip().lower()
+        device_mode = str(unit.get("device_shot_mode") or "none").strip().lower()
+        if device_mode not in {"none", "device_interaction", "screen_insert"}:
+            device_mode = "none"
+        screen_content = str(unit.get("screen_content") or "").strip()[:300]
+        if device_mode != "screen_insert":
+            screen_content = ""
         normalized.append({
             "unit_id": str(unit.get("unit_id") or f"unit_{index:02d}").strip(),
             "start_slide_id": start_id,
@@ -436,6 +567,10 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             "visual_focus": str(unit.get("visual_focus") or "依据原文呈现").strip()[:240],
             "visual_pacing": pacing if pacing in {"hold", "normal", "fast"} else "normal",
             "boundary_after": boundary_after if boundary_after in {"hard", "soft"} else "hard",
+            "character_ids": _string_list(unit.get("character_ids"), limit=10),
+            "device_shot_mode": device_mode,
+            "device_type": str(unit.get("device_type") or "").strip()[:40] if device_mode != "none" else "",
+            "screen_content": screen_content,
         })
         expected_start = end + 1
     return normalized if normalized and expected_start == len(ordered_ids) else []
@@ -526,6 +661,48 @@ def _fallback_story_plan(
     }
 
 
+def _safe_character_id(value: Any, index: int) -> str:
+    candidate = re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower()).strip("_")
+    return candidate[:48] or f"character_{index:02d}"
+
+
+def _string_list(value: Any, *, limit: int = 12) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))[:limit]
+
+
+def character_registry_issues(characters: Any) -> list[str]:
+    """Mechanical validation only; semantic repair remains Agent 0's job."""
+    if not isinstance(characters, list):
+        return ["characters 不是数组"]
+    issues: list[str] = []
+    id_owner: dict[str, str] = {}
+    name_owner: dict[str, str] = {}
+    alias_owner: dict[str, str] = {}
+    for character in characters:
+        if not isinstance(character, dict):
+            issues.append("存在非对象角色记录")
+            continue
+        character_id = str(character.get("character_id") or "").strip()
+        name = str(character.get("name") or "").strip()
+        if not character_id or not name:
+            issues.append("存在缺少 character_id 或 name 的角色")
+            continue
+        if character_id in id_owner and id_owner[character_id] != name:
+            issues.append(f"character_id“{character_id}”同时属于“{id_owner[character_id]}”和“{name}”")
+        id_owner[character_id] = name
+        if name in name_owner and name_owner[name] != character_id:
+            issues.append(f"name“{name}”被分配给多个角色")
+        name_owner[name] = character_id
+        for alias in [name, *_string_list(character.get("aliases"))]:
+            previous = alias_owner.get(alias)
+            if previous and previous != character_id:
+                issues.append(f"独占称呼“{alias}”同时指向多个角色")
+            alias_owner[alias] = character_id
+    return list(dict.fromkeys(issues))
+
+
 def _normalize_characters(raw_characters: Any, scenes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize stable identity separately from time-bounded wardrobe states."""
     if not isinstance(raw_characters, list):
@@ -533,7 +710,8 @@ def _normalize_characters(raw_characters: Any, scenes: list[dict[str, Any]]) -> 
     valid_ids = [str(scene.get("slide_id") or "") for scene in scenes]
     positions = {slide_id: index for index, slide_id in enumerate(valid_ids) if slide_id}
     characters: list[dict[str, Any]] = []
-    for raw in raw_characters[:10]:
+    used_ids: dict[str, int] = {}
+    for character_index, raw in enumerate(raw_characters[:10], 1):
         if not isinstance(raw, dict):
             continue
         name = str(raw.get("name") or "").strip()
@@ -564,8 +742,20 @@ def _normalize_characters(raw_characters: Any, scenes: list[dict[str, Any]]) -> 
                     "headwear": headwear,
                     "carried_items": carried_items,
                 })
+        character_id = _safe_character_id(raw.get("character_id"), character_index)
+        used_ids[character_id] = used_ids.get(character_id, 0) + 1
+        if used_ids[character_id] > 1:
+            character_id = f"{character_id}_{used_ids[character_id]}"
+        aliases = [value for value in _string_list(raw.get("aliases")) if value != name]
+        group_aliases = [
+            value for value in _string_list(raw.get("group_aliases"))
+            if value != name and value not in aliases
+        ]
         characters.append({
+            "character_id": character_id,
             "name": name,
+            "aliases": aliases,
+            "group_aliases": group_aliases,
             "role": str(raw.get("role") or "").strip(),
             "appearance": str(raw.get("appearance") or "").strip(" ，。；"),
             "wardrobe": str(raw.get("wardrobe") or "").strip(" ，。；"),
@@ -607,6 +797,7 @@ def _normalize_story_plan(
                     if str(beat.get("visual_pacing") or "normal").strip().lower() in {"hold", "normal", "fast"}
                     else "normal"
                 ),
+                "character_ids": _string_list(beat.get("character_ids"), limit=10),
             }
         )
     if not normalized_beats:
@@ -619,12 +810,28 @@ def _normalize_story_plan(
         value = raw.get(key)
         if value not in (None, "", []):
             plan[key] = value
+    plan["characters"] = _normalize_characters(raw.get("characters"), scenes)
+    plan["key_information_objects"] = _normalize_key_information_objects(
+        raw.get("key_information_objects")
+    )
+    valid_character_ids = {
+        str(character.get("character_id") or "") for character in plan["characters"]
+    }
+    for beat in normalized_beats:
+        beat["character_ids"] = [
+            value for value in beat.get("character_ids", []) if value in valid_character_ids
+        ]
     plan["story_beats"] = normalized_beats
     plan["semantic_units"] = (
         _normalize_semantic_units(raw.get("semantic_units"), scenes)
         or _fallback_semantic_units(scenes)
     )
-    plan["characters"] = _normalize_characters(raw.get("characters"), scenes)
+    for unit in plan["semantic_units"]:
+        unit["character_ids"] = [
+            value for value in unit.get("character_ids", []) if value in valid_character_ids
+        ]
+        if unit.get("device_shot_mode") == "screen_insert":
+            unit["character_ids"] = []
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
     plan["content_mode"] = content_mode
     plan["agent_version"] = STORY_AGENT_VERSION
@@ -636,7 +843,7 @@ TIMELINE_AGENT_SYSTEM_PROMPT = """你是视频流水线的 Agent 1：时间轴�
 Agent 0 已经完成全文理解、人物与世界观资料整理；你不需要重新总结全文、创建人物档案或改写世界观。
 你的唯一任务是根据每条字幕的 slide_id、start、end、text，以及 Agent 0 资料，划分连续的具体画面事件。
 只输出严格 JSON 对象：{\"story_beats\":[...],\"semantic_units\":[...]}，不要 Markdown。
-semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after。
+    semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有 semantic_units 必须按顺序完整覆盖全部 slide_id，不能遗漏、重叠、倒序或跳过。
 一个单元等于一个具体画面事件，不是章节、观点大类或整段口播：同一动作、同一环境建立镜头、同一段连续论证可保持在一起；
 结论收束、话题转折、互动引导、人物/地点/时间改变、镜头关注对象改变时必须新起单元。
@@ -668,7 +875,9 @@ def _create_timeline_story_plan(
     """Agent 1: a narrow timed segmentation pass built on Agent 0 context."""
     fallback = _fallback_story_plan(scenes, content_mode)
     if not gemini_configured():
-        plan = {**dict(story_context), **fallback}
+        plan = {**fallback, **dict(story_context)}
+        plan["semantic_units"] = fallback["semantic_units"]
+        plan["story_beats"] = fallback["story_beats"]
         plan["generation_source"] = "local_fallback"
         return plan
     compact_scenes = [
@@ -685,6 +894,13 @@ def _create_timeline_story_plan(
         system_prompt = custom_prompt or TIMELINE_AGENT_SYSTEM_PROMPT
         if custom_prompt and "semantic_units" not in custom_prompt:
             system_prompt += "\n\n" + TIMELINE_AGENT_SYSTEM_PROMPT
+        system_prompt += (
+            "\n\n【角色 ID 约束】Agent 0 的 characters 已为每个人建立唯一 character_id。"
+            "每个 story_beats 和 semantic_units 必须额外输出 character_ids 数组，"
+            "只列出该段画面中实际出现的人物；环境、道具或仅被提及但未出镜的人物不要列入。"
+            "只能使用 Agent 0 已存在的 character_id，禁止用职业、群体称呼或人名代替 ID。"
+        )
+        system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
         response = generate_gemini_text(
             system_prompt=system_prompt,
             user_prompt=json.dumps({
@@ -712,7 +928,9 @@ def _create_timeline_story_plan(
         return plan
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
         print(f"Agent 1 时间轴规划失败，使用本地分镜边界: {exc}", flush=True)
-        plan = {**dict(story_context), **fallback}
+        plan = {**fallback, **dict(story_context)}
+        plan["semantic_units"] = fallback["semantic_units"]
+        plan["story_beats"] = fallback["story_beats"]
         plan["generation_source"] = "local_fallback"
         plan["agent0_source_fingerprint"] = story_context.get("source_fingerprint")
         return plan
@@ -776,6 +994,7 @@ def create_story_plan(
             # prompt.  The normalizer still has a local fallback for older
             # presets that do not return the new field.
             system_prompt += SEMANTIC_UNIT_RULES
+            system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
             retry_prompt = custom_agent1_prompt or (
                 SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode
                 else GENERAL_AGENT_COMPACT_RETRY_PROMPT if general_mode
@@ -787,6 +1006,7 @@ def create_story_plan(
                 "user_world_bible 为环境连续性的最高优先级。"
             )
             retry_prompt += SEMANTIC_UNIT_RULES
+            retry_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
             try:
                 response = generate_gemini_text(
                     system_prompt=system_prompt,
@@ -939,6 +1159,7 @@ def merge_global_and_segment_plan(
     merged["locations"] = _merge_named_records(global_plan.get("locations"), segment_plan.get("locations"))
     merged["story_beats"] = list(segment_plan.get("story_beats") or [])
     merged["semantic_units"] = list(segment_plan.get("semantic_units") or _fallback_semantic_units(scenes))
+    merged["key_information_objects"] = list(global_plan.get("key_information_objects") or [])
     merged["clues_and_payoffs"] = _unique_text_items(
         global_plan.get("clues_and_payoffs"), segment_plan.get("clues_and_payoffs"), limit=12
     )
@@ -996,6 +1217,7 @@ def create_segment_story_plan(
                 "\n每个 story_beats 必须输出 visual_pacing（hold、normal、fast 三选一）；"
                 "它只表示叙事节奏，后续程序会以真实音频时间戳执行切图。"
             )
+            segment_system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
             response = generate_gemini_text(
                 system_prompt=segment_system_prompt,
                 user_prompt=json.dumps(payload, ensure_ascii=False),
@@ -1069,6 +1291,8 @@ def story_context_for_prompt(plan: dict[str, Any]) -> dict[str, Any]:
         "characters",
         "locations",
         "story_beats",
+        "semantic_units",
+        "key_information_objects",
         "clues_and_payoffs",
         "continuity_rules",
         "visual_safety",

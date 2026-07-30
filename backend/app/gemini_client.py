@@ -16,6 +16,66 @@ DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://llm.runninghub.ai/v1"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 
+# The original Gemini variable names are retained for backwards compatibility.
+# New providers keep their own key/model variables so switching in the UI never
+# overwrites a key the user has already configured for another provider.
+LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, str]] = {
+    "gemini": {
+        "label": "Google Gemini",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
+        "model_env": "GEMINI_MODEL",
+        "default_base": DEFAULT_GEMINI_BASE_URL,
+        "default_model": DEFAULT_GEMINI_MODEL,
+        "protocol": "gemini",
+    },
+    "runninghub": {
+        "label": "第三方兼容接口",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
+        "model_env": "GEMINI_MODEL",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": DEFAULT_GEMINI_MODEL,
+        "protocol": "openai",
+    },
+    "deepseek": {
+        "label": "DeepSeek",
+        "key_env": "DEEPSEEK_API_KEY",
+        "base_env": "DEEPSEEK_API_BASE",
+        "model_env": "DEEPSEEK_MODEL",
+        "default_base": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "protocol": "openai",
+    },
+    "openai": {
+        "label": "OpenAI GPT",
+        "key_env": "OPENAI_API_KEY",
+        "base_env": "OPENAI_API_BASE",
+        "model_env": "OPENAI_MODEL",
+        "default_base": "https://api.openai.com/v1",
+        "default_model": "gpt-4.1-mini",
+        "protocol": "openai",
+    },
+    "kimi": {
+        "label": "Kimi",
+        "key_env": "MOONSHOT_API_KEY",
+        "base_env": "MOONSHOT_API_BASE",
+        "model_env": "MOONSHOT_MODEL",
+        "default_base": "https://api.moonshot.cn/v1",
+        "default_model": "kimi-k2.5",
+        "protocol": "openai",
+    },
+    "glm": {
+        "label": "智谱 GLM",
+        "key_env": "ZAI_API_KEY",
+        "base_env": "ZAI_API_BASE",
+        "model_env": "ZAI_MODEL",
+        "default_base": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-4.7-flash",
+        "protocol": "openai",
+    },
+}
+
 
 class GeminiError(RuntimeError):
     pass
@@ -26,15 +86,57 @@ class GeminiOutputTruncated(GeminiError):
 
 
 def gemini_configured() -> bool:
-    return bool(os.getenv("GEMINI_API_KEY", "").strip())
+    config = language_provider_config()
+    return bool(os.getenv(config["key_env"], "").strip())
 
 
 def _provider() -> str:
-    return os.getenv("GEMINI_PROVIDER", "google").strip().lower() or "google"
+    selected = os.getenv("LANGUAGE_PROVIDER", "").strip().lower()
+    if selected in LANGUAGE_PROVIDER_OPTIONS:
+        return selected
+    legacy = os.getenv("GEMINI_PROVIDER", "google").strip().lower() or "google"
+    if legacy in {"google", "gemini"}:
+        return "gemini"
+    if legacy in {"openai", "openai_compatible", "runninghub"}:
+        return "runninghub"
+    return legacy
 
 
-def _gemini_models() -> list[str]:
-    primary = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+def language_provider_config(provider: str | None = None) -> dict[str, str]:
+    """Return the selected provider config, while accepting legacy relays."""
+    provider_name = (provider or _provider()).strip().lower()
+    if provider_name in LANGUAGE_PROVIDER_OPTIONS:
+        return LANGUAGE_PROVIDER_OPTIONS[provider_name]
+    return {
+        "label": "OpenAI compatible",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
+        "model_env": "GEMINI_MODEL",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": DEFAULT_GEMINI_MODEL,
+        "protocol": "openai",
+    }
+
+
+def language_provider_status() -> dict[str, Any]:
+    selected = _provider()
+    options = [
+        {"value": name, "label": config["label"], "configured": bool(os.getenv(config["key_env"], "").strip())}
+        for name, config in LANGUAGE_PROVIDER_OPTIONS.items()
+    ]
+    config = language_provider_config(selected)
+    return {
+        "provider": selected,
+        "provider_label": config["label"],
+        "configured": bool(os.getenv(config["key_env"], "").strip()),
+        "model": os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"],
+        "providers": options,
+    }
+
+
+def _gemini_models(provider: str | None = None) -> list[str]:
+    config = language_provider_config(provider)
+    primary = os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
     fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS", "").strip()
     models = [primary]
     if fallback_raw:
@@ -88,18 +190,20 @@ def _generate_openai_compatible_text(
     temperature: float,
     response_mime_type: str | None,
     max_output_tokens: int | None,
+    provider: str | None = None,
 ) -> str:
-    base_url = os.getenv("GEMINI_API_BASE", DEFAULT_OPENAI_COMPATIBLE_BASE_URL).rstrip("/")
+    config = language_provider_config(provider)
+    base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
     extra_body: dict[str, Any] = {}
     reasoning_effort = os.getenv("GEMINI_REASONING_EFFORT", "none").strip()
-    if reasoning_effort:
+    if reasoning_effort and reasoning_effort.lower() != "none":
         extra_body["reasoning_effort"] = reasoning_effort
     if response_mime_type == "application/json":
         extra_body["response_format"] = {"type": "json_object"}
 
     errors: list[str] = []
     response: requests.Response | None = None
-    for model in _gemini_models():
+    for model in _gemini_models(provider):
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -112,7 +216,11 @@ def _generate_openai_compatible_text(
             "presence_penalty": float(os.getenv("GEMINI_PRESENCE_PENALTY", "0")),
             "frequency_penalty": float(os.getenv("GEMINI_FREQUENCY_PENALTY", "0")),
         }
-        if extra_body:
+        # Existing RunningHub relays historically accept this wrapper; official
+        # OpenAI-compatible providers expect these fields at the request root.
+        if provider in {"deepseek", "openai", "kimi", "glm"}:
+            payload.update(extra_body)
+        elif extra_body:
             payload["extra_body"] = extra_body
 
         url = f"{base_url}/chat/completions"
@@ -175,11 +283,13 @@ def generate_gemini_text(
     response_mime_type: str | None = None,
     max_output_tokens: int | None = None,
 ) -> str:
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    provider = _provider()
+    config = language_provider_config(provider)
+    api_key = os.getenv(config["key_env"], "").strip()
     if not api_key:
-        raise GeminiError("未配置 GEMINI_API_KEY")
+        raise GeminiError(f"未配置 {config['key_env']}")
 
-    if _provider() in {"openai", "openai_compatible", "runninghub"}:
+    if config["protocol"] == "openai":
         return _generate_openai_compatible_text(
             api_key=api_key,
             system_prompt=system_prompt,
@@ -187,9 +297,10 @@ def generate_gemini_text(
             temperature=temperature,
             response_mime_type=response_mime_type,
             max_output_tokens=max_output_tokens,
+            provider=provider,
         )
 
-    base_url = os.getenv("GEMINI_API_BASE", DEFAULT_GEMINI_BASE_URL).rstrip("/")
+    base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
     payload: dict[str, Any] = {
         "contents": [
             {
@@ -206,7 +317,7 @@ def generate_gemini_text(
 
     errors: list[str] = []
     response: requests.Response | None = None
-    for model in _gemini_models():
+    for model in _gemini_models(provider):
         response = None
         url = f"{base_url}/models/{model}:generateContent"
         for attempt in range(1, _gemini_retry_count() + 1):

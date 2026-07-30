@@ -2,12 +2,19 @@
   <div class="app-shell">
     <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="brand">
-        <div class="brand-mark">AI</div>
+        <img class="brand-mark brand-logo" src="/one-click-vidgen-logo.png" alt="One-Click VidGen Logo" />
         <div>
-          <div class="brand-name">AI 故事视频</div>
-          <div class="brand-sub">文案一键转惊悚漫画视频</div>
+          <div class="brand-name">一键生成视频</div>
+          <div class="brand-sub">One-Click VidGen</div>
         </div>
       </div>
+      <button class="sidebar-preflight-button" type="button" :disabled="preflightRunning || !session.user" @click="runManualPreflight">
+        <span class="sidebar-preflight-icon" aria-hidden="true">⚡</span>
+        <span>
+          <strong>{{ preflightRunning ? '正在检测…' : '启动前自动检测' }}</strong>
+          <small>API、TTS、素材与运行环境</small>
+        </span>
+      </button>
 
       <div class="sidebar-card auth-card">
         <template v-if="session.auth_mode === 'local'">
@@ -57,44 +64,64 @@
       <div v-if="session.user" class="sidebar-card api-key-card">
         <div class="sidebar-label">模型 API Key</div>
         <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
-        <label>
-          <span>语言模型 API Key</span>
-          <input v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" placeholder="Gemini / RunningHub LLM" />
-        </label>
-        <div class="api-key-status" :class="{ configured: apiKeyStatus.language?.configured }">
-          {{ apiKeyStatus.language?.configured ? '已配置' : '未配置' }}
+        <div class="api-key-entry">
+          <span>语言模型</span>
+          <select v-model="apiKeyForm.language_provider" class="language-provider-select" @change="onLanguageProviderChanged">
+            <option v-for="provider in languageProviderOptions" :key="provider.value" :value="provider.value">
+              {{ provider.label }}{{ provider.configured ? '（已配置）' : '' }}
+            </option>
+          </select>
+          <input v-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
+          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.language }">
+            <span><strong>{{ apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} 已配置` }}</strong><small v-if="apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small></span>
+            <button type="button" :title="`重新输入 ${currentLanguageProviderLabel} API Key`" @click="editApiKey('language')">✏️</button>
+          </div>
         </div>
-        <label class="api-key-pool-field">
+        <div class="api-key-pool-field api-key-entry">
           <span>图像模型 API Key</span>
-          <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" placeholder="RunningHub Image2" />
-          <div v-for="(_, index) in apiKeyForm.image_api_keys" :key="`image-key-${index}`" class="api-key-extra-row">
-            <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增图像账号 ${index + 2}`" />
-            <button type="button" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
+          <template v-if="apiKeyFieldOpen('image')">
+            <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" placeholder="第三方图像接口 API Key" />
+            <div v-for="(_, index) in apiKeyForm.image_api_keys" :key="`image-key-${index}`" class="api-key-extra-row">
+              <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增图像账号 ${index + 2}`" />
+              <button type="button" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
+            </div>
+            <div class="api-key-field-footer">
+              <span class="muted small">可继续添加并行账号</span>
+              <button class="api-key-add-btn" type="button" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
+            </div>
+          </template>
+          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.image }">
+            <span><strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small></span>
+            <div class="api-key-state-actions">
+              <button type="button" title="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
+              <button type="button" title="重新输入图像模型 API Key" @click="editApiKey('image')">✏️</button>
+            </div>
           </div>
-          <div class="api-key-field-footer">
-            <span class="api-key-status" :class="{ configured: apiKeyStatus.image?.configured }">
-              {{ apiKeyStatus.image?.configured ? `已配置 ${apiKeyStatus.image?.count || 1} 个账号` : '未配置' }}
-            </span>
-            <button class="api-key-add-btn" type="button" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
-          </div>
-        </label>
-        <label class="api-key-pool-field">
+        </div>
+        <div class="api-key-pool-field api-key-entry">
           <span>通用 API Key</span>
-          <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" placeholder="仅填此项会同时用于语言和图像" />
-          <div v-for="(_, index) in apiKeyForm.common_api_keys" :key="`common-key-${index}`" class="api-key-extra-row">
-            <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增通用账号 ${index + 2}`" />
-            <button type="button" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
+          <template v-if="apiKeyFieldOpen('common')">
+            <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" placeholder="仅填此项会同时用于语言和图像" />
+            <div v-for="(_, index) in apiKeyForm.common_api_keys" :key="`common-key-${index}`" class="api-key-extra-row">
+              <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增通用账号 ${index + 2}`" />
+              <button type="button" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
+            </div>
+            <div class="api-key-field-footer">
+              <span class="muted small">可继续添加通用账号</span>
+              <button class="api-key-add-btn" type="button" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
+            </div>
+          </template>
+          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.common }">
+            <span><strong>{{ apiKeyRuntimeErrors.common ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.common">{{ apiKeyRuntimeErrors.common }}</small></span>
+            <div class="api-key-state-actions">
+              <button type="button" title="新增通用并行账号" @click="addApiKeyAccount('common')">＋</button>
+              <button type="button" title="重新输入通用 API Key" @click="editApiKey('common')">✏️</button>
+            </div>
           </div>
-          <div class="api-key-field-footer">
-            <span class="api-key-status" :class="{ configured: apiKeyStatus.common?.configured }">
-              {{ apiKeyStatus.common?.configured ? `已配置 ${apiKeyStatus.common?.count || 1} 个账号` : '未配置' }}
-            </span>
-            <button class="api-key-add-btn" type="button" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
-          </div>
-        </label>
-        <div class="muted small">填写通用 Key 时，会自动补全未单独填写的语言与图像 Key；追加账号用于 Image2 轮换与并发，Agent 仍使用主语言 Key。</div>
+        </div>
+        <div class="muted small">语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；各家的 Key 分开保存。通用 Key 仍只用于原有第三方接口工作流。</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
-        <button class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
+        <button v-if="apiKeyEditorVisible" class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
           {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
         </button>
       </div>
@@ -120,8 +147,8 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="product-title" type="button" @click="sidebarOpen = !sidebarOpen" aria-label="一键成片，点击切换侧边栏">
-          一键成片 <span>/</span> One-Click VidGen
+        <button class="product-title" type="button" @click="sidebarOpen = !sidebarOpen" aria-label="一键生成视频，点击切换侧边栏">
+          一键生成视频 <span>/</span> One-Click VidGen
         </button>
       </header>
 
@@ -181,6 +208,7 @@
               <button class="primary-btn launch-generation-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
                 {{ submitButtonText }}
               </button>
+              <small v-if="generationSubmitMessage" class="generation-submit-message">{{ generationSubmitMessage }}</small>
             </div>
             <template v-if="session.user">
               <button class="toolbar-save-button" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
@@ -349,9 +377,13 @@
                 </small>
               </div>
               <div v-else class="qwen-tts-config">
-                <label class="qwen-key-field">
+                <label v-if="apiKeyFieldOpen('qwen_tts')" class="qwen-key-field">
                   <input v-model="apiKeyForm.qwen_tts_api_key" type="password" autocomplete="off" placeholder="DashScope API Key（sk-...）" />
                 </label>
+                <div v-else class="api-key-state-bar qwen-key-state" :class="{ error: apiKeyRuntimeErrors.qwen_tts }">
+                  <span><strong>{{ apiKeyRuntimeErrors.qwen_tts ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.qwen_tts">{{ apiKeyRuntimeErrors.qwen_tts }}</small></span>
+                  <button type="button" title="重新输入 Qwen-TTS API Key" @click="editApiKey('qwen_tts')">✏️</button>
+                </div>
                 <div class="qwen-voice-controls">
                   <label>
                     <span>系统音色</span>
@@ -376,10 +408,7 @@
                     placeholder="例如：沉稳的中年女性，语速偏慢，吐字清晰，带有克制而渐进的悬疑感，适合都市怪谈叙述。"
                   ></textarea>
                 </label>
-                <div class="qwen-tts-actions">
-                  <span class="api-key-status" :class="{ configured: apiKeyStatus.qwen_tts?.configured }">
-                    {{ apiKeyStatus.qwen_tts?.configured ? '已配置' : '未配置' }}
-                  </span>
+                <div v-if="apiKeyFieldOpen('qwen_tts')" class="qwen-tts-actions">
                   <button class="primary-btn qwen-save-btn" type="button" :disabled="savingQwenTtsKey" @click="saveQwenTtsKey">
                     {{ savingQwenTtsKey ? '保存中...' : '保存 API Key' }}
                   </button>
@@ -447,6 +476,16 @@
                 />
                 <span class="step-audio-time">{{ formatStepAudioTime(stepAudioCurrentTime) }} / {{ formatStepAudioTime(stepAudioDuration) }}</span>
                 <button
+                  class="step-audio-download"
+                  type="button"
+                  :disabled="savingStepAudio"
+                  title="将本次配音另存到指定位置"
+                  aria-label="下载配音"
+                  @click="saveStepAudioAs"
+                >
+                  {{ savingStepAudio ? '…' : '⇩' }}
+                </button>
+                <button
                   v-if="canRetryTts"
                   class="ghost-btn compact-btn step-audio-retry"
                   type="button"
@@ -456,10 +495,82 @@
                   {{ retryingTts ? '正在重新配音…' : '不满意，重新配音' }}
                 </button>
               </div>
+              <small v-if="stepAudioSaveMessage" class="muted">{{ stepAudioSaveMessage }}</small>
               <small v-if="canRetryTts" class="muted">重新配音会清理本任务的当前中间产物，并再次停在试听确认。</small>
             </section>
             </div>
             </div>
+
+            <section class="bgm-panel bgm-full-row" :class="{ expanded: form.bgm_enabled }">
+              <div class="bgm-panel-head">
+                <div>
+                  <div class="sidebar-label">背景音乐</div>
+                  <strong>为最终成片添加 BGM</strong>
+                  <small class="muted">按上传顺序播放；最后一首结束后从第一首开始列表循环。</small>
+                </div>
+                <label class="switch-row bgm-switch">
+                  <input v-model="form.bgm_enabled" type="checkbox" />
+                  <span class="switch-track"><i></i></span>
+                  <strong>添加 BGM</strong>
+                </label>
+              </div>
+              <div v-if="form.bgm_enabled" class="bgm-panel-body">
+                <div class="bgm-track-list">
+                  <div v-if="form.bgm_tracks.length" class="bgm-track-list-head">
+                    <span>播放列表（按此顺序循环）</span>
+                    <button class="ghost-btn compact-btn" type="button" @click="clearBgmTracks('main')">清空列表</button>
+                  </div>
+                  <div v-for="(track, index) in form.bgm_tracks" :key="`${track.asset_id}-${index}`" class="bgm-track-row">
+                    <div class="bgm-track-file">
+                      <span class="bgm-order">{{ index + 1 }}</span>
+                      <div>
+                        <strong>{{ track.name || track.asset_id }}</strong>
+                        <small class="muted">第 {{ index + 1 }} 首 · {{ formatBgmDuration(track.duration_seconds) }}</small>
+                      </div>
+                    </div>
+                    <label class="bgm-volume-field">
+                      <span>音量（dB）</span>
+                      <input v-model.number="track.volume_db" type="number" min="-60" max="6" step="1" />
+                    </label>
+                    <div class="bgm-track-actions">
+                      <button class="ghost-btn compact-btn" type="button" :disabled="!bgmTrackUrl(track)" :title="isBgmPreviewing(track) ? '暂停试听' : '播放试听'" @click="toggleBgmPreview(track)">{{ isBgmPreviewing(track) ? 'Ⅱ' : '▶' }}</button>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="index === 0" title="上移" @click="moveBgmTrack(form.bgm_tracks, index, -1)">↑</button>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="index === form.bgm_tracks.length - 1" title="下移" @click="moveBgmTrack(form.bgm_tracks, index, 1)">↓</button>
+                      <button class="ghost-btn compact-btn" type="button" title="移除" @click="removeBgmTrack(index)">×</button>
+                    </div>
+                  </div>
+                  <label class="script-file-picker bgm-upload-picker" :class="{ disabled: bgmUploading }">
+                    <input
+                      type="file"
+                      accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*"
+                      :disabled="bgmUploading"
+                      @change="uploadBgmTrack"
+                    />
+                    <span>{{ bgmUploading ? '上传中…' : (form.bgm_tracks.length ? '添加下一首' : '上传 BGM') }}</span>
+                    <strong>MP3 / WAV / M4A / AAC / FLAC / OGG</strong>
+                  </label>
+                  <small v-if="bgmError" class="script-upload-error">{{ bgmError }}</small>
+                </div>
+                <div class="bgm-fade-card">
+                  <label class="check-row">
+                    <input v-model="form.bgm_fade_enabled" type="checkbox" />
+                    <span>切换音乐及视频结束时开启渐弱</span>
+                  </label>
+                  <label>
+                    <span>渐弱时长（秒）</span>
+                    <input
+                      v-model.number="form.bgm_fade_duration"
+                      type="number"
+                      min="0.1"
+                      max="30"
+                      step="0.1"
+                      :disabled="!form.bgm_fade_enabled"
+                    />
+                  </label>
+                  <small class="muted">默认 1 秒；关闭后音乐会按顺序直接衔接。</small>
+                </div>
+              </div>
+            </section>
 
             <div class="content-mode-bar content-mode-full-row">
               <div class="content-mode-copy">
@@ -696,11 +807,17 @@
           </div>
           <div class="log-toolbar">
             <span class="muted small">后台日志</span>
-            <button class="ghost-btn compact-btn" type="button" @click="showFullLogs = !showFullLogs">
-              {{ showFullLogs ? '显示重点' : '显示全部' }}
-            </button>
+            <div class="log-toolbar-actions">
+              <button class="ghost-btn compact-btn" type="button" :disabled="diagnosticExporting || !activeJob" @click="exportDiagnosticPackage(activeJob)">
+                {{ diagnosticExporting ? '正在导出…' : '导出问题诊断包' }}
+              </button>
+              <button class="ghost-btn compact-btn" type="button" @click="showFullLogs = !showFullLogs">
+                {{ showFullLogs ? '显示重点' : '显示全部' }}
+              </button>
+            </div>
           </div>
           <pre class="log-view">{{ logText }}</pre>
+          <small v-if="diagnosticMessage" class="diagnostic-message">{{ diagnosticMessage }}</small>
         </section>
 
         <section id="outputs" class="grid-2">
@@ -747,21 +864,32 @@
               </div>
             </div>
             <div class="board-list">
-              <button
+              <div
                 v-for="job in jobs"
                 :key="job.id"
-                type="button"
                 class="project-card"
                 :class="{ active: activeJob?.id === job.id }"
+                role="button"
+                tabindex="0"
                 @click="selectJob(job.id)"
+                @keydown.enter="selectJob(job.id)"
               >
                 <div class="project-top">
                   <span class="status-chip" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span>
-                  <span class="muted small">{{ job.progress }}%</span>
+                  <div class="project-actions">
+                    <span class="muted small">{{ job.progress }}%</span>
+                    <button
+                      type="button"
+                      class="task-delete-btn"
+                      :disabled="['queued', 'running', 'waiting_confirmation'].includes(job.status)"
+                      title="删除任务及其专属产物"
+                      @click.stop="deleteGenerationJob(job)"
+                    >删除</button>
+                  </div>
                 </div>
                 <h3>{{ job.request?.project_name || job.id }}</h3>
                 <p>{{ job.message }}</p>
-              </button>
+              </div>
               <div v-if="!jobs.length" class="empty-state">暂无任务。</div>
             </div>
             <div v-if="jobTotal > 0" class="task-pagination" aria-label="任务列表分页">
@@ -820,7 +948,7 @@
                 </span>
                 <button v-if="visualReferenceSummary" class="ghost-btn compact-btn" type="button" @click="clearVisualReferenceImages">清空参考图</button>
                 <button class="ghost-btn compact-btn commit-all-baselines" type="button" :disabled="visualEditorLoading || visualEditor.has_active_image_tasks" @click="commitAllVisualBaselines">✅ 确认全部为原图</button>
-                <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorLoading" @click="loadVisualEditor({ preservePage: true })">刷新图片</button>
+                <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorLoading" @click="loadVisualEditor({ preservePage: true, hydrateBgm: true })">刷新图片</button>
               </div>
               <div class="visual-image-grid">
                 <article v-for="item in visibleVisualEditorItems" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
@@ -923,6 +1051,130 @@
                   </div>
                 </template>
               </section>
+              <section class="tts-segment-editor">
+                <div class="visual-timing-head">
+                  <div>
+                    <div class="eyebrow">配音精修</div>
+                    <h3>逐句试听与重配音</h3>
+                    <p class="muted small">按原始 TTS 断句试听。可单选或多选重配；新时长会自动更新整条配音、字幕及画面时间线。</p>
+                  </div>
+                  <div class="visual-timing-head-actions">
+                    <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
+                    <button
+                      class="primary-btn compact-btn"
+                      type="button"
+                      :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'"
+                      @click="regenerateSelectedTtsSegments"
+                    >{{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}</button>
+                  </div>
+                </div>
+                <div v-if="ttsEditorLoading" class="timing-unavailable">正在读取逐句配音…</div>
+                <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
+                <template v-else>
+                  <div v-if="ttsEditor.task?.message" class="visual-task-message" :class="ttsEditor.task?.status">{{ ttsEditor.task.message }}</div>
+                  <div class="tts-segment-grid">
+                    <article
+                      v-for="item in ttsEditor.segments"
+                      :key="`tts-segment-${item.index}-${item.audio_url}`"
+                      class="tts-segment-card"
+                      :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }"
+                    >
+                      <p class="tts-segment-text">{{ item.text }}</p>
+                      <div class="tts-segment-controls">
+                        <div class="tts-segment-meta">
+                          <strong>第 {{ item.index }} 句</strong>
+                          <span>{{ Number(item.duration || 0).toFixed(2) }} 秒</span>
+                        </div>
+                        <label class="tts-segment-select">
+                          <span>选中</span>
+                          <input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" />
+                        </label>
+                      </div>
+                      <div class="tts-segment-player">
+                        <button
+                          class="tts-segment-play"
+                          type="button"
+                          :title="ttsSegmentPlayingIndex === item.index && ttsSegmentIsPlaying ? '暂停' : '播放本句'"
+                          @click="toggleTtsSegmentAudio(item)"
+                        >{{ ttsSegmentPlayingIndex === item.index && ttsSegmentIsPlaying ? '❚❚' : '▶' }}</button>
+                        <input
+                          class="tts-segment-progress"
+                          type="range"
+                          min="0"
+                          :max="Math.max(0.01, ttsSegmentPlayingIndex === item.index ? ttsSegmentDuration : Number(item.duration || 0))"
+                          step="0.01"
+                          :value="ttsSegmentPlayingIndex === item.index ? ttsSegmentCurrentTime : 0"
+                          aria-label="本句播放进度"
+                          @input="seekTtsSegmentAudio(item, $event)"
+                        />
+                      </div>
+                    </article>
+                  </div>
+                </template>
+              </section>
+              <section class="bgm-panel visual-editor-bgm" :class="{ expanded: visualBgm.enabled }">
+                <div class="bgm-panel-head">
+                  <div>
+                    <div class="eyebrow">后期配乐</div>
+                    <h3>更改项目 BGM</h3>
+                    <small class="muted">只影响当前画面修改项目；重新渲染时按列表顺序循环播放。</small>
+                  </div>
+                  <label class="switch-row bgm-switch">
+                    <input v-model="visualBgm.enabled" type="checkbox" />
+                    <span class="switch-track"><i></i></span>
+                    <strong>添加 BGM</strong>
+                  </label>
+                </div>
+                <div v-if="visualBgm.enabled" class="bgm-panel-body">
+                  <div class="bgm-track-list">
+                    <div v-if="visualBgm.tracks.length" class="bgm-track-list-head">
+                      <span>播放列表（按此顺序循环）</span>
+                      <button class="ghost-btn compact-btn" type="button" @click="clearBgmTracks('visual')">清空列表</button>
+                    </div>
+                    <div v-for="(track, index) in visualBgm.tracks" :key="`${track.asset_id || track.archived_filename}-${index}`" class="bgm-track-row">
+                      <div class="bgm-track-file">
+                        <span class="bgm-order">{{ index + 1 }}</span>
+                        <div>
+                          <strong>{{ track.name || track.asset_id || track.archived_filename }}</strong>
+                          <small class="muted">第 {{ index + 1 }} 首 · {{ formatBgmDuration(track.duration_seconds) }}</small>
+                        </div>
+                      </div>
+                      <label class="bgm-volume-field">
+                        <span>音量（dB）</span>
+                        <input v-model.number="track.volume_db" type="number" min="-60" max="6" step="1" />
+                      </label>
+                      <div class="bgm-track-actions">
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!bgmTrackUrl(track)" :title="isBgmPreviewing(track) ? '暂停试听' : '播放试听'" @click="toggleBgmPreview(track)">{{ isBgmPreviewing(track) ? 'Ⅱ' : '▶' }}</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="index === 0" title="上移" @click="moveBgmTrack(visualBgm.tracks, index, -1)">↑</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="index === visualBgm.tracks.length - 1" title="下移" @click="moveBgmTrack(visualBgm.tracks, index, 1)">↓</button>
+                        <button class="ghost-btn compact-btn" type="button" title="移除" @click="removeVisualBgmTrack(index)">×</button>
+                      </div>
+                    </div>
+                    <label class="script-file-picker bgm-upload-picker" :class="{ disabled: visualBgmUploading }">
+                      <input
+                        type="file"
+                        accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*"
+                        :disabled="visualBgmUploading"
+                        @change="uploadVisualBgmTrack"
+                      />
+                      <span>{{ visualBgmUploading ? '上传中…' : (visualBgm.tracks.length ? '添加下一首' : '上传 BGM') }}</span>
+                      <strong>MP3 / WAV / M4A / AAC / FLAC / OGG</strong>
+                    </label>
+                    <small v-if="visualBgmError" class="script-upload-error">{{ visualBgmError }}</small>
+                  </div>
+                  <div class="bgm-fade-card">
+                    <label class="check-row">
+                      <input v-model="visualBgm.fade_enabled" type="checkbox" />
+                      <span>切换音乐及视频结束时开启渐弱</span>
+                    </label>
+                    <label>
+                      <span>渐弱时长（秒）</span>
+                      <input v-model.number="visualBgm.fade_duration" type="number" min="0.1" max="30" step="0.1" :disabled="!visualBgm.fade_enabled" />
+                    </label>
+                    <small class="muted">设置会随 BGM 一起保存到当前项目。</small>
+                  </div>
+                </div>
+              </section>
               <div class="visual-render-footer">
                 <label>渲染设置
                   <select v-model="visualRenderMode">
@@ -931,7 +1183,7 @@
                     <option value="both">双版本渲染</option>
                   </select>
                 </label>
-                <button class="primary-btn" type="button" :disabled="visualEditor.task?.status === 'running' || visualEditor.has_active_image_tasks" @click="renderEditedVideo">
+                <button class="primary-btn" type="button" :disabled="visualEditor.task?.status === 'running' || visualEditor.has_active_image_tasks || ttsEditor.task?.status === 'running'" @click="renderEditedVideo">
                   重新渲染
                 </button>
                 <button class="ghost-btn stop-btn" type="button" :disabled="visualEditor.task?.status !== 'running' || visualEditor.task?.action !== 'render'" @click="cancelVisualRender">停止渲染</button>
@@ -1207,6 +1459,12 @@
                 <div class="artifact-action">打开所在文件夹</div>
               </button>
             </div>
+            <div class="log-toolbar compact-log-toolbar">
+              <span class="muted small">模块 1 日志</span>
+              <button class="ghost-btn compact-btn" type="button" :disabled="diagnosticExporting || !module1Job" @click="exportDiagnosticPackage(module1Job)">
+                {{ diagnosticExporting ? '正在导出…' : '导出问题诊断包' }}
+              </button>
+            </div>
             <pre class="log-view">{{ module1LogText }}</pre>
           </article>
         </section>
@@ -1306,6 +1564,77 @@
             </div>
           </article>
 
+          <article class="panel subtitle-bgm-standalone">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">音频后处理</div>
+                <h2>添加 BGM</h2>
+                <p class="muted create-summary">为上方即将渲染的字幕视频添加背景音乐，按上传顺序进行列表循环。</p>
+              </div>
+              <label class="inline-switch">
+                <input v-model="subtitleRenderForm.bgm_enabled" type="checkbox" />
+                <span class="switch-track"><span></span></span>
+                <strong>启动 BGM 添加</strong>
+              </label>
+            </div>
+            <div v-if="subtitleRenderForm.bgm_enabled" class="bgm-panel-body subtitle-bgm-body">
+              <div class="bgm-track-list">
+                <div v-if="subtitleRenderForm.bgm_tracks.length" class="bgm-track-list-head">
+                  <span>播放列表（按此顺序循环）</span>
+                  <button class="ghost-btn compact-btn" type="button" @click="clearBgmTracks('subtitle')">清空列表</button>
+                </div>
+                <div v-for="(track, index) in subtitleRenderForm.bgm_tracks" :key="`${track.asset_id}-${index}`" class="bgm-track-row">
+                  <div class="bgm-track-file">
+                    <span class="bgm-order">{{ index + 1 }}</span>
+                    <div>
+                      <strong>{{ track.name || track.asset_id }}</strong>
+                      <small class="muted">第 {{ index + 1 }} 首 · {{ formatBgmDuration(track.duration_seconds) }}</small>
+                    </div>
+                  </div>
+                  <label class="bgm-volume-field">
+                    <span>音量（dB）</span>
+                    <input v-model.number="track.volume_db" type="number" min="-60" max="6" step="1" />
+                  </label>
+                  <div class="bgm-track-actions">
+                    <button class="ghost-btn compact-btn" type="button" :disabled="!bgmTrackUrl(track)" :title="isBgmPreviewing(track) ? '暂停试听' : '播放试听'" @click="toggleBgmPreview(track)">{{ isBgmPreviewing(track) ? 'Ⅱ' : '▶' }}</button>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="index === 0" title="上移" @click="moveBgmTrack(subtitleRenderForm.bgm_tracks, index, -1)">↑</button>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="index === subtitleRenderForm.bgm_tracks.length - 1" title="下移" @click="moveBgmTrack(subtitleRenderForm.bgm_tracks, index, 1)">↓</button>
+                    <button class="ghost-btn compact-btn" type="button" title="移除" @click="removeSubtitleBgmTrack(index)">×</button>
+                  </div>
+                </div>
+                <label class="script-file-picker bgm-upload-picker" :class="{ disabled: subtitleBgmUploading }">
+                  <input
+                    type="file"
+                    accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*"
+                    :disabled="subtitleBgmUploading"
+                    @change="uploadSubtitleBgmTrack"
+                  />
+                  <span>{{ subtitleBgmUploading ? '上传中…' : (subtitleRenderForm.bgm_tracks.length ? '添加下一首' : '上传 BGM') }}</span>
+                  <strong>MP3 / WAV / M4A / AAC / FLAC / OGG</strong>
+                </label>
+                <small v-if="subtitleBgmError" class="script-upload-error">{{ subtitleBgmError }}</small>
+              </div>
+              <div class="bgm-fade-card">
+                <label class="check-row">
+                  <input v-model="subtitleRenderForm.bgm_fade_enabled" type="checkbox" />
+                  <span>切换音乐及视频结束时开启渐弱</span>
+                </label>
+                <label>
+                  <span>渐弱时长（秒）</span>
+                  <input
+                    v-model.number="subtitleRenderForm.bgm_fade_duration"
+                    type="number"
+                    min="0.1"
+                    max="30"
+                    step="0.1"
+                    :disabled="!subtitleRenderForm.bgm_fade_enabled"
+                  />
+                </label>
+                <small class="muted">默认 1 秒；关闭后音乐按顺序直接衔接。</small>
+              </div>
+            </div>
+          </article>
+
           <article class="panel progress-panel">
             <div class="panel-head">
               <div>
@@ -1315,6 +1644,12 @@
               <span class="progress-percent">{{ subtitleJob?.progress || 0 }}%</span>
             </div>
             <div class="progress-track"><span :style="{ width: `${subtitleJob?.progress || 0}%` }"></span></div>
+            <div class="log-toolbar compact-log-toolbar">
+              <span class="muted small">字幕任务日志</span>
+              <button class="ghost-btn compact-btn" type="button" :disabled="diagnosticExporting || !subtitleJob" @click="exportDiagnosticPackage(subtitleJob)">
+                {{ diagnosticExporting ? '正在导出…' : '导出问题诊断包' }}
+              </button>
+            </div>
             <pre class="log-view">{{ subtitleLogText }}</pre>
             <div v-if="subtitleJob?.artifacts?.subtitle" class="subtitle-output-result">
               <div>
@@ -1338,6 +1673,42 @@
         </section>
       </section>
     </main>
+
+    <div v-if="preflightOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">
+      <section class="preflight-dialog">
+        <div class="preflight-head">
+          <div>
+            <div class="eyebrow">启动前体检</div>
+            <h2 id="preflight-title">{{ preflightResult?.message || '正在检查本次任务…' }}</h2>
+            <p class="muted">检查结果只针对当前填写的参数和本机环境，不会消耗生图次数。</p>
+          </div>
+          <button class="ghost-btn compact-btn" type="button" :disabled="preflightRunning" @click="closePreflight">关闭</button>
+        </div>
+        <div v-if="preflightRunning" class="preflight-loading">
+          <span class="preflight-spinner"></span>
+          <strong>正在检查 API、TTS、素材、渲染环境和磁盘空间…</strong>
+        </div>
+        <div v-else class="preflight-body">
+          <div class="preflight-summary">
+            <span class="preflight-count passed">✓ {{ preflightPassedCount }} 项通过</span>
+            <span v-if="preflightResult?.warning_count" class="preflight-count warning">! {{ preflightResult.warning_count }} 项提醒</span>
+            <span v-if="preflightResult?.error_count" class="preflight-count error">× {{ preflightResult.error_count }} 项必须处理</span>
+          </div>
+          <div class="preflight-list">
+            <article v-for="item in preflightResult?.items || []" :key="item.id" class="preflight-item" :class="item.status">
+              <span class="preflight-item-icon">{{ item.status === 'passed' ? '✓' : (item.status === 'warning' ? '!' : '×') }}</span>
+              <div>
+                <strong>{{ item.label }}</strong>
+                <p>{{ item.message }}</p>
+              </div>
+            </article>
+          </div>
+          <div class="preflight-actions">
+            <button class="primary-btn" type="button" @click="closePreflight">完成检测</button>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
@@ -1426,6 +1797,8 @@ const stepAudioPlayer = ref(null)
 const stepAudioPlaying = ref(false)
 const stepAudioCurrentTime = ref(0)
 const stepAudioDuration = ref(0)
+const savingStepAudio = ref(false)
+const stepAudioSaveMessage = ref('')
 const retryingTts = ref(false)
 const folderOpenMessage = ref('')
 const visualEditorOpen = ref(false)
@@ -1437,6 +1810,14 @@ const visualEditorPage = ref(1)
 const visualTimingSelectedId = ref('')
 const selectedVisualTimingHistory = ref('')
 const visualTimingAdjusting = ref(false)
+const ttsEditor = ref({ available: false, message: '', segments: [], task: { status: 'idle', message: '' } })
+const ttsEditorLoading = ref(false)
+const selectedTtsSegmentIndices = ref([])
+const ttsSegmentPlayingIndex = ref(0)
+const ttsSegmentIsPlaying = ref(false)
+const ttsSegmentCurrentTime = ref(0)
+const ttsSegmentDuration = ref(0)
+let ttsSegmentAudio = null
 const visualSelfReferenceMacroId = ref('')
 const visualReferenceUploads = ref([])
 const visualReferenceUploading = ref(false)
@@ -1444,7 +1825,18 @@ const visualReferenceOwnerMacroId = ref('')
 const VISUAL_EDITOR_PAGE_SIZE = 24
 const visualPreviewItem = ref(null)
 const visualRenderMode = ref('both')
+const visualBgmUploading = ref(false)
+const visualBgmError = ref('')
+const visualBgm = reactive({
+  enabled: false,
+  tracks: [],
+  fade_enabled: false,
+  fade_duration: 1,
+})
 const submitting = ref(false)
+const preflightRunning = ref(false)
+const preflightOpen = ref(false)
+const preflightResult = ref(null)
 const submittingModule1 = ref(false)
 const submittingSubtitle = ref(false)
 const cancellingGeneration = ref(false)
@@ -1454,6 +1846,7 @@ const settings = ref({ scripts: [], tts: { voices: [], emotions: [], defaults: {
 const session = ref({ user: null, auth_mode: 'account', mysql: {} })
 const authError = ref('')
 const activeJob = ref(null)
+const followLiveJob = ref(true)
 const module1Job = ref(null)
 const subtitleJob = ref(null)
 const jobs = ref([])
@@ -1469,8 +1862,13 @@ const editing = ref(false)
 const startingTts = ref(false)
 const ttsStartMessage = ref('')
 const showFullLogs = ref(false)
+const diagnosticExporting = ref(false)
+const diagnosticMessage = ref('')
+const generationSubmitMessage = ref('')
 const apiKeyStatus = ref({ language: {}, image: {}, common: {}, qwen_tts: {} })
 const apiKeyMessage = ref('')
+const apiKeyEditing = reactive({ language: false, image: false, common: false, qwen_tts: false })
+const apiKeyRuntimeErrors = reactive({ language: '', image: '', common: '', qwen_tts: '' })
 const savingApiKeys = ref(false)
 const savingQwenTtsKey = ref(false)
 const qwenTtsKeyMessage = ref('')
@@ -1550,6 +1948,7 @@ const qwenVoiceGroups = [
 let apiKeyStatusLoaded = false
 let timer = null
 let visualEditorTaskTimer = null
+let ttsEditorTaskTimer = null
 let completionAudioContext = null
 let completionFlashTimer = null
 let completionFlashState = false
@@ -1585,9 +1984,15 @@ const subtitleAddEnabled = ref(false)
 const subtitleFonts = ref([])
 const subtitleFontsLoading = ref(false)
 const subtitleRenderMessage = ref('')
+const subtitleBgmUploading = ref(false)
+const subtitleBgmError = ref('')
 const subtitleRenderForm = reactive({
   style: 'navy_bg_white',
   font_name: 'Microsoft YaHei',
+  bgm_enabled: false,
+  bgm_tracks: [],
+  bgm_fade_enabled: false,
+  bgm_fade_duration: 1,
 })
 const subtitleStyleOptions = [
   { key: 'black_white_outline', label: '黑字白描边' },
@@ -1600,6 +2005,7 @@ const referenceImageNames = ref([])
 const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
+  language_provider: 'gemini',
   language_api_key: '',
   image_api_key: '',
   image_api_keys: [],
@@ -1607,6 +2013,23 @@ const apiKeyForm = reactive({
   common_api_keys: [],
   qwen_tts_api_key: '',
 })
+const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
+  { value: 'gemini', label: 'Google Gemini', configured: false },
+  { value: 'runninghub', label: '第三方兼容接口', configured: false },
+  { value: 'deepseek', label: 'DeepSeek', configured: false },
+  { value: 'openai', label: 'OpenAI GPT', configured: false },
+  { value: 'kimi', label: 'Kimi', configured: false },
+  { value: 'glm', label: '智谱 GLM', configured: false },
+])
+const currentLanguageProvider = computed(() => (
+  languageProviderOptions.value.find((item) => item.value === apiKeyForm.language_provider)
+  || languageProviderOptions.value[0]
+  || { value: 'gemini', label: 'Google Gemini', configured: false }
+))
+const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
+const apiKeyEditorVisible = computed(() => (
+  ['language', 'image', 'common'].some((kind) => apiKeyFieldOpen(kind))
+))
 const parameterPresets = ref([])
 const selectedParameterPreset = ref('')
 const loadingParameterPresets = ref(false)
@@ -1617,6 +2040,10 @@ const agentPromptPresets = ref([])
 const selectedAgentPromptPreset = ref('')
 const loadingAgentPromptPresets = ref(false)
 const savingAgentPromptPreset = ref(false)
+const bgmUploading = ref(false)
+const bgmError = ref('')
+const bgmPreviewTrack = ref(null)
+let bgmPreviewAudio = null
 const form = reactive({
   project_name: randomProjectName(),
   script: '',
@@ -1633,6 +2060,10 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   video_render_variant: 'both',
+  bgm_enabled: false,
+  bgm_tracks: [],
+  bgm_fade_enabled: false,
+  bgm_fade_duration: 1,
   step_mode: false,
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'auto',
@@ -1853,10 +2284,17 @@ const qwenSelectedVoice = computed(() => qwenVoiceGroups
   .flatMap((group) => group.voices)
   .find((voice) => voice.value === form.qwen_tts_voice))
 const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.value?.supportsInstructions !== false)
+const hasPendingGeneration = computed(() => (
+  [activeJob.value, ...jobs.value].filter(Boolean).some((job) => (
+    ['queued', 'running', 'waiting_confirmation'].includes(job.status)
+  ))
+))
 const canSubmitGeneration = computed(() => {
   if (!session.value.user) return false
+  if (hasPendingGeneration.value) return false
   if (!form.project_name.trim()) return false
   if (scriptTooLong.value) return false
+  if (form.bgm_enabled && !form.bgm_tracks.length) return false
   if (form.skip_tts) {
     if (!form.source_audio_id) return false
     return form.skip_text_correction || form.script.trim().length > 0
@@ -1891,12 +2329,14 @@ const canSubmitSubtitle = computed(() => Boolean(
 const canRenderSubtitleVideo = computed(() => Boolean(
   subtitleJob.value?.id
   && subtitleJob.value?.artifacts?.subtitle
-  && !subtitleJobRunning.value,
+  && !subtitleJobRunning.value
+  && (!subtitleRenderForm.bgm_enabled || subtitleRenderForm.bgm_tracks.length > 0)
 ))
 const subtitleLogText = computed(() => (subtitleJob.value?.logs || []).join('\n') || '字幕识别日志会显示在这里。')
 const submitButtonText = computed(() => {
   if (!session.value.user) return '请先登录'
   if (submitting.value) return '任务已提交'
+  if (hasPendingGeneration.value) return '当前任务进行中'
   if (form.step_mode) return '开始分步生成'
   if (form.skip_tts && !form.source_audio_id) return '请先上传配音'
   if (form.skip_tts) return '从已有配音生成视频'
@@ -1904,6 +2344,9 @@ const submitButtonText = computed(() => {
   if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return '该音色不支持配音描述'
   return '一键生成视频'
 })
+const preflightPassedCount = computed(() => (
+  preflightResult.value?.items || []
+).filter((item) => item.status === 'passed').length)
 const scriptPlaceholder = computed(() => {
   if (form.skip_text_correction) return '已选择“没有文案”，系统会用 ASR 识别结果继续生成画面和字幕。'
   if (form.skip_tts) return '粘贴与已有配音对应的文案，系统会跳过配音并进行字幕校对。'
@@ -2001,7 +2444,7 @@ function stopCompletionFlash() {
 function startCompletionFlash() {
   if (!document.hidden) return
   stopCompletionFlash()
-  originalDocumentTitle = document.title || '一键成片 / One-Click VidGen'
+  originalDocumentTitle = document.title || '一键生成视频 / One-Click VidGen'
   completionFaviconLink = document.querySelector('link[rel~="icon"]')
   if (!completionFaviconLink) {
     completionFaviconLink = document.createElement('link')
@@ -2048,6 +2491,51 @@ function handleActiveJobCompletion(previous, current) {
   notifyVideoCompleted(current)
 }
 
+function apiFailureReason(text) {
+  const value = String(text || '')
+  if (/积分不足|余额不足|insufficient\s*(credit|balance)|quota|额度不足|HTTP\s*402/i.test(value)) return '积分或额度不足'
+  if (/timed?\s*out|timeout|超时/i.test(value)) return '请求超时'
+  if (/HTTP\s*429|rate\s*limit|限流|too many requests/i.test(value)) return '请求限流'
+  if (/HTTP\s*(401|403)|unauthorized|forbidden|API\s*Key.*(无效|错误)|invalid.*key/i.test(value)) return 'Key 无效或无权限'
+  return ''
+}
+
+function apiJobKinds(job) {
+  const request = job?.request || {}
+  const kinds = []
+  if (request.subtitle_only) {
+    if (request.subtitle_use_correction && !request.reference_text) kinds.push('language')
+    return kinds
+  }
+  if (!request.module1_only) kinds.push('language', 'image')
+  if (!request.skip_tts && request.tts_engine === 'qwen') kinds.push('qwen_tts')
+  return kinds
+}
+
+function syncApiRuntimeErrors(jobCandidates) {
+  const unique = new Map()
+  for (const job of jobCandidates.filter(Boolean)) unique.set(job.id, job)
+  const ordered = [...unique.values()].sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0))
+  const contexts = {
+    language: /gemini|openai|语言模型|chat\.completion|\bllm\b|agent\s*[012]/i,
+    image: /image2|runninghub|海报|poster_|生图|返图|图像模型|工作流/i,
+    qwen_tts: /qwen|dashscope|百炼|云端\s*tts/i,
+  }
+  for (const kind of ['language', 'image', 'qwen_tts']) {
+    const latest = ordered.find((job) => ['completed', 'failed', 'cancelled'].includes(job.status) && apiJobKinds(job).includes(kind))
+    if (!latest || latest.status !== 'failed') {
+      apiKeyRuntimeErrors[kind] = ''
+      continue
+    }
+    const text = [latest.error, latest.message, ...(latest.logs || []).slice(-80)].filter(Boolean).join('\n')
+    const reason = apiFailureReason(text)
+    apiKeyRuntimeErrors[kind] = reason && contexts[kind].test(text) ? reason : ''
+  }
+  apiKeyRuntimeErrors.common = apiKeyStatus.value.common?.configured
+    ? (apiKeyRuntimeErrors.language || apiKeyRuntimeErrors.image)
+    : ''
+}
+
 async function refresh() {
   const previousActiveJob = activeJob.value
     ? { id: activeJob.value.id, status: activeJob.value.status }
@@ -2079,7 +2567,12 @@ async function refresh() {
     jobPage.value = payload.page || 1
     jobTotal.value = payload.total || 0
     jobTotalPages.value = payload.total_pages || 1
-    if (activeJob.value?.id) {
+    const runningJob = jobs.value.find((job) => job.status === 'running')
+    const queuedJob = jobs.value.find((job) => job.status === 'queued')
+    const liveJob = runningJob || queuedJob
+    if (followLiveJob.value && liveJob?.id) {
+      activeJob.value = await api.job(liveJob.id)
+    } else if (activeJob.value?.id) {
       await selectJob(activeJob.value.id, false)
     } else if (jobs.value.length) {
       activeJob.value = jobs.value[0]
@@ -2090,6 +2583,7 @@ async function refresh() {
     if (subtitleJob.value?.id) {
       subtitleJob.value = await api.job(subtitleJob.value.id)
     }
+    syncApiRuntimeErrors([...jobs.value, activeJob.value, module1Job.value, subtitleJob.value])
     await refreshEditor()
     handleActiveJobCompletion(previousActiveJob, activeJob.value)
   } catch {
@@ -2161,6 +2655,36 @@ async function logout() {
   apiKeyStatusLoaded = false
   apiKeyStatus.value = { language: {}, image: {}, common: {}, qwen_tts: {} }
   apiKeyMessage.value = ''
+  for (const kind of Object.keys(apiKeyEditing)) apiKeyEditing[kind] = false
+  for (const kind of Object.keys(apiKeyRuntimeErrors)) apiKeyRuntimeErrors[kind] = ''
+}
+
+function apiKeyFieldOpen(kind) {
+  if (kind === 'language') {
+    return !currentLanguageProvider.value?.configured || Boolean(apiKeyEditing.language)
+  }
+  return !apiKeyStatus.value[kind]?.configured || Boolean(apiKeyEditing[kind])
+}
+
+function editApiKey(kind) {
+  apiKeyEditing[kind] = true
+  apiKeyMessage.value = ''
+  if (kind === 'qwen_tts') qwenTtsKeyMessage.value = ''
+}
+
+function onLanguageProviderChanged() {
+  // Selecting a provider is a pending configuration change.  Keep the key box
+  // visible even when this provider had been configured previously, so the
+  // user can either replace its key or simply save to activate it.
+  apiKeyEditing.language = true
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+}
+
+function addApiKeyAccount(kind) {
+  const field = kind === 'image' ? 'image_api_keys' : 'common_api_keys'
+  editApiKey(kind)
+  addApiKeyField(field)
 }
 
 async function loadApiKeySettings() {
@@ -2168,6 +2692,7 @@ async function loadApiKeySettings() {
   try {
     const payload = await api.apiKeySettings()
     apiKeyStatus.value = payload.keys || { language: {}, image: {}, common: {}, qwen_tts: {} }
+    apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini'
     apiKeyStatusLoaded = true
   } catch (error) {
     apiKeyMessage.value = error.message || '无法读取 API Key 配置状态'
@@ -2175,7 +2700,7 @@ async function loadApiKeySettings() {
 }
 
 async function saveApiKeySettings() {
-  const payload = {}
+  const payload = { language_provider: apiKeyForm.language_provider }
   for (const key of ['language_api_key', 'image_api_key', 'common_api_key']) {
     const value = String(apiKeyForm[key] || '').trim()
     if (value) payload[key] = value
@@ -2184,7 +2709,7 @@ async function saveApiKeySettings() {
     const values = apiKeyForm[key].map((value) => String(value || '').trim()).filter(Boolean)
     if (values.length) payload[key] = values
   }
-  if (!Object.keys(payload).length) {
+  if (!apiKeyForm.language_provider && Object.keys(payload).length === 0) {
     apiKeyMessage.value = '请至少填写一个 API Key。'
     return
   }
@@ -2195,6 +2720,18 @@ async function saveApiKeySettings() {
     apiKeyStatus.value = result.keys || apiKeyStatus.value
     apiKeyStatusLoaded = true
     apiKeyMessage.value = result.message || 'API Key 已保存。'
+    const touched = new Set()
+    if (payload.language_api_key || payload.language_provider) touched.add('language')
+    if (payload.image_api_key || payload.image_api_keys?.length) touched.add('image')
+    if (payload.common_api_key || payload.common_api_keys?.length) {
+      touched.add('common')
+      touched.add('language')
+      touched.add('image')
+    }
+    for (const kind of touched) {
+      apiKeyEditing[kind] = false
+      apiKeyRuntimeErrors[kind] = ''
+    }
     apiKeyForm.language_api_key = ''
     apiKeyForm.image_api_key = ''
     apiKeyForm.image_api_keys = []
@@ -2232,6 +2769,8 @@ async function saveQwenTtsKey() {
     apiKeyStatus.value = result.keys || apiKeyStatus.value
     apiKeyStatusLoaded = true
     apiKeyForm.qwen_tts_api_key = ''
+    apiKeyEditing.qwen_tts = false
+    apiKeyRuntimeErrors.qwen_tts = ''
     qwenTtsKeyMessage.value = 'Qwen-TTS API Key 已保存到本机 .env。'
   } catch (error) {
     qwenTtsKeyMessage.value = error.message || '保存 Qwen-TTS API Key 失败。'
@@ -2410,11 +2949,26 @@ async function loadSelectedParameterPreset() {
     const payload = await api.parameterPreset(selectedParameterPreset.value)
     const parameters = payload.parameters || {}
     Object.assign(form, parameters)
+    form.bgm_enabled = Boolean(parameters.bgm_enabled)
+    form.bgm_tracks = Array.isArray(parameters.bgm_tracks)
+      ? parameters.bgm_tracks.map((track) => ({
+          asset_id: String(track.asset_id || ''),
+          name: String(track.name || editorAssets.value.find((asset) => asset.id === track.asset_id)?.name || track.asset_id || ''),
+          volume_db: Number.isFinite(Number(track.volume_db)) ? Number(track.volume_db) : -10,
+          duration_seconds: Number.isFinite(Number(track.duration_seconds)) ? Number(track.duration_seconds) : null,
+          url: String(editorAssets.value.find((asset) => asset.id === track.asset_id)?.url || ''),
+        })).filter((track) => track.asset_id)
+      : []
+    form.bgm_fade_enabled = Boolean(parameters.bgm_fade_enabled)
+    form.bgm_fade_duration = Number.isFinite(Number(parameters.bgm_fade_duration))
+      ? Number(parameters.bgm_fade_duration)
+      : 1
     form.script = typeof parameters.script === 'string' ? parameters.script : ''
     ttsEngine.value = parameters.tts_engine === 'qwen' ? 'qwen' : 'indextts2'
     form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
     await restoreSavedTtsVoiceLabel()
     await restoreSavedProtagonistReferenceImageLabel()
+    void hydrateBgmTrackDurations(form.bgm_tracks)
     rememberVisualPrompt()
     rememberVisualPacing()
     parameterPresetMessage.value = `已读取参数：${payload.name || selectedParameterPreset.value}`
@@ -2439,6 +2993,198 @@ async function deleteSelectedParameterPreset() {
   } finally {
     deletingParameterPreset.value = false
   }
+}
+
+function formatBgmDuration(value) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return '时长读取中'
+  const total = Math.max(0, Math.round(seconds))
+  const minutes = Math.floor(total / 60)
+  return `${minutes}:${String(total % 60).padStart(2, '0')}`
+}
+
+function readAudioDuration(file) {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file)
+    const audio = new Audio()
+    const finish = (value) => {
+      URL.revokeObjectURL(objectUrl)
+      audio.removeAttribute('src')
+      audio.load()
+      resolve(Number.isFinite(value) && value > 0 ? Number(value.toFixed(2)) : null)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => finish(audio.duration)
+    audio.onerror = () => finish(null)
+    audio.src = objectUrl
+  })
+}
+
+function readAudioUrlDuration(url) {
+  return new Promise((resolve) => {
+    const audio = new Audio()
+    const finish = (value) => {
+      audio.removeAttribute('src')
+      audio.load()
+      resolve(Number.isFinite(value) && value > 0 ? Number(value.toFixed(2)) : null)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => finish(audio.duration)
+    audio.onerror = () => finish(null)
+    audio.src = url
+  })
+}
+
+async function hydrateBgmTrackDurations(tracks) {
+  await Promise.all((tracks || []).map(async (track) => {
+    if (Number.isFinite(Number(track.duration_seconds)) && Number(track.duration_seconds) > 0) return
+    const url = bgmTrackUrl(track)
+    if (url) track.duration_seconds = await readAudioUrlDuration(url)
+  }))
+}
+
+function bgmTrackUrl(track) {
+  if (track?.url) return track.url
+  return editorAssets.value.find((asset) => String(asset.id) === String(track?.asset_id))?.url || ''
+}
+
+function isBgmPreviewing(track) {
+  return bgmPreviewTrack.value === track && Boolean(bgmPreviewAudio && !bgmPreviewAudio.paused)
+}
+
+function stopBgmPreview() {
+  if (bgmPreviewAudio) {
+    bgmPreviewAudio.pause()
+    bgmPreviewAudio.currentTime = 0
+  }
+  bgmPreviewAudio = null
+  bgmPreviewTrack.value = null
+}
+
+async function toggleBgmPreview(track) {
+  const url = bgmTrackUrl(track)
+  if (!url) return
+  if (bgmPreviewTrack.value === track && bgmPreviewAudio) {
+    if (bgmPreviewAudio.paused) {
+      try {
+        await bgmPreviewAudio.play()
+      } catch (error) {
+        bgmError.value = error.message || 'BGM 试听无法播放。'
+      }
+    } else {
+      bgmPreviewAudio.pause()
+    }
+    return
+  }
+  if (bgmPreviewAudio) bgmPreviewAudio.pause()
+  const audio = new Audio(url)
+  bgmPreviewAudio = audio
+  bgmPreviewTrack.value = track
+  audio.addEventListener('ended', () => {
+    if (bgmPreviewAudio === audio) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+  })
+  audio.addEventListener('pause', () => {
+    if (bgmPreviewAudio === audio && audio.currentTime >= audio.duration) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+  })
+  try {
+    await audio.play()
+  } catch (error) {
+    if (bgmPreviewAudio === audio) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+    bgmError.value = error.message || 'BGM 试听无法播放。'
+  }
+}
+
+function moveBgmTrack(tracks, index, direction) {
+  const target = index + direction
+  if (!Array.isArray(tracks) || target < 0 || target >= tracks.length) return
+  const [track] = tracks.splice(index, 1)
+  tracks.splice(target, 0, track)
+}
+
+function clearBgmTracks(scope) {
+  const tracks = scope === 'subtitle'
+    ? subtitleRenderForm.bgm_tracks
+    : scope === 'visual'
+      ? visualBgm.tracks
+      : form.bgm_tracks
+  if (!tracks.length) return
+  if (!window.confirm('确定清空当前 BGM 播放列表吗？')) return
+  if (bgmPreviewTrack.value && tracks.includes(bgmPreviewTrack.value)) stopBgmPreview()
+  tracks.splice(0, tracks.length)
+}
+
+async function uploadVisualBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  visualBgmUploading.value = true
+  visualBgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    visualBgm.tracks.push({
+      asset_id: payload.asset.id,
+      archived_filename: '',
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) editorAssets.value.push(payload.asset)
+  } catch (error) {
+    visualBgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    visualBgmUploading.value = false
+  }
+}
+
+function removeVisualBgmTrack(index) {
+  const [track] = visualBgm.tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
+}
+
+async function uploadBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  bgmUploading.value = true
+  bgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    form.bgm_tracks.push({
+      asset_id: payload.asset.id,
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) {
+      editorAssets.value.push(payload.asset)
+    }
+  } catch (error) {
+    bgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    bgmUploading.value = false
+  }
+}
+
+function removeBgmTrack(index) {
+  const [track] = form.bgm_tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
 }
 
 async function uploadLocalScript(event) {
@@ -2702,6 +3448,28 @@ async function restoreSavedProtagonistReferenceImageLabel() {
   }
 }
 
+async function exportDiagnosticPackage(job) {
+  if (!job?.id || diagnosticExporting.value) return
+  diagnosticExporting.value = true
+  diagnosticMessage.value = ''
+  try {
+    const { blob, filename } = await api.downloadDiagnosticPackage(job.id)
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename || '问题诊断包.zip'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    diagnosticMessage.value = '问题诊断包已下载：不含 API Key、文案原文、提示词、媒体和模型文件。'
+  } catch (error) {
+    diagnosticMessage.value = error.message || '问题诊断包导出失败。'
+  } finally {
+    diagnosticExporting.value = false
+  }
+}
+
 async function openArtifactFolder(url) {
   folderOpenMessage.value = ''
   try {
@@ -2745,11 +3513,20 @@ async function openStepModeVisualPreviewFolder() {
   }
 }
 
-async function loadVisualEditor({ preservePage = false } = {}) {
+function hydrateVisualBgm(settings = {}) {
+  visualBgm.enabled = Boolean(settings.enabled)
+  visualBgm.tracks = Array.isArray(settings.tracks) ? settings.tracks.map((track) => ({ ...track })) : []
+  visualBgm.fade_enabled = Boolean(settings.fade_enabled)
+  visualBgm.fade_duration = Number(settings.fade_duration || 1)
+  visualBgmError.value = ''
+}
+
+async function loadVisualEditor({ preservePage = false, hydrateBgm = false } = {}) {
   if (!visualEditorProjectId.value) return
   visualEditorLoading.value = true
   try {
     visualEditor.value = await api.visualEditor(visualEditorProjectId.value)
+    if (hydrateBgm) hydrateVisualBgm(visualEditor.value.bgm)
     if (!preservePage) visualEditorPage.value = 1
     if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
     if (!visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
@@ -2762,6 +3539,128 @@ async function loadVisualEditor({ preservePage = false } = {}) {
     visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
   } finally {
     visualEditorLoading.value = false
+  }
+}
+
+async function loadTtsEditor() {
+  if (!visualEditorProjectId.value) return
+  ttsEditorLoading.value = true
+  try {
+    ttsEditor.value = await api.ttsEditor(visualEditorProjectId.value)
+    const valid = new Set((ttsEditor.value.segments || []).map((item) => item.index))
+    selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter((value) => valid.has(value))
+  } catch (error) {
+    ttsEditor.value = { available: false, message: error.message || '无法读取逐句配音', segments: [], task: { status: 'failed', message: '' } }
+  } finally {
+    ttsEditorLoading.value = false
+  }
+}
+
+function resetTtsSegmentAudio({ clearSource = true } = {}) {
+  if (ttsSegmentAudio) {
+    ttsSegmentAudio.pause()
+    if (clearSource) {
+      ttsSegmentAudio.removeAttribute('src')
+      ttsSegmentAudio.load()
+    }
+  }
+  ttsSegmentPlayingIndex.value = 0
+  ttsSegmentIsPlaying.value = false
+  ttsSegmentCurrentTime.value = 0
+  ttsSegmentDuration.value = 0
+}
+
+function prepareTtsSegmentAudio(item) {
+  if (!ttsSegmentAudio) {
+    ttsSegmentAudio = new Audio()
+    ttsSegmentAudio.preload = 'metadata'
+    ttsSegmentAudio.addEventListener('timeupdate', () => {
+      ttsSegmentCurrentTime.value = Number(ttsSegmentAudio?.currentTime || 0)
+    })
+    ttsSegmentAudio.addEventListener('loadedmetadata', () => {
+      ttsSegmentDuration.value = Number.isFinite(ttsSegmentAudio?.duration)
+        ? Number(ttsSegmentAudio.duration)
+        : Number(item.duration || 0)
+    })
+    ttsSegmentAudio.addEventListener('play', () => { ttsSegmentIsPlaying.value = true })
+    ttsSegmentAudio.addEventListener('pause', () => { ttsSegmentIsPlaying.value = false })
+    ttsSegmentAudio.addEventListener('ended', () => {
+      ttsSegmentIsPlaying.value = false
+      ttsSegmentCurrentTime.value = 0
+    })
+  }
+  if (ttsSegmentPlayingIndex.value !== item.index || ttsSegmentAudio.dataset.source !== item.audio_url) {
+    ttsSegmentAudio.pause()
+    ttsSegmentPlayingIndex.value = item.index
+    ttsSegmentCurrentTime.value = 0
+    ttsSegmentDuration.value = Number(item.duration || 0)
+    ttsSegmentAudio.dataset.source = item.audio_url
+    const separator = item.audio_url.includes('?') ? '&' : '?'
+    ttsSegmentAudio.src = `${item.audio_url}${separator}play=${Date.now()}`
+    ttsSegmentAudio.load()
+  }
+  return ttsSegmentAudio
+}
+
+async function toggleTtsSegmentAudio(item) {
+  const audio = prepareTtsSegmentAudio(item)
+  if (!audio.paused) {
+    audio.pause()
+    return
+  }
+  try {
+    await audio.play()
+  } catch {
+    ttsSegmentIsPlaying.value = false
+  }
+}
+
+function seekTtsSegmentAudio(item, event) {
+  const audio = prepareTtsSegmentAudio(item)
+  const value = Math.max(0, Number(event?.target?.value || 0))
+  audio.currentTime = Math.min(value, Number.isFinite(audio.duration) ? audio.duration : value)
+  ttsSegmentCurrentTime.value = value
+}
+
+function stopTtsEditorPolling() {
+  if (ttsEditorTaskTimer) window.clearInterval(ttsEditorTaskTimer)
+  ttsEditorTaskTimer = null
+}
+
+async function pollTtsEditorStatus() {
+  if (!visualEditorOpen.value || !visualEditorProjectId.value) return
+  try {
+    const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
+    const previous = ttsEditor.value.task?.status
+    ttsEditor.value.task = payload.task || ttsEditor.value.task
+    if (previous === 'running' && payload.task?.status !== 'running') {
+      stopTtsEditorPolling()
+      if (payload.task?.status === 'completed') {
+        resetTtsSegmentAudio()
+        selectedTtsSegmentIndices.value = []
+        await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
+      }
+    }
+  } catch {
+    // Main job log remains visible if one polling request fails.
+  }
+}
+
+function startTtsEditorPolling() {
+  if (ttsEditorTaskTimer) return
+  ttsEditorTaskTimer = window.setInterval(pollTtsEditorStatus, 1600)
+}
+
+async function regenerateSelectedTtsSegments() {
+  if (!visualEditorProjectId.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
+  const count = selectedTtsSegmentIndices.value.length
+  if (!window.confirm(`重新生成选中的 ${count} 句配音？\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
+  try {
+    await api.regenerateTtsSegments(visualEditorProjectId.value, selectedTtsSegmentIndices.value)
+    ttsEditor.value.task = { status: 'running', progress: 0, message: `正在重配 ${count} 句，请留意上方任务日志。` }
+    startTtsEditorPolling()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法启动单句重配音' }
   }
 }
 
@@ -2883,7 +3782,7 @@ async function pollVisualEditorTaskStatus() {
         changedImage = true
       }
     }
-    if (!status.has_active_image_tasks) stopVisualEditorTaskPolling()
+    if (!status.has_active_image_tasks && status.task?.status !== 'running') stopVisualEditorTaskPolling()
   } catch {
     // The main log remains the source of truth if a short status request fails.
   }
@@ -2896,13 +3795,15 @@ function startVisualEditorTaskPolling() {
 
 async function selectVisualEditorProject() {
   if (!visualEditorProjectId.value) return
+  resetTtsSegmentAudio()
   clearVisualReferenceImages()
   try {
     activeJob.value = await api.job(visualEditorProjectId.value)
   } catch {
     // The editor can still be loaded even if the task list has just refreshed.
   }
-  await loadVisualEditor()
+  selectedTtsSegmentIndices.value = []
+  await Promise.all([loadVisualEditor({ hydrateBgm: true }), loadTtsEditor()])
 }
 
 async function toggleVisualEditor() {
@@ -2918,6 +3819,7 @@ async function toggleVisualEditor() {
   }
   else {
     stopVisualEditorTaskPolling()
+    stopTtsEditorPolling()
     visualPreviewItem.value = null
   }
 }
@@ -3075,9 +3977,31 @@ async function renderEditedVideo() {
   if (!visualEditorProjectId.value) return
   prepareCompletionAlerts(true)
   try {
-    await api.renderVisualEditor(visualEditorProjectId.value, visualRenderMode.value)
+    if (visualBgm.enabled && !visualBgm.tracks.length) {
+      visualBgmError.value = '已开启 BGM，请先上传至少一首音乐。'
+      return
+    }
+    const renderPayload = {
+      mode: visualRenderMode.value,
+      bgm_enabled: Boolean(visualBgm.enabled),
+      bgm_tracks: visualBgm.tracks.map((track) => ({
+        asset_id: track.asset_id || null,
+        archived_filename: track.archived_filename || null,
+        volume_db: Number(track.volume_db ?? -10),
+        duration_seconds: Number.isFinite(Number(track.duration_seconds)) ? Number(track.duration_seconds) : null,
+      })),
+      bgm_fade_enabled: Boolean(visualBgm.fade_enabled),
+      bgm_fade_duration: Number(visualBgm.fade_duration || 1),
+    }
+    await api.renderVisualEditor(visualEditorProjectId.value, renderPayload)
     activeJob.value = await api.job(visualEditorProjectId.value)
-    visualEditor.value.task = { status: 'running', action: 'render', message: '已开始重新渲染，进度显示在上方主进度条。' }
+    visualEditor.value.task = {
+      status: 'running',
+      action: 'render',
+      message: visualBgm.enabled && visualBgm.tracks.length
+        ? `已开始重新渲染，并应用当前项目设置的 ${visualBgm.tracks.length} 首 BGM。`
+        : '已开始重新渲染，进度显示在上方主进度条。',
+    }
     startVisualEditorTaskPolling()
   } catch (error) {
     visualEditor.value.task = { status: 'failed', action: 'render', message: error.message || '重新渲染启动失败' }
@@ -3181,23 +4105,66 @@ function removeReferenceImage(index) {
   protagonistReferenceImageError.value = ''
 }
 
+function generationRequestPayload() {
+  return {
+    ...form,
+    tts_engine: ttsEngine.value,
+    tts_emotion: form.tts_emotion || null,
+    tts_pronunciation: form.tts_pronunciation || null,
+  }
+}
+
+async function runManualPreflight() {
+  if (!session.value.user || preflightRunning.value) return
+  preflightResult.value = null
+  preflightOpen.value = true
+  preflightRunning.value = true
+  try {
+    preflightResult.value = await api.preflightJob(generationRequestPayload())
+  } catch (error) {
+    const errorMessage = String(error?.message || '')
+    const staleBackend = /method not allowed|\b405\b/i.test(errorMessage)
+    preflightResult.value = {
+      ok: false,
+      error_count: 1,
+      warning_count: 0,
+      message: staleBackend ? '后台服务尚未更新' : '启动前体检未完成',
+      items: [{
+        id: 'preflight_api',
+        label: '体检服务',
+        status: 'error',
+        message: staleBackend
+          ? '当前仍是修改前启动的旧后台进程。请关闭程序并重新启动一次，任务和产物不会受影响。'
+          : (errorMessage || '无法连接后端体检接口'),
+      }],
+    }
+  } finally {
+    preflightRunning.value = false
+  }
+}
+
+function closePreflight() {
+  if (preflightRunning.value) return
+  preflightOpen.value = false
+  preflightResult.value = null
+}
+
 async function submit() {
   if (!session.value.user) {
     authError.value = '请先登录后再生成视频'
     return
   }
   if (!canSubmitGeneration.value) return
+  generationSubmitMessage.value = ''
   prepareCompletionAlerts(true)
+  followLiveJob.value = true
   submitting.value = true
   try {
-    activeJob.value = await api.createJob({
-      ...form,
-      tts_engine: ttsEngine.value,
-      tts_emotion: form.tts_emotion || null,
-      tts_pronunciation: form.tts_pronunciation || null,
-    })
+    activeJob.value = await api.createJob(generationRequestPayload())
     jobPage.value = 1
     await refresh()
+  } catch (error) {
+    generationSubmitMessage.value = error.message || '无法创建任务，请稍后重试。'
   } finally {
     submitting.value = false
   }
@@ -3205,6 +4172,7 @@ async function submit() {
 
 async function selectJob(id, replace = true) {
   const payload = await api.job(id)
+  if (replace) followLiveJob.value = false
   if (replace) activeJob.value = payload
   else activeJob.value = payload
   // Background refreshes also call selectJob(..., false). They must not close
@@ -3222,6 +4190,22 @@ async function cancelGeneration() {
     await refresh()
   } finally {
     cancellingGeneration.value = false
+  }
+}
+
+async function deleteGenerationJob(job) {
+  if (!job?.id) return
+  const name = job.request?.project_name || job.id
+  if (!window.confirm(`确定删除任务“${name}”？\n将同时删除它的专属 workspace、output/TTS_Output 归档和日志，此操作不可撤销。`)) return
+  try {
+    await api.deleteJob(job.id)
+    if (activeJob.value?.id === job.id) activeJob.value = null
+    if (module1Job.value?.id === job.id) module1Job.value = null
+    if (subtitleJob.value?.id === job.id) subtitleJob.value = null
+    await refresh()
+    if (!jobs.value.length && jobPage.value > 1) await changeJobPage(jobPage.value - 1)
+  } catch (error) {
+    window.alert(error.message || '删除任务失败')
   }
 }
 
@@ -3326,6 +4310,39 @@ async function loadSubtitleFonts() {
   }
 }
 
+async function uploadSubtitleBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  subtitleBgmUploading.value = true
+  subtitleBgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    subtitleRenderForm.bgm_tracks.push({
+      asset_id: payload.asset.id,
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) {
+      editorAssets.value.push(payload.asset)
+    }
+  } catch (error) {
+    subtitleBgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    subtitleBgmUploading.value = false
+  }
+}
+
+function removeSubtitleBgmTrack(index) {
+  const [track] = subtitleRenderForm.bgm_tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
+}
+
 async function renderSubtitleVideo() {
   if (!canRenderSubtitleVideo.value || !subtitleJob.value?.id) return
   subtitleRenderMessage.value = ''
@@ -3397,6 +4414,47 @@ function seekStepAudio(event) {
   if (!player || !Number.isFinite(target)) return
   player.currentTime = target
   stepAudioCurrentTime.value = target
+}
+
+async function saveStepAudioAs() {
+  if (!stepModeAudioUrl.value || savingStepAudio.value) return
+  savingStepAudio.value = true
+  stepAudioSaveMessage.value = ''
+  try {
+    const response = await fetch(stepModeAudioUrl.value, { credentials: 'include' })
+    if (!response.ok) throw new Error(`下载配音失败（HTTP ${response.status}）`)
+    const blob = await response.blob()
+    const safeProjectName = String(activeJob.value?.request?.project_name || form.project_name || '本次任务')
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .slice(0, 80)
+    const suggestedName = `${safeProjectName}_配音.wav`
+    if (typeof window.showSaveFilePicker === 'function') {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description: 'WAV 音频', accept: { 'audio/wav': ['.wav'] } }],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      stepAudioSaveMessage.value = `配音已另存为：${handle.name || suggestedName}`
+    } else {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = suggestedName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      stepAudioSaveMessage.value = '浏览器不支持选择保存目录，已转为普通下载。'
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      stepAudioSaveMessage.value = error.message || '配音保存失败'
+    }
+  } finally {
+    savingStepAudio.value = false
+  }
 }
 
 function formatStepAudioTime(value) {
@@ -3563,7 +4621,7 @@ function kindLabel(kind) {
 }
 
 onMounted(async () => {
-  originalDocumentTitle = document.title || '一键成片 / One-Click VidGen'
+  originalDocumentTitle = document.title || '一键生成视频 / One-Click VidGen'
   window.addEventListener('focus', stopCompletionFlash)
   document.addEventListener('visibilitychange', stopCompletionFlash)
   await loadSettings()
@@ -3577,6 +4635,8 @@ onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
   stopTtsVoicePreview()
+  resetTtsSegmentAudio()
+  stopBgmPreview()
   stopCompletionFlash()
   window.removeEventListener('focus', stopCompletionFlash)
   document.removeEventListener('visibilitychange', stopCompletionFlash)

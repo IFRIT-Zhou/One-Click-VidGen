@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.app import pipeline
 
@@ -100,6 +100,57 @@ class OutputOrganizerTest(unittest.TestCase):
                 [item["slide_id"] for item in timeline],
                 ["part_001_scene_001", "part_002_scene_001"],
             )
+            manifest = json.loads((result / "other" / "归档清单.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["job_id"], job.id)
+            self.assertEqual(manifest["project_name"], "测试项目")
+            self.assertTrue(manifest["editable_from_output"])
+            self.assertTrue((result / "other" / "任务参数.json").is_file())
+
+    def test_incomplete_output_archive_is_rejected_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("input", "image", "video", "other"):
+                (root / name).mkdir()
+            job = pipeline.Job(id="missing", user_id=1, request={})
+
+            with self.assertRaisesRegex(RuntimeError, "项目归档不完整"):
+                pipeline.validate_and_write_output_manifest(
+                    root,
+                    job,
+                    {"video_render_variant": "subtitles"},
+                    project_name="不完整项目",
+                )
+            self.assertFalse((root / "other" / "归档清单.json").exists())
+
+    def test_completed_pipeline_cleans_shared_workspace_only_after_manifest_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary) / "output" / "项目"
+            (output_dir / "other").mkdir(parents=True)
+            (output_dir / "other" / "归档清单.json").write_text("{}", encoding="utf-8")
+            job = pipeline.Job(id="complete", user_id=1, request={})
+            store = Mock()
+            with (
+                patch.object(pipeline, "organize_project_output", return_value=output_dir),
+                patch.object(pipeline, "copy_artifacts", return_value={"audio": "/audio"}),
+                patch.object(pipeline, "reset_generation_workspace") as cleanup,
+            ):
+                pipeline.finalize_completed_pipeline(job, store, {"project_name": "项目"})
+            cleanup.assert_called_once_with()
+
+    def test_completed_pipeline_keeps_workspace_without_validated_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output_dir = Path(temporary) / "output" / "项目"
+            (output_dir / "other").mkdir(parents=True)
+            job = pipeline.Job(id="incomplete", user_id=1, request={})
+            store = Mock()
+            with (
+                patch.object(pipeline, "organize_project_output", return_value=output_dir),
+                patch.object(pipeline, "copy_artifacts", return_value={}),
+                patch.object(pipeline, "reset_generation_workspace") as cleanup,
+            ):
+                pipeline.finalize_completed_pipeline(job, store, {"project_name": "项目"})
+            cleanup.assert_not_called()
 
 
 if __name__ == "__main__":

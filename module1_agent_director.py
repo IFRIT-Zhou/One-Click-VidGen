@@ -38,6 +38,11 @@ CHUNK_MAX_LEN = 85
 # (with headroom) rather than using Python character counts.
 QWEN_CHUNK_MIN_LEN = 240
 QWEN_CHUNK_MAX_LEN = 540
+NON_BOUNDARY_WRAPPER_MARKS = frozenset("“”《》<>【】")
+PRODUCTION_NOTE_PATTERN = re.compile(
+    r"【\s*(?:镜头|画面|场景|制作|剪辑|字幕|音效|配乐|BGM|停顿|留白)[^】]*】",
+    flags=re.IGNORECASE,
+)
 
 
 def parse_args():
@@ -50,6 +55,7 @@ def parse_args():
     parser.add_argument("--job-id", help="关联的生成任务 ID")
     parser.add_argument("--user-id", type=int, help="关联的用户 ID")
     parser.add_argument("--tts-voice-id", help="官方 IndexTTS2 参考音频 ID")
+    parser.add_argument("--tts-voice-path", help="重配音时使用的已归档参考音频绝对路径")
     parser.add_argument("--tts-speed", type=float, default=1.0, help="输出语速（0.5-2）")
     parser.add_argument("--tts-volume", type=float, default=1.0, help="输出音量（0.1-10）")
     parser.add_argument("--tts-pitch", type=int, default=0, help="输出音调（-12 到 12）")
@@ -70,6 +76,9 @@ def parse_args():
         choices=("true", "false"),
         help="兼容旧请求；IndexTTS2 原生处理中英文文本",
     )
+    parser.add_argument("--chunks-json", help="跳过自动断句，按 JSON 数组中的文本逐句合成")
+    parser.add_argument("--output-dir", help="覆盖合并音频与字幕的输出目录")
+    parser.add_argument("--segment-archive-dir", help="保留逐句 WAV 与断句清单的目录")
     return parser.parse_args()
 
 
@@ -80,7 +89,7 @@ def ensure_dir(path: Path) -> None:
 def clean_text(raw: str) -> str:
     """Remove production notes while preserving spoken parenthetical content."""
     lines = [line for line in raw.split("\n") if "此处留白" not in line]
-    return re.sub(r"【[^】]*】", "", "\n".join(lines))
+    return PRODUCTION_NOTE_PATTERN.sub("", "\n".join(lines))
 
 
 def _split_sentences_preserving_closers(paragraph: str) -> list[str]:
@@ -91,6 +100,11 @@ def _split_sentences_preserving_closers(paragraph: str) -> list[str]:
     start = 0
     index = 0
     while index < len(paragraph):
+        # Quotes, book-title marks and user-facing brackets are formatting
+        # wrappers, never sentence boundaries by themselves.
+        if paragraph[index] in NON_BOUNDARY_WRAPPER_MARKS:
+            index += 1
+            continue
         if paragraph[index] not in endings:
             index += 1
             continue
@@ -114,6 +128,8 @@ def _split_clause_units(sentence: str) -> list[str]:
     units: list[str] = []
     start = 0
     for index, char in enumerate(sentence):
+        if char in NON_BOUNDARY_WRAPPER_MARKS:
+            continue
         if char not in boundaries:
             continue
         unit = sentence[start:index + 1].strip()
@@ -565,7 +581,13 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
         raise RuntimeError("清洗和断句后没有可合成的文案")
 
     ensure_dir(TEMP_DIR)
-    voice_path = resolve_voice_reference(config, args.tts_voice_id, user_id=args.user_id)
+    explicit_voice_path = Path(str(getattr(args, "tts_voice_path", "") or "")).resolve()
+    if str(getattr(args, "tts_voice_path", "") or "").strip():
+        if not explicit_voice_path.is_file() or explicit_voice_path.suffix.lower() not in {".wav", ".mp3", ".flac"}:
+            raise FileNotFoundError(f"找不到有效的重配音参考音频: {explicit_voice_path}")
+        voice_path = explicit_voice_path
+    else:
+        voice_path = resolve_voice_reference(config, args.tts_voice_id, user_id=args.user_id)
     emotion_vector = emotion_vector_text(args.tts_emotion)
 
     env = os.environ.copy()
@@ -859,7 +881,56 @@ def step2_qwen_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str
     return wav_paths, srt_entries
 
 
-def step3_finalize(wav_paths: list[Path], srt_entries: list[str]) -> None:
+def export_tts_segments(
+    archive_dir: Path,
+    chunks: list[str],
+    wav_paths: list[Path],
+    args,
+) -> None:
+    """Persist exact per-request WAVs so completed projects can selectively regenerate speech."""
+    shutil.rmtree(archive_dir, ignore_errors=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    current_time = 0.0
+    items: list[dict[str, object]] = []
+    for index, (chunk, source) in enumerate(zip(chunks, wav_paths), 1):
+        filename = f"segment_{index:04d}.wav"
+        target = archive_dir / filename
+        shutil.copy2(source, target)
+        duration = get_wav_duration(target)
+        items.append({
+            "index": index,
+            "text": chunk,
+            "filename": filename,
+            "start": round(current_time, 6),
+            "end": round(current_time + duration, 6),
+            "duration": round(duration, 6),
+        })
+        current_time += duration
+    manifest = {
+        "schema_version": 1,
+        "engine": str(getattr(args, "tts_engine", "indextts2") or "indextts2"),
+        "tts_voice_id": str(getattr(args, "tts_voice_id", "") or ""),
+        "tts_speed": float(getattr(args, "tts_speed", 1) or 1),
+        "tts_volume": float(getattr(args, "tts_volume", 1) or 1),
+        "tts_pitch": int(getattr(args, "tts_pitch", 0) or 0),
+        "tts_emotion": str(getattr(args, "tts_emotion", "") or ""),
+        "qwen_voice": str(getattr(args, "qwen_voice", "") or ""),
+        "qwen_instructions": str(getattr(args, "qwen_instructions", "") or ""),
+        "total_duration": round(current_time, 6),
+        "segments": items,
+    }
+    (archive_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"  -> Per-sentence TTS archive: {archive_dir}", flush=True)
+
+
+def step3_finalize(
+    wav_paths: list[Path],
+    srt_entries: list[str],
+    chunks: list[str] | None = None,
+    args=None,
+) -> None:
     print("[Step 3] Finalizing output...", flush=True)
     ensure_dir(OUTPUT_DIR)
     output_wav = OUTPUT_DIR / "final_output.wav"
@@ -883,6 +954,9 @@ def step3_finalize(wav_paths: list[Path], srt_entries: list[str]) -> None:
     output_srt = OUTPUT_DIR / "final_output.srt"
     output_srt.write_text("\n".join(srt_entries) + "\n", encoding="utf-8")
     print(f"  -> SRT written: {output_srt}", flush=True)
+    segment_archive = str(getattr(args, "segment_archive_dir", "") or "").strip() if args is not None else ""
+    if segment_archive and chunks is not None:
+        export_tts_segments(Path(segment_archive).resolve(), chunks, wav_paths, args)
 
 
 def step4_cleanup() -> None:
@@ -893,7 +967,10 @@ def step4_cleanup() -> None:
 
 
 def main() -> None:
+    global OUTPUT_DIR
     args = parse_args()
+    if str(args.output_dir or "").strip():
+        OUTPUT_DIR = Path(args.output_dir).resolve()
     text_path = Path(args.text)
     if not text_path.is_absolute():
         text_path = PROJECT_ROOT / text_path
@@ -911,7 +988,15 @@ def main() -> None:
     print(f"  临时音频目录: {TEMP_DIR}", flush=True)
 
     try:
-        if args.tts_engine == "qwen":
+        if str(args.chunks_json or "").strip():
+            raw_chunks = json.loads(Path(args.chunks_json).read_text(encoding="utf-8"))
+            if not isinstance(raw_chunks, list) or not raw_chunks:
+                raise ValueError("chunks-json 必须是非空文本数组")
+            chunks = [str(value).strip() for value in raw_chunks if str(value).strip()]
+            if not chunks:
+                raise ValueError("chunks-json 中没有可配音文本")
+            print(f"[Step 1] Using {len(chunks)} preserved TTS chunks...", flush=True)
+        elif args.tts_engine == "qwen":
             chunks = step1_dynamic_chunk_slicing(
                 text_path,
                 min_len=QWEN_CHUNK_MIN_LEN,
@@ -924,7 +1009,7 @@ def main() -> None:
             wav_paths, srt_entries = step2_qwen_synthesize(chunks, args)
         else:
             wav_paths, srt_entries = step2_indextts2_synthesize(chunks, args)
-        step3_finalize(wav_paths, srt_entries)
+        step3_finalize(wav_paths, srt_entries, chunks, args)
     except Exception as exc:
         clear_temp_chunks()
         sys.exit(f"【致命错误】{engine_label} 生成失败：{type(exc).__name__}: {exc}")
