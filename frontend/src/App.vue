@@ -315,11 +315,14 @@
               <div class="tts-parameter-head">
                 <div>
                   <div class="tts-engine-row">
-                    <div class="sidebar-label">{{ ttsEngine === 'indextts2' ? 'IndexTTS2 · 本地 GPU' : 'Qwen-TTS · 云端 API' }}</div>
-                    <label class="tts-engine-switch" title="切换本地 IndexTTS2 与 Qwen-TTS 云端配音">
-                      <input v-model="ttsEngine" type="checkbox" true-value="qwen" false-value="indextts2" />
-                      <span class="tts-engine-track" aria-hidden="true"></span>
-                      <span>Qwen-TTS</span>
+                    <div class="sidebar-label">{{ ttsEngineLabel }}</div>
+                    <label class="tts-engine-select" title="选择配音执行方式">
+                      <span>执行方式</span>
+                      <select v-model="ttsEngine">
+                        <option value="indextts2">本地 GPU</option>
+                        <option value="cluster">集群 GPU</option>
+                        <option value="qwen">Qwen-TTS</option>
+                      </select>
                     </label>
                   </div>
                   <h3>语音参数</h3>
@@ -328,7 +331,10 @@
                   <span v-if="ttsEngine === 'indextts2'" class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
                     {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
                   </span>
-                  <span class="muted small">{{ ttsEngine === 'indextts2' ? (settings.tts?.model || 'official IndexTTS2 2.0.0') : 'DashScope / 百炼' }}</span>
+                  <span v-else-if="ttsEngine === 'cluster'" class="status-chip" :class="cloudReady ? 'success' : 'warning'">
+                    {{ cloudReady ? '集群已登录' : '集群未登录' }}
+                  </span>
+                  <span class="muted small">{{ ttsEngineProviderLabel }}</span>
                 </div>
               </div>
               <div v-if="ttsEngine === 'indextts2'" class="form-grid tts-param-grid">
@@ -375,6 +381,64 @@
                 <small class="muted tts-wide-field">
                   4090 建议日常用 2；3 是上限尝试档，显存紧张或报错时调回 2。
                 </small>
+              </div>
+              <div v-else-if="ttsEngine === 'cluster'" class="cluster-tts-config">
+                <div v-if="!cloudSession.configured" class="cluster-notice warning">
+                  后端尚未配置 CLOUD_API_BASE_URL，请先在本机 .env 中填写集群 cloud-api 地址并重启。
+                </div>
+                <template v-else-if="!cloudSession.authenticated">
+                  <div class="cluster-login-grid">
+                    <label><span>云端邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" /></label>
+                    <label><span>云端密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" /></label>
+                    <div class="inline-actions">
+                      <button class="primary-btn" type="button" :disabled="cloudBusy" @click="loginCloud">登录集群</button>
+                      <button class="ghost-btn" type="button" :disabled="cloudBusy" @click="registerCloud">注册账户</button>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="cluster-account-bar">
+                    <span><strong>{{ cloudSession.user?.email || '云端账户' }}</strong></span>
+                    <span>可用积分 <strong>{{ cloudAccount.credits?.available ?? '-' }}</strong></span>
+                    <span>冻结 <strong>{{ cloudAccount.credits?.reserved ?? '-' }}</strong></span>
+                    <span>并发 <strong>{{ cloudAccount.quota?.running_jobs ?? 0 }}/{{ cloudAccount.quota?.max_concurrent_jobs ?? '-' }}</strong></span>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="refreshCloudState">刷新</button>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="logoutCloud">退出云端</button>
+                  </div>
+                  <div class="form-grid cluster-voice-grid">
+                    <label>
+                      <span>云端参考音色</span>
+                      <select v-model="cloudVoiceModel">
+                        <option v-for="voice in activeCloudVoices" :key="`${voice.type}:${voice.id}`" :value="`${voice.type}:${voice.id}`">
+                          {{ voice.display_name || voice.id }} · {{ voice.type === 'custom' ? '自定义' : '预置' }}
+                        </option>
+                      </select>
+                      <button v-if="selectedCloudVoice?.type === 'custom'" class="ghost-btn compact-btn cloud-voice-delete" type="button" :disabled="cloudBusy" @click="deleteSelectedCloudVoice">删除当前自定义音色</button>
+                    </label>
+                    <label><span>上传音色名称</span><input v-model.trim="cloudVoiceDisplayName" type="text" maxlength="80" placeholder="例如：我的旁白音色" /></label>
+                    <div class="script-upload-field cloud-voice-upload">
+                      <label class="script-file-picker">
+                        <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="cloudVoiceUploading" @change="uploadCloudVoice" />
+                        <span>{{ cloudVoiceUploading ? '上传中' : '上传云端' }}</span>
+                        <strong>WAV / MP3 / FLAC，3–30 秒</strong>
+                      </label>
+                      <label class="check-row cloud-consent-row"><input v-model="cloudVoiceConsent" type="checkbox" /><span>我确认已获得该声音的合法授权</span></label>
+                    </div>
+                    <label><span>情绪</span><select v-model="form.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="emotion" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
+                    <label><span>语速（0.5–2）</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
+                    <label><span>音量（0.1–10）</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
+                    <label><span>音调（-12–12）</span><input v-model.number="form.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
+                    <label><span>并行分块（1–3）</span><input v-model.number="form.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                  </div>
+                  <div class="cluster-quote-bar">
+                    <span>预计积分：<strong>{{ cloudQuote.estimated_credits ?? '尚未报价' }}</strong></span>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="cloudQuoteLoading || form.script.trim().length < 5" @click="refreshCloudQuote">
+                      {{ cloudQuoteLoading ? '报价中…' : '刷新报价' }}
+                    </button>
+                  </div>
+                </template>
+                <small v-if="cloudError" class="script-upload-error">{{ cloudError }}</small>
+                <small v-else-if="cloudMessage" class="api-key-message">{{ cloudMessage }}</small>
               </div>
               <div v-else class="qwen-tts-config">
                 <label v-if="apiKeyFieldOpen('qwen_tts')" class="qwen-key-field">
@@ -1370,12 +1434,19 @@
             <div class="panel-head">
               <div>
                 <div class="eyebrow">独立工具</div>
-                <h2>模块 1 · IndexTTS2 配音</h2>
+                <h2>模块 1 · {{ ttsEngineLabel }}</h2>
                 <p class="muted create-summary">只执行断句、配音和原始字幕，不启动 ASR、双 Agent、出图及视频合成。</p>
               </div>
-              <span class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
-                {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
-              </span>
+              <div class="module1-engine-control">
+                <select v-model="ttsEngine">
+                  <option value="indextts2">本地 GPU</option>
+                  <option value="cluster">集群 GPU</option>
+                  <option value="qwen">Qwen-TTS</option>
+                </select>
+                <span class="status-chip" :class="((ttsEngine === 'indextts2' && health.tts_online) || (ttsEngine === 'cluster' && cloudReady) || (ttsEngine === 'qwen' && apiKeyStatus.qwen_tts?.configured)) ? 'success' : 'warning'">
+                  {{ ttsEngine === 'indextts2' ? (health.tts_online ? '本地已就绪' : '本地未就绪') : (ttsEngine === 'cluster' ? (cloudReady ? '集群已就绪' : '集群未就绪') : (apiKeyStatus.qwen_tts?.configured ? 'Qwen 已就绪' : 'Qwen 未配置')) }}
+                </span>
+              </div>
             </div>
 
             <div class="module1-layout">
@@ -1403,10 +1474,10 @@
                   <div class="tts-parameter-head">
                     <div>
                       <div class="sidebar-label">参考声音</div>
-                      <h3>本地参考音色</h3>
+                      <h3>{{ ttsEngine === 'indextts2' ? '本地参考音色' : (ttsEngine === 'cluster' ? '集群参考音色' : 'Qwen 系统音色') }}</h3>
                     </div>
                   </div>
-                  <div class="script-upload-field">
+                  <div v-if="ttsEngine === 'indextts2'" class="script-upload-field">
                     <div class="tts-voice-picker-row">
                       <label class="script-file-picker">
                         <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
@@ -1419,6 +1490,26 @@
                     </div>
                     <small v-if="ttsVoiceUploadError" class="script-upload-error">{{ ttsVoiceUploadError }}</small>
                     <small v-else class="muted">建议 10–30 秒、单人、无音乐的干净人声。</small>
+                  </div>
+                  <div v-else-if="ttsEngine === 'cluster'" class="module1-cloud-voice">
+                    <template v-if="cloudReady">
+                      <label><span>云端音色</span><select v-model="cloudVoiceModel"><option v-for="voice in activeCloudVoices" :key="`${voice.type}:${voice.id}`" :value="`${voice.type}:${voice.id}`">{{ voice.display_name || voice.id }} · {{ voice.type === 'custom' ? '自定义' : '预置' }}</option></select></label>
+                      <small class="muted">可用积分 {{ cloudAccount.credits?.available ?? '-' }}，任务会在云端 GPU 合成后下载到本机。</small>
+                    </template>
+                    <template v-else>
+                      <p class="muted">请先登录集群云端账户并选择音色。</p>
+                      <div class="cluster-login-grid compact-cloud-login">
+                        <label><span>云端邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" /></label>
+                        <label><span>云端密码</span><input v-model="cloudLoginForm.password" type="password" /></label>
+                        <button class="primary-btn" type="button" :disabled="cloudBusy" @click="loginCloud">登录集群</button>
+                      </div>
+                    </template>
+                    <small v-if="cloudError" class="script-upload-error">{{ cloudError }}</small>
+                  </div>
+                  <div v-else class="module1-qwen-voice">
+                    <label><span>Qwen 系统音色</span><select v-model="form.qwen_tts_voice"><optgroup v-for="group in qwenVoiceGroups" :key="group.label" :label="group.label"><option v-for="voice in group.voices" :key="voice.value" :value="voice.value">{{ voice.label }}</option></optgroup></select></label>
+                    <label><span>配音描述</span><textarea v-model="form.qwen_tts_instructions" rows="4" maxlength="1600"></textarea></label>
+                    <small v-if="!apiKeyStatus.qwen_tts?.configured" class="script-upload-error">请先在一键生成页配置 Qwen-TTS API Key。</small>
                   </div>
                 </div>
 
@@ -1719,7 +1810,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
 
 const VISUAL_PROMPT_FULL_STORAGE_KEY = 'visual_prompt_system_story_v3'
@@ -1888,6 +1979,18 @@ const savingApiKeys = ref(false)
 const savingQwenTtsKey = ref(false)
 const qwenTtsKeyMessage = ref('')
 const ttsEngine = ref('indextts2')
+const cloudSession = ref({ configured: false, authenticated: false, user: null, base_url: '' })
+const cloudAccount = ref({ credits: {}, quota: {} })
+const cloudVoices = ref([])
+const cloudQuote = ref({})
+const cloudBusy = ref(false)
+const cloudQuoteLoading = ref(false)
+const cloudVoiceUploading = ref(false)
+const cloudVoiceDisplayName = ref('')
+const cloudVoiceConsent = ref(false)
+const cloudError = ref('')
+const cloudMessage = ref('')
+const cloudLoginForm = reactive({ email: '', password: '' })
 // Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
 // 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
 const qwenVoiceGroups = [
@@ -2071,6 +2174,8 @@ const form = reactive({
   tts_emotion: '',
   tts_english_normalization: false,
   tts_pronunciation: '',
+  cluster_voice_type: 'preset',
+  cluster_voice_id: 'voice_01.wav',
   qwen_tts_instructions: '',
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
@@ -2323,6 +2428,36 @@ const qwenSelectedVoice = computed(() => qwenVoiceGroups
   .flatMap((group) => group.voices)
   .find((voice) => voice.value === form.qwen_tts_voice))
 const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.value?.supportsInstructions !== false)
+const ttsEngineLabel = computed(() => ({
+  indextts2: 'IndexTTS2 · 本地 GPU',
+  cluster: 'IndexTTS2 · 集群 GPU',
+  qwen: 'Qwen-TTS · 云端 API',
+}[ttsEngine.value] || '配音引擎'))
+const ttsEngineProviderLabel = computed(() => ({
+  indextts2: settings.value.tts?.model || 'official IndexTTS2 2.0.0',
+  cluster: cloudSession.value.base_url || 'cloud-api / Ray 集群',
+  qwen: 'DashScope / 百炼',
+}[ttsEngine.value] || ''))
+const activeCloudVoices = computed(() => cloudVoices.value.filter((voice) => voice?.status === 'active'))
+const selectedCloudVoice = computed(() => cloudVoices.value.find((voice) => (
+  voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
+)))
+const cloudReady = computed(() => Boolean(
+  cloudSession.value.configured
+  && cloudSession.value.authenticated
+  && activeCloudVoices.value.some((voice) => (
+    voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
+  ))
+))
+const cloudVoiceModel = computed({
+  get: () => `${form.cluster_voice_type}:${form.cluster_voice_id}`,
+  set(value) {
+    const [type, ...idParts] = String(value || '').split(':')
+    form.cluster_voice_type = type === 'custom' ? 'custom' : 'preset'
+    form.cluster_voice_id = idParts.join(':') || 'voice_01.wav'
+    cloudQuote.value = {}
+  },
+})
 const hasPendingGeneration = computed(() => (
   [activeJob.value, ...jobs.value].filter(Boolean).some((job) => (
     ['queued', 'running', 'waiting_confirmation'].includes(job.status)
@@ -2340,11 +2475,16 @@ const canSubmitGeneration = computed(() => {
   }
   if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return false
   if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return false
+  if (ttsEngine.value === 'cluster' && !cloudReady.value) return false
   return form.script.trim().length > 0
 })
 const canSubmitModule1 = computed(() => Boolean(
   session.value.user
-  && health.value.tts_online
+  && (
+    (ttsEngine.value === 'indextts2' && health.value.tts_online)
+    || (ttsEngine.value === 'cluster' && cloudReady.value)
+    || (ttsEngine.value === 'qwen' && apiKeyStatus.value.qwen_tts?.configured)
+  )
   && form.project_name.trim()
   && form.script.trim().length >= 5
   && !scriptTooLong.value
@@ -2381,6 +2521,8 @@ const submitButtonText = computed(() => {
   if (form.skip_tts) return '从已有配音生成视频'
   if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return '请先保存 Qwen-TTS API Key'
   if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return '该音色不支持配音描述'
+  if (ttsEngine.value === 'cluster' && !cloudSession.value.authenticated) return '请先登录集群云端账户'
+  if (ttsEngine.value === 'cluster' && !cloudReady.value) return '请选择可用的集群音色'
   return '一键生成视频'
 })
 const preflightPassedCount = computed(() => (
@@ -2677,6 +2819,9 @@ async function register() {
 }
 
 async function logout() {
+  if (cloudSession.value.authenticated) {
+    try { await api.cloudLogout() } catch { /* local logout must still proceed */ }
+  }
   await api.logout()
   session.value = { user: null, auth_mode: 'account', mysql: {} }
   parameterPresets.value = []
@@ -2696,6 +2841,170 @@ async function logout() {
   apiKeyMessage.value = ''
   for (const kind of Object.keys(apiKeyEditing)) apiKeyEditing[kind] = false
   for (const kind of Object.keys(apiKeyRuntimeErrors)) apiKeyRuntimeErrors[kind] = ''
+  cloudSession.value = { configured: false, authenticated: false, user: null, base_url: '' }
+  cloudAccount.value = { credits: {}, quota: {} }
+  cloudVoices.value = []
+  cloudQuote.value = {}
+}
+
+async function refreshCloudState() {
+  if (!session.value.user) return
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    cloudSession.value = await api.cloudSession()
+    if (!cloudSession.value.authenticated) {
+      cloudAccount.value = { credits: {}, quota: {} }
+      cloudVoices.value = []
+      return
+    }
+    const [account, voices] = await Promise.all([api.cloudAccount(), api.cloudVoices()])
+    cloudAccount.value = account || { credits: {}, quota: {} }
+    cloudVoices.value = voices.items || []
+    const selectedExists = activeCloudVoices.value.some((voice) => (
+      voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
+    ))
+    if (!selectedExists && activeCloudVoices.value[0]) {
+      const first = activeCloudVoices.value[0]
+      form.cluster_voice_type = first.type === 'custom' ? 'custom' : 'preset'
+      form.cluster_voice_id = first.id
+    }
+  } catch (error) {
+    cloudError.value = error.message || '无法读取集群云端状态。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function loginCloud() {
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!cloudLoginForm.email || !cloudLoginForm.password) {
+    cloudError.value = '请输入云端邮箱和密码。'
+    return
+  }
+  cloudBusy.value = true
+  try {
+    cloudSession.value = await api.cloudLogin({ ...cloudLoginForm })
+    cloudLoginForm.password = ''
+    cloudMessage.value = '集群云端登录成功。'
+    await refreshCloudState()
+  } catch (error) {
+    cloudError.value = error.message || '集群云端登录失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function registerCloud() {
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!cloudLoginForm.email || cloudLoginForm.password.length < 8) {
+    cloudError.value = '注册密码至少需要 8 位。'
+    return
+  }
+  cloudBusy.value = true
+  try {
+    const payload = await api.cloudRegister({ ...cloudLoginForm })
+    cloudMessage.value = payload.verification_required
+      ? '注册成功，请先完成邮箱验证后再登录。'
+      : '注册成功，现在可以登录集群。'
+  } catch (error) {
+    cloudError.value = error.message || '集群云端注册失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function logoutCloud() {
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    await api.cloudLogout()
+    cloudSession.value = await api.cloudSession()
+    cloudAccount.value = { credits: {}, quota: {} }
+    cloudVoices.value = []
+    cloudQuote.value = {}
+    cloudMessage.value = '已退出集群云端账户。'
+  } catch (error) {
+    cloudError.value = error.message || '退出集群失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function uploadCloudVoice(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['wav', 'mp3', 'flac'].includes(suffix)) {
+    cloudError.value = '云端参考音色只支持 WAV、MP3 或 FLAC。'
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    cloudError.value = '云端参考音色不能超过 20 MiB。'
+    return
+  }
+  if (!cloudVoiceDisplayName.value.trim()) {
+    cloudError.value = '请先填写上传音色名称。'
+    return
+  }
+  if (!cloudVoiceConsent.value) {
+    cloudError.value = '请确认已获得该声音的合法授权。'
+    return
+  }
+  cloudVoiceUploading.value = true
+  try {
+    const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const payload = await api.uploadCloudVoice(file, cloudVoiceDisplayName.value.trim(), `voice-upload-${randomId}`)
+    const voice = payload.voice
+    if (!voice?.id) throw new Error('云端上传响应缺少 voice_id。')
+    form.cluster_voice_type = 'custom'
+    form.cluster_voice_id = voice.id
+    cloudMessage.value = payload.deduplicated ? '音色已存在，已直接选中。' : '参考音色上传成功。'
+    cloudVoiceConsent.value = false
+    cloudVoiceDisplayName.value = ''
+    await refreshCloudState()
+  } catch (error) {
+    cloudError.value = error.message || '上传云端参考音色失败。'
+  } finally {
+    cloudVoiceUploading.value = false
+  }
+}
+
+async function deleteSelectedCloudVoice() {
+  const voice = selectedCloudVoice.value
+  if (!voice || voice.type !== 'custom') return
+  if (!window.confirm(`确定删除云端音色“${voice.display_name || voice.id}”？`)) return
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    await api.deleteCloudVoice(voice.id)
+    cloudMessage.value = '云端自定义音色已删除。'
+    await refreshCloudState()
+  } catch (error) {
+    cloudError.value = error.message || '删除云端音色失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function refreshCloudQuote() {
+  if (!cloudReady.value || form.script.trim().length < 5) return
+  cloudQuoteLoading.value = true
+  cloudError.value = ''
+  try {
+    cloudQuote.value = await api.cloudQuote(generationRequestPayload())
+  } catch (error) {
+    cloudQuote.value = {}
+    cloudError.value = error.message || '获取集群报价失败。'
+  } finally {
+    cloudQuoteLoading.value = false
+  }
 }
 
 function apiKeyFieldOpen(kind) {
@@ -3003,7 +3312,9 @@ async function loadSelectedParameterPreset() {
       ? Number(parameters.bgm_fade_duration)
       : 1
     form.script = typeof parameters.script === 'string' ? parameters.script : ''
-    ttsEngine.value = parameters.tts_engine === 'qwen' ? 'qwen' : 'indextts2'
+    ttsEngine.value = ['indextts2', 'cluster', 'qwen'].includes(parameters.tts_engine)
+      ? parameters.tts_engine
+      : 'indextts2'
     form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
     await restoreSavedTtsVoiceLabel()
     await restoreSavedProtagonistReferenceImageLabel()
@@ -4254,6 +4565,7 @@ async function submitModule1() {
   try {
     module1Job.value = await api.createJob({
       ...form,
+      tts_engine: ttsEngine.value,
       module1_only: true,
       skip_tts: false,
       source_audio_id: null,
@@ -4667,7 +4979,12 @@ onMounted(async () => {
   await refresh()
   await refreshParameterPresets()
   await refreshAgentPromptPresets()
+  if (ttsEngine.value === 'cluster') await refreshCloudState()
   timer = window.setInterval(refresh, 2500)
+})
+
+watch(ttsEngine, (engine) => {
+  if (engine === 'cluster') void refreshCloudState()
 })
 
 onUnmounted(() => {

@@ -463,6 +463,13 @@ class JobStore:
             if job.status in {"queued", "running"}:
                 return job.snapshot()
             self._cancel_events[job.id] = threading.Event()
+        if str(job.request.get("tts_engine") or "") == "cluster" and (
+            job.status == "cancelled"
+            or str(job.request.get("_cloud_job_status") or "") in {"failed", "cancelled", "expired"}
+        ):
+            job.request.pop("_cloud_job_id", None)
+            job.request.pop("_cloud_job_status", None)
+            job.request["_cloud_tts_attempt"] = int(job.request.get("_cloud_tts_attempt", 1) or 1) + 1
         if job.status == "waiting_confirmation":
             self.log(job, "收到分步确认，将复用已经生成的中间产物继续执行")
         else:
@@ -487,6 +494,10 @@ class JobStore:
         with self._lock:
             self._cancel_events[job.id] = threading.Event()
         job.request.pop("_step_mode_stage", None)
+        if str(job.request.get("tts_engine") or "") == "cluster":
+            job.request.pop("_cloud_job_id", None)
+            job.request.pop("_cloud_job_status", None)
+            job.request["_cloud_tts_attempt"] = int(job.request.get("_cloud_tts_attempt", 1) or 1) + 1
         job_dir = JOBS_DIR / job.id
         shutil.rmtree(job_dir / "artifacts", ignore_errors=True)
         shutil.rmtree(job_dir / "step_mode_preview_images", ignore_errors=True)
@@ -547,6 +558,7 @@ class JobStore:
             process = self._processes.get(job.id)
 
         is_tts = job.step == "tts"
+        is_cluster_tts = is_tts and str(job.request.get("tts_engine") or "") == "cluster"
         self.log(job, "收到停止生成请求")
         self.update(
             job,
@@ -554,7 +566,11 @@ class JobStore:
             # Keep the phase visible until run_command observes the graceful
             # shutdown; it also tells that loop this is a CUDA-safe stop.
             step="tts" if is_tts else "cancelled",
-            message="正在安全停止配音，等待当前 GPU 推理释放资源" if is_tts else "已停止生成",
+            message=(
+                "正在取消集群云端任务"
+                if is_cluster_tts
+                else ("正在安全停止配音，等待当前 GPU 推理释放资源" if is_tts else "已停止生成")
+            ),
             error=None,
         )
         if process is not None:
@@ -634,8 +650,12 @@ class JobStore:
                     # `cancel()` deliberately keeps the TTS phase while CUDA
                     # is winding down.  Once run_command returns here, it is
                     # safe to mark the stop as fully complete.
-                    self.log(job, "IndexTTS2 已安全退出，显存释放完成")
-                    self.update(job, step="cancelled", message="已安全停止生成", error=None)
+                    if str(job.request.get("tts_engine") or "") == "cluster":
+                        self.log(job, "集群云端任务已停止")
+                        self.update(job, step="cancelled", message="已停止集群云端生成", error=None)
+                    else:
+                        self.log(job, "IndexTTS2 已安全退出，显存释放完成")
+                        self.update(job, step="cancelled", message="已安全停止生成", error=None)
             except Exception as exc:
                 if self.is_cancelled(job):
                     if job.status != "cancelled":
@@ -2706,64 +2726,100 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     else:
         store.update(job, status="running", step="tts", progress=8, message=STEPS[0][1])
         tts_engine = str(request.get("tts_engine") or "indextts2").strip().lower()
-        if tts_engine not in {"indextts2", "qwen"}:
+        if tts_engine not in {"indextts2", "cluster", "qwen"}:
             tts_engine = "indextts2"
-        if tts_engine == "qwen":
+        if tts_engine == "cluster":
+            store.log(job, "模块 1：使用集群 GPU 加速配音，通过 cloud-api 提交、轮询并下载分块 WAV")
+        elif tts_engine == "qwen":
             store.log(job, "模块 1：使用 Qwen-TTS 云端配音，逐句下载并合并本地 WAV")
         else:
             store.log(job, "模块 1：使用官方 IndexTTS2 本地 GPU 配音")
-        tts_command = [
-            sys.executable,
-            "module1_agent_director.py",
-            "--text",
-            str(script_path),
-            "--job-id",
-            job.id,
-            "--tts-engine",
-            tts_engine,
-            "--segment-archive-dir",
-            str(JOBS_DIR / job.id / "artifacts" / "tts_segments"),
-        ]
-        if job.user_id is not None:
-            tts_command.extend(["--user-id", str(job.user_id)])
-        tts_command.extend(
-            [
-                "--tts-voice-id",
-                  str(request.get("tts_voice_id") or "voice_05.wav"),
-                "--tts-speed",
-                str(request.get("tts_speed", 1)),
-                "--tts-volume",
-                str(request.get("tts_volume", 1)),
-                "--tts-pitch",
-                str(request.get("tts_pitch", 0)),
-                "--tts-parallelism",
-                str(request.get("tts_parallelism", 2)),
-                "--tts-english-normalization",
-                "true" if request.get("tts_english_normalization", False) else "false",
+        if tts_engine == "cluster":
+            if job.user_id is None:
+                raise RuntimeError("集群 GPU 模式需要本地用户身份")
+            from .cloud_client import cloud_client_for
+            from .cloud_tts import CloudTtsCancelled, synthesize_cloud_tts
+
+            def update_cloud_progress(percent: int, message: str) -> None:
+                mapped = min(29, 8 + round(max(0, min(100, percent)) / 100 * 21))
+                store.update(job, progress=max(job.progress, mapped), message=f"集群 GPU：{message}"[:500])
+
+            def remember_cloud_job(cloud_job_id: str, payload: dict[str, Any]) -> None:
+                request["_cloud_job_id"] = cloud_job_id
+                request["_cloud_job_status"] = str(payload.get("status") or "")
+                for field in ("reserved_credits", "consumed_credits", "released_credits"):
+                    if payload.get(field) is not None:
+                        request[f"_cloud_{field}"] = payload.get(field)
+                store.update(job, request=request)
+
+            try:
+                synthesize_cloud_tts(
+                    client=cloud_client_for(int(job.user_id)),
+                    local_job_id=job.id,
+                    request=request,
+                    output_dir=WORKSPACE_DIR / "2_audio_srt",
+                    segment_archive_dir=JOBS_DIR / job.id / "artifacts" / "tts_segments",
+                    temp_dir=WORKSPACE_DIR / "temp_chunks" / job.id,
+                    is_cancelled=lambda: store.is_cancelled(job),
+                    on_progress=update_cloud_progress,
+                    on_log=lambda line: store.log(job, line),
+                    on_remote_job=remember_cloud_job,
+                )
+            except CloudTtsCancelled as exc:
+                raise GenerationCancelled(str(exc)) from exc
+        else:
+            tts_command = [
+                sys.executable,
+                "module1_agent_director.py",
+                "--text",
+                str(script_path),
+                "--job-id",
+                job.id,
+                "--tts-engine",
+                tts_engine,
+                "--segment-archive-dir",
+                str(JOBS_DIR / job.id / "artifacts" / "tts_segments"),
             ]
-        )
-        emotion = str(request.get("tts_emotion") or "").strip()
-        if emotion:
-            tts_command.extend(["--tts-emotion", emotion])
-        pronunciation = str(request.get("tts_pronunciation") or "").strip()
-        if pronunciation:
-            tts_command.extend(["--tts-pronunciation", pronunciation])
-        qwen_instructions = str(request.get("qwen_tts_instructions") or "").strip()
-        if tts_engine == "qwen" and qwen_instructions:
-            tts_command.extend(["--qwen-instructions", qwen_instructions])
-        if tts_engine == "qwen":
-            tts_command.extend([
-                "--qwen-voice",
-                str(request.get("qwen_tts_voice") or "Elias"),
-                "--qwen-optimize-instructions",
-                "true" if request.get("qwen_tts_optimize_instructions", False) else "false",
-            ])
-        run_command(
-            job,
-            store,
-            tts_command,
-            STEPS[0][1],
-        )
+            if job.user_id is not None:
+                tts_command.extend(["--user-id", str(job.user_id)])
+            tts_command.extend(
+                [
+                    "--tts-voice-id",
+                    str(request.get("tts_voice_id") or "voice_05.wav"),
+                    "--tts-speed",
+                    str(request.get("tts_speed", 1)),
+                    "--tts-volume",
+                    str(request.get("tts_volume", 1)),
+                    "--tts-pitch",
+                    str(request.get("tts_pitch", 0)),
+                    "--tts-parallelism",
+                    str(request.get("tts_parallelism", 2)),
+                    "--tts-english-normalization",
+                    "true" if request.get("tts_english_normalization", False) else "false",
+                ]
+            )
+            emotion = str(request.get("tts_emotion") or "").strip()
+            if emotion:
+                tts_command.extend(["--tts-emotion", emotion])
+            pronunciation = str(request.get("tts_pronunciation") or "").strip()
+            if pronunciation:
+                tts_command.extend(["--tts-pronunciation", pronunciation])
+            qwen_instructions = str(request.get("qwen_tts_instructions") or "").strip()
+            if tts_engine == "qwen" and qwen_instructions:
+                tts_command.extend(["--qwen-instructions", qwen_instructions])
+            if tts_engine == "qwen":
+                tts_command.extend([
+                    "--qwen-voice",
+                    str(request.get("qwen_tts_voice") or "Elias"),
+                    "--qwen-optimize-instructions",
+                    "true" if request.get("qwen_tts_optimize_instructions", False) else "false",
+                ])
+            run_command(
+                job,
+                store,
+                tts_command,
+                STEPS[0][1],
+            )
 
     store.raise_if_cancelled(job)
     if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") not in {"audio", "visual"}:

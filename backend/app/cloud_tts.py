@@ -1,0 +1,313 @@
+"""Cluster TTS orchestration and local artifact assembly."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import time
+import wave
+from pathlib import Path
+from typing import Any, Callable
+
+from .cloud_client import CloudApiError, CloudClient
+
+
+class CloudTtsCancelled(RuntimeError):
+    pass
+
+
+def split_cloud_text(text: str) -> list[str]:
+    # Keep local and cluster IndexTTS2 prosody boundaries identical.
+    from module1_agent_director import split_indextts2_text
+
+    chunks = split_indextts2_text(text)
+    if not chunks:
+        raise ValueError("清洗和断句后没有可合成的文案")
+    return chunks
+
+
+def cloud_voice_payload(request: dict[str, Any]) -> dict[str, str]:
+    voice_type = str(request.get("cluster_voice_type") or "preset").strip().lower()
+    if voice_type not in {"preset", "custom"}:
+        raise ValueError("集群音色类型必须是 preset 或 custom")
+    voice_id = str(request.get("cluster_voice_id") or "").strip()
+    if not voice_id:
+        raise ValueError("请选择集群参考音色")
+    return {"type": voice_type, "id": voice_id}
+
+
+def build_quote_payload(request: dict[str, Any], chunks: list[str] | None = None) -> dict[str, Any]:
+    prepared = chunks or split_cloud_text(str(request.get("script") or ""))
+    return {
+        "chunks": [{"index": index, "text": text} for index, text in enumerate(prepared)],
+        "voice": cloud_voice_payload(request),
+        "audio": {"sample_rate": 24000},
+        "gpu_acceleration": True,
+    }
+
+
+def build_job_payload(
+    request: dict[str, Any],
+    chunks: list[str],
+    *,
+    client_job_id: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "client_job_id": client_job_id,
+        "chunks": [{"index": index, "text": text} for index, text in enumerate(chunks)],
+        "voice": cloud_voice_payload(request),
+        "audio": {
+            "speed": float(request.get("tts_speed", 1) or 1),
+            "volume": float(request.get("tts_volume", 1) or 1),
+            "pitch": int(request.get("tts_pitch", 0) or 0),
+            "sample_rate": 24000,
+            "channels": 1,
+        },
+        "scheduling": {
+            "max_parallel_chunks": max(1, min(3, int(request.get("tts_parallelism", 2) or 2)))
+        },
+    }
+    emotion = str(request.get("tts_emotion") or "").strip()
+    if emotion:
+        payload["emotion"] = {
+            "name": emotion,
+            "weight": float(request.get("tts_emotion_weight", 0.65) or 0.65),
+        }
+    return payload
+
+
+def _srt_timestamp(seconds: float) -> str:
+    total_ms = max(0, round(seconds * 1000))
+    hours, remainder = divmod(total_ms, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    secs, millis = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _wav_info(path: Path) -> tuple[wave._wave_params, float]:
+    try:
+        with wave.open(str(path), "rb") as audio:
+            params = audio.getparams()
+            if params.nchannels != 1 or params.sampwidth != 2 or params.framerate != 24000:
+                raise RuntimeError(
+                    f"云端音频格式错误：{path.name} 必须是 24 kHz、单声道、16-bit PCM WAV"
+                )
+            duration = audio.getnframes() / max(1, audio.getframerate())
+    except (wave.Error, EOFError) as exc:
+        raise RuntimeError(f"云端返回的音频不是有效 WAV：{path.name}") from exc
+    if duration <= 0:
+        raise RuntimeError(f"云端返回了空音频：{path.name}")
+    return params, duration
+
+
+def assemble_cloud_audio(
+    chunks: list[str],
+    wav_paths: list[Path],
+    *,
+    output_dir: Path,
+    segment_archive_dir: Path,
+    manifest_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    if not chunks or len(chunks) != len(wav_paths):
+        raise RuntimeError("云端音频分块数量与原文不一致")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    segment_archive_dir.mkdir(parents=True, exist_ok=True)
+
+    params: wave._wave_params | None = None
+    durations: list[float] = []
+    for path in wav_paths:
+        current_params, duration = _wav_info(path)
+        current_format = (current_params.nchannels, current_params.sampwidth, current_params.framerate)
+        if params is None:
+            params = current_params
+        elif current_format != (params.nchannels, params.sampwidth, params.framerate):
+            raise RuntimeError(f"云端 WAV 分块格式不一致：{path.name}")
+        durations.append(duration)
+    assert params is not None
+
+    output_wav = output_dir / "final_output.wav"
+    with wave.open(str(output_wav), "wb") as output:
+        output.setparams(params)
+        for path in wav_paths:
+            with wave.open(str(path), "rb") as audio:
+                output.writeframes(audio.readframes(audio.getnframes()))
+
+    srt_entries: list[str] = []
+    segment_items: list[dict[str, Any]] = []
+    current_time = 0.0
+    for index, (text, source, duration) in enumerate(zip(chunks, wav_paths, durations), start=1):
+        end_time = current_time + duration
+        srt_entries.append(
+            f"{index}\n{_srt_timestamp(current_time)} --> {_srt_timestamp(end_time)}\n{text}\n"
+        )
+        filename = f"segment_{index:04d}.wav"
+        shutil.copy2(source, segment_archive_dir / filename)
+        segment_items.append(
+            {
+                "index": index,
+                "text": text,
+                "filename": filename,
+                "start": round(current_time, 6),
+                "end": round(end_time, 6),
+                "duration": round(duration, 6),
+            }
+        )
+        current_time = end_time
+
+    output_srt = output_dir / "final_output.srt"
+    output_srt.write_text("\n".join(srt_entries).rstrip() + "\n", encoding="utf-8")
+    manifest = {
+        "schema_version": 1,
+        "engine": "cluster",
+        **manifest_metadata,
+        "total_duration": round(current_time, 6),
+        "segments": segment_items,
+    }
+    (segment_archive_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return {
+        "audio_path": str(output_wav),
+        "subtitle_path": str(output_srt),
+        "duration": round(current_time, 6),
+    }
+
+
+def _ordered_result_chunks(payload: dict[str, Any], total: int) -> list[dict[str, Any]]:
+    result = payload.get("result")
+    items = result.get("chunks") if isinstance(result, dict) else None
+    if not isinstance(items, list):
+        raise RuntimeError("云端完成响应缺少 result.chunks")
+    by_index: dict[int, dict[str, Any]] = {}
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        try:
+            index = int(raw_item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if index in by_index:
+            raise RuntimeError(f"云端返回了重复分块索引：{index}")
+        by_index[index] = raw_item
+    expected = list(range(total))
+    if sorted(by_index) != expected:
+        raise RuntimeError(f"云端分块索引不完整：期望 0-{total - 1}，实际 {sorted(by_index)}")
+    return [by_index[index] for index in expected]
+
+
+def synthesize_cloud_tts(
+    *,
+    client: CloudClient,
+    local_job_id: str,
+    request: dict[str, Any],
+    output_dir: Path,
+    segment_archive_dir: Path,
+    temp_dir: Path,
+    is_cancelled: Callable[[], bool],
+    on_progress: Callable[[int, str], None],
+    on_log: Callable[[str], None],
+    on_remote_job: Callable[[str, dict[str, Any]], None],
+    chunks_override: list[str] | None = None,
+) -> dict[str, Any]:
+    chunks = [str(value) for value in (chunks_override or []) if str(value).strip()]
+    if not chunks:
+        chunks = split_cloud_text(str(request.get("script") or ""))
+    attempt = max(1, int(request.get("_cloud_tts_attempt", 1) or 1))
+    idempotency_key = f"{local_job_id}:tts:v{attempt}"
+    remote_job_id = str(request.get("_cloud_job_id") or "").strip()
+    if is_cancelled():
+        raise CloudTtsCancelled("用户已停止生成")
+
+    if remote_job_id:
+        on_log(f"断点续跑：继续查询云端任务 {remote_job_id}")
+        remote = client.get_job(remote_job_id)
+    else:
+        payload = build_job_payload(request, chunks, client_job_id=local_job_id)
+        on_log(f"正在提交集群 TTS：{len(chunks)} 个分块，并行数 {payload['scheduling']['max_parallel_chunks']}")
+        remote = client.create_job(payload, idempotency_key=idempotency_key)
+        remote_job_id = str(remote.get("job_id") or "").strip()
+        if not remote_job_id:
+            raise RuntimeError("云端创建任务响应缺少 job_id")
+        on_remote_job(remote_job_id, remote)
+        on_log(f"云端任务已创建：{remote_job_id}，预扣积分 {remote.get('reserved_credits', 0)}")
+
+    deadline = time.monotonic() + client.config.max_wait_seconds
+    last_status = ""
+    last_progress = -1
+    cancel_sent = False
+    while True:
+        if is_cancelled():
+            if not cancel_sent:
+                cancel_sent = True
+                try:
+                    cancelled = client.cancel_job(remote_job_id)
+                    on_remote_job(remote_job_id, cancelled)
+                    on_log(f"已向云端任务 {remote_job_id} 发送取消请求")
+                except CloudApiError as exc:
+                    on_log(f"云端取消请求未确认：{exc}")
+            raise CloudTtsCancelled("用户已停止生成")
+        status = str(remote.get("status") or "").strip().lower()
+        try:
+            progress = max(0, min(100, int(remote.get("progress") or 0)))
+        except (TypeError, ValueError):
+            progress = 0
+        message = str(remote.get("message") or "").strip() or f"云端任务 {status or '处理中'}"
+        if status != last_status:
+            on_remote_job(remote_job_id, remote)
+            on_log(f"云端状态：{status or 'unknown'} · {message}")
+            last_status = status
+        if progress != last_progress:
+            on_progress(progress, message)
+            last_progress = progress
+        if status == "completed":
+            break
+        if status in {"failed", "cancelled", "expired"}:
+            code = str(remote.get("error", {}).get("code") or "") if isinstance(remote.get("error"), dict) else ""
+            raise RuntimeError(f"云端任务{status}：{message}{f' ({code})' if code else ''}")
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"等待云端任务超时（{int(client.config.max_wait_seconds)} 秒）")
+        time.sleep(client.config.poll_interval)
+        remote = client.get_job(remote_job_id)
+
+    result_chunks = _ordered_result_chunks(remote, len(chunks))
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    wav_paths: list[Path] = []
+    for position, item in enumerate(result_chunks):
+        if is_cancelled():
+            raise CloudTtsCancelled("用户已停止生成")
+        audio_url = str(item.get("audio_url") or "").strip()
+        if not audio_url:
+            audio_url = f"/api/v1/cloud/jobs/{remote_job_id}/chunks/{position}/audio"
+        target = temp_dir / f"chunk-cluster-{position + 1:04d}.wav"
+        client.download_to(audio_url, target)
+        _wav_info(target)
+        wav_paths.append(target)
+        on_progress(100, f"正在下载云端音频 {position + 1}/{len(chunks)}")
+        on_log(f"[TTS_PROGRESS] 配音进度 {position + 1}/{len(chunks)}：已下载云端分块")
+
+    metadata = {
+        "cloud_job_id": remote_job_id,
+        "cluster_voice_type": cloud_voice_payload(request)["type"],
+        "cluster_voice_id": cloud_voice_payload(request)["id"],
+        "tts_speed": float(request.get("tts_speed", 1) or 1),
+        "tts_volume": float(request.get("tts_volume", 1) or 1),
+        "tts_pitch": int(request.get("tts_pitch", 0) or 0),
+        "tts_emotion": str(request.get("tts_emotion") or ""),
+        "reserved_credits": remote.get("reserved_credits"),
+        "consumed_credits": remote.get("consumed_credits"),
+        "released_credits": remote.get("released_credits"),
+    }
+    assembled = assemble_cloud_audio(
+        chunks,
+        wav_paths,
+        output_dir=output_dir,
+        segment_archive_dir=segment_archive_dir,
+        manifest_metadata=metadata,
+    )
+    on_remote_job(remote_job_id, remote)
+    on_log(
+        f"集群 TTS 完成：{len(chunks)} 个分块，实际消耗积分 {remote.get('consumed_credits', 0)}，"
+        f"释放 {remote.get('released_credits', 0)}"
+    )
+    return {"cloud_job": remote, **assembled}

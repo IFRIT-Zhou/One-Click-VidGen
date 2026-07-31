@@ -81,6 +81,18 @@ class PipelineLoggingTest(unittest.TestCase):
         self.assertEqual(snapshot["status"], "cancelled")
         self.assertEqual(snapshot["step"], "tts")
 
+    def test_cluster_cancel_does_not_claim_local_cuda_cleanup(self) -> None:
+        job = Job(id="cluster-stop", status="running", step="tts", request={"tts_engine": "cluster"})
+        store = JobStore()
+        with (
+            patch("backend.app.pipeline.append_generation_job_log"),
+            patch("backend.app.pipeline.upsert_generation_job"),
+            patch("backend.app.pipeline._request_graceful_tts_stop") as graceful_stop,
+        ):
+            snapshot = store.cancel(job)
+        graceful_stop.assert_not_called()
+        self.assertEqual(snapshot["message"], "正在取消集群云端任务")
+
 
 if __name__ == "__main__":
     unittest.main()

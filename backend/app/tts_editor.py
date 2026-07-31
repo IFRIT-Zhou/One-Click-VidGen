@@ -313,47 +313,79 @@ class TtsEditor:
         script_path.write_text("\n".join(str(by_index[index].get("text") or "") for index in indices), encoding="utf-8")
 
         engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts2")
-        command = [
-            sys.executable, str(PROJECT_ROOT / "module1_agent_director.py"),
-            "--text", str(script_path), "--job-id", f"{job.id}_tts_edit",
-            "--tts-engine", engine, "--chunks-json", str(chunks_path),
-            "--output-dir", str(output_dir), "--segment-archive-dir", str(generated_dir),
-            "--tts-speed", str(manifest.get("tts_speed") or 1),
-            "--tts-volume", str(manifest.get("tts_volume") or 1),
-            "--tts-pitch", str(manifest.get("tts_pitch") or 0),
-            "--tts-parallelism", str(job.request.get("tts_parallelism") or 1),
-        ]
-        if user_id:
-            command.extend(["--user-id", str(user_id)])
-        if engine == "qwen":
-            command.extend(["--qwen-voice", str(manifest.get("qwen_voice") or "Elias")])
-            instructions = str(manifest.get("qwen_instructions") or "").strip()
-            if instructions:
-                command.extend(["--qwen-instructions", instructions])
-        else:
-            archived_voice = next((project_dir / "input").glob("TTS参考音色.*"), None)
-            if archived_voice and archived_voice.is_file():
-                command.extend(["--tts-voice-path", str(archived_voice)])
-            else:
-                command.extend(["--tts-voice-id", str(manifest.get("tts_voice_id") or "voice_05.wav")])
-            emotion = str(manifest.get("tts_emotion") or "").strip()
-            if emotion:
-                command.extend(["--tts-emotion", emotion])
-
         store.log(job, f"开始单句重配：第 {', '.join(map(str, indices))} 句（{engine}）")
-        process = subprocess.Popen(
-            command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace", bufsize=1,
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            cleaned = line.strip()
-            if cleaned:
-                store.log(job, f"[单句重配] {cleaned}")
-        return_code = process.wait()
-        if return_code != 0:
-            raise RuntimeError(f"TTS 子任务退出码 {return_code}")
+        if engine == "cluster":
+            from .cloud_client import cloud_client_for
+            from .cloud_tts import synthesize_cloud_tts
+
+            cloud_request = dict(job.request)
+            cloud_request.pop("_cloud_job_id", None)
+            cloud_request.pop("_cloud_job_status", None)
+            cloud_request["cluster_voice_type"] = manifest.get("cluster_voice_type") or cloud_request.get("cluster_voice_type") or "preset"
+            cloud_request["cluster_voice_id"] = manifest.get("cluster_voice_id") or cloud_request.get("cluster_voice_id") or ""
+            cloud_request["tts_speed"] = manifest.get("tts_speed") or 1
+            cloud_request["tts_volume"] = manifest.get("tts_volume") or 1
+            cloud_request["tts_pitch"] = manifest.get("tts_pitch") or 0
+            cloud_request["tts_emotion"] = manifest.get("tts_emotion") or ""
+            synthesize_cloud_tts(
+                client=cloud_client_for(user_id),
+                local_job_id=f"{job.id}-edit-{timestamp}",
+                request=cloud_request,
+                output_dir=output_dir,
+                segment_archive_dir=generated_dir,
+                temp_dir=work_dir / "temp",
+                is_cancelled=lambda: False,
+                on_progress=lambda percent, message: self._set_task(
+                    job.id,
+                    status="running",
+                    progress=max(1, min(95, int(percent))),
+                    message=f"单句重配：{message}",
+                ),
+                on_log=lambda line: store.log(job, f"[单句重配] {line}"),
+                on_remote_job=lambda _job_id, _payload: None,
+                chunks_override=[str(by_index[index].get("text") or "") for index in indices],
+            )
+        else:
+            command = [
+                sys.executable, str(PROJECT_ROOT / "module1_agent_director.py"),
+                "--text", str(script_path), "--job-id", f"{job.id}_tts_edit",
+                "--tts-engine", engine, "--chunks-json", str(chunks_path),
+                "--output-dir", str(output_dir), "--segment-archive-dir", str(generated_dir),
+                "--tts-speed", str(manifest.get("tts_speed") or 1),
+                "--tts-volume", str(manifest.get("tts_volume") or 1),
+                "--tts-pitch", str(manifest.get("tts_pitch") or 0),
+                "--tts-parallelism", str(job.request.get("tts_parallelism") or 1),
+            ]
+            if user_id:
+                command.extend(["--user-id", str(user_id)])
+            if engine == "qwen":
+                command.extend(["--qwen-voice", str(manifest.get("qwen_voice") or "Elias")])
+                instructions = str(manifest.get("qwen_instructions") or "").strip()
+                if instructions:
+                    command.extend(["--qwen-instructions", instructions])
+            else:
+                archived_voice = next((project_dir / "input").glob("TTS参考音色.*"), None)
+                if archived_voice and archived_voice.is_file():
+                    command.extend(["--tts-voice-path", str(archived_voice)])
+                else:
+                    command.extend(["--tts-voice-id", str(manifest.get("tts_voice_id") or "voice_05.wav")])
+                emotion = str(manifest.get("tts_emotion") or "").strip()
+                if emotion:
+                    command.extend(["--tts-emotion", emotion])
+
+            process = subprocess.Popen(
+                command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                cleaned = line.strip()
+                if cleaned:
+                    store.log(job, f"[单句重配] {cleaned}")
+            return_code = process.wait()
+            if return_code != 0:
+                raise RuntimeError(f"TTS 子任务退出码 {return_code}")
 
         generated_manifest = json.loads((generated_dir / SEGMENT_MANIFEST).read_text(encoding="utf-8"))
         generated = generated_manifest.get("segments") or []

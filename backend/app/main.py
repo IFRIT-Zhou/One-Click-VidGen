@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pymysql
 import requests
-from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +19,8 @@ from pydantic import BaseModel, EmailStr, Field
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .config import _parse_env_lines, save_project_env_values
+from .cloud_client import CloudApiError, cloud_client_for, load_cloud_config
+from .cloud_tts import build_quote_payload
 from .diagnostics import create_diagnostic_package
 from .db import (
     authenticate_user,
@@ -124,10 +126,13 @@ class GenerateRequest(BaseModel):
     tts_volume: float = Field(default=1, ge=0.1, le=10)
     tts_pitch: int = Field(default=0, ge=-12, le=12)
     tts_parallelism: int = Field(default=2, ge=1, le=3)
-    tts_engine: Literal["indextts2", "qwen"] = "indextts2"
+    tts_engine: Literal["indextts2", "cluster", "qwen"] = "indextts2"
     tts_emotion: str | None = Field(default=None, max_length=30)
+    tts_emotion_weight: float = Field(default=0.65, ge=0, le=1)
     tts_english_normalization: bool = False
     tts_pronunciation: str | None = Field(default=None, max_length=200)
+    cluster_voice_type: Literal["preset", "custom"] = "preset"
+    cluster_voice_id: str = Field(default="voice_01.wav", min_length=1, max_length=180)
     qwen_tts_instructions: str | None = Field(default=None, max_length=1600)
     qwen_tts_voice: str = Field(default=DEFAULT_QWEN_VOICE, min_length=1, max_length=80)
     qwen_tts_optimize_instructions: bool = False
@@ -233,6 +238,22 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class CloudRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    captcha_token: str | None = Field(default=None, max_length=2048)
+
+
+class CloudLoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class CloudRechargeRequest(BaseModel):
+    product_id: str = Field(min_length=1, max_length=120)
+    payment_provider: str = Field(min_length=1, max_length=40)
+
+
 class ApiKeySettingsRequest(BaseModel):
     language_provider: Literal["gemini", "runninghub", "deepseek", "openai", "kimi", "glm"] | None = None
     language_api_key: str | None = Field(default=None, max_length=2048)
@@ -307,6 +328,7 @@ def list_files(patterns: list[str]) -> list[dict[str, str]]:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     indextts2 = load_indextts2_config()
+    cloud = load_cloud_config()
     return {
         "ok": True,
         "tts_online": indextts2.ready,
@@ -316,6 +338,10 @@ def health() -> dict[str, Any]:
         "tts_api_base_url": None,
         "tts_device": indextts2.device,
         "tts_missing": indextts2.missing_resources(),
+        "cloud": {
+            "configured": cloud.configured,
+            "base_url": cloud.base_url,
+        },
         "mysql": db_status(),
         # Keep the old response key for frontend compatibility, but report the
         # currently selected language provider rather than assuming Gemini.
@@ -355,6 +381,204 @@ def session(request: Request) -> dict[str, Any]:
         "auth_mode": "local" if local_auth_enabled() else "account",
         "mysql": db_status(),
     }
+
+
+def _cloud_error(exc: CloudApiError) -> HTTPException:
+    suffix = f" [{exc.code}]" if exc.code else ""
+    request_id = f"，请求 ID：{exc.request_id}" if exc.request_id else ""
+    return HTTPException(
+        status_code=exc.status_code,
+        detail=f"{exc}{suffix}{request_id}",
+    )
+
+
+def _cloud_for_request(request: Request):
+    user = require_user(request)
+    return user, cloud_client_for(int(user["id"]))
+
+
+@app.get("/api/cloud/session")
+def cloud_session(request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    return client.session_snapshot()
+
+
+@app.post("/api/cloud/auth/register")
+def cloud_register(payload: CloudRegisterRequest, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.register(str(payload.email), payload.password, payload.captcha_token)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/auth/login")
+def cloud_login(payload: CloudLoginRequest, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.login(str(payload.email), payload.password)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/auth/logout")
+def cloud_logout(request: Request) -> dict[str, bool]:
+    _user, client = _cloud_for_request(request)
+    try:
+        client.logout()
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+    return {"ok": True}
+
+
+@app.get("/api/cloud/account")
+def cloud_account(request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.account_summary()
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/wallet/ledger")
+def cloud_wallet_ledger(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    entry_type: str = Query(default="all", alias="type", max_length=40),
+) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.wallet_ledger(page=page, page_size=page_size, entry_type=entry_type)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/voices")
+def cloud_voices(
+    request: Request,
+    voice_type: Literal["all", "preset", "custom"] = Query(default="all", alias="type"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.list_voices(voice_type=voice_type, page=page, page_size=page_size)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/voices")
+def cloud_voice_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    display_name: str = Form(..., min_length=1, max_length=80),
+    consent_confirmed: bool = Form(...),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=180),
+) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".wav", ".mp3", ".flac"}:
+        raise HTTPException(status_code=415, detail="集群参考音色只支持 WAV、MP3 或 FLAC")
+    if file.size is not None and file.size > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="集群参考音色不能超过 20 MiB")
+    if not consent_confirmed:
+        raise HTTPException(status_code=400, detail="请确认已获得该声音的合法授权")
+    try:
+        return client.upload_voice(
+            file_object=file.file,
+            filename=Path(file.filename or f"voice{suffix}").name,
+            content_type=str(file.content_type or "application/octet-stream"),
+            display_name=display_name.strip(),
+            consent_confirmed=True,
+            idempotency_key=idempotency_key,
+        )
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/voices/{voice_id}")
+def cloud_voice_detail(voice_id: str, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.get_voice(voice_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.delete("/api/cloud/voices/{voice_id}")
+def cloud_voice_delete(voice_id: str, request: Request) -> dict[str, bool]:
+    _user, client = _cloud_for_request(request)
+    try:
+        client.delete_voice(voice_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+    return {"ok": True}
+
+
+@app.post("/api/cloud/quote")
+def cloud_quote(payload: GenerateRequest, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.quote(build_quote_payload(payload.model_dump()))
+    except (CloudApiError, ValueError) as exc:
+        if isinstance(exc, CloudApiError):
+            raise _cloud_error(exc) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/cloud/jobs")
+def cloud_jobs(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    status: str | None = Query(default=None, max_length=40),
+) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.list_jobs(page=page, page_size=page_size, status=status)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/jobs/{cloud_job_id}")
+def cloud_job(cloud_job_id: str, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.get_job(cloud_job_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/jobs/{cloud_job_id}/cancel")
+def cloud_job_cancel(cloud_job_id: str, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.cancel_job(cloud_job_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/recharge/orders")
+def cloud_recharge_order(
+    payload: CloudRechargeRequest,
+    request: Request,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=180),
+) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.create_recharge_order(payload.model_dump(), idempotency_key=idempotency_key)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/recharge/orders/{order_id}")
+def cloud_recharge_order_status(order_id: str, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.get_recharge_order(order_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
 
 
 @app.post("/api/auth/register")
@@ -654,6 +878,36 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             add("source_audio", "已有配音", "passed", f"已找到上传媒体：{source.name}")
         except (FileNotFoundError, ValueError) as exc:
             add("source_audio", "已有配音", "error", str(exc))
+    elif str(data.get("tts_engine") or "indextts2") == "cluster":
+        client = cloud_client_for(int(user["id"]))
+        cloud_state = client.session_snapshot()
+        if not cloud_state.get("configured"):
+            add("tts", "集群 GPU", "error", "尚未配置 CLOUD_API_BASE_URL")
+        elif not cloud_state.get("authenticated"):
+            add("tts", "集群 GPU", "error", "请先登录集群云端账户")
+        else:
+            try:
+                account = client.account_summary()
+                quote = client.quote(build_quote_payload(data))
+                credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
+                quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
+                available = int(credits.get("available") or 0)
+                estimated = int(quote.get("estimated_credits") or 0)
+                running = int(quota.get("running_jobs") or 0)
+                maximum = int(quota.get("max_concurrent_jobs") or 0)
+                if estimated > available:
+                    add("tts", "集群 GPU", "error", f"预计消耗 {estimated} 积分，可用积分仅 {available}")
+                elif maximum > 0 and running >= maximum:
+                    add("tts", "集群 GPU", "error", f"云端并发已满：{running}/{maximum}")
+                else:
+                    add(
+                        "tts",
+                        "集群 GPU",
+                        "passed",
+                        f"云端已登录；预计 {estimated} 积分，可用 {available}，并发 {running}/{maximum or '-'}",
+                    )
+            except (CloudApiError, ValueError) as exc:
+                add("tts", "集群 GPU", "error", str(exc))
     elif str(data.get("tts_engine") or "indextts2") == "qwen":
         if _api_key_status()["qwen_tts"]["configured"]:
             add("tts", "Qwen-TTS", "passed", "DashScope API Key 已配置；实际额度将在合成时由服务端确认")
@@ -1138,6 +1392,21 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Qwen-TTS 尚未配置 API Key，请先在语音参数中保存 DASHSCOPE_API_KEY")
     elif data.get("tts_engine") == "qwen" and str(data.get("qwen_tts_instructions") or "").strip() and not voice_supports_instructions(str(data.get("qwen_tts_voice") or "")):
         raise HTTPException(status_code=400, detail="所选 Qwen 系统音色仅支持基础合成；请清空配音描述，或改选支持配音描述的音色")
+    elif data.get("tts_engine") == "cluster":
+        if data.get("skip_text_correction"):
+            raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
+        client = cloud_client_for(int(user["id"]))
+        cloud_state = client.session_snapshot()
+        if not cloud_state.get("configured"):
+            raise HTTPException(status_code=503, detail="集群云端地址尚未配置，请设置 CLOUD_API_BASE_URL")
+        if not cloud_state.get("authenticated"):
+            raise HTTPException(status_code=401, detail="请先登录集群云端账户")
+        try:
+            client.quote(build_quote_payload(data))
+        except CloudApiError as exc:
+            raise _cloud_error(exc) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     elif data.get("skip_text_correction"):
         raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
     block_reason = store.new_job_block_reason(int(user["id"]))

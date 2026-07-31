@@ -1,8 +1,8 @@
 # 一键成片 / One-Click VidGen
 
-一个由 FastAPI 后端和 Vue 前端组成的 AI 视频生产工作台。支持 IndexTTS2 本地配音、
-Qwen-TTS 云端配音以及已有音频；流水线包括字幕识别与校对、Agent 0/1/2 全文理解与
-语义分镜、第三方图像接口生图、画面精修、时序调整、BGM 和视频合成。
+一个由 FastAPI 后端和 Vue 前端组成的 AI 视频生产工作台。支持 IndexTTS2 本地 GPU、
+集群 GPU 加速、Qwen-TTS 云端配音以及已有音频；流水线包括字幕识别与校对、Agent
+0/1/2 全文理解与语义分镜、第三方图像接口生图、画面精修、时序调整、BGM 和视频合成。
 
 ## 两种使用方式
 
@@ -21,6 +21,7 @@ Qwen-TTS 云端配音以及已有音频；流水线包括字幕识别与校对�
 - FFmpeg（需要加入 `PATH`）
 - 可用的语言模型与图像模型 API Key
 - 使用本地 IndexTTS2 时，需要另行准备官方模型权重；没有合适显卡可改用 Qwen-TTS
+- 使用集群 GPU 时，需要部署符合《集群云端加速接口文档》的 cloud-api 服务
 
 ## 安装
 
@@ -33,6 +34,28 @@ cd frontend && npm install && cd ..
 
 本地版本默认使用 SQLite，无需安装 MySQL。在 `.env` 中填写 RunningHub 和 Gemini
 相关配置；不要把包含真实密钥的 `.env` 提交到 Git。
+
+## 集群 GPU 加速
+
+在 `.env` 中配置集群业务网关，不要填写 Ray Head、Ray Serve 或 MinIO 的内部地址：
+
+```dotenv
+CLOUD_API_BASE_URL=https://your-domain/api/v1
+CLOUD_API_CONNECT_TIMEOUT=15
+CLOUD_API_READ_TIMEOUT=180
+CLOUD_API_RETRY_COUNT=2
+CLOUD_API_RETRY_DELAY_SECONDS=1
+CLOUD_JOB_POLL_INTERVAL=2
+CLOUD_JOB_MAX_WAIT_SECONDS=3600
+```
+
+启动后在“语音参数”中选择“集群 GPU”，登录云端账户并选择预置音色，或者上传已经获得
+合法授权的 WAV、MP3、FLAC 参考音频。浏览器只访问本地 FastAPI；Access Token 和
+Refresh Token 只保存在后端进程内存中，后端重启后需要重新登录云端账户。
+
+集群模式只替换模块 1 的 TTS：文案分块提交给 cloud-api，完成后逐块下载 WAV，在本机
+合并 `final_output.wav` 和 `final_output.srt`，后续 ASR、Agent、生图和视频渲染仍使用
+原有本地流水线。停止本地任务时会同时请求取消对应的云端任务。
 
 ## 启动
 

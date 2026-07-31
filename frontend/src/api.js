@@ -59,6 +59,39 @@ export const api = {
     body: JSON.stringify(payload),
   }),
   logout: () => requestJSON('/api/auth/logout', { method: 'POST' }),
+  cloudSession: () => requestJSON('/api/cloud/session'),
+  cloudRegister: (payload) => requestJSON('/api/cloud/auth/register', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  cloudLogin: (payload) => requestJSON('/api/cloud/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  cloudLogout: () => requestJSON('/api/cloud/auth/logout', { method: 'POST' }),
+  cloudAccount: () => requestJSON('/api/cloud/account'),
+  cloudVoices: (type = 'all') => requestJSON(`/api/cloud/voices?type=${encodeURIComponent(type)}`),
+  uploadCloudVoice: (file, displayName, idempotencyKey) => {
+    const data = new FormData()
+    data.append('file', file)
+    data.append('display_name', displayName)
+    data.append('consent_confirmed', 'true')
+    return requestJSON('/api/cloud/voices', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: data,
+    })
+  },
+  deleteCloudVoice: (id) => requestJSON(`/api/cloud/voices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  cloudQuote: (payload) => requestJSON('/api/cloud/quote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  cloudJobs: (page = 1, pageSize = 20) => requestJSON(`/api/cloud/jobs?page=${page}&page_size=${pageSize}`),
+  cloudWalletLedger: (page = 1, pageSize = 20) => requestJSON(`/api/cloud/wallet/ledger?page=${page}&page_size=${pageSize}`),
+  createCloudRechargeOrder: (payload, idempotencyKey) => requestJSON('/api/cloud/recharge/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  cloudRechargeOrder: (id) => requestJSON(`/api/cloud/recharge/orders/${encodeURIComponent(id)}`),
   startTts: () => requestJSON('/api/tts/start', { method: 'POST' }),
   settings: () => requestJSON('/api/settings'),
   apiKeySettings: () => requestJSON('/api/api-keys'),
