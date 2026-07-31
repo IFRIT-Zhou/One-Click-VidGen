@@ -7,6 +7,36 @@ import module4_video_render as visual
 
 
 class VisualConstraintsTest(unittest.TestCase):
+    def test_strict_agent2_failure_aborts_without_local_prompt_fallback(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001",
+            "start": 0,
+            "end": 6,
+            "text_content": "她走进空荡的房间。",
+            "visual_summary": "她走进空荡的房间。",
+        }]
+        with (
+            patch.object(visual, "gemini_configured", return_value=True),
+            patch.object(
+                visual,
+                "generate_gemini_text",
+                side_effect=visual.GeminiError("HTTP 502 upstream timed out"),
+            ),
+            patch.object(visual, "_fallback_mapping") as fallback,
+            patch.dict(os.environ, {"REQUIRE_AI_AGENT_SUCCESS": "1"}, clear=False),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Agent 2.*提交 Image2 前安全终止.*HTTP 502"):
+                visual.build_macro_mapping(scenes)
+        fallback.assert_not_called()
+
+    def test_strict_agent2_requires_configured_language_model(self) -> None:
+        with (
+            patch.object(visual, "gemini_configured", return_value=False),
+            patch.dict(os.environ, {"REQUIRE_AI_AGENT_SUCCESS": "1"}, clear=False),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "语言模型未配置.*提交 Image2 前安全终止"):
+                visual.build_macro_mapping([])
+
     def test_one_failed_image_reuses_neighbor_without_stopping_batch(self) -> None:
         mapping = [
             {"macro_scene_id": f"poster_{index:03d}", "image_prompt": f"画面 {index}"}
@@ -76,6 +106,7 @@ class VisualConstraintsTest(unittest.TestCase):
         for content_mode in (
             visual.CONTENT_MODE_STORY,
             visual.CONTENT_MODE_SCIENCE,
+            visual.CONTENT_MODE_PURE_SCIENCE,
             visual.CONTENT_MODE_GENERAL,
         ):
             with self.subTest(content_mode=content_mode):
@@ -84,6 +115,39 @@ class VisualConstraintsTest(unittest.TestCase):
                 self.assertIn("屏幕背向镜头、虚化或不可读", system_prompt)
                 self.assertIn("只有原文明示具体文字、照片、监控、网页或文件内容", system_prompt)
                 self.assertIn("不并列人物脸部特写", system_prompt)
+
+    def test_pure_science_mode_allows_scientific_labels_without_default_character(self) -> None:
+        system_prompt = visual.build_visual_prompt_system(
+            content_mode=visual.CONTENT_MODE_PURE_SCIENCE,
+        )
+        self.assertIn("严肃科普", system_prompt)
+        self.assertIn("禁止默认套用生物学", system_prompt)
+        self.assertIn("物理可用受力图", system_prompt)
+        self.assertIn("历史、地理与社会知识", system_prompt)
+        self.assertIn("ATP、ADP、Pi", system_prompt)
+        self.assertIn("公式", system_prompt)
+        self.assertIn("不设置机械的 20 字上限", system_prompt)
+        self.assertIn("默认没有固定主持人物", system_prompt)
+        self.assertNotIn("红色围巾", system_prompt)
+        self.assertNotIn("黑色短发", system_prompt)
+
+    def test_pure_science_fallback_uses_structures_instead_of_host(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001", "start": 0, "end": 8,
+            "text_content": "ATP 水解为 ADP 和 Pi，并释放能量。",
+            "visual_summary": "ATP 水解过程",
+        }]
+        with patch.dict(
+            os.environ,
+            {"CONTENT_MODE": visual.CONTENT_MODE_PURE_SCIENCE},
+            clear=False,
+        ):
+            mapping = visual._fallback_mapping(scenes)
+        self.assertEqual(len(mapping), 1)
+        prompt = mapping[0]["image_prompt"]
+        self.assertIn("跨学科", prompt)
+        self.assertNotIn("科普少女", prompt)
+        self.assertNotIn("红色围巾", prompt)
 
     def test_explicit_screen_content_becomes_device_only_and_clears_character_reference(self) -> None:
         scenes = [{
@@ -114,6 +178,8 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertEqual(result["reference_image_ids"], [])
         self.assertIn("只展示手机正面屏幕", result["image_prompt"])
         self.assertIn("今晚别回家", result["image_prompt"])
+        self.assertIn("可根据常见应用形态设计合理的状态栏", result["image_prompt"])
+        self.assertNotIn("屏幕内容严格依据原文", result["image_prompt"])
         self.assertNotIn("林晚举着手机贴近脸部", result["image_prompt"])
         self.assertNotIn("本镜头唯一角色卡", result["image_prompt"])
 
@@ -146,6 +212,97 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertEqual(result["screen_content"], "")
         self.assertIn("屏幕必须背向镜头、虚化或不可读", result["image_prompt"])
         self.assertIn("林晚", result["image_prompt"])
+
+    def test_long_device_unit_is_scoped_to_each_child_poster(self) -> None:
+        scenes = [
+            {"slide_id": "scene_017", "start": 0, "end": 3, "text_content": "面前摆着三样东西：二胎孕检报告单，"},
+            {"slide_id": "scene_020", "start": 3, "end": 6, "text_content": "小号里仅一人可见的密友动态，"},
+            {"slide_id": "scene_023", "start": 6, "end": 9, "text_content": "老城区民宿的入住时间账单。"},
+        ]
+        mapping = [
+            {"includes_slides": [scene["slide_id"]], "image_prompt": f"独有镜头 {index}"}
+            for index, scene in enumerate(scenes, 1)
+        ]
+        story_plan = {"semantic_units": [{
+            "start_slide_id": "scene_017", "end_slide_id": "scene_023",
+            "character_ids": [], "device_shot_mode": "screen_insert",
+            "device_type": "纸质报告/手机/打印账单",
+            "screen_content": "二胎孕检报告单、小号密友动态、老城区民宿入住账单",
+        }]}
+
+        result = visual._finalize_mapping(mapping, scenes, story_plan)
+
+        self.assertEqual([item["screen_content"] for item in result], [
+            "二胎孕检报告单", "小号密友动态", "老城区民宿入住账单",
+        ])
+        self.assertEqual([item["device_type"] for item in result], ["纸质报告", "手机", "打印账单"])
+        self.assertEqual(len({item["image_prompt"] for item in result}), 3)
+
+    def test_agent0_information_registry_disambiguates_adjacent_evidence_posters(self) -> None:
+        scenes = [
+            {"slide_id": "scene_020", "start": 0, "end": 2, "text_content": "一人可见的密友动态，"},
+            {"slide_id": "scene_021", "start": 2, "end": 4, "text_content": "还有一张打印出来的账单——"},
+            {"slide_id": "scene_022", "start": 4, "end": 6, "text_content": "那间开在老城区、"},
+            {"slide_id": "scene_023", "start": 6, "end": 8, "text_content": "打着咖啡旗号的民宿，"},
+            {"slide_id": "scene_024", "start": 8, "end": 10, "text_content": "每一笔入住时间"},
+            {"slide_id": "scene_025", "start": 10, "end": 12, "text_content": "都对应着她声称带孩子补习的时间。"},
+        ]
+        mapping = [
+            {"includes_slides": ["scene_020", "scene_021", "scene_022"], "image_prompt": "证据镜头一"},
+            {"includes_slides": ["scene_023", "scene_024", "scene_025"], "image_prompt": "证据镜头二"},
+        ]
+        story_plan = {
+            "key_information_objects": [
+                {"object_id": "social", "device_type": "手机", "content": "小号里上百条仅一人可见的密友动态"},
+                {"object_id": "hotel", "device_type": "打印账单", "content": "老城区民宿的入住时间记录，对应她声称带孩子补习的时间"},
+            ],
+            # Agent 1 intentionally omitted the social-media item, reproducing
+            # the real failure that previously made both posters inherit the bill.
+            "semantic_units": [{
+                "start_slide_id": "scene_020", "end_slide_id": "scene_025",
+                "character_ids": [], "device_shot_mode": "screen_insert",
+                "device_type": "纸质报告与打印账单",
+                "screen_content": "老城区民宿入住时间记录",
+            }],
+        }
+
+        result = visual._finalize_mapping(mapping, scenes, story_plan)
+
+        self.assertEqual(result[0]["device_type"], "手机")
+        self.assertIn("密友动态", result[0]["screen_content"])
+        self.assertEqual(result[1]["device_type"], "打印账单")
+        self.assertIn("民宿的入住时间记录", result[1]["screen_content"])
+        self.assertNotEqual(result[0]["image_prompt"], result[1]["image_prompt"])
+        self.assertIn("信息载体特写硬约束", result[1]["image_prompt"])
+        self.assertNotIn("正面屏幕", result[1]["image_prompt"])
+
+    def test_screen_insert_does_not_leak_into_setup_or_consequence_groups(self) -> None:
+        scenes = [
+            {"slide_id": "scene_179", "start": 0, "end": 3, "text_content": "丈夫没有给你任何协商空间。"},
+            {"slide_id": "scene_182", "start": 3, "end": 6, "text_content": "调查报告列出住房记录和消费明细。"},
+            {"slide_id": "scene_185", "start": 6, "end": 9, "text_content": "还有咖啡馆后巷拥抱的照片。"},
+            {"slide_id": "scene_188", "start": 9, "end": 12, "text_content": "法院判决后，她被要求搬出家。"},
+        ]
+        mapping = [
+            {"includes_slides": [scene["slide_id"]], "image_prompt": f"独有场景 {index}"}
+            for index, scene in enumerate(scenes, 1)
+        ]
+        story_plan = {"semantic_units": [{
+            "start_slide_id": "scene_179", "end_slide_id": "scene_188",
+            "character_ids": [], "device_shot_mode": "screen_insert",
+            "device_type": "纸质文件",
+            "screen_content": "住房记录、消费明细、咖啡馆后巷拥抱照片",
+        }]}
+
+        result = visual._finalize_mapping(mapping, scenes, story_plan)
+
+        self.assertEqual([item["device_shot_mode"] for item in result], [
+            "none", "screen_insert", "screen_insert", "none",
+        ])
+        self.assertIn("独有场景 1", result[0]["image_prompt"])
+        self.assertIn("独有场景 4", result[3]["image_prompt"])
+        self.assertEqual(result[1]["screen_content"], "住房记录")
+        self.assertEqual(result[2]["screen_content"], "咖啡馆后巷拥抱照片")
 
     def test_pacing_groups_use_agent_one_recommendation_and_real_timestamps(self) -> None:
         scenes = [

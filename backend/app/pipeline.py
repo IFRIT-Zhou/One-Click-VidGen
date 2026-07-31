@@ -94,6 +94,7 @@ def normalize_project_name(value: str | None) -> str:
 VISUAL_PACING_DEFAULTS = {
     "urban_suspense": {"min_duration": 6.0, "target_duration": 8.0, "max_duration": 12.0, "max_slides": 6},
     "science_explainer": {"min_duration": 7.0, "target_duration": 9.0, "max_duration": 14.0, "max_slides": 6},
+    "pure_science": {"min_duration": 7.0, "target_duration": 10.0, "max_duration": 16.0, "max_slides": 8},
     "general": {"min_duration": 6.0, "target_duration": 8.0, "max_duration": 12.0, "max_slides": 6},
 }
 
@@ -1481,7 +1482,7 @@ def split_scenes_by_topic_with_llm(
                 "text": text,
             }
         )
-    science_mode = (story_plan or {}).get("content_mode") == "science_explainer"
+    science_mode = (story_plan or {}).get("content_mode") in {"science_explainer", "pure_science"}
     role_and_goal = (
         "你是科普口播视频 Agent 1 的知识结构分段执行器。"
         "你的任务是通读全文字幕段，识别问题提出、原理解释、因果链、案例或实验、结论与行动建议，"
@@ -1745,6 +1746,7 @@ def render_semantic_visual_video(
             resume=resume,
             path=story_plan_path,
             content_mode=str(request.get("content_mode") or "urban_suspense"),
+            require_ai_success=True,
         )
         store.log(job, "Agent 1：已按全文规划语义镜头单元")
     else:
@@ -1756,7 +1758,13 @@ def render_semantic_visual_video(
                 resume=resume,
                 path=story_plan_path,
                 content_mode=str(request.get("content_mode") or "urban_suspense"),
+                require_ai_success=True,
             )
+    if not isinstance(story_plan, dict) or story_plan.get("generation_source") != "gemini":
+        raise RuntimeError(
+            "Agent 1 规划产物不是有效的语言模型结果，已在提交图像任务前安全终止；"
+            "配音与字幕已保留，请修复语言模型配置后断点续跑。"
+        )
     fine_path = WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json"
     if resume and fine_path.is_file() and fine_path.stat().st_size > 0:
         store.log(job, f"断点续跑：复用模块 3 剧本: {fine_path}")
@@ -1778,6 +1786,9 @@ def render_semantic_visual_video(
         store.log(job, f"视觉生成来源: {provider}")
     elif visual_backend in {"poster", "online-poster", "runninghub"}:
         poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id}
+        # Agent 2 is a paid-image safety gate. Never submit image jobs when its
+        # language-model planning failed or silently fell back to raw subtitles.
+        poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"
         poster_env["CONTENT_MODE"] = str(request.get("content_mode") or "urban_suspense")
         visual_pacing = visual_pacing_settings(request)
         poster_env.update({
@@ -2435,6 +2446,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             global_character_prompt=global_character_prompt,
             world_prompt=world_prompt,
             agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+            require_ai_success=True,
         )
         story_plan_path = WORKSPACE_DIR / "3_visual_template" / "story_plan.json"
         store.log(job, "Agent 1：开始按字幕时间轴规划画面边界")
@@ -2444,6 +2456,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             path=story_plan_path,
             content_mode=content_mode,
             story_context=story_context,
+            require_ai_success=True,
         )
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
         store.update(job, step="semantic", progress=48, message=STEPS[3][1])
@@ -2463,6 +2476,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         global_character_prompt=global_character_prompt,
         world_prompt=world_prompt,
         agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+        require_ai_success=True,
     )
     store.log(job, f"Agent 1：开始通读长文全文（{len(scenes)} 个片段）")
     story_plan = load_or_create_story_plan(
@@ -2471,6 +2485,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         path=global_story_plan,
         content_mode=content_mode,
         story_context=story_context,
+        require_ai_success=True,
     )
     store.log(job, f"Agent 1：全文故事上下文已保存: {global_story_plan}")
     if hierarchical_planning:

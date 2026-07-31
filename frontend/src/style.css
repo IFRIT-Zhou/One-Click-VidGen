@@ -831,6 +831,25 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
 }
 .script-character-count { display: block; margin-top: 6px; color: var(--muted); font-size: .76rem; }
 .script-character-count.error { color: #fda4af; }
+
+.visual-medium-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.26);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.09);
+  color: #fcd38c;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.visual-medium-warning > span {
+  flex: 0 0 auto;
+  color: #fbbf24;
+}
 .source-mode-panel {
   display: grid;
   gap: 14px;
@@ -1084,7 +1103,8 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   grid-template-columns: minmax(150px, 0.42fr) minmax(0, 1.58fr);
   gap: 14px;
   align-items: center;
-  margin: -2px -2px 18px;
+  width: min(100%, 1480px);
+  margin: -2px auto 18px;
   padding: 12px;
   border: 1px solid rgba(124, 219, 255, 0.2);
   border-radius: 12px;
@@ -1097,7 +1117,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
 .content-mode-copy strong { font-size: 0.92rem; }
 .content-mode-options {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 .content-mode-options button {

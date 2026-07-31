@@ -650,10 +650,16 @@
                   maxlength="1000"
                   :placeholder="form.content_mode === 'science_explainer'
                     ? '描述科教漫画画风、红围巾短发少女、信息表达与画面质感。'
+                    : form.content_mode === 'pure_science'
+                      ? '描述跨学科教材插图、结构图、实验、公式、地图、时间轴或流程图的画面质感。'
                     : form.content_mode === 'general'
                       ? '可自由填写：例如日系治愈动画、赛博朋克电影、写实水墨、儿童绘本等。'
                       : '描述惊悚漫画画风、角色一致性、色彩与悬疑氛围。'"
                 ></textarea>
+                <small v-if="visualMediumWarning" class="visual-medium-warning">
+                  <span aria-hidden="true">⚠</span>
+                  {{ visualMediumWarning }}
+                </small>
               </label>
               <label class="stack">
                 <span>全局人物设定</span>
@@ -1738,6 +1744,7 @@ const AGENT2_DIRECTOR_THEME_STORAGE_KEY = 'agent2_director_theme_v1'
 const AGENT2_DIRECTOR_THEME_DEFAULTS = {
   urban_suspense: '惊悚漫画',
   science_explainer: '科普科技口播视频',
+  pure_science: '跨学科严肃科普与知识可视化视频',
   general: '通用视频',
 }
 const VISUAL_PROMPT_STYLE_STORAGE_KEY = 'visual_prompt_style_story_v3'
@@ -1751,6 +1758,7 @@ const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
 const VISUAL_PACING_DEFAULTS = {
   urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
   science_explainer: { min: 7, target: 9, max: 14, slides: 6 },
+  pure_science: { min: 7, target: 10, max: 16, slides: 8 },
   general: { min: 6, target: 8, max: 12, slides: 6 },
 }
 const FALLBACK_CONTENT_MODES = {
@@ -1761,6 +1769,13 @@ const FALLBACK_CONTENT_MODES = {
   science_explainer: {
     label: '口播科普',
     description: '红围巾短发少女的清晰科教漫画',
+  },
+  pure_science: {
+    label: '纯科普',
+    description: '无固定人物的跨学科严肃知识可视化',
+    default_style: '跨学科严肃科普与现代教材级知识可视化，准确、克制、清晰；允许必要术语、公式、坐标、地图、时间轴、结构标签和流程示意。',
+    default_character: '',
+    default_system: '',
   },
   general: {
     label: '通用自定义',
@@ -2091,6 +2106,18 @@ const contentModeOptions = computed(() => {
   const modes = settings.value.visual_prompt?.modes || FALLBACK_CONTENT_MODES
   return Object.entries(modes).map(([key, value]) => ({ key, ...value }))
 })
+const visualMediumWarning = computed(() => {
+  if (form.visual_prompt_mode === 'full') return ''
+  const style = String(form.visual_style_prompt || '').trim()
+  if (!style) return ''
+  const mediumMarkers = [
+    '插画', '漫画', '绘本', '手绘', '条漫', '平涂', '厚涂', '水彩', '国画', '水墨', '油画', '素描', '版画',
+    '二维', '2D', '动画', '三维', '3D', 'CG', '渲染',
+    '摄影', '真人', '实拍', '照片级', '纪实', '剧照',
+  ]
+  if (mediumMarkers.some((marker) => style.toLowerCase().includes(marker.toLowerCase()))) return ''
+  return '当前画风只描述了氛围，没有指定插画、漫画、真人摄影等视觉媒介，长视频可能出现风格漂移。建议补充一种明确媒介。'
+})
 const defaultAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind === 'default'))
 const userAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind !== 'default'))
 const activeAgent2LockedProtocol = computed(() => {
@@ -2117,6 +2144,18 @@ const activeAgent2LockedProtocol = computed(() => {
 
 【分镜规则】
 - 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版解说漫画。`
+  }
+  if (form.content_mode === 'pure_science') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.pure_science).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.pure_science
+    return `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版科学画面，不遗漏、重复、合并或人为限制海报数量。`
   }
   const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.general).trim()
     || AGENT2_DIRECTOR_THEME_DEFAULTS.general

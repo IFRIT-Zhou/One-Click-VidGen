@@ -31,16 +31,32 @@ STORY_PLAN_PATH = VISUAL_DIR / "story_plan.json"
 STORY_CONTEXT_PATH = VISUAL_DIR / "story_context.json"
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 8
+STORY_AGENT_VERSION = 10
 CHARACTER_CONTINUITY_VERSION = 4
-STORY_CONTEXT_VERSION = 3
+STORY_CONTEXT_VERSION = 4
+
+
+class AgentPlanningFatalError(RuntimeError):
+    """The AI planning chain failed and image generation must not continue."""
+
+
+def _planning_failure(stage: str, reason: object) -> AgentPlanningFatalError:
+    detail = str(reason or "未知错误").strip()
+    return AgentPlanningFatalError(
+        f"{stage} 语言模型规划失败，已在提交图像任务前安全终止；"
+        f"配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
+        f"原始错误：{detail}"
+    )
 
 
 def normalize_content_mode(value: str | None) -> str:
     mode = str(value or "").strip().lower()
     if mode == CONTENT_MODE_SCIENCE:
         return CONTENT_MODE_SCIENCE
+    if mode == CONTENT_MODE_PURE_SCIENCE:
+        return CONTENT_MODE_PURE_SCIENCE
     if mode == CONTENT_MODE_GENERAL:
         return CONTENT_MODE_GENERAL
     return CONTENT_MODE_STORY
@@ -249,6 +265,14 @@ AGENT0_DEVICE_INFORMATION_CONTRACT = """【系统固定设备信息结构】
 - content 只能摘录或忠实概括原文已经明确说明的文字、照片、监控、网页或文件内容；只有“看手机、收到消息、打开电脑”等动作而内容不明时，不得登记虚构内容。
 - 不规划具体镜头；该资料仅供 Agent 1 判断后文“那条消息、那张照片、那个文件”是否已有明确内容。"""
 
+PURE_SCIENCE_AGENT0_CONTRACT = """【纯科普模式硬约束】
+- 本模式没有默认主持人、默认少女或固定主角；禁止为了串联讲解而凭空创建人物。
+- characters 只登记原文明确参与内容的人物，或用户在人物设定中明确要求的角色。纯概念、结构、机制、实验和数据讲解通常应输出空数组 []。
+- 分子、细胞、器官、粒子、天体、地层、公式、算法、装置、国家、机构和抽象概念不是人物，不得写入 characters。
+- 先识别真实学科；整理该学科的术语、结构、状态转换、因果链、时间空间关系、证据、实验或史料对象和必要标签，禁止默认把非生物学内容改写成细胞或分子题材。"""
+
+PURE_SCIENCE_AGENT0_SYSTEM_PROMPT = AGENT0_SYSTEM_PROMPT + "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
+
 
 def _normalize_key_information_objects(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
@@ -329,22 +353,38 @@ def create_story_context(
     global_character_prompt: str = "",
     world_prompt: str = "",
     agent0_prompt_system: str = "",
+    require_ai_success: bool = False,
 ) -> dict[str, Any]:
     """Run Agent 0 once: full-text understanding without timing decisions."""
     content_mode = normalize_content_mode(content_mode)
     full_text = str(full_text or "").strip()
     fallback = _fallback_story_context(full_text, content_mode, global_character_prompt, world_prompt)
+    fallback["source_fingerprint"] = story_context_fingerprint(
+        full_text,
+        content_mode,
+        global_character_prompt,
+        world_prompt,
+        agent0_prompt_system,
+    )
     if not gemini_configured():
+        if require_ai_success:
+            raise _planning_failure("Agent 0", "语言模型未配置")
         return fallback
     try:
         custom_prompt = str(agent0_prompt_system or "").strip()
-        system_prompt = custom_prompt or AGENT0_SYSTEM_PROMPT
+        system_prompt = custom_prompt or (
+            PURE_SCIENCE_AGENT0_SYSTEM_PROMPT
+            if content_mode == CONTENT_MODE_PURE_SCIENCE
+            else AGENT0_SYSTEM_PROMPT
+        )
         if custom_prompt and "continuity_rules" not in custom_prompt:
             system_prompt += "\n\n" + AGENT0_SYSTEM_PROMPT
         # Expert prompts may change creative analysis, but may not remove the
         # machine-readable identity contract required by downstream stages.
         system_prompt += "\n\n" + AGENT0_IDENTITY_CONTRACT
         system_prompt += "\n\n" + AGENT0_DEVICE_INFORMATION_CONTRACT
+        if content_mode == CONTENT_MODE_PURE_SCIENCE and PURE_SCIENCE_AGENT0_CONTRACT not in system_prompt:
+            system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
         response = generate_gemini_text(
             system_prompt=system_prompt,
             user_prompt=json.dumps({
@@ -400,9 +440,20 @@ def create_story_context(
                     context["characters"] = safe_characters
                     context["character_registry_warning"] = issues
             context["generation_source"] = "gemini"
+            context["source_fingerprint"] = story_context_fingerprint(
+                full_text,
+                content_mode,
+                global_character_prompt,
+                world_prompt,
+                agent0_prompt_system,
+            )
             return context
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        if require_ai_success:
+            raise _planning_failure("Agent 0", exc) from exc
         print(f"Agent 0 全文资料规划失败，使用本地资料: {exc}", flush=True)
+    if require_ai_success:
+        raise _planning_failure("Agent 0", "模型返回内容无法形成有效的全文资料")
     return fallback
 
 
@@ -415,6 +466,7 @@ def load_or_create_story_context(
     global_character_prompt: str = "",
     world_prompt: str = "",
     agent0_prompt_system: str = "",
+    require_ai_success: bool = False,
 ) -> dict[str, Any]:
     fingerprint = story_context_fingerprint(full_text, content_mode, global_character_prompt, world_prompt, agent0_prompt_system)
     if path.is_file():
@@ -422,7 +474,13 @@ def load_or_create_story_context(
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             existing = None
-        if isinstance(existing, dict) and existing.get("source_fingerprint") == fingerprint and int(existing.get("agent0_version") or 0) >= STORY_CONTEXT_VERSION:
+        existing_is_ai = isinstance(existing, dict) and existing.get("generation_source") == "gemini"
+        if (
+            isinstance(existing, dict)
+            and existing.get("source_fingerprint") == fingerprint
+            and int(existing.get("agent0_version") or 0) >= STORY_CONTEXT_VERSION
+            and (existing_is_ai or not require_ai_success)
+        ):
             print(f"Agent 0：{'断点续跑' if resume else '全文未变化'}，复用全文资料: {path}", flush=True)
             return existing
     print("Agent 0：正在通读全文并建立全局资料...", flush=True)
@@ -431,6 +489,7 @@ def load_or_create_story_context(
         global_character_prompt=global_character_prompt,
         world_prompt=world_prompt,
         agent0_prompt_system=agent0_prompt_system,
+        require_ai_success=require_ai_success,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     _backup_json(path)
@@ -456,6 +515,7 @@ DEVICE_SHOT_CONTRACT = """【设备画面三态（系统固定，必须执行）
 - screen_insert：原文或 Agent 0 的 key_information_objects 已明确给出手机、平板、电脑显示器中的文字、照片、监控、网页或文件内容，而且该内容是本单元的视觉重点。此时 device_type 写具体设备，screen_content 只写原文已有内容；character_ids 必须为 []，后续只拍设备正面内容，不拍人物脸部或人物特写。
 - device_interaction：人物正在看、拿、操作、接听设备，但屏幕内容没有明确给出或并非本镜头重点。screen_content 必须为空；人物可以出镜，但屏幕必须不可读，不得编造聊天、照片、网页、文件或界面文字。
 - none：设备未出现，或只是与核心画面无关的普通背景道具。screen_content 必须为空。
+- screen_insert 必须精确限定在实际描述该项内容的字幕范围内；同一较长事件里，如果前面只是铺垫、后面已经转入人物反应、法律结果、搬家或其他后果，必须在内容特写结束处切出新的 semantic_unit，后续单元改为 none 或 device_interaction。禁止让一份屏幕/文件内容跨越多个不再描述它的画面事件。
 - 不能仅因出现“消息、手机、电脑”等词就选择 screen_insert；必须能够从原文或 Agent 0 已登记的信息载体中指出具体内容。后文出现“那条消息、那张照片、那个文件”等指代时，应结合 Agent 0 全文资料判断。"""
 
 
@@ -613,7 +673,8 @@ def _fallback_story_plan(
                 "visual_pacing": "normal",
             }
         )
-    science_mode = content_mode == CONTENT_MODE_SCIENCE
+    science_mode = content_mode in {CONTENT_MODE_SCIENCE, CONTENT_MODE_PURE_SCIENCE}
+    hosted_science_mode = content_mode == CONTENT_MODE_SCIENCE
     return {
         "content_mode": content_mode,
         "story_type": "science_explainer" if science_mode else "other",
@@ -628,13 +689,14 @@ def _fallback_story_plan(
             "wardrobe_states": [],
             "signature_item": "红色围巾",
             "relationships": "负责串联知识讲解",
-        }] if science_mode else []),
+        }] if hosted_science_mode else []),
         "locations": [],
         "story_beats": beats,
         "semantic_units": _fallback_semantic_units(scenes),
         "clues_and_payoffs": [],
         "continuity_rules": (
-            ["科普少女始终保持黑色短发和红色围巾", "术语、物体外观、数据关系与原文保持一致"]
+            (["科普少女始终保持黑色短发和红色围巾", "术语、物体外观、数据关系与原文保持一致"]
+             if hosted_science_mode else ["术语、公式、结构、物体外观和数据关系与原文保持一致"])
             if science_mode
             else ["同一人物的外貌、服装与标志物保持一致", "地点与时间顺序忠于原文"]
         ),
@@ -852,6 +914,16 @@ boundary_after 只能是 hard 或 soft：人物、地点、时间、事件、结
 例如“很难靠它翻身”与其后的“省流结束/点赞引导”是两个单元，且前者 boundary_after 必须是 hard。visual_pacing 只能是 hold、normal、fast。
 story_beats 仅用于概括较高层节奏，每项包含 beat_id、slide_ids、purpose、emotion、visual_focus、visual_pacing。"""
 
+PURE_SCIENCE_TIMELINE_CONTRACT = """【纯科普模式硬约束】
+- 不建立、暗示或反复调用默认主持人；原文没有人物参与时，character_ids 必须为 []。
+- 以一个完整知识关系为优先边界：定义与其必要解释、反应物与产物、条件与结果、结构与功能不要因最短时长而机械拆开。
+- 先识别物理、化学、生物医学、数学、天文地学、工程计算机或人文社会知识等真实题材，再决定视觉事件，不默认套用某一学科模板。
+- 可把结构图、机制图、状态转换、实验演示、公式推导、地图、时间轴、统计关系、系统流程或必要术语标注作为独立视觉事件；不人为限制画面总数。"""
+
+PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT = (
+    TIMELINE_AGENT_SYSTEM_PROMPT + "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
+)
+
 
 def _beats_from_semantic_units(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
@@ -871,10 +943,13 @@ def _create_timeline_story_plan(
     scenes: list[dict[str, Any]],
     story_context: dict[str, Any],
     content_mode: str,
+    require_ai_success: bool = False,
 ) -> dict[str, Any]:
     """Agent 1: a narrow timed segmentation pass built on Agent 0 context."""
     fallback = _fallback_story_plan(scenes, content_mode)
     if not gemini_configured():
+        if require_ai_success:
+            raise _planning_failure("Agent 1", "语言模型未配置")
         plan = {**fallback, **dict(story_context)}
         plan["semantic_units"] = fallback["semantic_units"]
         plan["story_beats"] = fallback["story_beats"]
@@ -891,7 +966,11 @@ def _create_timeline_story_plan(
     ]
     custom_prompt = os.getenv("AGENT1_PROMPT_SYSTEM", "").strip()
     try:
-        system_prompt = custom_prompt or TIMELINE_AGENT_SYSTEM_PROMPT
+        system_prompt = custom_prompt or (
+            PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT
+            if content_mode == CONTENT_MODE_PURE_SCIENCE
+            else TIMELINE_AGENT_SYSTEM_PROMPT
+        )
         if custom_prompt and "semantic_units" not in custom_prompt:
             system_prompt += "\n\n" + TIMELINE_AGENT_SYSTEM_PROMPT
         system_prompt += (
@@ -901,6 +980,8 @@ def _create_timeline_story_plan(
             "只能使用 Agent 0 已存在的 character_id，禁止用职业、群体称呼或人名代替 ID。"
         )
         system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+        if content_mode == CONTENT_MODE_PURE_SCIENCE and PURE_SCIENCE_TIMELINE_CONTRACT not in system_prompt:
+            system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
         response = generate_gemini_text(
             system_prompt=system_prompt,
             user_prompt=json.dumps({
@@ -927,6 +1008,8 @@ def _create_timeline_story_plan(
         plan["agent0_source_fingerprint"] = story_context.get("source_fingerprint")
         return plan
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        if require_ai_success:
+            raise _planning_failure("Agent 1", exc) from exc
         print(f"Agent 1 时间轴规划失败，使用本地分镜边界: {exc}", flush=True)
         plan = {**fallback, **dict(story_context)}
         plan["semantic_units"] = fallback["semantic_units"]
@@ -941,12 +1024,15 @@ def create_story_plan(
     content_mode: str = CONTENT_MODE_STORY,
     *,
     story_context: dict[str, Any] | None = None,
+    require_ai_success: bool = False,
 ) -> dict[str, Any]:
     """Run Agent 1 once, with a deterministic local fallback."""
     content_mode = normalize_content_mode(content_mode)
     if story_context is not None:
-        return _create_timeline_story_plan(scenes, story_context, content_mode)
-    science_mode = content_mode == CONTENT_MODE_SCIENCE
+        return _create_timeline_story_plan(
+            scenes, story_context, content_mode, require_ai_success=require_ai_success
+        )
+    science_mode = content_mode in {CONTENT_MODE_SCIENCE, CONTENT_MODE_PURE_SCIENCE}
     general_mode = content_mode == CONTENT_MODE_GENERAL
     generation_source = "local_fallback"
     # This is intentionally supplied as structured context, not as an editable
@@ -954,6 +1040,8 @@ def create_story_plan(
     global_environment_prompt = os.getenv("GLOBAL_ENVIRONMENT_PROMPT", "").strip()
     custom_agent1_prompt = os.getenv("AGENT1_PROMPT_SYSTEM", "").strip()
     if not gemini_configured():
+        if require_ai_success:
+            raise _planning_failure("Agent 1", "语言模型未配置")
         print("Agent 1：Gemini 未配置，使用本地故事上下文。", flush=True)
         plan = _fallback_story_plan(scenes, content_mode)
     else:
@@ -995,6 +1083,9 @@ def create_story_plan(
             # presets that do not return the new field.
             system_prompt += SEMANTIC_UNIT_RULES
             system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if content_mode == CONTENT_MODE_PURE_SCIENCE:
+                system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
+                system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
             retry_prompt = custom_agent1_prompt or (
                 SCIENCE_AGENT_COMPACT_RETRY_PROMPT if science_mode
                 else GENERAL_AGENT_COMPACT_RETRY_PROMPT if general_mode
@@ -1007,6 +1098,9 @@ def create_story_plan(
             )
             retry_prompt += SEMANTIC_UNIT_RULES
             retry_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if content_mode == CONTENT_MODE_PURE_SCIENCE:
+                retry_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
+                retry_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
             try:
                 response = generate_gemini_text(
                     system_prompt=system_prompt,
@@ -1028,9 +1122,13 @@ def create_story_plan(
             if plan is not None:
                 generation_source = "gemini"
         except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            if require_ai_success:
+                raise _planning_failure("Agent 1", exc) from exc
             print(f"Agent 1 规划失败，使用本地故事上下文: {exc}", flush=True)
             plan = None
         if plan is None:
+            if require_ai_success:
+                raise _planning_failure("Agent 1", "模型返回内容无法形成有效的时间轴规划")
             plan = _fallback_story_plan(scenes, content_mode)
 
     plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
@@ -1051,6 +1149,7 @@ def load_or_create_story_plan(
     allow_source_mismatch: bool = False,
     content_mode: str = CONTENT_MODE_STORY,
     story_context: dict[str, Any] | None = None,
+    require_ai_success: bool = False,
 ) -> dict[str, Any]:
     """Reuse a matching Agent 1 artifact or create and persist a new one."""
     content_mode = normalize_content_mode(content_mode)
@@ -1074,14 +1173,26 @@ def load_or_create_story_plan(
             isinstance(existing, dict)
             and existing.get("agent0_source_fingerprint") == story_context.get("source_fingerprint")
         )
-        if source_matches and context_matches and plan_is_current and (plan_is_ai or may_reuse_fallback):
+        if source_matches and context_matches and plan_is_current and (
+            plan_is_ai or (may_reuse_fallback and not require_ai_success)
+        ):
             reason = "断点续跑" if resume else "上下文未变化"
             print(f"Agent 1：{reason}，复用故事规划: {path}", flush=True)
             return existing
         if source_matches and gemini_configured():
             print("Agent 1：发现旧版或本地降级规划，Gemini 已配置，将重新生成。", flush=True)
 
-    plan = create_story_plan(scenes, content_mode, story_context=story_context) if story_context is not None else create_story_plan(scenes, content_mode)
+    if story_context is not None or require_ai_success:
+        plan = create_story_plan(
+            scenes,
+            content_mode,
+            story_context=story_context,
+            require_ai_success=require_ai_success,
+        )
+    else:
+        # Preserve the public/default call shape for integrations that wrap the
+        # legacy non-strict helper.
+        plan = create_story_plan(scenes, content_mode)
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = _backup_json(path)
     if backup:
@@ -1209,7 +1320,7 @@ def create_segment_story_plan(
         try:
             segment_system_prompt = (
                 SCIENCE_SEGMENT_AGENT_SYSTEM_PROMPT
-                if content_mode == CONTENT_MODE_SCIENCE
+                if content_mode in {CONTENT_MODE_SCIENCE, CONTENT_MODE_PURE_SCIENCE}
                 else GENERAL_SEGMENT_AGENT_SYSTEM_PROMPT
                 if content_mode == CONTENT_MODE_GENERAL
                 else SEGMENT_AGENT_SYSTEM_PROMPT
@@ -1218,6 +1329,9 @@ def create_segment_story_plan(
                 "它只表示叙事节奏，后续程序会以真实音频时间戳执行切图。"
             )
             segment_system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if content_mode == CONTENT_MODE_PURE_SCIENCE:
+                segment_system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
+                segment_system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
             response = generate_gemini_text(
                 system_prompt=segment_system_prompt,
                 user_prompt=json.dumps(payload, ensure_ascii=False),

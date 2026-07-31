@@ -48,6 +48,7 @@ from .visual_editor import IMAGE_EXTENSIONS, visual_editor
 from .tts_editor import tts_editor
 from module4_video_render import (
     CONTENT_MODE_SCIENCE,
+    CONTENT_MODE_PURE_SCIENCE,
     CONTENT_MODE_GENERAL,
     CONTENT_MODE_STORY,
     DEFAULT_VISUAL_PROMPT_SYSTEM,
@@ -58,10 +59,17 @@ from module4_video_render import (
     SCIENCE_GLOBAL_CHARACTER_PROMPT,
     SCIENCE_VISUAL_PROMPT_SYSTEM,
     SCIENCE_VISUAL_STYLE,
+    PURE_SCIENCE_VISUAL_PROMPT_SYSTEM,
+    PURE_SCIENCE_VISUAL_STYLE,
     build_visual_prompt_system,
 )
 from bgm_mixer import mix_bgm_into_videos
-from story_agents import AGENT0_SYSTEM_PROMPT, TIMELINE_AGENT_SYSTEM_PROMPT
+from story_agents import (
+    AGENT0_SYSTEM_PROMPT,
+    PURE_SCIENCE_AGENT0_SYSTEM_PROMPT,
+    PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT,
+    TIMELINE_AGENT_SYSTEM_PROMPT,
+)
 
 MAX_SCRIPT_CHARACTERS = 12_000
 SERVER_STARTED_AT = time.time()
@@ -105,7 +113,7 @@ class GenerateRequest(BaseModel):
     module1_only: bool = False
     subtitle_only: bool = False
     subtitle_use_correction: bool = True
-    content_mode: Literal["urban_suspense", "science_explainer", "general"] = "urban_suspense"
+    content_mode: Literal["urban_suspense", "science_explainer", "pure_science", "general"] = "urban_suspense"
     skip_tts: bool = False
     source_audio_id: str | None = None
     skip_text_correction: bool = False
@@ -161,7 +169,7 @@ class AgentPromptPresetRequest(BaseModel):
     agent0_prompt_system: str | None = Field(default=None, max_length=12000)
     agent1_prompt_system: str | None = Field(default=None, max_length=12000)
     agent2_director_theme: str | None = Field(default=None, max_length=40)
-    content_mode: Literal["urban_suspense", "science_explainer", "general"] | None = None
+    content_mode: Literal["urban_suspense", "science_explainer", "pure_science", "general"] | None = None
 
 
 class VisualRedrawRequest(BaseModel):
@@ -451,6 +459,15 @@ def settings() -> dict[str, Any]:
                     "default_system": SCIENCE_VISUAL_PROMPT_SYSTEM,
                     "default_agent0_system": AGENT0_SYSTEM_PROMPT,
                     "default_agent1_system": TIMELINE_AGENT_SYSTEM_PROMPT,
+                },
+                CONTENT_MODE_PURE_SCIENCE: {
+                    "label": "纯科普",
+                    "description": "无固定人物的跨学科严肃知识可视化",
+                    "default_style": PURE_SCIENCE_VISUAL_STYLE,
+                    "default_character": "",
+                    "default_system": PURE_SCIENCE_VISUAL_PROMPT_SYSTEM,
+                    "default_agent0_system": PURE_SCIENCE_AGENT0_SYSTEM_PROMPT,
+                    "default_agent1_system": PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT,
                 },
                 CONTENT_MODE_GENERAL: {
                     "label": "通用自定义",
@@ -857,6 +874,13 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
         "agent1_prompt_system": TIMELINE_AGENT_SYSTEM_PROMPT,
         "agent2_director_theme": "科普科技口播视频",
     },
+    CONTENT_MODE_PURE_SCIENCE: {
+        "name": "纯科普",
+        "visual_prompt_system": PURE_SCIENCE_VISUAL_PROMPT_SYSTEM,
+        "agent0_prompt_system": PURE_SCIENCE_AGENT0_SYSTEM_PROMPT,
+        "agent1_prompt_system": PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT,
+        "agent2_director_theme": "跨学科严肃科普与知识可视化视频",
+    },
     CONTENT_MODE_GENERAL: {
         "name": "通用自定义",
         "visual_prompt_system": GENERAL_VISUAL_PROMPT_SYSTEM,
@@ -865,7 +889,7 @@ DEFAULT_AGENT_PROMPT_PRESETS: dict[str, dict[str, str]] = {
         "agent2_director_theme": "通用视频",
     },
 }
-DEFAULT_AGENT_PROMPT_PRESET_VERSION = 6
+DEFAULT_AGENT_PROMPT_PRESET_VERSION = 9
 
 
 def _default_agent_prompt_preset_path(content_mode: str) -> Path:
@@ -1079,7 +1103,10 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         data["agent0_prompt_system"] = None
         data["agent1_prompt_system"] = None
     if data.get("visual_prompt_mode") == "simple":
-        if not str(data.get("global_character_prompt") or "").strip() and str(data.get("content_mode") or "") != CONTENT_MODE_GENERAL:
+        if (
+            not str(data.get("global_character_prompt") or "").strip()
+            and str(data.get("content_mode") or "") in {CONTENT_MODE_STORY, CONTENT_MODE_SCIENCE}
+        ):
             data["global_character_prompt"] = (
                 SCIENCE_GLOBAL_CHARACTER_PROMPT
                 if str(data.get("content_mode") or "") == CONTENT_MODE_SCIENCE

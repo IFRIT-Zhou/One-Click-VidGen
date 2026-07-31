@@ -21,6 +21,65 @@ def sample_scenes() -> list[dict]:
 
 
 class StoryAgentsTest(unittest.TestCase):
+    def test_strict_agent0_failure_stops_instead_of_returning_local_fallback(self) -> None:
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(
+                story_agents,
+                "generate_gemini_text",
+                side_effect=story_agents.GeminiError("HTTP 502 upstream timed out"),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                story_agents.AgentPlanningFatalError,
+                "Agent 0.*提交图像任务前安全终止.*HTTP 502",
+            ):
+                story_agents.create_story_context(
+                    "一段完整文案",
+                    require_ai_success=True,
+                )
+
+    def test_strict_agent1_failure_stops_instead_of_returning_local_fallback(self) -> None:
+        scenes = sample_scenes()[:2]
+        context = story_agents._fallback_story_context("完整文案", story_agents.CONTENT_MODE_STORY)
+        context["generation_source"] = "gemini"
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(
+                story_agents,
+                "generate_gemini_text",
+                side_effect=story_agents.GeminiError("rate limit"),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                story_agents.AgentPlanningFatalError,
+                "Agent 1.*提交图像任务前安全终止.*rate limit",
+            ):
+                story_agents.create_story_plan(
+                    scenes,
+                    story_context=context,
+                    require_ai_success=True,
+                )
+
+    def test_strict_resume_rejects_cached_local_fallback(self) -> None:
+        scenes = sample_scenes()[:2]
+        stale = story_agents._fallback_story_plan(scenes)
+        stale["source_fingerprint"] = story_agents.story_fingerprint(scenes)
+        stale["agent_version"] = story_agents.STORY_AGENT_VERSION
+        stale["character_continuity_version"] = story_agents.CHARACTER_CONTINUITY_VERSION
+        stale["generation_source"] = "local_fallback"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "story_plan.json"
+            path.write_text(json.dumps(stale, ensure_ascii=False), encoding="utf-8")
+            with patch.object(story_agents, "gemini_configured", return_value=False):
+                with self.assertRaisesRegex(story_agents.AgentPlanningFatalError, "语言模型未配置"):
+                    story_agents.load_or_create_story_plan(
+                        scenes,
+                        resume=True,
+                        path=path,
+                        require_ai_success=True,
+                    )
+
     def test_old_fallback_plan_is_replaced_when_gemini_is_available(self) -> None:
         scenes = sample_scenes()
         with tempfile.TemporaryDirectory() as directory:
@@ -122,6 +181,37 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertEqual(plan["story_type"], "science_explainer")
         self.assertIn("红色围巾", plan["characters"][0]["appearance"])
         self.assertIn("知识", story_agents.SCIENCE_AGENT_SYSTEM_PROMPT)
+
+    def test_pure_science_mode_has_no_fallback_host_and_uses_dedicated_contracts(self) -> None:
+        scenes = sample_scenes()
+        plan = story_agents._fallback_story_plan(
+            scenes,
+            story_agents.CONTENT_MODE_PURE_SCIENCE,
+        )
+        self.assertEqual(plan["content_mode"], story_agents.CONTENT_MODE_PURE_SCIENCE)
+        self.assertEqual(plan["story_type"], "science_explainer")
+        self.assertEqual(plan["characters"], [])
+        self.assertIn("没有默认主持人", story_agents.PURE_SCIENCE_AGENT0_SYSTEM_PROMPT)
+        self.assertIn("禁止默认把非生物学内容", story_agents.PURE_SCIENCE_AGENT0_SYSTEM_PROMPT)
+        self.assertIn("不人为限制画面总数", story_agents.PURE_SCIENCE_TIMELINE_AGENT_SYSTEM_PROMPT)
+
+    def test_pure_science_agent0_receives_no_presenter_contract(self) -> None:
+        response = json.dumps({
+            "story_type": "science_explainer", "logline": "ATP 循环", "theme": "能量转换",
+            "narrative_tone": "严谨", "characters": [], "locations": [],
+            "key_information_objects": [], "clues_and_payoffs": [],
+            "continuity_rules": ["科学结构准确"], "visual_safety": [],
+        }, ensure_ascii=False)
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(story_agents, "generate_gemini_text", return_value=response) as generate,
+        ):
+            context = story_agents.create_story_context(
+                "ATP 水解为 ADP 和 Pi。",
+                story_agents.CONTENT_MODE_PURE_SCIENCE,
+            )
+        self.assertEqual(context["characters"], [])
+        self.assertIn("禁止为了串联讲解而凭空创建人物", generate.call_args.kwargs["system_prompt"])
 
     def test_agent0_reads_plain_full_text_without_subtitle_timing(self) -> None:
         response = json.dumps({

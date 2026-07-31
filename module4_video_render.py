@@ -37,9 +37,10 @@ RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
-# v12: Agent 1 device-shot modes are enforced again after Agent 2, so an
-# information screen cannot silently become a face-and-phone split portrait.
-VISUAL_PROMPT_AGENT_VERSION = 12
+# v13: screen/file contents are scoped again to each fixed image group. A long
+# Agent 1 unit can no longer stamp the same evidence insert across every child
+# poster after Python splits that unit by duration.
+VISUAL_PROMPT_AGENT_VERSION = 15
 
 REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
 
@@ -83,12 +84,20 @@ SCIENCE_VISUAL_STYLE = (
     "画面可信、亲切、信息层级明确，适合口播视频背景。"
     "去除燥波燥点，去除涂抹感，色彩平滑，画面严格执行干净质感。"
 )
+PURE_SCIENCE_VISUAL_STYLE = (
+    "跨学科严肃科普与现代教材级知识可视化，准确、克制、清晰；依据题材选用结构图、受力图、"
+    "实验装置、函数图像、时间轴、地图、剖面图、流程箭头、尺度对比或必要的三维示意。"
+    "允许忠于原文的术语、化学式、公式、坐标、年代、地名、结构标签和少量解释文字，"
+    "信息层级明确、标注可读，不设置固定主持人物。"
+    "避免低幼卡通、娱乐化表情、无依据的数据、伪公式、乱码和与知识点无关的装饰。"
+)
 GENERAL_VISUAL_STYLE = (
     "通用横版叙事画面：请在此填写你希望的画风、色彩、质感、时代背景和镜头气质。"
     "未填写时，采用清晰、电影感、主体明确的叙事插画表现；避免乱码、水印、二维码和密集文字。"
 )
 CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
+CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
 DEFAULT_GLOBAL_CHARACTER_PROMPT = (
     "主角：35岁憔悴中年女性，黑色长发；前期戴红色鸭舌帽、穿灰色旧衣服；"
@@ -101,6 +110,8 @@ def normalize_content_mode(value: str | None) -> str:
     mode = str(value or "").strip().lower()
     if mode == CONTENT_MODE_SCIENCE:
         return CONTENT_MODE_SCIENCE
+    if mode == CONTENT_MODE_PURE_SCIENCE:
+        return CONTENT_MODE_PURE_SCIENCE
     if mode == CONTENT_MODE_GENERAL:
         return CONTENT_MODE_GENERAL
     return CONTENT_MODE_STORY
@@ -179,12 +190,41 @@ def build_visual_prompt_system(
     content_mode = normalize_content_mode(content_mode)
     visual_style = style.strip() or {
         CONTENT_MODE_SCIENCE: SCIENCE_VISUAL_STYLE,
+        CONTENT_MODE_PURE_SCIENCE: PURE_SCIENCE_VISUAL_STYLE,
         CONTENT_MODE_GENERAL: GENERAL_VISUAL_STYLE,
     }.get(content_mode, DEFAULT_VISUAL_STYLE)
     character_reference = global_character_prompt.strip() or {
         CONTENT_MODE_STORY: DEFAULT_GLOBAL_CHARACTER_PROMPT,
         CONTENT_MODE_SCIENCE: SCIENCE_GLOBAL_CHARACTER_PROMPT,
     }.get(content_mode, "未填写；只能依据原文建立必要的临时角色档案。")
+    if content_mode == CONTENT_MODE_PURE_SCIENCE:
+        return f"""你是跨学科严肃科普、知识教育与教材级可视化视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）、image_prompt（中文生图提示词）和 reference_image_ids（参考图编号数组）。
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版科学画面，完整覆盖全部 slide_id，不遗漏、重复、合并或人为限制海报数量。
+- 纯科普默认没有固定主持人物；没有用户参考角色时，character_ids 和 reference_image_ids 必须输出 []。
+
+【跨学科分镜规则】
+- 先识别本组所属学科及它是在提出问题、定义概念、解释结构、展示机制、比较状态、给出证据还是总结结论，再选择该学科最合适的视觉语言，禁止默认套用生物学或微观细胞画面。
+- 生物与医学可用结构、剖面和生理过程；物理可用受力图、场线、光路和实验；化学可用结构式、反应过程和装置；数学可用几何、函数图像、坐标和推导关系；天文与地学可用尺度、轨道、地图和地层；工程与计算机可用系统结构、零件剖面、电路、数据流和算法步骤；历史、地理与社会知识可用时间轴、地图、史料物件、统计关系和情境复原。
+- ATP、ADP、Pi、化学式、数学公式、结构名称、坐标、年代、地名和必要标签可以直接出现，不设置机械的 20 字上限；所有文字必须忠于原文、数量服务于讲解且清晰可读，禁止编造术语、数据和伪公式。
+- 同一张图仍应围绕一个核心知识点组织信息；允许教材图、结构图、流程图或科学信息图，但避免把整段旁白塞进画面，也避免无层级的密集海报排版。
+- 如原文类比存在口误、拼写误差或不严谨表达，画面优先使用正确科学结构，不把错误类比绘制成错误事实。
+{DEVICE_CREATIVE_GUIDANCE}
+
+【用户可控设定】
+- 当前统一画风参考为：{visual_style}
+- 用户全局人物设定为：{character_reference}
+- {_reference_image_instruction()}
+- 当画面中没有这些角色的时候，则本段人物设定不作为参考。
+- image_prompt 只写当前知识点独有的结构、对象、过程、视角、构图、标注、光线和色彩，不重复整段通用画风。
+
+【质量与安全】
+- 概念关系、因果、方向、数量级、时间与空间关系优先于戏剧效果；没有把握的专业细节使用简化但不误导的示意表达。
+- 禁止水印、二维码、品牌 logo、乱码、无意义装饰字符和与原文无关的人物。
+- 系统会在每条 image_prompt 末尾统一加入干净画质要求，模型不要重复输出。"""
     if content_mode == CONTENT_MODE_SCIENCE:
         return f"""你是科普科技口播视频的分镜视觉导演，也是本流水线的 Agent 2。
 
@@ -305,6 +345,7 @@ SCIENCE_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(
     global_character_prompt=SCIENCE_GLOBAL_CHARACTER_PROMPT,
 )
 GENERAL_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_GENERAL)
+PURE_SCIENCE_VISUAL_PROMPT_SYSTEM = build_visual_prompt_system(content_mode=CONTENT_MODE_PURE_SCIENCE)
 
 
 @dataclass(frozen=True)
@@ -702,6 +743,7 @@ def _fallback_mapping(
     groups = required_groups if required_groups is not None else _visual_groups(scenes, story_plan)
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE"))
     science_mode = content_mode == CONTENT_MODE_SCIENCE
+    pure_science_mode = content_mode == CONTENT_MODE_PURE_SCIENCE
     general_mode = content_mode == CONTENT_MODE_GENERAL
     return [
         {
@@ -715,6 +757,11 @@ def _fallback_mapping(
                     "黑色短发、红色围巾的少女形象保持一致，知识准确、构图清楚，不做密集PPT、字幕或水印。"
                 )
                 if science_mode
+                else (
+                    "2:1 横版跨学科严肃知识可视化，单一核心知识点，依据具体学科使用准确的结构图、过程示意、实验、地图、时间轴、函数图像或系统图，"
+                    f"公式或必要标签讲清“{'；'.join(str(scene.get('visual_summary') or '') for scene in group)}”，"
+                    "默认不出现主持人物，允许忠于原文的专业术语、公式与必要标签，不编造数据、伪公式、乱码或水印。"
+                ) if pure_science_mode
                 else (
                     "2:1 横版叙事插画或漫画分镜，单一视觉焦点，人物、环境或关键物件清楚服务于原文，"
                     f"具体呈现“{'；'.join(str(scene.get('visual_summary') or '') for scene in group)}”，"
@@ -1135,6 +1182,9 @@ def _plan_mapping_batch(
     story_context: dict[str, Any] | None = None,
     required_groups: list[list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]] | None:
+    require_ai_success = os.getenv("REQUIRE_AI_AGENT_SUCCESS", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     required_slide_groups = [
         [str(scene["slide_id"]) for scene in group]
         for group in (required_groups if required_groups is not None else _visual_groups(scenes, story_context))
@@ -1201,7 +1251,23 @@ def _plan_mapping_batch(
             print(f"Gemini {batch_label} 已规划 {len(mapping)} 张海报。", flush=True)
             return mapping
         print(f"Gemini {batch_label} 返回的海报映射不完整。", flush=True)
+        if require_ai_success:
+            raise RuntimeError("模型返回的海报映射不完整或无法解析")
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"Gemini {batch_label} 规划失败: {exc}", flush=True)
+        if require_ai_success:
+            raise RuntimeError(
+                f"Agent 2 {batch_label}语言模型规划失败，已在提交 Image2 前安全终止；"
+                "配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
+                f"原始错误：{exc}"
+            ) from exc
+    except RuntimeError as exc:
+        if require_ai_success:
+            raise RuntimeError(
+                f"Agent 2 {batch_label}语言模型规划失败，已在提交 Image2 前安全终止；"
+                "配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
+                f"原始错误：{exc}"
+            ) from exc
         print(f"Gemini {batch_label} 规划失败: {exc}", flush=True)
     return None
 
@@ -1279,6 +1345,107 @@ def _extract_explicit_screen_content(text: str) -> tuple[str, str]:
     return device_type, ""
 
 
+def _compact_device_text(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(value or "")).lower()
+
+
+def _device_content_parts(screen_content: str) -> list[str]:
+    parts = [
+        str(value).strip()
+        for value in re.split(r"[、，,；;]+", str(screen_content or ""))
+        if str(value).strip()
+    ]
+    return parts or ([str(screen_content).strip()] if str(screen_content).strip() else [])
+
+
+def _device_type_parts(device_type: str) -> list[str]:
+    return [
+        str(value).strip()
+        for value in re.split(r"[/／、，,；;]+", str(device_type or ""))
+        if str(value).strip()
+    ]
+
+
+def _device_content_local_score(content: str, group_text: str) -> int:
+    """Estimate whether one Agent 1 information item is present in this group.
+
+    Chinese bigram overlap is intentionally conservative: one broad semantic
+    unit may contain several documents, while each fixed image group should
+    inherit at most the item actually named by its own subtitle text.
+    """
+    content_text = _compact_device_text(content)
+    local_text = _compact_device_text(group_text)
+    if not content_text or not local_text:
+        return 0
+    if content_text in local_text:
+        return 100 + len(content_text)
+    if len(local_text) >= 3 and local_text in content_text:
+        return 80 + len(local_text)
+    content_bigrams = {content_text[index:index + 2] for index in range(len(content_text) - 1)}
+    local_bigrams = {local_text[index:index + 2] for index in range(len(local_text) - 1)}
+    overlap = content_bigrams & local_bigrams
+    # A single generic bigram such as “内容” or “文件” is not enough to turn a
+    # whole child poster into the same insert shot.
+    weak = {"内容", "文件", "记录", "手机", "屏幕", "报告", "照片", "消息", "账单"}
+    strong_overlap = overlap - weak
+    return len(strong_overlap) * 10 + len(overlap)
+
+
+def _localize_device_insert(
+    device_type: str,
+    screen_content: str,
+    group_text: str,
+) -> tuple[str, str]:
+    """Select one source-backed information item for the current image group."""
+    content_parts = _device_content_parts(screen_content)
+    if not content_parts:
+        return "", ""
+    scored = [(_device_content_local_score(content, group_text), index, content) for index, content in enumerate(content_parts)]
+    score, selected_index, selected_content = max(scored, key=lambda value: (value[0], -value[1]))
+    reference_only = bool(re.search(
+        r"(?:这|那|该|上述|前述)(?:条|张|份|个)?(?:消息|短信|照片|文件|报告|账单|记录|网页|画面)",
+        str(group_text or ""),
+    ))
+    if score <= 0 and not reference_only:
+        return "", ""
+    type_parts = _device_type_parts(device_type)
+    selected_type = (
+        type_parts[selected_index]
+        if len(type_parts) == len(content_parts) and selected_index < len(type_parts)
+        else str(device_type or "").strip()
+    )
+    return selected_type, selected_content
+
+
+def _localize_key_information_object(
+    story_plan: dict[str, Any] | None,
+    group_text: str,
+) -> tuple[str, str]:
+    """Match a fixed child group against Agent 0's precise information registry.
+
+    Agent 1 may summarize a long evidence sequence and omit one of several
+    documents.  The full-text Agent 0 registry is more precise for deciding
+    which individual message, report or bill belongs to each child poster.
+    """
+    matches: list[tuple[int, int, str, str]] = []
+    for index, record in enumerate((story_plan or {}).get("key_information_objects", [])):
+        if not isinstance(record, dict):
+            continue
+        content = str(record.get("content") or "").strip()
+        if not content:
+            continue
+        score = _device_content_local_score(content, group_text)
+        matches.append((score, -index, str(record.get("device_type") or "").strip(), content))
+    if not matches:
+        return "", ""
+    score, _order, device_type, content = max(matches, key=lambda value: (value[0], value[1]))
+    # Two meaningful Chinese bigrams (or a direct substring) are required. This
+    # rejects generic overlaps such as only “报告” or “记录”.
+    if score < 20:
+        return "", ""
+    return device_type, content
+
+
 def _device_shot_for_item(
     item: dict[str, Any],
     story_plan: dict[str, Any] | None,
@@ -1326,7 +1493,22 @@ def _device_shot_for_item(
     if explicit_source_content:
         mode = "screen_insert"
         device_type = device_type or source_device_type
-        screen_content = screen_content or explicit_source_content
+        screen_content = explicit_source_content
+    elif mode == "screen_insert":
+        localized_type, localized_content = _localize_key_information_object(
+            story_plan, group_text
+        )
+        if not localized_content:
+            localized_type, localized_content = _localize_device_insert(
+                device_type, screen_content, group_text
+            )
+        if localized_content:
+            device_type, screen_content = localized_type, localized_content
+        else:
+            # The parent semantic unit discusses a screen or file somewhere,
+            # but this fixed child group no longer does. Keep Agent 2's unique
+            # scene instead of repeating the parent's evidence insert.
+            mode, device_type, screen_content = "none", "", ""
     if mode == "screen_insert" and not screen_content:
         mode = "device_interaction"
     if mode == "device_interaction" and not device_type:
@@ -1354,11 +1536,23 @@ def _apply_device_shot_guard(
             line.strip() for line in body.splitlines()
             if line.strip().startswith(("【统一画面风格】", "【视觉媒介锁】"))
         ]
-        guarded = (
-            f"【设备内容镜头硬约束】本镜头只展示{device_type}正面屏幕及其内容，屏幕占据画面主体；"
-            "不出现人物脸部、人物肖像、半身、反应特写或人物与屏幕并列构图，只允许必要的手指、设备边框或桌面边缘；"
-            f"屏幕内容严格依据原文：{screen_content}；不得补写或虚构其他界面信息。"
-        )
+        physical_document = bool(re.search(r"纸|报告|账单|书信|信件|照片|文件|票据|档案", device_type))
+        if physical_document:
+            guarded = (
+                f"【信息载体特写硬约束】本镜头只展示{device_type}正面及其内容，纸面或载体占据画面主体；"
+                "不出现人物脸部、人物肖像、半身或反应特写，只允许必要的手指、纸张边缘或桌面边缘；"
+                f"画面需要准确传达的核心信息为：{screen_content}；"
+                "可按常见纸质材料补充合理的版式、表格线、项目符号、页边与留白等非剧情性视觉细节，"
+                "版式与辅助细节可以自然发挥；涉及具体姓名、数字、结论或剧情证据时，以原文已有信息为准。"
+            )
+        else:
+            guarded = (
+                f"【设备内容镜头硬约束】本镜头只展示{device_type}正面屏幕及其内容，屏幕占据画面主体；"
+                "不出现人物脸部、人物肖像、半身、反应特写或人物与屏幕并列构图，只允许必要的手指、设备边框或桌面边缘；"
+                f"画面需要准确传达的核心信息为：{screen_content}；"
+                "可根据常见应用形态设计合理的状态栏、列表排版、头像占位、图标、色块与视觉层级，"
+                "界面与辅助信息可以自然发挥；涉及具体聊天内容、人物关系、姓名、金额、日期等剧情关键信息时，以原文已有信息为准。"
+            )
         return "\n".join([*style_lines, guarded])
     if mode == "device_interaction":
         return (
@@ -1500,7 +1694,15 @@ def build_macro_mapping(
     scenes: list[dict[str, Any]],
     story_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    require_ai_success = os.getenv("REQUIRE_AI_AGENT_SUCCESS", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
     if not gemini_configured():
+        if require_ai_success:
+            raise RuntimeError(
+                "Agent 2 语言模型未配置，已在提交 Image2 前安全终止；"
+                "配音与字幕已保留，请配置语言模型后断点续跑。"
+            )
         print("Gemini 未配置，模块 4 使用本地分组提示词。", flush=True)
         return _finalize_mapping(_fallback_mapping(scenes, story_plan), scenes, story_plan)
 
@@ -1567,6 +1769,10 @@ def build_macro_mapping(
             required_groups=batch_groups,
         )
         if mapping is None:
+            if require_ai_success:
+                raise RuntimeError(
+                    f"Agent 2 {batch_label}未生成有效画面规划，已在提交 Image2 前安全终止。"
+                )
             print(f"{batch_label} 已降级为本地分组提示词。", flush=True)
             mapping = _fallback_mapping(batch, story_plan, required_groups=batch_groups)
         combined.extend(mapping)
@@ -2254,6 +2460,8 @@ def run_online_poster_engine() -> None:
         path=configured_story_path,
         allow_source_mismatch=global_story_plan,
         content_mode=content_mode,
+        require_ai_success=os.getenv("REQUIRE_AI_AGENT_SUCCESS", "").strip().lower()
+        in {"1", "true", "yes", "on"},
     )
     if configured_story_path != STORY_PLAN_PATH.resolve():
         STORY_PLAN_PATH.write_text(json.dumps(story_plan, ensure_ascii=False, indent=2), encoding="utf-8")
