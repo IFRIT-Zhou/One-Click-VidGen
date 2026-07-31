@@ -72,6 +72,12 @@ class TtsSemanticChunkingTest(unittest.TestCase):
         self.assert_complete(source, chunks)
         self.assertIn("One Click VidGen", "".join(chunks))
 
+    def test_space_after_sentence_boundary_is_preserved(self) -> None:
+        source = "真正的珍惜不是供奉。 一页写满真情的日记，远胜一本空白的废纸。"
+        chunks = split_indextts2_text(source)
+        self.assert_complete(source, chunks)
+        self.assertIn("供奉。 一页", "".join(chunks))
+
 
 if __name__ == "__main__":
     unittest.main()

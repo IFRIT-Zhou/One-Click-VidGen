@@ -111,13 +111,13 @@ def _split_sentences_preserving_closers(paragraph: str) -> list[str]:
         end = index + 1
         while end < len(paragraph) and paragraph[end] in closers:
             end += 1
-        sentence = paragraph[start:end].strip()
-        if sentence:
+        sentence = paragraph[start:end]
+        if sentence.strip():
             sentences.append(sentence)
         start = end
         index = end
-    tail = paragraph[start:].strip()
-    if tail:
+    tail = paragraph[start:]
+    if tail.strip():
         sentences.append(tail)
     return sentences
 
@@ -132,19 +132,22 @@ def _split_clause_units(sentence: str) -> list[str]:
             continue
         if char not in boundaries:
             continue
-        unit = sentence[start:index + 1].strip()
-        if unit:
+        unit = sentence[start:index + 1]
+        if unit.strip():
             units.append(unit)
         start = index + 1
-    tail = sentence[start:].strip()
-    if tail:
+    tail = sentence[start:]
+    if tail.strip():
         units.append(tail)
     return units
 
 
 def _safe_hard_split(text: str, target_len: int, hard_max_len: int) -> list[str]:
     """Bound punctuation-free text without cutting through an ASCII word/number."""
-    remaining = text.strip()
+    # Keep whitespace exactly as supplied.  It can be semantically meaningful
+    # in English/mixed-language narration, and dropping a space at a chunk
+    # boundary makes the integrity guard report a false omission.
+    remaining = text
     result: list[str] = []
     while len(remaining) > hard_max_len:
         split_at = min(target_len, len(remaining))
@@ -159,8 +162,10 @@ def _safe_hard_split(text: str, target_len: int, hard_max_len: int) -> list[str]
             split_at -= 1
         if split_at <= 1:
             split_at = hard_max_len
-        result.append(remaining[:split_at].strip())
-        remaining = remaining[split_at:].strip()
+        piece = remaining[:split_at]
+        if piece:
+            result.append(piece)
+        remaining = remaining[split_at:]
     if remaining:
         result.append(remaining)
     return result
