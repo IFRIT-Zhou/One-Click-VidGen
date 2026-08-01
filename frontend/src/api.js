@@ -18,7 +18,9 @@ export async function requestJSON(url, options = {}) {
     } catch {
       message = raw
     }
-    throw new Error(message || `Request failed with ${response.status}`)
+    const error = new Error(message || `Request failed with ${response.status}`)
+    error.status = response.status
+    throw error
   }
   return response.json()
 }
@@ -69,11 +71,11 @@ export const api = {
   cloudLogout: () => requestJSON('/api/cloud/auth/logout', { method: 'POST' }),
   cloudAccount: () => requestJSON('/api/cloud/account'),
   cloudVoices: (type = 'all') => requestJSON(`/api/cloud/voices?type=${encodeURIComponent(type)}`),
+  cloudVoiceAudioUrl: (id) => `/api/cloud/voices/${encodeURIComponent(id)}/audio`,
   uploadCloudVoice: (file, displayName, idempotencyKey) => {
     const data = new FormData()
     data.append('file', file)
     data.append('display_name', displayName)
-    data.append('consent_confirmed', 'true')
     return requestJSON('/api/cloud/voices', {
       method: 'POST',
       headers: { 'Idempotency-Key': idempotencyKey },

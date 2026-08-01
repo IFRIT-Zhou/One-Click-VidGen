@@ -405,25 +405,55 @@
                     <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="refreshCloudState">刷新</button>
                     <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="logoutCloud">退出云端</button>
                   </div>
-                  <div class="form-grid cluster-voice-grid">
-                    <label>
-                      <span>云端参考音色</span>
-                      <select v-model="cloudVoiceModel">
-                        <option v-for="voice in activeCloudVoices" :key="`${voice.type}:${voice.id}`" :value="`${voice.type}:${voice.id}`">
-                          {{ voice.display_name || voice.id }} · {{ voice.type === 'custom' ? '自定义' : '预置' }}
-                        </option>
-                      </select>
-                      <button v-if="selectedCloudVoice?.type === 'custom'" class="ghost-btn compact-btn cloud-voice-delete" type="button" :disabled="cloudBusy" @click="deleteSelectedCloudVoice">删除当前自定义音色</button>
-                    </label>
-                    <label><span>上传音色名称</span><input v-model.trim="cloudVoiceDisplayName" type="text" maxlength="80" placeholder="例如：我的旁白音色" /></label>
-                    <div class="script-upload-field cloud-voice-upload">
-                      <label class="script-file-picker">
-                        <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="cloudVoiceUploading" @change="uploadCloudVoice" />
-                        <span>{{ cloudVoiceUploading ? '上传中' : '上传云端' }}</span>
-                        <strong>WAV / MP3 / FLAC，3–30 秒</strong>
+                  <div class="cluster-voice-workspace">
+                    <section class="cluster-voice-card cluster-library-card">
+                      <div class="cluster-card-head">
+                        <div><span class="cluster-card-kicker">VOICE LIBRARY</span><h4>选择云端音色</h4></div>
+                        <span class="cluster-count">{{ cloudPresetVoiceOptions.length + cloudUploadedVoiceOptions.length }} 个可用</span>
+                      </div>
+                      <label class="cluster-main-select">
+                        <span>当前音色</span>
+                        <span class="cluster-main-select-row">
+                          <select v-model="cloudVoiceModel">
+                            <option value="">自动选择 · {{ firstDefaultCloudVoice?.display_name || '第一个默认音色' }}</option>
+                            <optgroup label="云端默认音色">
+                              <option v-for="voice in cloudPresetVoiceOptions" :key="`preset:${voice.id}`" :value="`preset:${voice.id}`">{{ voice.display_name || voice.id }}</option>
+                            </optgroup>
+                            <optgroup v-if="cloudUploadedVoiceOptions.length" label="我上传的音色">
+                              <option v-for="voice in cloudUploadedVoiceOptions" :key="`uploaded:${voice.id}`" :value="`uploaded:${voice.id}`">{{ voice.display_name || voice.id }}</option>
+                            </optgroup>
+                          </select>
+                          <button class="cloud-voice-preview-btn" type="button" :disabled="!previewableCloudPresetVoice || cloudVoicePreviewLoading" :title="previewableCloudPresetVoice ? `试听 ${previewableCloudPresetVoice.display_name || previewableCloudPresetVoice.id}` : '请选择一个云端默认音色'" @click="toggleCloudVoicePreview">
+                            {{ cloudVoicePreviewLoading ? '加载中…' : (cloudVoicePreviewPlaying ? 'Ⅱ 暂停' : '▶ 试听') }}
+                          </button>
+                        </span>
                       </label>
-                      <label class="check-row cloud-consent-row"><input v-model="cloudVoiceConsent" type="checkbox" /><span>我确认已获得该声音的合法授权</span></label>
-                    </div>
+                      <div class="uploaded-voice-section">
+                        <div class="uploaded-voice-title"><strong>我上传的音色</strong><span>{{ cloudUploadedVoiceOptions.length }}/{{ cloudVoiceLimits.max_uploaded_voices || 20 }}</span></div>
+                        <div v-if="cloudUploadedVoiceOptions.length" class="uploaded-voice-list">
+                          <button v-for="voice in cloudUploadedVoiceOptions" :key="`mine:${voice.id}`" type="button" class="uploaded-voice-item" :class="{ active: selectedCloudVoice?.id === voice.id }" @click="selectCloudVoice(voice)">
+                            <span class="voice-avatar">{{ (voice.display_name || '音').slice(0, 1) }}</span>
+                            <span><strong>{{ voice.display_name || voice.id }}</strong><small>{{ voice.audio?.format?.toUpperCase() || 'AUDIO' }} · 已保存到云端</small></span>
+                          </button>
+                        </div>
+                        <div v-else class="uploaded-voice-empty">还没有上传音色。上传后会永久显示在这里。</div>
+                      </div>
+                      <button v-if="selectedCloudVoice && selectedCloudVoice.type !== 'preset'" class="ghost-btn compact-btn cloud-voice-delete" type="button" :disabled="cloudBusy" @click="deleteSelectedCloudVoice">删除当前音色</button>
+                    </section>
+                    <section class="cluster-voice-card cluster-upload-card">
+                      <div class="cluster-card-head">
+                        <div><span class="cluster-card-kicker">UPLOAD</span><h4>上传我的音色</h4></div>
+                      </div>
+                      <label class="cluster-upload-name"><span>音色名称</span><input v-model.trim="cloudVoiceDisplayName" type="text" maxlength="80" placeholder="给这个音色取一个容易识别的名字" /></label>
+                      <label class="cluster-drop-zone" :class="{ disabled: cloudVoiceUploading || !cloudVoiceApiAvailable }">
+                        <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="cloudVoiceUploading || !cloudVoiceApiAvailable" @change="uploadCloudVoice" />
+                        <span class="cluster-upload-icon">＋</span>
+                        <strong>{{ cloudVoiceUploading ? '正在上传和保存…' : (cloudVoiceApiAvailable ? '选择音频并上传' : '云端暂未开放上传') }}</strong>
+                        <small>WAV / MP3 / FLAC · 建议 3–30 秒 · 最大 20 MiB</small>
+                      </label>
+                    </section>
+                  </div>
+                  <div class="form-grid cluster-parameter-grid">
                     <label><span>情绪</span><select v-model="form.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="emotion" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
                     <label><span>语速（0.5–2）</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
                     <label><span>音量（0.1–10）</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
@@ -1493,7 +1523,33 @@
                   </div>
                   <div v-else-if="ttsEngine === 'cluster'" class="module1-cloud-voice">
                     <template v-if="cloudReady">
-                      <label><span>云端音色</span><select v-model="cloudVoiceModel"><option v-for="voice in activeCloudVoices" :key="`${voice.type}:${voice.id}`" :value="`${voice.type}:${voice.id}`">{{ voice.display_name || voice.id }} · {{ voice.type === 'custom' ? '自定义' : '预置' }}</option></select></label>
+                      <label>
+                        <span>云端音色</span>
+                        <select v-model="cloudVoiceModel">
+                          <option value="">不选择（自动使用 {{ firstDefaultCloudVoice?.display_name || '第一个默认音色' }}）</option>
+                          <optgroup label="云端默认音色">
+                            <option v-for="voice in cloudPresetVoiceOptions" :key="`module1-preset:${voice.id}`" :value="`preset:${voice.id}`">{{ voice.display_name || voice.id }}</option>
+                          </optgroup>
+                          <optgroup v-if="cloudUploadedVoiceOptions.length" label="我上传的音色">
+                            <option v-for="voice in cloudUploadedVoiceOptions" :key="`module1-uploaded:${voice.id}`" :value="`uploaded:${voice.id}`">{{ voice.display_name || voice.id }}</option>
+                          </optgroup>
+                        </select>
+                      </label>
+                      <div v-if="cloudUploadedVoiceOptions.length" class="uploaded-voice-list compact-uploaded-list">
+                        <button v-for="voice in cloudUploadedVoiceOptions" :key="`module1-mine:${voice.id}`" type="button" class="uploaded-voice-item" :class="{ active: selectedCloudVoice?.id === voice.id }" @click="selectCloudVoice(voice)">
+                          <span class="voice-avatar">{{ (voice.display_name || '音').slice(0, 1) }}</span>
+                          <span><strong>{{ voice.display_name || voice.id }}</strong><small>我的云端音色</small></span>
+                        </button>
+                      </div>
+                      <div class="module1-cloud-upload">
+                        <label><span>上传音色名称</span><input v-model.trim="cloudVoiceDisplayName" type="text" maxlength="80" placeholder="例如：我的旁白音色" /></label>
+                        <label class="cluster-drop-zone module1-drop-zone">
+                          <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="cloudVoiceUploading || !cloudVoiceApiAvailable" @change="uploadCloudVoice" />
+                          <span class="cluster-upload-icon">＋</span>
+                          <strong>{{ cloudVoiceUploading ? '上传中…' : (cloudVoiceApiAvailable ? '选择并上传音频' : '云端暂未开放上传') }}</strong>
+                          <small>WAV / MP3 / FLAC · 3–30 秒</small>
+                        </label>
+                      </div>
                       <small class="muted">可用积分 {{ cloudAccount.credits?.available ?? '-' }}，任务会在云端 GPU 合成后下载到本机。</small>
                     </template>
                     <template v-else>
@@ -1982,15 +2038,19 @@ const ttsEngine = ref('indextts2')
 const cloudSession = ref({ configured: false, authenticated: false, user: null, base_url: '' })
 const cloudAccount = ref({ credits: {}, quota: {} })
 const cloudVoices = ref([])
+const cloudVoiceLimits = ref({})
 const cloudQuote = ref({})
 const cloudBusy = ref(false)
 const cloudQuoteLoading = ref(false)
 const cloudVoiceUploading = ref(false)
 const cloudVoiceDisplayName = ref('')
-const cloudVoiceConsent = ref(false)
+const cloudVoiceApiAvailable = ref(true)
+const cloudVoicePreviewLoading = ref(false)
+const cloudVoicePreviewPlayingId = ref('')
 const cloudError = ref('')
 const cloudMessage = ref('')
 const cloudLoginForm = reactive({ email: '', password: '' })
+let cloudVoicePreviewAudio = null
 // Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
 // 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
 const qwenVoiceGroups = [
@@ -2175,7 +2235,9 @@ const form = reactive({
   tts_english_normalization: false,
   tts_pronunciation: '',
   cluster_voice_type: 'preset',
-  cluster_voice_id: 'voice_01.wav',
+  // Empty is an intentional UI state: submission resolves it to the first
+  // displayed preset instead of forcing the user to make a selection.
+  cluster_voice_id: '',
   qwen_tts_instructions: '',
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
@@ -2438,23 +2500,53 @@ const ttsEngineProviderLabel = computed(() => ({
   cluster: cloudSession.value.base_url || 'cloud-api / Ray 集群',
   qwen: 'DashScope / 百炼',
 }[ttsEngine.value] || ''))
-const activeCloudVoices = computed(() => cloudVoices.value.filter((voice) => voice?.status === 'active'))
-const selectedCloudVoice = computed(() => cloudVoices.value.find((voice) => (
-  voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
+const activeRemoteCloudVoices = computed(() => cloudVoices.value.filter((voice) => voice?.status === 'active'))
+const cloudPresetVoiceOptions = computed(() => activeRemoteCloudVoices.value.filter((voice) => voice.type === 'preset'))
+const cloudUploadedVoiceOptions = computed(() => activeRemoteCloudVoices.value.filter((voice) => (
+  voice.type === 'uploaded' || voice.type === 'custom'
 )))
+const activeCloudVoices = computed(() => [
+  ...cloudPresetVoiceOptions.value,
+  ...cloudUploadedVoiceOptions.value,
+])
+const firstDefaultCloudVoice = computed(() => cloudPresetVoiceOptions.value[0] || null)
+const selectedCloudVoice = computed(() => {
+  if (!form.cluster_voice_id) return null
+  const expectedType = form.cluster_voice_type === 'preset' ? 'preset' : 'uploaded'
+  return activeCloudVoices.value.find((voice) => (
+    (voice.type === 'preset' ? 'preset' : 'uploaded') === expectedType && voice.id === form.cluster_voice_id
+  )) || null
+})
+const effectiveCloudVoice = computed(() => selectedCloudVoice.value || firstDefaultCloudVoice.value)
+const previewableCloudPresetVoice = computed(() => (
+  effectiveCloudVoice.value?.type === 'preset' ? effectiveCloudVoice.value : null
+))
+const cloudVoicePreviewPlaying = computed(() => Boolean(
+  previewableCloudPresetVoice.value?.id
+  && cloudVoicePreviewPlayingId.value === previewableCloudPresetVoice.value.id
+  && cloudVoicePreviewAudio
+  && !cloudVoicePreviewAudio.paused
+))
 const cloudReady = computed(() => Boolean(
   cloudSession.value.configured
   && cloudSession.value.authenticated
-  && activeCloudVoices.value.some((voice) => (
-    voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
-  ))
+  && effectiveCloudVoice.value?.id
 ))
 const cloudVoiceModel = computed({
-  get: () => `${form.cluster_voice_type}:${form.cluster_voice_id}`,
+  get: () => {
+    if (!selectedCloudVoice.value) return ''
+    return `${selectedCloudVoice.value.type === 'preset' ? 'preset' : 'uploaded'}:${selectedCloudVoice.value.id}`
+  },
   set(value) {
+    if (!value) {
+      form.cluster_voice_type = 'preset'
+      form.cluster_voice_id = ''
+      cloudQuote.value = {}
+      return
+    }
     const [type, ...idParts] = String(value || '').split(':')
-    form.cluster_voice_type = type === 'custom' ? 'custom' : 'preset'
-    form.cluster_voice_id = idParts.join(':') || 'voice_01.wav'
+    form.cluster_voice_type = type === 'preset' ? 'preset' : 'uploaded'
+    form.cluster_voice_id = idParts.join(':')
     cloudQuote.value = {}
   },
 })
@@ -2844,6 +2936,8 @@ async function logout() {
   cloudSession.value = { configured: false, authenticated: false, user: null, base_url: '' }
   cloudAccount.value = { credits: {}, quota: {} }
   cloudVoices.value = []
+  cloudVoiceLimits.value = {}
+  cloudVoiceApiAvailable.value = true
   cloudQuote.value = {}
 }
 
@@ -2856,18 +2950,29 @@ async function refreshCloudState() {
     if (!cloudSession.value.authenticated) {
       cloudAccount.value = { credits: {}, quota: {} }
       cloudVoices.value = []
+      cloudVoiceLimits.value = {}
       return
     }
-    const [account, voices] = await Promise.all([api.cloudAccount(), api.cloudVoices()])
-    cloudAccount.value = account || { credits: {}, quota: {} }
-    cloudVoices.value = voices.items || []
-    const selectedExists = activeCloudVoices.value.some((voice) => (
-      voice.type === form.cluster_voice_type && voice.id === form.cluster_voice_id
-    ))
-    if (!selectedExists && activeCloudVoices.value[0]) {
-      const first = activeCloudVoices.value[0]
-      form.cluster_voice_type = first.type === 'custom' ? 'custom' : 'preset'
-      form.cluster_voice_id = first.id
+    cloudAccount.value = await api.cloudAccount() || { credits: {}, quota: {} }
+    try {
+      const voices = await api.cloudVoices()
+      cloudVoices.value = voices.items || []
+      cloudVoiceLimits.value = voices.limits || {}
+      cloudVoiceApiAvailable.value = voices.capabilities?.upload !== false
+      if (!cloudPresetVoiceOptions.value.length) {
+        cloudError.value = '集群当前没有返回可用的默认音色，请检查 PRESET_VOICE_IDS 配置。'
+      }
+    } catch (voiceError) {
+      cloudVoices.value = []
+      cloudVoiceLimits.value = {}
+      cloudVoiceApiAvailable.value = voiceError?.status !== 404
+      cloudError.value = voiceError?.status === 404
+        ? '当前云端版本尚未部署音色查询接口，请先更新 cloud-api。'
+        : (voiceError.message || '无法查询集群当前支持的默认音色。')
+    }
+    if (form.cluster_voice_id && !selectedCloudVoice.value) {
+      form.cluster_voice_type = 'preset'
+      form.cluster_voice_id = ''
     }
   } catch (error) {
     cloudError.value = error.message || '无法读取集群云端状态。'
@@ -2924,12 +3029,89 @@ async function logoutCloud() {
     cloudSession.value = await api.cloudSession()
     cloudAccount.value = { credits: {}, quota: {} }
     cloudVoices.value = []
+    cloudVoiceLimits.value = {}
+    cloudVoiceApiAvailable.value = true
     cloudQuote.value = {}
     cloudMessage.value = '已退出集群云端账户。'
   } catch (error) {
     cloudError.value = error.message || '退出集群失败。'
   } finally {
     cloudBusy.value = false
+  }
+}
+
+function selectCloudVoice(voice) {
+  if (!voice?.id) return
+  form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
+  form.cluster_voice_id = voice.id
+  cloudQuote.value = {}
+}
+
+function stopCloudVoicePreview() {
+  if (cloudVoicePreviewAudio) {
+    cloudVoicePreviewAudio.pause()
+    cloudVoicePreviewAudio.removeAttribute('src')
+    cloudVoicePreviewAudio.load()
+    cloudVoicePreviewAudio = null
+  }
+  cloudVoicePreviewLoading.value = false
+  cloudVoicePreviewPlayingId.value = ''
+}
+
+async function toggleCloudVoicePreview() {
+  const voice = previewableCloudPresetVoice.value
+  if (!voice?.id) return
+  if (cloudVoicePreviewAudio && cloudVoicePreviewPlayingId.value === voice.id) {
+    if (!cloudVoicePreviewAudio.paused) {
+      cloudVoicePreviewAudio.pause()
+      cloudVoicePreviewPlayingId.value = ''
+      return
+    }
+    try {
+      await cloudVoicePreviewAudio.play()
+      cloudVoicePreviewPlayingId.value = voice.id
+    } catch (error) {
+      cloudError.value = error.message || '云端默认音色无法播放。'
+    }
+    return
+  }
+
+  stopCloudVoicePreview()
+  cloudError.value = ''
+  cloudVoicePreviewLoading.value = true
+  const audio = new Audio(api.cloudVoiceAudioUrl(voice.id))
+  cloudVoicePreviewAudio = audio
+  audio.preload = 'auto'
+  audio.addEventListener('playing', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewLoading.value = false
+      cloudVoicePreviewPlayingId.value = voice.id
+    }
+  })
+  audio.addEventListener('pause', () => {
+    if (cloudVoicePreviewAudio === audio && !audio.ended) {
+      cloudVoicePreviewPlayingId.value = ''
+    }
+  })
+  audio.addEventListener('ended', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewPlayingId.value = ''
+      audio.currentTime = 0
+    }
+  })
+  audio.addEventListener('error', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewLoading.value = false
+      cloudVoicePreviewPlayingId.value = ''
+      cloudError.value = '云端默认音色加载失败，请刷新后重试。'
+    }
+  })
+  try {
+    await audio.play()
+  } catch (error) {
+    cloudVoicePreviewLoading.value = false
+    cloudVoicePreviewPlayingId.value = ''
+    cloudError.value = error.message || '云端默认音色无法播放。'
   }
 }
 
@@ -2953,20 +3135,15 @@ async function uploadCloudVoice(event) {
     cloudError.value = '请先填写上传音色名称。'
     return
   }
-  if (!cloudVoiceConsent.value) {
-    cloudError.value = '请确认已获得该声音的合法授权。'
-    return
-  }
   cloudVoiceUploading.value = true
   try {
     const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
     const payload = await api.uploadCloudVoice(file, cloudVoiceDisplayName.value.trim(), `voice-upload-${randomId}`)
     const voice = payload.voice
     if (!voice?.id) throw new Error('云端上传响应缺少 voice_id。')
-    form.cluster_voice_type = 'custom'
+    form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
     form.cluster_voice_id = voice.id
     cloudMessage.value = payload.deduplicated ? '音色已存在，已直接选中。' : '参考音色上传成功。'
-    cloudVoiceConsent.value = false
     cloudVoiceDisplayName.value = ''
     await refreshCloudState()
   } catch (error) {
@@ -2978,7 +3155,7 @@ async function uploadCloudVoice(event) {
 
 async function deleteSelectedCloudVoice() {
   const voice = selectedCloudVoice.value
-  if (!voice || voice.type !== 'custom') return
+  if (!voice || voice.type === 'preset') return
   if (!window.confirm(`确定删除云端音色“${voice.display_name || voice.id}”？`)) return
   cloudBusy.value = true
   cloudError.value = ''
@@ -4456,11 +4633,16 @@ function removeReferenceImage(index) {
 }
 
 function generationRequestPayload() {
+  const resolvedCloudVoice = effectiveCloudVoice.value
   return {
     ...form,
     tts_engine: ttsEngine.value,
     tts_emotion: form.tts_emotion || null,
     tts_pronunciation: form.tts_pronunciation || null,
+    ...(ttsEngine.value === 'cluster' && resolvedCloudVoice ? {
+      cluster_voice_type: resolvedCloudVoice.type === 'preset' ? 'preset' : 'uploaded',
+      cluster_voice_id: resolvedCloudVoice.id,
+    } : {}),
   }
 }
 
@@ -4984,13 +5166,19 @@ onMounted(async () => {
 })
 
 watch(ttsEngine, (engine) => {
+  if (engine !== 'cluster') stopCloudVoicePreview()
   if (engine === 'cluster') void refreshCloudState()
+})
+
+watch(() => `${form.cluster_voice_type}:${form.cluster_voice_id}`, () => {
+  if (cloudVoicePreviewAudio) stopCloudVoicePreview()
 })
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
   stopTtsVoicePreview()
+  stopCloudVoicePreview()
   resetTtsSegmentAudio()
   stopBgmPreview()
   stopCompletionFlash()

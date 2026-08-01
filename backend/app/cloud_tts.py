@@ -28,8 +28,12 @@ def split_cloud_text(text: str) -> list[str]:
 
 def cloud_voice_payload(request: dict[str, Any]) -> dict[str, str]:
     voice_type = str(request.get("cluster_voice_type") or "preset").strip().lower()
-    if voice_type not in {"preset", "custom"}:
-        raise ValueError("集群音色类型必须是 preset 或 custom")
+    if voice_type == "custom":
+        # The first client implementation and design document used ``custom``;
+        # the deployed cloud API calls the same user-owned resource ``uploaded``.
+        voice_type = "uploaded"
+    if voice_type not in {"preset", "uploaded"}:
+        raise ValueError("集群音色类型必须是 preset 或 uploaded")
     voice_id = str(request.get("cluster_voice_id") or "").strip()
     if not voice_id:
         raise ValueError("请选择集群参考音色")

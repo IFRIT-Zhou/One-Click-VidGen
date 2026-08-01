@@ -23,7 +23,7 @@ def write_wav(path: Path, frames: int, value: int = 1000) -> None:
 
 
 class CloudTtsTest(unittest.TestCase):
-    def test_payload_uses_custom_voice_and_local_job_as_client_job_id(self) -> None:
+    def test_payload_normalizes_custom_voice_for_deployed_cloud_contract(self) -> None:
         request = {
             "script": "这是一段足够长的集群配音测试文案，用于确认报价和任务参数保持一致。",
             "cluster_voice_type": "custom",
@@ -37,7 +37,7 @@ class CloudTtsTest(unittest.TestCase):
         quote = build_quote_payload(request)
         job = build_job_payload(request, [item["text"] for item in quote["chunks"]], client_job_id="local-001")
 
-        self.assertEqual(quote["voice"], {"type": "custom", "id": "voice_usr_123"})
+        self.assertEqual(quote["voice"], {"type": "uploaded", "id": "voice_usr_123"})
         self.assertEqual(job["client_job_id"], "local-001")
         self.assertEqual(job["voice"], quote["voice"])
         self.assertEqual(job["scheduling"]["max_parallel_chunks"], 3)

@@ -386,6 +386,9 @@ class CloudClient:
     def get_voice(self, voice_id: str) -> dict[str, Any]:
         return self._json_request("GET", f"/cloud/voices/{voice_id}")
 
+    def stream_voice_audio(self, voice_id: str) -> requests.Response:
+        return self._send("GET", f"/cloud/voices/{voice_id}/audio", stream=True)
+
     def upload_voice(
         self,
         *,
@@ -393,7 +396,6 @@ class CloudClient:
         filename: str,
         content_type: str,
         display_name: str,
-        consent_confirmed: bool,
         idempotency_key: str,
     ) -> dict[str, Any]:
         return self._json_request(
@@ -401,10 +403,7 @@ class CloudClient:
             "/cloud/voices",
             headers={"Idempotency-Key": idempotency_key},
             files={"file": (filename, file_object, content_type or "application/octet-stream")},
-            data={
-                "display_name": display_name,
-                "consent_confirmed": "true" if consent_confirmed else "false",
-            },
+            data={"display_name": display_name},
         )
 
     def delete_voice(self, voice_id: str) -> None:

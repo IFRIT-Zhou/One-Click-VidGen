@@ -13,7 +13,7 @@ import pymysql
 import requests
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
@@ -131,7 +131,10 @@ class GenerateRequest(BaseModel):
     tts_emotion_weight: float = Field(default=0.65, ge=0, le=1)
     tts_english_normalization: bool = False
     tts_pronunciation: str | None = Field(default=None, max_length=200)
-    cluster_voice_type: Literal["preset", "custom"] = "preset"
+    # ``uploaded`` is the name used by the currently deployed cloud API.
+    # ``custom`` remains accepted for compatibility with the written contract
+    # and parameter presets saved by earlier client versions.
+    cluster_voice_type: Literal["preset", "uploaded", "custom"] = "preset"
     cluster_voice_id: str = Field(default="voice_01.wav", min_length=1, max_length=180)
     qwen_tts_instructions: str | None = Field(default=None, max_length=1600)
     qwen_tts_voice: str = Field(default=DEFAULT_QWEN_VOICE, min_length=1, max_length=80)
@@ -457,7 +460,7 @@ def cloud_wallet_ledger(
 @app.get("/api/cloud/voices")
 def cloud_voices(
     request: Request,
-    voice_type: Literal["all", "preset", "custom"] = Query(default="all", alias="type"),
+    voice_type: Literal["all", "preset", "uploaded", "custom"] = Query(default="all", alias="type"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -473,7 +476,6 @@ def cloud_voice_upload(
     request: Request,
     file: UploadFile = File(...),
     display_name: str = Form(..., min_length=1, max_length=80),
-    consent_confirmed: bool = Form(...),
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=180),
 ) -> dict[str, Any]:
     _user, client = _cloud_for_request(request)
@@ -482,15 +484,12 @@ def cloud_voice_upload(
         raise HTTPException(status_code=415, detail="集群参考音色只支持 WAV、MP3 或 FLAC")
     if file.size is not None and file.size > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="集群参考音色不能超过 20 MiB")
-    if not consent_confirmed:
-        raise HTTPException(status_code=400, detail="请确认已获得该声音的合法授权")
     try:
         return client.upload_voice(
             file_object=file.file,
             filename=Path(file.filename or f"voice{suffix}").name,
             content_type=str(file.content_type or "application/octet-stream"),
             display_name=display_name.strip(),
-            consent_confirmed=True,
             idempotency_key=idempotency_key,
         )
     except CloudApiError as exc:
@@ -504,6 +503,36 @@ def cloud_voice_detail(voice_id: str, request: Request) -> dict[str, Any]:
         return client.get_voice(voice_id)
     except CloudApiError as exc:
         raise _cloud_error(exc) from exc
+
+
+@app.get("/api/cloud/voices/{voice_id}/audio")
+def cloud_voice_audio(voice_id: str, request: Request) -> StreamingResponse:
+    _user, client = _cloud_for_request(request)
+    try:
+        upstream = client.stream_voice_audio(voice_id)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+    def audio_blocks():
+        try:
+            for block in upstream.iter_content(chunk_size=256 * 1024):
+                if block:
+                    yield block
+        finally:
+            upstream.close()
+
+    headers = {
+        "Cache-Control": upstream.headers.get("Cache-Control", "private, max-age=3600"),
+        "Content-Disposition": f'inline; filename="{Path(voice_id).name}"',
+    }
+    content_length = upstream.headers.get("Content-Length")
+    if content_length and content_length.isdigit():
+        headers["Content-Length"] = content_length
+    return StreamingResponse(
+        audio_blocks(),
+        media_type=upstream.headers.get("Content-Type", "audio/wav"),
+        headers=headers,
+    )
 
 
 @app.delete("/api/cloud/voices/{voice_id}")

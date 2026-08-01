@@ -71,6 +71,35 @@ class CloudClientTest(unittest.TestCase):
                 self.client.download_to("https://attacker.invalid/audio.wav", Path(directory) / "audio.wav")
         request.assert_not_called()
 
+    def test_voice_list_queries_cluster_supported_presets(self) -> None:
+        self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
+        response = json_response({
+            "items": [{"id": "voice_01.wav", "type": "preset", "status": "active"}],
+            "capabilities": {"preset": True, "upload": False},
+        })
+        with patch("backend.app.cloud_client.requests.request", return_value=response) as request:
+            payload = self.client.list_voices(voice_type="preset")
+
+        self.assertEqual(payload["items"][0]["id"], "voice_01.wav")
+        self.assertFalse(payload["capabilities"]["upload"])
+        self.assertEqual(request.call_args.args[1], "https://cluster.example/api/v1/cloud/voices")
+        self.assertEqual(request.call_args.kwargs["params"]["type"], "preset")
+
+    def test_voice_audio_is_streamed_from_authenticated_same_origin_endpoint(self) -> None:
+        self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
+        response = json_response(None)
+        response.headers = {"Content-Type": "audio/wav", "Content-Length": "478050"}
+        with patch("backend.app.cloud_client.requests.request", return_value=response) as request:
+            streamed = self.client.stream_voice_audio("voice_01.wav")
+
+        self.assertIs(streamed, response)
+        self.assertEqual(
+            request.call_args.args[1],
+            "https://cluster.example/api/v1/cloud/voices/voice_01.wav/audio",
+        )
+        self.assertTrue(request.call_args.kwargs["stream"])
+        self.assertEqual(request.call_args.kwargs["headers"]["Authorization"], "Bearer access")
+
 
 if __name__ == "__main__":
     unittest.main()
