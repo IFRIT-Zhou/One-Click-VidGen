@@ -36,6 +36,7 @@ VISUAL_PROMPT_PLAN_PATH = VISUAL_DIR / "visual_prompt_plan.json"
 RUNNINGHUB_HOST = "https://www.runninghub.cn"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
+_CLOUD_TOKEN_REFRESH_LOCK = threading.Lock()
 _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
 # v13: screen/file contents are scoped again to each fixed image group. A long
 # Agent 1 unit can no longer stamp the same evidence insert across every child
@@ -547,6 +548,25 @@ def _load_runninghub_env_from_file() -> None:
 
 
 def _provider_configs() -> list[dict[str, str]]:
+    use_cloud_pool = os.getenv("USE_CLOUD_IMAGE_POOL", "").strip().lower() in {"1", "true", "yes", "on"}
+    if use_cloud_pool:
+        base_url = os.getenv("CLOUD_IMAGE_POOL_BASE_URL", "").strip().rstrip("/")
+        access_token = os.getenv("CLOUD_IMAGE_POOL_ACCESS_TOKEN", "").strip()
+        if not base_url or not access_token:
+            raise RuntimeError("云端号池运行凭据缺失，请重新登录云端账户后重试")
+        return [{
+            "endpoint": f"{base_url}/image-pool/generate",
+            "query_url": f"{base_url}/image-pool/query",
+            "upload_url": f"{base_url}/image-pool/media/upload",
+            "account_url": f"{base_url}/image-pool/account-status",
+            "resolution": os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip(),
+            "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+            "api_key": access_token,
+            "refresh_token": os.getenv("CLOUD_IMAGE_POOL_REFRESH_TOKEN", "").strip(),
+            "cloud_base_url": base_url,
+            "account_label": "云端号池",
+            "cloud_pool": "1",
+        }]
     _load_runninghub_env_from_file()
     base_config = {
         "endpoint": os.getenv("RUNNINGHUB_ENDPOINT", "/rhart-image-g-2/text-to-image").strip(),
@@ -1780,8 +1800,71 @@ def build_macro_mapping(
     return _finalize_mapping(combined, scenes, story_plan)
 
 
-def _request_json(session: requests.Session, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-    response = session.request(method, url, timeout=60, **kwargs)
+def _persist_cloud_pool_session(config: dict[str, str], *, expires_in: int = 900) -> None:
+    raw_path = os.getenv("CLOUD_IMAGE_POOL_SESSION_UPDATE_PATH", "").strip()
+    if not raw_path:
+        return
+    path = Path(raw_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps({
+        "access_token": config.get("api_key", ""),
+        "refresh_token": config.get("refresh_token", ""),
+        "expires_in": expires_in,
+    }), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _request_with_cloud_refresh(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    config: dict[str, str] | None = None,
+    timeout: float = 60,
+    **kwargs: Any,
+) -> requests.Response:
+    headers = dict(kwargs.pop("headers", {}) or {})
+    if config and config.get("cloud_pool") == "1":
+        headers["Authorization"] = f"Bearer {config['api_key']}"
+    response = session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+    if response.status_code != 401 or not config or config.get("cloud_pool") != "1":
+        return response
+    failed_token = config.get("api_key", "")
+    response.close()
+    with _CLOUD_TOKEN_REFRESH_LOCK:
+        if config.get("api_key", "") == failed_token:
+            refresh_token = config.get("refresh_token", "")
+            refresh_url = f"{config.get('cloud_base_url', '').rstrip('/')}/auth/refresh"
+            if not refresh_token or not refresh_url.startswith(("http://", "https://")):
+                raise RuntimeError("云端号池登录已过期，请重新登录后断点续跑")
+            refreshed = requests.post(refresh_url, json={"refresh_token": refresh_token}, timeout=30)
+            refreshed.raise_for_status()
+            payload = refreshed.json()
+            access_token = str(payload.get("access_token") or "").strip()
+            next_refresh = str(payload.get("refresh_token") or refresh_token).strip()
+            if not access_token:
+                raise RuntimeError("云端号池刷新登录后未返回访问令牌")
+            config["api_key"] = access_token
+            config["refresh_token"] = next_refresh
+            try:
+                expires_in = max(30, int(payload.get("expires_in") or 900))
+            except (TypeError, ValueError):
+                expires_in = 900
+            _persist_cloud_pool_session(config, expires_in=expires_in)
+    headers["Authorization"] = f"Bearer {config['api_key']}"
+    return session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+
+
+def _request_json(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    config: dict[str, str] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    response = _request_with_cloud_refresh(session, method, url, config=config, timeout=60, **kwargs)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):
@@ -1838,8 +1921,9 @@ def _account_active_task_count(config: dict[str, str]) -> int:
         payload = _request_json(
             session,
             "POST",
-            f"{RUNNINGHUB_HOST}/uc/openapi/accountStatus",
+            config.get("account_url") or f"{RUNNINGHUB_HOST}/uc/openapi/accountStatus",
             headers={"Authorization": f"Bearer {config['api_key']}"},
+            config=config,
             json={"apikey": config["api_key"]},
         )
     except requests.RequestException as exc:
@@ -2035,9 +2119,22 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
     raise RunningHubTransientError(f"RunningHub 提交失败，错误码: {code}{detail}")
 
 
-def _download_image(session: requests.Session, poster_id: str, file_url: str, output: Path) -> Path | None:
+def _download_image(
+    session: requests.Session,
+    poster_id: str,
+    file_url: str,
+    output: Path,
+    config: dict[str, str] | None = None,
+) -> Path | None:
     try:
-        response = session.get(str(file_url), timeout=120)
+        headers = (
+            {"Authorization": f"Bearer {config['api_key']}"}
+            if config and config.get("cloud_pool") == "1"
+            else None
+        )
+        response = _request_with_cloud_refresh(
+            session, "GET", str(file_url), config=config, headers=headers, timeout=120
+        )
         response.raise_for_status()
     except requests.RequestException as exc:
         print(f"{poster_id} 下载网络异常，稍后重试: {type(exc).__name__}", flush=True)
@@ -2080,8 +2177,11 @@ def _submit_poster_request(
         payload["imageUrls"] = reference_urls
         endpoint = os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
             str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
-    response = session.post(
+    response = _request_with_cloud_refresh(
+        session,
+        "POST",
         _runninghub_generate_url(config, endpoint),
+        config=config,
         headers=_runninghub_headers(config),
         json=payload,
         timeout=60,
@@ -2163,8 +2263,9 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
             result = _request_json(
                 session,
                 "POST",
-                f"{RUNNINGHUB_HOST}/openapi/v2/query",
+                config.get("query_url") or f"{RUNNINGHUB_HOST}/openapi/v2/query",
                 headers=_runninghub_headers(config),
+                config=config,
                 json={"taskId": task.task_id},
             )
         except requests.RequestException as exc:
@@ -2176,7 +2277,7 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
         if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "FINISHED"} or file_url:
             if not file_url:
                 raise RuntimeError(f"{poster_id} 未返回图像下载地址")
-            downloaded = _download_image(session, poster_id, str(file_url), task.output)
+            downloaded = _download_image(session, poster_id, str(file_url), task.output, config)
             if downloaded:
                 return downloaded
         elif status in {"RUNNING", "QUEUED", "PENDING", ""}:
@@ -2560,12 +2661,16 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
             return cached
         try:
             with path.open("rb") as handle:
-                response = requests.post(
-                    f"{RUNNINGHUB_HOST}/openapi/v2/media/upload/binary",
-                    headers={"Authorization": f"Bearer {config['api_key']}"},
-                    files={"file": (path.name, handle, "application/octet-stream")},
-                    timeout=120,
-                )
+                with _new_session() as session:
+                    response = _request_with_cloud_refresh(
+                        session,
+                        "POST",
+                        config.get("upload_url") or f"{RUNNINGHUB_HOST}/openapi/v2/media/upload/binary",
+                        config=config,
+                        headers={"Authorization": f"Bearer {config['api_key']}"},
+                        files={"file": (path.name, handle, "application/octet-stream")},
+                        timeout=120,
+                    )
             payload = response.json()
         except (OSError, requests.RequestException, ValueError) as exc:
             raise RunningHubTransientError(f"主角参考图上传失败: {type(exc).__name__}") from exc

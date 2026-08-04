@@ -1,5 +1,29 @@
 const API_BASE = ''
 
+function readableError(value, fallback = '') {
+  if (typeof value === 'string') return value.trim() || fallback
+  if (Array.isArray(value)) {
+    const messages = value.map((item) => readableError(item)).filter(Boolean)
+    return messages.join('；') || fallback
+  }
+  if (value && typeof value === 'object') {
+    const nested = value.detail ?? value.message ?? value.error
+    if (nested !== undefined && nested !== value) return readableError(nested, fallback)
+    const location = Array.isArray(value.loc)
+      ? value.loc.filter((part) => part !== 'body').join('.')
+      : ''
+    const message = readableError(value.msg || value.code || '', fallback)
+    if (location && message) return `${location}：${message}`
+    if (message) return message
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return fallback
+    }
+  }
+  return value == null ? fallback : String(value)
+}
+
 export async function requestJSON(url, options = {}) {
   const response = await fetch(`${API_BASE}${url}`, {
     credentials: 'include',
@@ -14,11 +38,11 @@ export async function requestJSON(url, options = {}) {
     let message = raw
     try {
       const payload = JSON.parse(raw)
-      message = payload.detail || payload.message || raw
+      message = readableError(payload.detail ?? payload.message ?? payload, raw)
     } catch {
       message = raw
     }
-    const error = new Error(message || `Request failed with ${response.status}`)
+    const error = new Error(readableError(message, `Request failed with ${response.status}`))
     error.status = response.status
     throw error
   }
@@ -32,11 +56,11 @@ async function downloadFile(url) {
     let message = raw
     try {
       const payload = JSON.parse(raw)
-      message = payload.detail || payload.message || raw
+      message = readableError(payload.detail ?? payload.message ?? payload, raw)
     } catch {
       // The backend can return a plain text error for startup failures.
     }
-    throw new Error(message || `Request failed with ${response.status}`)
+    throw new Error(readableError(message, `Request failed with ${response.status}`))
   }
   const disposition = response.headers.get('content-disposition') || ''
   const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]

@@ -61,65 +61,79 @@
         </template>
       </div>
 
-      <div v-if="session.user" class="sidebar-card api-key-card">
+      <div v-if="session.user" class="sidebar-card api-key-card" :class="{ 'pool-mode-active': form.use_cloud_image_pool }">
         <div class="sidebar-label">模型 API Key</div>
         <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
-        <div class="api-key-entry">
+        <div class="api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>语言模型</span>
-          <select v-model="apiKeyForm.language_provider" class="language-provider-select" @change="onLanguageProviderChanged">
+          <select v-model="apiKeyForm.language_provider" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageProviderChanged">
             <option v-for="provider in languageProviderOptions" :key="provider.value" :value="provider.value">
               {{ provider.label }}{{ provider.configured ? '（已配置）' : '' }}
             </option>
           </select>
           <input v-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
-          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.language }">
-            <span><strong>{{ apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} 已配置` }}</strong><small v-if="apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small></span>
-            <button type="button" :title="`重新输入 ${currentLanguageProviderLabel} API Key`" @click="editApiKey('language')">✏️</button>
+          <div v-else class="api-key-state-bar" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
+            <span><strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} 已配置`) }}</strong><small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small></span>
+            <button type="button" :disabled="form.use_cloud_image_pool" :title="`重新输入 ${currentLanguageProviderLabel} API Key`" @click="editApiKey('language')">✏️</button>
           </div>
         </div>
-        <div class="api-key-pool-field api-key-entry">
+        <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>图像模型 API Key</span>
           <template v-if="apiKeyFieldOpen('image')">
-            <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" placeholder="第三方图像接口 API Key" />
+            <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="第三方图像接口 API Key" />
             <div v-for="(_, index) in apiKeyForm.image_api_keys" :key="`image-key-${index}`" class="api-key-extra-row">
-              <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增图像账号 ${index + 2}`" />
-              <button type="button" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
+              <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" :placeholder="`新增图像账号 ${index + 2}`" />
+              <button type="button" :disabled="form.use_cloud_image_pool" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
             </div>
             <div class="api-key-field-footer">
               <span class="muted small">可继续添加并行账号</span>
-              <button class="api-key-add-btn" type="button" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
+              <button class="api-key-add-btn" type="button" :disabled="form.use_cloud_image_pool" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
             </div>
           </template>
           <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.image }">
             <span><strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small></span>
             <div class="api-key-state-actions">
-              <button type="button" title="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
-              <button type="button" title="重新输入图像模型 API Key" @click="editApiKey('image')">✏️</button>
+              <button type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
+              <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入图像模型 API Key" @click="editApiKey('image')">✏️</button>
             </div>
           </div>
         </div>
-        <div class="api-key-pool-field api-key-entry">
+        <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>通用 API Key</span>
           <template v-if="apiKeyFieldOpen('common')">
-            <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" placeholder="仅填此项会同时用于语言和图像" />
+            <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="仅填此项会同时用于语言和图像" />
             <div v-for="(_, index) in apiKeyForm.common_api_keys" :key="`common-key-${index}`" class="api-key-extra-row">
-              <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :placeholder="`新增通用账号 ${index + 2}`" />
-              <button type="button" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
+              <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" :placeholder="`新增通用账号 ${index + 2}`" />
+              <button type="button" :disabled="form.use_cloud_image_pool" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
             </div>
             <div class="api-key-field-footer">
               <span class="muted small">可继续添加通用账号</span>
-              <button class="api-key-add-btn" type="button" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
+              <button class="api-key-add-btn" type="button" :disabled="form.use_cloud_image_pool" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
             </div>
           </template>
           <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.common }">
             <span><strong>{{ apiKeyRuntimeErrors.common ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.common">{{ apiKeyRuntimeErrors.common }}</small></span>
             <div class="api-key-state-actions">
-              <button type="button" title="新增通用并行账号" @click="addApiKeyAccount('common')">＋</button>
-              <button type="button" title="重新输入通用 API Key" @click="editApiKey('common')">✏️</button>
+              <button type="button" :disabled="form.use_cloud_image_pool" title="新增通用并行账号" @click="addApiKeyAccount('common')">＋</button>
+              <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入通用 API Key" @click="editApiKey('common')">✏️</button>
             </div>
           </div>
         </div>
-        <div class="muted small">语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；各家的 Key 分开保存。通用 Key 仍只用于原有第三方接口工作流。</div>
+        <div class="cloud-pool-toggle-row">
+          <div>
+            <strong>使用号池</strong>
+            <small>{{ form.use_cloud_image_pool ? 'Agent 与出图均使用云端号池，并从账户积分扣除' : '关闭时使用本机保存的模型 API Key' }}</small>
+          </div>
+          <label class="inline-switch cloud-pool-switch" :title="cloudSession.authenticated ? '切换云端号池' : '需先登录右上角云端账户'">
+            <input v-model="form.use_cloud_image_pool" type="checkbox" />
+            <span class="switch-track"><span></span></span>
+          </label>
+        </div>
+        <div v-if="form.use_cloud_image_pool" class="cloud-pool-status" :class="cloudSession.authenticated ? 'ready' : 'warning'">
+          <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
+          <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
+        </div>
+        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人文本、图像或通用 API Key。' : '语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；各家的 Key 分开保存。通用 Key 仍只用于原有第三方接口工作流。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
         <button v-if="apiKeyEditorVisible" class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
           {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
@@ -150,7 +164,67 @@
         <button class="product-title" type="button" @click="sidebarOpen = !sidebarOpen" aria-label="一键生成视频，点击切换侧边栏">
           一键生成视频 <span>/</span> One-Click VidGen
         </button>
+        <div class="cloud-account-entry">
+          <button
+            v-if="cloudSession.authenticated"
+            class="cloud-account-summary"
+            type="button"
+            title="查看云端账户"
+            @click="openCloudLogin"
+          >
+            <span class="cloud-account-avatar" aria-hidden="true">{{ cloudDisplayName.slice(0, 1).toUpperCase() }}</span>
+            <span class="cloud-account-copy">
+              <strong>{{ cloudDisplayName }}</strong>
+              <small>剩余积分 {{ cloudAvailableCredits }}</small>
+            </span>
+          </button>
+          <button v-else class="primary-btn cloud-login-entry" type="button" @click="openCloudLogin">
+            登录
+          </button>
+        </div>
       </header>
+
+      <div v-if="cloudLoginOpen" class="cloud-auth-overlay" @click.self="cloudLoginOpen = false">
+        <section class="cloud-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-auth-title">
+          <div class="cloud-auth-dialog-head">
+            <div>
+              <span class="cluster-card-kicker">ONE-CLICK VIDGEN CLOUD</span>
+              <h2 id="cloud-auth-title">{{ cloudSession.authenticated ? '云端账户' : '登录云端服务' }}</h2>
+            </div>
+            <button class="cloud-auth-close" type="button" aria-label="关闭登录窗口" @click="cloudLoginOpen = false">×</button>
+          </div>
+
+          <div v-if="!cloudSession.configured" class="cluster-notice warning">
+            云端服务正在部署中，登录入口已经准备完毕。服务上线后会由程序自动连接，无需用户填写服务器地址。
+          </div>
+          <template v-else-if="cloudSession.authenticated">
+            <div class="cloud-auth-profile">
+              <span class="cloud-auth-profile-avatar">{{ cloudDisplayName.slice(0, 1).toUpperCase() }}</span>
+              <div><strong>{{ cloudDisplayName }}</strong><small>{{ cloudSession.user?.email || '云端用户' }}</small></div>
+            </div>
+            <div class="cloud-auth-stats">
+              <div><span>可用积分</span><strong>{{ cloudAvailableCredits }}</strong></div>
+              <div><span>冻结积分</span><strong>{{ cloudAccount.credits?.reserved ?? 0 }}</strong></div>
+              <div><span>运行任务</span><strong>{{ cloudAccount.quota?.running_jobs ?? 0 }}/{{ cloudAccount.quota?.max_concurrent_jobs ?? '-' }}</strong></div>
+            </div>
+            <div class="cloud-auth-actions">
+              <button class="ghost-btn" type="button" :disabled="cloudBusy" @click="refreshCloudState">刷新账户</button>
+              <button class="ghost-btn danger-btn" type="button" :disabled="cloudBusy" @click="logoutCloud">退出登录</button>
+            </div>
+          </template>
+          <form v-else class="cloud-auth-form" @submit.prevent="loginCloud">
+            <label><span>邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" placeholder="请输入注册邮箱" required /></label>
+            <label><span>密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" required /></label>
+            <button class="primary-btn cloud-auth-submit" type="submit" :disabled="cloudBusy">
+              {{ cloudBusy ? '正在登录…' : '登录' }}
+            </button>
+            <button class="ghost-btn" type="button" :disabled="cloudBusy" @click="registerCloud">注册新账户</button>
+          </form>
+          <div v-if="cloudError" class="board-error cloud-auth-feedback">{{ cloudError }}</div>
+          <div v-else-if="cloudMessage" class="api-key-message cloud-auth-feedback">{{ cloudMessage }}</div>
+          <p class="cloud-auth-security">登录凭据由本机后端与云端服务安全交换，浏览器不会保存集群访问令牌。</p>
+        </section>
+      </div>
 
       <section class="content stack">
         <nav class="page-tabs" aria-label="页面切换">
@@ -384,16 +458,12 @@
               </div>
               <div v-else-if="ttsEngine === 'cluster'" class="cluster-tts-config">
                 <div v-if="!cloudSession.configured" class="cluster-notice warning">
-                  后端尚未配置 CLOUD_API_BASE_URL，请先在本机 .env 中填写集群 cloud-api 地址并重启。
+                  云端集群服务尚未开放。服务上线后程序会自动连接，不需要手动填写服务器地址。
                 </div>
                 <template v-else-if="!cloudSession.authenticated">
-                  <div class="cluster-login-grid">
-                    <label><span>云端邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" /></label>
-                    <label><span>云端密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" /></label>
-                    <div class="inline-actions">
-                      <button class="primary-btn" type="button" :disabled="cloudBusy" @click="loginCloud">登录集群</button>
-                      <button class="ghost-btn" type="button" :disabled="cloudBusy" @click="registerCloud">注册账户</button>
-                    </div>
+                  <div class="cluster-notice cluster-login-prompt">
+                    <span>使用集群 GPU 前，请先登录云端账户。</span>
+                    <button class="primary-btn compact-btn" type="button" @click="openCloudLogin">前往登录</button>
                   </div>
                 </template>
                 <template v-else>
@@ -2050,6 +2120,7 @@ const cloudVoicePreviewPlayingId = ref('')
 const cloudError = ref('')
 const cloudMessage = ref('')
 const cloudLoginForm = reactive({ email: '', password: '' })
+const cloudLoginOpen = ref(false)
 let cloudVoicePreviewAudio = null
 // Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
 // 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
@@ -2206,7 +2277,8 @@ const currentLanguageProvider = computed(() => (
 ))
 const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
 const apiKeyEditorVisible = computed(() => (
-  ['language', 'image', 'common'].some((kind) => apiKeyFieldOpen(kind))
+  !form.use_cloud_image_pool
+  && ['language', 'image', 'common'].some((kind) => apiKeyFieldOpen(kind))
 ))
 const parameterPresets = ref([])
 const selectedParameterPreset = ref('')
@@ -2241,6 +2313,7 @@ const form = reactive({
   qwen_tts_instructions: '',
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
+  use_cloud_image_pool: false,
   video_render_variant: 'both',
   bgm_enabled: false,
   bgm_tracks: [],
@@ -2532,6 +2605,11 @@ const cloudReady = computed(() => Boolean(
   && cloudSession.value.authenticated
   && effectiveCloudVoice.value?.id
 ))
+const cloudDisplayName = computed(() => {
+  const user = cloudSession.value.user || {}
+  return String(user.name || user.display_name || user.username || user.email?.split('@')[0] || '云端用户')
+})
+const cloudAvailableCredits = computed(() => cloudAccount.value.credits?.available ?? '-')
 const cloudVoiceModel = computed({
   get: () => {
     if (!selectedCloudVoice.value) return ''
@@ -2561,6 +2639,7 @@ const canSubmitGeneration = computed(() => {
   if (!form.project_name.trim()) return false
   if (scriptTooLong.value) return false
   if (form.bgm_enabled && !form.bgm_tracks.length) return false
+  if (form.use_cloud_image_pool && !cloudSession.value.authenticated) return false
   if (form.skip_tts) {
     if (!form.source_audio_id) return false
     return form.skip_text_correction || form.script.trim().length > 0
@@ -2759,6 +2838,8 @@ function notifyVideoCompleted(job, message = '视频已经生成完成，可以�
 function handleActiveJobCompletion(previous, current) {
   if (!previous || !current || previous.id !== current.id) return
   if (!['queued', 'running', 'waiting_confirmation'].includes(previous.status)) return
+  if (!['completed', 'failed', 'cancelled'].includes(current.status)) return
+  if (current.request?.use_cloud_image_pool) void refreshCloudState()
   if (current.status !== 'completed') return
   if (current.request?.module1_only || current.request?.subtitle_only) return
   notifyVideoCompleted(current)
@@ -2981,6 +3062,11 @@ async function refreshCloudState() {
   }
 }
 
+async function openCloudLogin() {
+  cloudLoginOpen.value = true
+  await refreshCloudState()
+}
+
 async function loginCloud() {
   cloudError.value = ''
   cloudMessage.value = ''
@@ -2994,6 +3080,7 @@ async function loginCloud() {
     cloudLoginForm.password = ''
     cloudMessage.value = '集群云端登录成功。'
     await refreshCloudState()
+    cloudLoginOpen.value = false
   } catch (error) {
     cloudError.value = error.message || '集群云端登录失败。'
   } finally {
@@ -3131,14 +3218,12 @@ async function uploadCloudVoice(event) {
     cloudError.value = '云端参考音色不能超过 20 MiB。'
     return
   }
-  if (!cloudVoiceDisplayName.value.trim()) {
-    cloudError.value = '请先填写上传音色名称。'
-    return
-  }
+  const automaticName = file.name.replace(/\.[^.]+$/, '').trim() || '我的云端音色'
+  const displayName = cloudVoiceDisplayName.value.trim() || automaticName
   cloudVoiceUploading.value = true
   try {
     const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const payload = await api.uploadCloudVoice(file, cloudVoiceDisplayName.value.trim(), `voice-upload-${randomId}`)
+    const payload = await api.uploadCloudVoice(file, displayName, `voice-upload-${randomId}`)
     const voice = payload.voice
     if (!voice?.id) throw new Error('云端上传响应缺少 voice_id。')
     form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
@@ -3185,6 +3270,7 @@ async function refreshCloudQuote() {
 }
 
 function apiKeyFieldOpen(kind) {
+  if (form.use_cloud_image_pool && ['language', 'image', 'common'].includes(kind)) return false
   if (kind === 'language') {
     return !currentLanguageProvider.value?.configured || Boolean(apiKeyEditing.language)
   }
@@ -3192,6 +3278,7 @@ function apiKeyFieldOpen(kind) {
 }
 
 function editApiKey(kind) {
+  if (form.use_cloud_image_pool && kind !== 'qwen_tts') return
   apiKeyEditing[kind] = true
   apiKeyMessage.value = ''
   if (kind === 'qwen_tts') qwenTtsKeyMessage.value = ''
@@ -3207,6 +3294,7 @@ function onLanguageProviderChanged() {
 }
 
 function addApiKeyAccount(kind) {
+  if (form.use_cloud_image_pool) return
   const field = kind === 'image' ? 'image_api_keys' : 'common_api_keys'
   editApiKey(kind)
   addApiKeyField(field)
@@ -4634,7 +4722,7 @@ function removeReferenceImage(index) {
 
 function generationRequestPayload() {
   const resolvedCloudVoice = effectiveCloudVoice.value
-  return {
+  const payload = {
     ...form,
     tts_engine: ttsEngine.value,
     tts_emotion: form.tts_emotion || null,
@@ -4644,6 +4732,10 @@ function generationRequestPayload() {
       cluster_voice_id: resolvedCloudVoice.id,
     } : {}),
   }
+  // An empty cluster voice is a valid idle UI state, but it must not be sent
+  // to non-cluster jobs where the backend correctly enforces a real voice ID.
+  if (ttsEngine.value !== 'cluster') delete payload.cluster_voice_id
+  return payload
 }
 
 async function runManualPreflight() {
@@ -5161,7 +5253,7 @@ onMounted(async () => {
   await refresh()
   await refreshParameterPresets()
   await refreshAgentPromptPresets()
-  if (ttsEngine.value === 'cluster') await refreshCloudState()
+  await refreshCloudState()
   timer = window.setInterval(refresh, 2500)
 })
 

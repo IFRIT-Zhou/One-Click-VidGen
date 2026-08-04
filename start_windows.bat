@@ -148,9 +148,12 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":5173 .*LISTENING"') d
 if not defined BACKEND_PID goto :startup_failed
 if not defined FRONTEND_PID goto :startup_failed
 
+set "WATCHDOG_EXTRA_ARGS="
+if defined OCV_EXTRA_WATCHDOG_PID set "WATCHDOG_EXTRA_ARGS=--pid !OCV_EXTRA_WATCHDOG_PID!"
+
 set "LIFETIME_HEARTBEAT=%ROOT_DIR%runtime_logs\launcher_%RANDOM%_%RANDOM%.heartbeat"
 >"!LIFETIME_HEARTBEAT!" echo alive
-start "" /b "%WATCHDOG_PYTHON%" "%ROOT_DIR%tools\local_service_watchdog.py" --heartbeat "!LIFETIME_HEARTBEAT!" --pid "!BACKEND_PID!" --pid "!FRONTEND_PID!" --log "%ROOT_DIR%runtime_logs\service_watchdog.log"
+start "" /b "%WATCHDOG_PYTHON%" "%ROOT_DIR%tools\local_service_watchdog.py" --heartbeat "!LIFETIME_HEARTBEAT!" --pid "!BACKEND_PID!" --pid "!FRONTEND_PID!" !WATCHDOG_EXTRA_ARGS! --log "%ROOT_DIR%runtime_logs\service_watchdog.log"
 if errorlevel 1 (
     echo [ERROR] Could not start the service lifetime watchdog.
     goto :startup_failed

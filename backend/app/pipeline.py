@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 import wave
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from .db import (
 from .html_generator import generate_visual_html
 from .semantic_timeline import generate_fine_grained_timeline
 from .gemini_client import GeminiError, gemini_configured, generate_gemini_text, parse_json_response
+from .cloud_client import cloud_client_for
 from story_agents import load_or_create_story_context, load_or_create_story_plan, story_fingerprint
 
 
@@ -1806,6 +1808,28 @@ def render_semantic_visual_video(
         store.log(job, f"视觉生成来源: {provider}")
     elif visual_backend in {"poster", "online-poster", "runninghub"}:
         poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id}
+        cloud_pool_client = None
+        cloud_session_update_path = None
+        if bool(request.get("use_cloud_image_pool")):
+            if job.user_id is None:
+                raise RuntimeError("使用云端号池需要登录账户")
+            cloud_pool_client = cloud_client_for(int(job.user_id))
+            cloud_runtime = cloud_pool_client.image_pool_runtime()
+            cloud_session_update_path = JOBS_DIR / job.id / ".cloud_image_session.json"
+            cloud_session_update_path.unlink(missing_ok=True)
+            poster_env.update({
+                "USE_CLOUD_IMAGE_POOL": "1",
+                "CLOUD_IMAGE_POOL_BASE_URL": cloud_runtime["base_url"],
+                "CLOUD_IMAGE_POOL_ACCESS_TOKEN": cloud_runtime["access_token"],
+                "CLOUD_IMAGE_POOL_REFRESH_TOKEN": cloud_runtime["refresh_token"],
+                "CLOUD_IMAGE_POOL_SESSION_UPDATE_PATH": str(cloud_session_update_path),
+                "LANGUAGE_PROVIDER": "runninghub",
+                "GEMINI_API_KEY": cloud_runtime["access_token"],
+                "GEMINI_API_BASE": f"{cloud_runtime['base_url'].rstrip('/')}/model-pool/v1",
+                "GEMINI_MODEL": "auto",
+                "GEMINI_FALLBACK_MODELS": "",
+            })
+            store.log(job, "模块 4：Agent 2 与出图均使用云端号池，费用由云端账户积分结算")
         # Agent 2 is a paid-image safety gate. Never submit image jobs when its
         # language-model planning failed or silently fell back to raw subtitles.
         poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"
@@ -1874,13 +1898,25 @@ def render_semantic_visual_video(
             visual_style_prompt = str(request.get("visual_style_prompt") or "").strip()
             if visual_style_prompt:
                 poster_env["VISUAL_STYLE_PROMPT"] = visual_style_prompt
-        run_command(
-            job,
-            store,
-            [sys.executable, "module4_online_poster.py"],
-            STEPS[4][1],
-            extra_env=poster_env,
-        )
+        try:
+            run_command(
+                job,
+                store,
+                [sys.executable, "module4_online_poster.py"],
+                STEPS[4][1],
+                extra_env=poster_env,
+            )
+        finally:
+            if cloud_pool_client is not None and cloud_session_update_path is not None:
+                try:
+                    if cloud_session_update_path.is_file():
+                        payload = json.loads(cloud_session_update_path.read_text(encoding="utf-8"))
+                        if isinstance(payload, dict):
+                            cloud_pool_client.adopt_image_pool_runtime(payload)
+                except (OSError, ValueError, json.JSONDecodeError):
+                    store.log(job, "云端号池登录令牌同步失败；如账户状态无法刷新，请重新登录")
+                finally:
+                    cloud_session_update_path.unlink(missing_ok=True)
     else:
         raise ValueError(f"不支持的视觉后端: {visual_backend}")
 
@@ -2436,6 +2472,35 @@ def concat_videos(job: Job, store: JobStore, inputs: list[Path], output: Path, l
     register_job_asset(job, output, f"generation_artifact:{label}")
 
 
+@contextmanager
+def cloud_model_pool_environment(job: Job, store: JobStore, request: dict[str, Any]):
+    """Route Agent 0/1 through the authenticated cloud text-model pool."""
+    if not bool(request.get("use_cloud_image_pool")):
+        yield
+        return
+    if job.user_id is None:
+        raise RuntimeError("使用云端号池需要先登录账户")
+    runtime = cloud_client_for(int(job.user_id)).image_pool_runtime()
+    updates = {
+        "LANGUAGE_PROVIDER": "runninghub",
+        "GEMINI_API_KEY": runtime["access_token"],
+        "GEMINI_API_BASE": f"{runtime['base_url'].rstrip('/')}/model-pool/v1",
+        "GEMINI_MODEL": "auto",
+        "GEMINI_FALLBACK_MODELS": "",
+    }
+    previous = {key: os.environ.get(key) for key in updates}
+    os.environ.update(updates)
+    store.log(job, "Agent 0/1：使用云端文本模型号池，费用由云端账户积分结算")
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, resume: bool = False) -> None:
     threshold = int(request.get("split_text_threshold") or 3000)
     auto_split = bool(request.get("auto_split_long_text", True))
@@ -2900,6 +2965,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         run_command(job, store, [sys.executable, "module2_5_text_corrector.py"], STEPS[2][1])
 
     store.raise_if_cancelled(job)
-    render_downstream(job, store, request, resume=resume)
+    with cloud_model_pool_environment(job, store, request):
+        render_downstream(job, store, request, resume=resume)
 
     finalize_completed_pipeline(job, store, request)

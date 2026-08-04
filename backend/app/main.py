@@ -135,7 +135,7 @@ class GenerateRequest(BaseModel):
     # ``custom`` remains accepted for compatibility with the written contract
     # and parameter presets saved by earlier client versions.
     cluster_voice_type: Literal["preset", "uploaded", "custom"] = "preset"
-    cluster_voice_id: str = Field(default="voice_01.wav", min_length=1, max_length=180)
+    cluster_voice_id: str | None = Field(default=None, max_length=180)
     qwen_tts_instructions: str | None = Field(default=None, max_length=1600)
     qwen_tts_voice: str = Field(default=DEFAULT_QWEN_VOICE, min_length=1, max_length=80)
     qwen_tts_optimize_instructions: bool = False
@@ -144,6 +144,7 @@ class GenerateRequest(BaseModel):
     model: str | None = "gpt-4o-mini"
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
+    use_cloud_image_pool: bool = False
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
     bgm_enabled: bool = False
     bgm_tracks: list[BgmTrackRequest] = Field(default_factory=list)
@@ -972,16 +973,57 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         values = _parse_env_lines(PROJECT_ROOT / ".env")
         language_required = True
         image_required = str(data.get("visual_backend") or "poster").lower() in {"poster", "online-poster", "runninghub"}
+        use_cloud_pool = bool(data.get("use_cloud_image_pool"))
         with ThreadPoolExecutor(max_workers=2) as executor:
-            language_future = executor.submit(_probe_language_api, values) if language_required else None
+            language_future = (
+                None if use_cloud_pool
+                else executor.submit(_probe_language_api, values) if language_required else None
+            )
             image_keys = _runninghub_api_keys(values)
-            image_future = executor.submit(_probe_image_api_pool, image_keys) if image_required else None
+            image_future = (
+                None
+                if image_required and use_cloud_pool
+                else executor.submit(_probe_image_api_pool, image_keys) if image_required else None
+            )
             if language_future:
                 status, message = language_future.result()
                 add("language_api", "语言模型 API", status, message)
             if image_future:
                 status, message = image_future.result()
                 add("image_api", "图像模型 API", status, message)
+            elif image_required and use_cloud_pool:
+                client = cloud_client_for(int(user["id"]))
+                state = client.session_snapshot()
+                if not state.get("configured"):
+                    add("language_api", "云端文本号池", "error", "尚未配置 CLOUD_API_BASE_URL")
+                    add("image_api", "云端号池", "error", "尚未配置 CLOUD_API_BASE_URL")
+                elif not state.get("authenticated"):
+                    add("language_api", "云端文本号池", "error", "请先登录右上角云端账户")
+                    add("image_api", "云端号池", "error", "请先登录右上角云端账户")
+                else:
+                    try:
+                        account = client.account_summary()
+                        client.model_pool_status()
+                        client.image_pool_status()
+                        credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
+                        available = int(credits.get("available") or 0)
+                        pool_status = "passed" if available > 0 else "error"
+                        pool_message = f"云端账户已登录，可用积分 {available}" if available > 0 else "云端账户积分不足"
+                        add("language_api", "云端文本号池", pool_status, pool_message)
+                        add(
+                            "image_api",
+                            "云端号池",
+                            pool_status,
+                            pool_message,
+                        )
+                    except (CloudApiError, ValueError) as exc:
+                        message = (
+                            "当前 cloud-api 尚未完整部署文本与图像号池接口，请先更新服务器后端"
+                            if isinstance(exc, CloudApiError) and exc.status_code == 404
+                            else str(exc)
+                        )
+                        add("language_api", "云端文本号池", "error", message)
+                        add("image_api", "云端号池", "error", message)
 
         for index, image_id in enumerate(data.get("reference_image_ids") or [], 1):
             try:
@@ -1371,6 +1413,26 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             ),
         )
     data["project_name"] = normalize_project_name(data.get("project_name"))
+    if data.get("tts_engine") == "cluster" and not str(data.get("cluster_voice_id") or "").strip():
+        raise HTTPException(status_code=400, detail="使用集群配音前请选择一个云端音色")
+    if data.get("use_cloud_image_pool") and not data.get("module1_only") and not data.get("subtitle_only"):
+        client = cloud_client_for(int(user["id"]))
+        cloud_state = client.session_snapshot()
+        if not cloud_state.get("configured"):
+            raise HTTPException(status_code=503, detail="号池云端地址尚未配置，请设置 CLOUD_API_BASE_URL")
+        if not cloud_state.get("authenticated"):
+            raise HTTPException(status_code=401, detail="使用号池前请先登录右上角云端账户")
+        try:
+            account = client.account_summary()
+            client.model_pool_status()
+            client.image_pool_status()
+            credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
+            if int(credits.get("available") or 0) <= 0:
+                raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")
+        except CloudApiError as exc:
+            if exc.status_code == 404:
+                raise HTTPException(status_code=503, detail="当前 cloud-api 尚未完整部署文本与图像号池接口，请先更新服务器后端") from exc
+            raise _cloud_error(exc) from exc
     if data.get("bgm_enabled"):
         if not data.get("bgm_tracks"):
             data["bgm_enabled"] = False

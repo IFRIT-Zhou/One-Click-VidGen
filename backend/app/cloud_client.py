@@ -339,6 +339,45 @@ class CloudClient:
             **(session.public_snapshot() if session else {"authenticated": False, "user": None}),
         }
 
+    def image_pool_runtime(self) -> dict[str, str]:
+        """Provide short-lived credentials only to the local image worker.
+
+        The browser never receives this value and the caller must not persist it
+        in the job request or project archive.
+        """
+        session = self._ensure_access_token()
+        return {
+            "base_url": self.config.base_url,
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token,
+        }
+
+    def image_pool_status(self) -> dict[str, Any]:
+        """Verify that the deployed cloud-api exposes the image-pool proxy."""
+        return self._json_request("POST", "/image-pool/account-status", json={})
+
+    def model_pool_status(self) -> dict[str, Any]:
+        """Verify that the deployed cloud-api exposes the text-model proxy."""
+        return self._json_request("POST", "/model-pool/status", json={})
+
+    def adopt_image_pool_runtime(self, payload: dict[str, Any]) -> None:
+        """Adopt tokens refreshed by the isolated module-4 worker process."""
+        current = self.sessions.get(self.user_id)
+        access_token = str(payload.get("access_token") or "").strip()
+        refresh_token = str(payload.get("refresh_token") or "").strip()
+        if current is None or not access_token or not refresh_token:
+            return
+        try:
+            expires_in = max(30, int(payload.get("expires_in") or 900))
+        except (TypeError, ValueError):
+            expires_in = 900
+        self.sessions.set(self.user_id, CloudAuthSession(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=time.time() + expires_in,
+            user=current.user,
+        ))
+
     def register(self, email: str, password: str, captcha_token: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"email": email, "password": password}
         if captcha_token:

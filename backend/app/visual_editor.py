@@ -855,7 +855,30 @@ class VisualEditor:
                         "提示词中提及图N时，必须严格以第N张参考图作为该角色或物体的形象依据。\n"
                         f"{prompt}"
                     )
-                provider_configs = visual._provider_configs()
+                cloud_pool_client = None
+                if bool((job.request or {}).get("use_cloud_image_pool")):
+                    if job.user_id is None:
+                        raise RuntimeError("使用云端号池重绘需要先登录账户")
+                    from .cloud_client import cloud_client_for
+                    cloud_pool_client = cloud_client_for(int(job.user_id))
+                    runtime = cloud_pool_client.image_pool_runtime()
+                    base_url = runtime["base_url"].rstrip("/")
+                    provider_configs = [{
+                        "endpoint": f"{base_url}/image-pool/generate",
+                        "query_url": f"{base_url}/image-pool/query",
+                        "upload_url": f"{base_url}/image-pool/media/upload",
+                        "account_url": f"{base_url}/image-pool/account-status",
+                        "resolution": os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip(),
+                        "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+                        "api_key": runtime["access_token"],
+                        "refresh_token": runtime["refresh_token"],
+                        "cloud_base_url": base_url,
+                        "account_label": "云端号池",
+                        "cloud_pool": "1",
+                    }]
+                    self._log(job, f"{macro_id} 使用云端图像号池重绘，费用由账户积分结算。")
+                else:
+                    provider_configs = visual._provider_configs()
                 account_pool = visual.shared_runninghub_account_pool(
                     provider_configs,
                     namespace="visual_editor_redraw",
@@ -866,6 +889,13 @@ class VisualEditor:
                 redraw_output = redraw_dir / f"{macro_id}_{time.time_ns()}.jpg"
                 render_item["_output_path"] = str(redraw_output)
                 rendered = visual._render_poster_with_retry(render_item, account_pool)
+                if cloud_pool_client is not None and provider_configs:
+                    active_config = provider_configs[0]
+                    cloud_pool_client.adopt_image_pool_runtime({
+                        "access_token": active_config.get("api_key"),
+                        "refresh_token": active_config.get("refresh_token"),
+                        "expires_in": 900,
+                    })
                 if not rendered.is_file() or rendered.stat().st_size <= 0:
                     raise FileNotFoundError(f"Image2 返回完成，但没有找到下载后的重绘图片: {rendered}")
                 shutil.copy2(rendered, image)
