@@ -46,7 +46,7 @@ cd frontend && npm install && cd ..
 在 `.env` 中配置集群业务网关，不要填写 Ray Head、Ray Serve 或 MinIO 的内部地址：
 
 ```dotenv
-CLOUD_API_BASE_URL=https://your-domain/api/v1
+CLOUD_API_BASE_URL=https://oneclickvidgen.com/api/v1
 CLOUD_API_CONNECT_TIMEOUT=15
 CLOUD_API_READ_TIMEOUT=180
 CLOUD_API_RETRY_COUNT=2
@@ -55,9 +55,9 @@ CLOUD_JOB_POLL_INTERVAL=2
 CLOUD_JOB_MAX_WAIT_SECONDS=3600
 ```
 
-当前 `122.51.217.35` 是 staging 环境且暂时只有 HTTP；正式用户、正式密码和支付接入
-必须等待域名/ICP备案完成并启用 HTTPS。公网客户端只能配置 cloud-api 业务网关，不能
-直接访问 Ray 的 `/api/tts` 或内部端口。
+正式业务网关为 `https://oneclickvidgen.com/api/v1`。域名备案和 HTTPS 已于
+2026-08-04 完成，HTTP 会强制跳转到 HTTPS。公网客户端只能配置 cloud-api 业务网关，
+不能直接访问 Ray 的 `/api/tts` 或内部端口。
 
 启动后在“语音参数”中选择“集群 GPU”，登录云端账户后可以选择云端默认音色，或者
 上传 WAV、MP3、FLAC 参考音频。音色保持“不选择”也可以直接提交，
