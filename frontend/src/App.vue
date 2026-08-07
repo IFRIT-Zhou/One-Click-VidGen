@@ -1986,6 +1986,41 @@
       </section>
     </div>
 
+    <div
+      v-if="cloudRechargeSuccess"
+      class="cloud-recharge-success-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="cloud-recharge-success-title"
+    >
+      <section class="cloud-recharge-success-dialog">
+        <button class="cloud-recharge-success-close" type="button" aria-label="关闭充值成功提示" @click="finishCloudRecharge">×</button>
+        <div class="cloud-recharge-success-icon" aria-hidden="true">
+          <span>✓</span>
+          <i></i>
+        </div>
+        <span class="cloud-recharge-kicker">PAYMENT CONFIRMED</span>
+        <h2 id="cloud-recharge-success-title">充值成功</h2>
+        <p>支付宝支付结果已由云端确认，积分已存入你的账户。</p>
+        <div class="cloud-recharge-success-credit">
+          <small>本次到账</small>
+          <strong>
+            +{{ Number(cloudRechargeSuccess.credits || 0).toLocaleString('zh-CN') }}
+            <em>积分</em>
+          </strong>
+        </div>
+        <div class="cloud-recharge-success-meta">
+          <div><span>充值金额</span><strong>¥{{ formatCloudRechargeAmount(cloudRechargeSuccess.amount_fen) }}</strong></div>
+          <div><span>订单状态</span><strong>已到账</strong></div>
+        </div>
+        <small class="cloud-recharge-success-order">订单 {{ cloudRechargeSuccess.order_id }}</small>
+        <footer class="cloud-recharge-success-actions">
+          <button class="ghost-btn" type="button" @click="continueCloudRecharge">继续充值</button>
+          <button class="cloud-recharge-pay" type="button" @click="finishCloudRecharge">完成</button>
+        </footer>
+      </section>
+    </div>
+
     <div v-if="preflightOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">
       <section class="preflight-dialog">
         <div class="preflight-head">
@@ -2218,6 +2253,7 @@ const cloudRechargeBusy = ref(false)
 const cloudRechargeChecking = ref(false)
 const cloudRechargeError = ref('')
 const cloudRechargeMessage = ref('')
+const cloudRechargeSuccess = ref(null)
 const cloudLoginForm = reactive({ email: '', password: '' })
 const cloudLoginOpen = ref(false)
 let cloudVoicePreviewAudio = null
@@ -3142,6 +3178,7 @@ async function logout() {
   cloudVoiceApiAvailable.value = true
   cloudQuote.value = {}
   cloudRechargeOpen.value = false
+  cloudRechargeSuccess.value = null
   stopCloudRechargePolling()
   cloudRechargeOrder.value = null
   cloudRechargePaymentUrl.value = ''
@@ -3247,6 +3284,7 @@ async function logoutCloud() {
     cloudVoiceApiAvailable.value = true
     cloudQuote.value = {}
     cloudRechargeOpen.value = false
+    cloudRechargeSuccess.value = null
     stopCloudRechargePolling()
     cloudRechargeOrder.value = null
     cloudRechargePaymentUrl.value = ''
@@ -3366,6 +3404,18 @@ function closeCloudRecharge() {
   cloudRechargeOpen.value = false
 }
 
+function continueCloudRecharge() {
+  cloudRechargeSuccess.value = null
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
+  cloudRechargeMessage.value = ''
+}
+
+function finishCloudRecharge() {
+  cloudRechargeSuccess.value = null
+  closeCloudRecharge()
+}
+
 function openCloudPaymentPage() {
   if (!cloudRechargePaymentUrl.value) return
   let popup = null
@@ -3437,8 +3487,13 @@ async function checkCloudRechargeOrder(manual = false) {
       closeCloudRechargeCheckoutWindow()
       cloudRechargeMessage.value = `支付成功，${Number(order.credits || 0).toLocaleString('zh-CN')} 积分已到账。`
       cloudMessage.value = cloudRechargeMessage.value
-      await refreshCloudState()
       window.focus()
+      cloudRechargeSuccess.value = {
+        order_id: order.order_id,
+        amount_fen: Number(order.amount_fen || 0),
+        credits: Number(order.credits || 0),
+      }
+      await refreshCloudState()
     } else if (['cancelled', 'expired', 'refunded'].includes(order.status)) {
       stopCloudRechargePolling()
       clearStoredCloudRecharge()
@@ -3460,6 +3515,7 @@ async function startCloudRecharge() {
   if (!product || cloudRechargeBusy.value) return
   cloudRechargeError.value = ''
   cloudRechargeMessage.value = ''
+  cloudRechargeSuccess.value = null
   cloudRechargeOrder.value = null
   cloudRechargePaymentUrl.value = ''
   stopCloudRechargePolling()
@@ -5644,7 +5700,7 @@ watch(() => `${form.cluster_voice_type}:${form.cluster_voice_id}`, () => {
   if (cloudVoicePreviewAudio) stopCloudVoicePreview()
 })
 
-watch(cloudRechargeOpen, (open) => {
+watch(() => cloudRechargeOpen.value || Boolean(cloudRechargeSuccess.value), (open) => {
   if (open) {
     cloudRechargePreviousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
