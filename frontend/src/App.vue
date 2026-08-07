@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 Zhou Ruoyu and He Yun -->
+
 <template>
   <div class="app-shell">
     <aside class="sidebar" :class="{ open: sidebarOpen }">
@@ -1895,6 +1898,13 @@
           </article>
         </section>
       </section>
+      <footer class="legal-footer" aria-label="开源许可证与官方源码">
+        <span>OCV · Copyright © 2026 周若雨、何允</span>
+        <span>本程序不附带任何担保</span>
+        <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
+        <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
+        <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/TRADEMARKS.md" target="_blank" rel="noopener noreferrer">品牌规则</a>
+      </footer>
     </main>
 
     <div v-if="preflightOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">

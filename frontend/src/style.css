@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Zhou Ruoyu and He Yun */
+
 :root {
   --bg: #07111f;
   --bg-2: #0b1629;
@@ -422,6 +425,20 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   justify-content: flex-end;
 }
 .content { min-width: 0; padding: 18px 28px 38px; }
+.legal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 14px;
+  margin: 0 28px 24px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+.legal-footer a { color: var(--accent); }
+.legal-footer a:hover { text-decoration: underline; }
 .stack { display: grid; gap: 18px; }
 .page-tabs {
   position: sticky;

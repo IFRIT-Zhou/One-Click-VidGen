@@ -1,5 +1,11 @@
 """Sentence-level TTS regeneration for completed, output-scoped projects."""
 
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Zhou Ruoyu and He Yun
+
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Zhou Ruoyu and He Yun
+
 from __future__ import annotations
 
 import json

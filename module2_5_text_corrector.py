@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Zhou Ruoyu and He Yun
+
 import json
 import re
 import os

@@ -1,5 +1,7 @@
 # 一键成片 / One-Click VidGen
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+
 一个由 FastAPI 后端和 Vue 前端组成的 AI 视频生产工作台。支持 IndexTTS2 本地 GPU、
 集群 GPU 加速、Qwen-TTS 云端配音以及已有音频；流水线包括字幕识别与校对、Agent
 0/1/2 全文理解与语义分镜、第三方图像接口生图、画面精修、时序调整、BGM 和视频合成。
@@ -95,3 +97,17 @@ npm --prefix frontend run dev
 仓库包含前后端源码、自动化测试、Python/Node 依赖清单、启动脚本和源码部署辅助脚本。
 本地模型、便携运行时、API 密钥、依赖安装目录、音色文件、任务数据、日志和生成媒体不纳入
 版本控制。官方 IndexTTS2 项目见 <https://github.com/index-tts/index-tts>。
+
+## 开源许可证
+
+OCV 自研代码依据 [GNU Affero General Public License Version 3 only](./LICENSE)
+（`AGPL-3.0-only`）发布。你可以使用、研究、修改、再分发和商业使用本项目，但必须遵守
+AGPL-3.0-only 的全部条件。修改后通过网络向用户提供服务时，应按照许可证要求向这些
+用户提供运行版本的对应源代码。
+
+官方源码仓库：<https://github.com/IFRIT-Zhou/One-Click-VidGen>
+
+软件按“原样”提供，不附带任何明示或默示担保。版权与贡献说明见 [NOTICE](./NOTICE)。
+One-Click VidGen、OCV、一键成片、润物工坊及官方 Logo 不随软件许可证授权，衍生版本
+不得冒充官方；详见 [品牌使用规则](./TRADEMARKS.md)。第三方组件、模型权重、字体和媒体
+仍遵守各自条款，详见 [第三方软件与资源说明](./THIRD_PARTY_NOTICES.md)。
