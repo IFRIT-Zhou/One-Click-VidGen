@@ -1901,7 +1901,7 @@
         </section>
       </section>
       <footer class="legal-footer" aria-label="开源许可证与官方源码">
-        <span>OCV · Copyright © 2026 周若雨、何允</span>
+        <span>OCV v1.1.0 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
