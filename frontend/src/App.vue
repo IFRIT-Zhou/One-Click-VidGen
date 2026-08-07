@@ -532,8 +532,8 @@
                     <label><span>语速（0.5–2）</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
                     <label><span>音量（0.1–10）</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
                     <label><span>音调（-12–12）</span><input v-model.number="form.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
-                    <label><span>并行分块（1–3）</span><input v-model.number="form.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
                   </div>
+                  <div class="cluster-notice">所有文本分块会同时进入集群队列，由空闲 GPU 自动领取；每个分块生成后会立即下载到本机。</div>
                   <div class="cluster-quote-bar">
                     <span>预计积分：<strong>{{ cloudQuote.estimated_credits ?? '尚未报价' }}</strong></span>
                     <button class="ghost-btn compact-btn" type="button" :disabled="cloudQuoteLoading || form.script.trim().length < 5" @click="refreshCloudQuote">
@@ -1655,7 +1655,8 @@
                     <label><span>语速</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
                     <label><span>音量</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
                     <label><span>音调</span><input v-model.number="form.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
-                    <label><span>并行数</span><input v-model.number="form.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                    <label v-if="ttsEngine !== 'cluster'"><span>并行数</span><input v-model.number="form.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                    <div v-else class="cluster-notice">集群自动将全部文本分块分配给空闲 GPU。</div>
                   </div>
                 </div>
 

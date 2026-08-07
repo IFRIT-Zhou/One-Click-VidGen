@@ -67,9 +67,6 @@ def build_job_payload(
             "sample_rate": 24000,
             "channels": 1,
         },
-        "scheduling": {
-            "max_parallel_chunks": max(1, min(3, int(request.get("tts_parallelism", 2) or 2)))
-        },
     }
     emotion = str(request.get("tts_emotion") or "").strip()
     if emotion:
@@ -177,11 +174,13 @@ def assemble_cloud_audio(
     }
 
 
-def _ordered_result_chunks(payload: dict[str, Any], total: int) -> list[dict[str, Any]]:
+def _result_chunks_by_index(payload: dict[str, Any], total: int) -> dict[int, dict[str, Any]]:
     result = payload.get("result")
     items = result.get("chunks") if isinstance(result, dict) else None
+    if items is None:
+        return {}
     if not isinstance(items, list):
-        raise RuntimeError("云端完成响应缺少 result.chunks")
+        raise RuntimeError("云端响应中 result.chunks 格式错误")
     by_index: dict[int, dict[str, Any]] = {}
     for raw_item in items:
         if not isinstance(raw_item, dict):
@@ -190,9 +189,16 @@ def _ordered_result_chunks(payload: dict[str, Any], total: int) -> list[dict[str
             index = int(raw_item.get("index"))
         except (TypeError, ValueError):
             continue
+        if index < 0 or index >= total:
+            raise RuntimeError(f"云端返回了超出范围的分块索引：{index}")
         if index in by_index:
             raise RuntimeError(f"云端返回了重复分块索引：{index}")
         by_index[index] = raw_item
+    return by_index
+
+
+def _ordered_result_chunks(payload: dict[str, Any], total: int) -> list[dict[str, Any]]:
+    by_index = _result_chunks_by_index(payload, total)
     expected = list(range(total))
     if sorted(by_index) != expected:
         raise RuntimeError(f"云端分块索引不完整：期望 0-{total - 1}，实际 {sorted(by_index)}")
@@ -227,7 +233,7 @@ def synthesize_cloud_tts(
         remote = client.get_job(remote_job_id)
     else:
         payload = build_job_payload(request, chunks, client_job_id=local_job_id)
-        on_log(f"正在提交集群 TTS：{len(chunks)} 个分块，并行数 {payload['scheduling']['max_parallel_chunks']}")
+        on_log(f"正在提交集群 TTS：{len(chunks)} 个分块将全部入队，由空闲 GPU 自动调度")
         remote = client.create_job(payload, idempotency_key=idempotency_key)
         remote_job_id = str(remote.get("job_id") or "").strip()
         if not remote_job_id:
@@ -238,7 +244,11 @@ def synthesize_cloud_tts(
     deadline = time.monotonic() + client.config.max_wait_seconds
     last_status = ""
     last_progress = -1
+    last_completed_chunks = -1
     cancel_sent = False
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_wavs: dict[int, Path] = {}
     while True:
         if is_cancelled():
             if not cancel_sent:
@@ -256,15 +266,46 @@ def synthesize_cloud_tts(
         except (TypeError, ValueError):
             progress = 0
         message = str(remote.get("message") or "").strip() or f"云端任务 {status or '处理中'}"
-        if status != last_status:
+        ready_chunks = _result_chunks_by_index(remote, len(chunks))
+        completed_chunks = max(
+            len(ready_chunks),
+            int(remote.get("completed_chunks") or 0),
+        )
+        if status != last_status or completed_chunks != last_completed_chunks:
             on_remote_job(remote_job_id, remote)
-            on_log(f"云端状态：{status or 'unknown'} · {message}")
+            if status != last_status:
+                on_log(f"云端状态：{status or 'unknown'} · {message}")
             last_status = status
+            last_completed_chunks = completed_chunks
+
+        for index, item in ready_chunks.items():
+            if index in downloaded_wavs:
+                continue
+            if is_cancelled():
+                raise CloudTtsCancelled("用户已停止生成")
+            audio_url = str(item.get("audio_url") or "").strip()
+            if not audio_url:
+                audio_url = f"/api/v1/cloud/jobs/{remote_job_id}/chunks/{index}/audio"
+            target = temp_dir / f"chunk-cluster-{index + 1:04d}.wav"
+            try:
+                client.download_to(audio_url, target)
+                _wav_info(target)
+            except CloudApiError as exc:
+                on_log(f"云端分块 {index + 1} 已生成，下载尚未就绪，将自动重试：{exc}")
+                continue
+            downloaded_wavs[index] = target
+            on_log(
+                f"[TTS_PROGRESS] 配音进度 {len(downloaded_wavs)}/{len(chunks)}："
+                f"已下载云端分块 {index + 1}"
+            )
+
         if progress != last_progress:
             on_progress(progress, message)
             last_progress = progress
         if status == "completed":
-            break
+            _ordered_result_chunks(remote, len(chunks))
+            if len(downloaded_wavs) == len(chunks):
+                break
         if status in {"failed", "cancelled", "expired"}:
             code = str(remote.get("error", {}).get("code") or "") if isinstance(remote.get("error"), dict) else ""
             raise RuntimeError(f"云端任务{status}：{message}{f' ({code})' if code else ''}")
@@ -273,22 +314,7 @@ def synthesize_cloud_tts(
         time.sleep(client.config.poll_interval)
         remote = client.get_job(remote_job_id)
 
-    result_chunks = _ordered_result_chunks(remote, len(chunks))
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    wav_paths: list[Path] = []
-    for position, item in enumerate(result_chunks):
-        if is_cancelled():
-            raise CloudTtsCancelled("用户已停止生成")
-        audio_url = str(item.get("audio_url") or "").strip()
-        if not audio_url:
-            audio_url = f"/api/v1/cloud/jobs/{remote_job_id}/chunks/{position}/audio"
-        target = temp_dir / f"chunk-cluster-{position + 1:04d}.wav"
-        client.download_to(audio_url, target)
-        _wav_info(target)
-        wav_paths.append(target)
-        on_progress(100, f"正在下载云端音频 {position + 1}/{len(chunks)}")
-        on_log(f"[TTS_PROGRESS] 配音进度 {position + 1}/{len(chunks)}：已下载云端分块")
+    wav_paths = [downloaded_wavs[index] for index in range(len(chunks))]
 
     metadata = {
         "cloud_job_id": remote_job_id,
