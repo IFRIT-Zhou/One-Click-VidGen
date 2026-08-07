@@ -100,6 +100,48 @@ class CloudClientTest(unittest.TestCase):
         self.assertTrue(request.call_args.kwargs["stream"])
         self.assertEqual(request.call_args.kwargs["headers"]["Authorization"], "Bearer access")
 
+    def test_recharge_products_and_order_use_authenticated_cloud_session(self) -> None:
+        self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
+        products = json_response({
+            "items": [{"product_id": "credits_100", "amount_fen": 100, "credits": 100}],
+            "test_product_enabled": False,
+        })
+        order = json_response({
+            "order_id": "ord_1",
+            "status": "pending",
+            "amount_fen": 100,
+            "credits": 100,
+            "payment": {"provider": "alipay", "payment_url": "https://openapi.alipay.com/gateway.do"},
+        }, status_code=201)
+        with patch("backend.app.cloud_client.requests.request", side_effect=[products, order]) as request:
+            catalog = self.client.list_recharge_products()
+            created = self.client.create_recharge_order(
+                {"product_id": "credits_100", "payment_provider": "alipay"},
+                idempotency_key="client-order-1",
+            )
+
+        self.assertEqual(catalog["items"][0]["amount_fen"], 100)
+        self.assertEqual(created["payment"]["provider"], "alipay")
+        product_call, order_call = request.call_args_list
+        self.assertEqual(product_call.args[1], "https://cluster.example/api/v1/recharge/products")
+        self.assertEqual(order_call.args[1], "https://cluster.example/api/v1/recharge/orders")
+        self.assertEqual(order_call.kwargs["headers"]["Idempotency-Key"], "client-order-1")
+        self.assertEqual(order_call.kwargs["headers"]["Authorization"], "Bearer access")
+
+    def test_alipay_order_rejects_untrusted_checkout_url(self) -> None:
+        self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
+        response = json_response({
+            "order_id": "ord_bad",
+            "status": "pending",
+            "payment": {"provider": "alipay", "payment_url": "https://attacker.invalid/pay"},
+        }, status_code=201)
+        with patch("backend.app.cloud_client.requests.request", return_value=response):
+            with self.assertRaisesRegex(CloudApiError, "收银台地址不受信任"):
+                self.client.create_recharge_order(
+                    {"product_id": "credits_100", "payment_provider": "alipay"},
+                    idempotency_key="client-order-bad",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

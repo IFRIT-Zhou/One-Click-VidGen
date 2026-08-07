@@ -608,6 +608,15 @@ def cloud_recharge_order(
         raise _cloud_error(exc) from exc
 
 
+@app.get("/api/cloud/recharge/products")
+def cloud_recharge_products(request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.list_recharge_products()
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
 @app.get("/api/cloud/recharge/orders/{order_id}")
 def cloud_recharge_order_status(order_id: str, request: Request) -> dict[str, Any]:
     _user, client = _cloud_for_request(request)

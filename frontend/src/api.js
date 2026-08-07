@@ -115,6 +115,7 @@ export const api = {
   }),
   cloudJobs: (page = 1, pageSize = 20) => requestJSON(`/api/cloud/jobs?page=${page}&page_size=${pageSize}`),
   cloudWalletLedger: (page = 1, pageSize = 20) => requestJSON(`/api/cloud/wallet/ledger?page=${page}&page_size=${pageSize}`),
+  cloudRechargeProducts: () => requestJSON('/api/cloud/recharge/products'),
   createCloudRechargeOrder: (payload, idempotencyKey) => requestJSON('/api/cloud/recharge/orders', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },

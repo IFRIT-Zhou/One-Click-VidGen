@@ -6,9 +6,9 @@ FRONTEND_DIR="$ROOT_DIR/frontend"
 LOG_DIR="$ROOT_DIR/runtime/logs"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
+BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-8010}"
-FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
+FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 if [[ -n "${FRONTEND_PORT+x}" ]]; then
   FRONTEND_PORT_EXPLICIT=1
 else
@@ -87,7 +87,7 @@ backend_ready() {
 
 frontend_ready() {
   curl --noproxy '*' -fsS --max-time 2 "$FRONTEND_URL/" 2>/dev/null \
-    | grep -q '口播视频生成台'
+    | grep -q 'One-Click VidGen'
 }
 
 start_service() {

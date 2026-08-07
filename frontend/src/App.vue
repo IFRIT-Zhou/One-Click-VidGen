@@ -476,6 +476,7 @@
                     <span>冻结 <strong>{{ cloudAccount.credits?.reserved ?? '-' }}</strong></span>
                     <span>并发 <strong>{{ cloudAccount.quota?.running_jobs ?? 0 }}/{{ cloudAccount.quota?.max_concurrent_jobs ?? '-' }}</strong></span>
                     <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="refreshCloudState">刷新</button>
+                    <button class="cloud-recharge-entry" type="button" :disabled="cloudBusy" @click="openCloudRecharge">支付宝充值</button>
                     <button class="ghost-btn compact-btn" type="button" :disabled="cloudBusy" @click="logoutCloud">退出云端</button>
                   </div>
                   <div class="cluster-voice-workspace">
@@ -1907,6 +1908,83 @@
       </footer>
     </main>
 
+    <div v-if="cloudRechargeOpen" class="cloud-recharge-overlay" role="dialog" aria-modal="true" aria-labelledby="cloud-recharge-title" @click.self="closeCloudRecharge">
+      <section class="cloud-recharge-dialog">
+        <header class="cloud-recharge-head">
+          <div>
+            <span class="cloud-recharge-kicker">ALIPAY · CLOUD CREDITS</span>
+            <h2 id="cloud-recharge-title">充值云端积分</h2>
+            <p>选择积分套餐后前往支付宝官方收银台，支付结果由集群服务端确认。</p>
+          </div>
+          <button class="cloud-recharge-close" type="button" aria-label="关闭充值窗口" @click="closeCloudRecharge">×</button>
+        </header>
+
+        <div class="cloud-recharge-account">
+          <div><small>充值账户</small><strong>{{ cloudSession.user?.email || '云端账户' }}</strong></div>
+          <div><small>当前可用积分</small><strong>{{ cloudAccount.credits?.available ?? '—' }}</strong></div>
+          <span class="cloud-recharge-secure"><i></i> HTTPS · RSA2</span>
+        </div>
+
+        <div v-if="cloudRechargeLoadingProducts" class="cloud-recharge-loading">
+          <span class="preflight-spinner"></span>正在读取可用套餐…
+        </div>
+        <template v-else>
+          <div class="cloud-recharge-section-title"><strong>选择充值套餐</strong><span>积分支付成功后自动到账</span></div>
+          <div class="cloud-recharge-products">
+            <button
+              v-for="product in cloudRechargeProducts"
+              :key="product.product_id"
+              class="cloud-recharge-product"
+              :class="{ selected: cloudRechargeSelectedId === product.product_id, temporary: product.temporary }"
+              type="button"
+              :disabled="cloudRechargeBusy || cloudRechargeOrder?.status === 'pending'"
+              @click="cloudRechargeSelectedId = product.product_id"
+            >
+              <span v-if="product.temporary" class="cloud-product-badge">临时测试</span>
+              <small>{{ cloudRechargeProductLabel(product) }}</small>
+              <strong>{{ Number(product.credits).toLocaleString('zh-CN') }}<em>积分</em></strong>
+              <span>¥{{ formatCloudRechargeAmount(product.amount_fen) }}</span>
+              <i aria-hidden="true">✓</i>
+            </button>
+          </div>
+        </template>
+
+        <div v-if="cloudRechargeOrder" class="cloud-recharge-order" :class="cloudRechargeOrder.status">
+          <div class="cloud-order-state-icon">
+            <span v-if="cloudRechargeOrder.status === 'paid'">✓</span>
+            <span v-else-if="['cancelled', 'expired', 'refunded'].includes(cloudRechargeOrder.status)">×</span>
+            <span v-else class="cloud-order-spinner"></span>
+          </div>
+          <div>
+            <small>订单 {{ cloudRechargeOrder.order_id }}</small>
+            <strong>{{ cloudRechargeStatusLabel }}</strong>
+            <p>{{ cloudRechargeStatusDescription }}</p>
+          </div>
+          <b>¥{{ formatCloudRechargeAmount(cloudRechargeOrder.amount_fen) }}</b>
+        </div>
+
+        <div v-if="cloudRechargeError" class="cloud-recharge-message error">{{ cloudRechargeError }}</div>
+        <div v-else-if="cloudRechargeMessage" class="cloud-recharge-message success">{{ cloudRechargeMessage }}</div>
+
+        <footer class="cloud-recharge-actions">
+          <div>
+            <span>应付金额</span>
+            <strong>¥{{ formatCloudRechargeAmount(cloudRechargeSelectedProduct?.amount_fen) }}</strong>
+          </div>
+          <button v-if="!cloudRechargeOrder || cloudRechargeOrder.status !== 'pending'" class="cloud-recharge-pay" type="button" :disabled="cloudRechargeBusy || !cloudRechargeSelectedProduct" @click="startCloudRecharge">
+            {{ cloudRechargeBusy ? '正在创建订单…' : '前往支付宝支付' }}
+          </button>
+          <template v-else>
+            <button class="ghost-btn" type="button" :disabled="!cloudRechargePaymentUrl" @click="openCloudPaymentPage">重新打开支付宝</button>
+            <button class="cloud-recharge-pay" type="button" :disabled="cloudRechargeChecking" @click="checkCloudRechargeOrder(true)">
+              {{ cloudRechargeChecking ? '正在查询…' : '我已完成支付' }}
+            </button>
+          </template>
+        </footer>
+        <p class="cloud-recharge-footnote">客户端不会接触支付宝密码或银行卡信息；积分只根据支付宝服务端异步通知入账。</p>
+      </section>
+    </div>
+
     <div v-if="preflightOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">
       <section class="preflight-dialog">
         <div class="preflight-head">
@@ -2129,9 +2207,24 @@ const cloudVoicePreviewLoading = ref(false)
 const cloudVoicePreviewPlayingId = ref('')
 const cloudError = ref('')
 const cloudMessage = ref('')
+const cloudRechargeOpen = ref(false)
+const cloudRechargeProducts = ref([])
+const cloudRechargeSelectedId = ref('')
+const cloudRechargeOrder = ref(null)
+const cloudRechargePaymentUrl = ref('')
+const cloudRechargeLoadingProducts = ref(false)
+const cloudRechargeBusy = ref(false)
+const cloudRechargeChecking = ref(false)
+const cloudRechargeError = ref('')
+const cloudRechargeMessage = ref('')
 const cloudLoginForm = reactive({ email: '', password: '' })
 const cloudLoginOpen = ref(false)
 let cloudVoicePreviewAudio = null
+let cloudRechargePollTimer = null
+let cloudRechargePollDeadline = 0
+let cloudRechargeCheckoutWindow = null
+let cloudRechargePreviousBodyOverflow = ''
+const CLOUD_RECHARGE_STORAGE_KEY = 'one_click_vidgen_pending_recharge_v1'
 // Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
 // 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
 const qwenVoiceGroups = [
@@ -2620,6 +2713,23 @@ const cloudDisplayName = computed(() => {
   return String(user.name || user.display_name || user.username || user.email?.split('@')[0] || '云端用户')
 })
 const cloudAvailableCredits = computed(() => cloudAccount.value.credits?.available ?? '-')
+const cloudRechargeSelectedProduct = computed(() => (
+  cloudRechargeProducts.value.find((product) => product.product_id === cloudRechargeSelectedId.value) || null
+))
+const cloudRechargeStatusLabel = computed(() => ({
+  pending: '等待支付宝付款',
+  paid: '支付成功，积分已到账',
+  cancelled: '订单已取消',
+  expired: '订单已过期',
+  refunded: '订单已退款',
+}[cloudRechargeOrder.value?.status] || '正在确认订单状态'))
+const cloudRechargeStatusDescription = computed(() => ({
+  pending: '收银台会在新窗口打开；付款后客户端将自动刷新积分。',
+  paid: `本次已增加 ${Number(cloudRechargeOrder.value?.credits || 0).toLocaleString('zh-CN')} 积分。`,
+  cancelled: '本次没有扣款，也不会增加积分。',
+  expired: '订单已失效，请重新选择套餐发起支付。',
+  refunded: '退款状态已同步，最终余额以云端账本为准。',
+}[cloudRechargeOrder.value?.status] || '正在向云端查询支付结果。'))
 const cloudVoiceModel = computed({
   get: () => {
     if (!selectedCloudVoice.value) return ''
@@ -3030,6 +3140,10 @@ async function logout() {
   cloudVoiceLimits.value = {}
   cloudVoiceApiAvailable.value = true
   cloudQuote.value = {}
+  cloudRechargeOpen.value = false
+  stopCloudRechargePolling()
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
 }
 
 async function refreshCloudState() {
@@ -3042,6 +3156,8 @@ async function refreshCloudState() {
       cloudAccount.value = { credits: {}, quota: {} }
       cloudVoices.value = []
       cloudVoiceLimits.value = {}
+      cloudRechargeOpen.value = false
+      stopCloudRechargePolling()
       return
     }
     cloudAccount.value = await api.cloudAccount() || { credits: {}, quota: {} }
@@ -3101,8 +3217,8 @@ async function loginCloud() {
 async function registerCloud() {
   cloudError.value = ''
   cloudMessage.value = ''
-  if (!cloudLoginForm.email || cloudLoginForm.password.length < 8) {
-    cloudError.value = '注册密码至少需要 8 位。'
+  if (!cloudLoginForm.email || cloudLoginForm.password.length < 10) {
+    cloudError.value = '注册密码至少需要 10 位。'
     return
   }
   cloudBusy.value = true
@@ -3129,11 +3245,262 @@ async function logoutCloud() {
     cloudVoiceLimits.value = {}
     cloudVoiceApiAvailable.value = true
     cloudQuote.value = {}
+    cloudRechargeOpen.value = false
+    stopCloudRechargePolling()
+    cloudRechargeOrder.value = null
+    cloudRechargePaymentUrl.value = ''
     cloudMessage.value = '已退出集群云端账户。'
   } catch (error) {
     cloudError.value = error.message || '退出集群失败。'
   } finally {
     cloudBusy.value = false
+  }
+}
+
+function formatCloudRechargeAmount(amountFen) {
+  const amount = Number(amountFen)
+  return Number.isFinite(amount) ? (amount / 100).toFixed(2) : '0.00'
+}
+
+function cloudRechargeProductLabel(product) {
+  if (product?.temporary) return '支付测试包'
+  return {
+    credits_100: '体验包',
+    credits_1000: '标准包',
+    credits_5000: '创作包',
+  }[product?.product_id] || '云端积分包'
+}
+
+function stopCloudRechargePolling() {
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  cloudRechargePollTimer = null
+  cloudRechargePollDeadline = 0
+}
+
+function clearStoredCloudRecharge() {
+  try { window.localStorage.removeItem(CLOUD_RECHARGE_STORAGE_KEY) } catch { /* storage is optional */ }
+}
+
+function storePendingCloudRecharge(order, paymentUrl) {
+  try {
+    window.localStorage.setItem(CLOUD_RECHARGE_STORAGE_KEY, JSON.stringify({
+      order_id: order.order_id,
+      amount_fen: order.amount_fen,
+      credits: order.credits,
+      expires_at: order.expires_at,
+      payment_url: paymentUrl,
+      cloud_user_id: cloudSession.value.user?.id || '',
+      saved_at: Date.now(),
+    }))
+  } catch { /* storage is optional */ }
+}
+
+function restorePendingCloudRecharge() {
+  if (cloudRechargeOrder.value?.order_id) return
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(CLOUD_RECHARGE_STORAGE_KEY) || 'null')
+    if (!saved?.order_id || Date.now() - Number(saved.saved_at || 0) > 35 * 60 * 1000) {
+      clearStoredCloudRecharge()
+      return
+    }
+    const currentUserId = String(cloudSession.value.user?.id || '')
+    if (saved.cloud_user_id && currentUserId && String(saved.cloud_user_id) !== currentUserId) return
+    cloudRechargeOrder.value = {
+      order_id: saved.order_id,
+      status: 'pending',
+      amount_fen: saved.amount_fen,
+      credits: saved.credits,
+      expires_at: saved.expires_at,
+    }
+    cloudRechargePaymentUrl.value = saved.payment_url || ''
+    beginCloudRechargePolling()
+  } catch {
+    clearStoredCloudRecharge()
+  }
+}
+
+async function loadCloudRechargeProducts() {
+  cloudRechargeLoadingProducts.value = true
+  cloudRechargeError.value = ''
+  try {
+    const catalog = await api.cloudRechargeProducts()
+    const products = (Array.isArray(catalog.items) ? catalog.items : [])
+      .filter((product) => (
+        product?.product_id
+        && Number.isInteger(Number(product.amount_fen))
+        && Number(product.amount_fen) > 0
+        && Number(product.credits) > 0
+      ))
+      .sort((left, right) => Number(Boolean(right.temporary)) - Number(Boolean(left.temporary)))
+    if (!products.length) throw new Error('云端当前没有可购买的积分套餐。')
+    cloudRechargeProducts.value = products
+    if (!products.some((product) => product.product_id === cloudRechargeSelectedId.value)) {
+      const preferred = products.find((product) => product.product_id === 'credits_1000')
+        || products.find((product) => !product.temporary)
+        || products[0]
+      cloudRechargeSelectedId.value = preferred.product_id
+    }
+  } catch (error) {
+    cloudRechargeProducts.value = []
+    cloudRechargeSelectedId.value = ''
+    cloudRechargeError.value = error.message || '无法读取云端充值套餐。'
+  } finally {
+    cloudRechargeLoadingProducts.value = false
+  }
+}
+
+async function openCloudRecharge() {
+  if (!cloudSession.value.authenticated) {
+    cloudError.value = '请先登录集群云端账户再充值。'
+    return
+  }
+  cloudRechargeOpen.value = true
+  cloudRechargeError.value = ''
+  cloudRechargeMessage.value = ''
+  await loadCloudRechargeProducts()
+  restorePendingCloudRecharge()
+}
+
+function closeCloudRecharge() {
+  cloudRechargeOpen.value = false
+}
+
+function openCloudPaymentPage() {
+  if (!cloudRechargePaymentUrl.value) return
+  let popup = null
+  try {
+    popup = window.open('about:blank', '_blank')
+    if (popup) {
+      popup.opener = null
+      popup.location.replace(cloudRechargePaymentUrl.value)
+      cloudRechargeCheckoutWindow = popup
+    }
+  } catch { popup = null }
+  if (!popup) cloudRechargeMessage.value = '浏览器阻止了新窗口，请允许弹窗后重试。'
+}
+
+function closeCloudRechargeCheckoutWindow() {
+  try {
+    if (cloudRechargeCheckoutWindow && !cloudRechargeCheckoutWindow.closed) {
+      cloudRechargeCheckoutWindow.close()
+    }
+  } catch { /* cross-origin checkout windows may reject inspection */ }
+  cloudRechargeCheckoutWindow = null
+}
+
+function handleCloudRechargeReturnFocus() {
+  stopCompletionFlash()
+  if (document.visibilityState === 'hidden') return
+  if (cloudRechargeOrder.value?.status === 'pending' && !cloudRechargeChecking.value) {
+    void checkCloudRechargeOrder(false)
+  }
+}
+
+function scheduleCloudRechargePoll() {
+  if (!cloudRechargeOrder.value?.order_id || cloudRechargeOrder.value.status !== 'pending') return
+  if (cloudRechargePollDeadline && Date.now() >= cloudRechargePollDeadline) {
+    cloudRechargeMessage.value = '自动查询已暂停，可点击“我已完成支付”继续确认。'
+    return
+  }
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  cloudRechargePollTimer = window.setTimeout(() => void checkCloudRechargeOrder(false), 2200)
+}
+
+function beginCloudRechargePolling() {
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  const expiresAt = Date.parse(cloudRechargeOrder.value?.expires_at || '')
+  cloudRechargePollDeadline = Number.isFinite(expiresAt)
+    ? Math.min(expiresAt + 60_000, Date.now() + 35 * 60 * 1000)
+    : Date.now() + 35 * 60 * 1000
+  scheduleCloudRechargePoll()
+}
+
+async function checkCloudRechargeOrder(manual = false) {
+  const orderId = cloudRechargeOrder.value?.order_id
+  if (!orderId || cloudRechargeChecking.value) return
+  if (manual && cloudRechargePollTimer) {
+    window.clearTimeout(cloudRechargePollTimer)
+    cloudRechargePollTimer = null
+  }
+  cloudRechargeChecking.value = true
+  if (manual) {
+    cloudRechargeError.value = ''
+    cloudRechargeMessage.value = '正在向云端确认支付宝支付结果…'
+  }
+  try {
+    const order = await api.cloudRechargeOrder(orderId)
+    cloudRechargeOrder.value = order
+    if (order.status === 'paid') {
+      stopCloudRechargePolling()
+      clearStoredCloudRecharge()
+      closeCloudRechargeCheckoutWindow()
+      cloudRechargeMessage.value = `支付成功，${Number(order.credits || 0).toLocaleString('zh-CN')} 积分已到账。`
+      cloudMessage.value = cloudRechargeMessage.value
+      await refreshCloudState()
+      window.focus()
+    } else if (['cancelled', 'expired', 'refunded'].includes(order.status)) {
+      stopCloudRechargePolling()
+      clearStoredCloudRecharge()
+      cloudRechargeMessage.value = cloudRechargeStatusDescription.value
+    } else {
+      if (manual) cloudRechargeMessage.value = '订单仍在等待付款，客户端会继续自动查询。'
+      scheduleCloudRechargePoll()
+    }
+  } catch (error) {
+    if (manual) cloudRechargeError.value = error.message || '查询支付结果失败。'
+    scheduleCloudRechargePoll()
+  } finally {
+    cloudRechargeChecking.value = false
+  }
+}
+
+async function startCloudRecharge() {
+  const product = cloudRechargeSelectedProduct.value
+  if (!product || cloudRechargeBusy.value) return
+  cloudRechargeError.value = ''
+  cloudRechargeMessage.value = ''
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
+  stopCloudRechargePolling()
+
+  let checkoutWindow = null
+  try {
+    checkoutWindow = window.open('about:blank', '_blank')
+    if (checkoutWindow) {
+      checkoutWindow.opener = null
+      cloudRechargeCheckoutWindow = checkoutWindow
+      checkoutWindow.document.title = '正在打开支付宝'
+      checkoutWindow.document.body.innerHTML = '<p style="font:16px system-ui;padding:32px;color:#334155">正在创建安全支付订单，请稍候…</p>'
+    }
+  } catch { checkoutWindow = null }
+
+  cloudRechargeBusy.value = true
+  try {
+    const randomPart = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)
+    const order = await api.createCloudRechargeOrder({
+      product_id: product.product_id,
+      payment_provider: 'alipay',
+    }, `desktop-alipay-${Date.now()}-${randomPart}`)
+    const paymentUrl = String(order.payment?.payment_url || '').trim()
+    if (!paymentUrl) throw new Error('云端没有返回支付宝收银台地址。')
+    const target = new URL(paymentUrl)
+    const allowedHosts = new Set(['openapi.alipay.com', 'openapi-sandbox.dl.alipaydev.com', 'openapi.alipaydev.com'])
+    if (target.protocol !== 'https:' || !allowedHosts.has(target.hostname)) {
+      throw new Error('支付宝收银台地址校验失败。')
+    }
+    cloudRechargeOrder.value = order
+    cloudRechargePaymentUrl.value = paymentUrl
+    cloudRechargeMessage.value = '订单已创建，正在打开支付宝官方收银台。'
+    storePendingCloudRecharge(order, paymentUrl)
+    beginCloudRechargePolling()
+    if (checkoutWindow && !checkoutWindow.closed) checkoutWindow.location.replace(paymentUrl)
+    else openCloudPaymentPage()
+  } catch (error) {
+    try { checkoutWindow?.close() } catch { /* ignore */ }
+    if (cloudRechargeCheckoutWindow === checkoutWindow) cloudRechargeCheckoutWindow = null
+    cloudRechargeError.value = error.message || '创建支付宝订单失败。'
+  } finally {
+    cloudRechargeBusy.value = false
   }
 }
 
@@ -5257,8 +5624,8 @@ function kindLabel(kind) {
 
 onMounted(async () => {
   originalDocumentTitle = document.title || '一键生成视频 / One-Click VidGen'
-  window.addEventListener('focus', stopCompletionFlash)
-  document.addEventListener('visibilitychange', stopCompletionFlash)
+  window.addEventListener('focus', handleCloudRechargeReturnFocus)
+  document.addEventListener('visibilitychange', handleCloudRechargeReturnFocus)
   await loadSettings()
   await refresh()
   await refreshParameterPresets()
@@ -5276,16 +5643,27 @@ watch(() => `${form.cluster_voice_type}:${form.cluster_voice_id}`, () => {
   if (cloudVoicePreviewAudio) stopCloudVoicePreview()
 })
 
+watch(cloudRechargeOpen, (open) => {
+  if (open) {
+    cloudRechargePreviousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = cloudRechargePreviousBodyOverflow
+  }
+})
+
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
   stopTtsVoicePreview()
   stopCloudVoicePreview()
+  stopCloudRechargePolling()
+  document.body.style.overflow = cloudRechargePreviousBodyOverflow
   resetTtsSegmentAudio()
   stopBgmPreview()
   stopCompletionFlash()
-  window.removeEventListener('focus', stopCompletionFlash)
-  document.removeEventListener('visibilitychange', stopCompletionFlash)
+  window.removeEventListener('focus', handleCloudRechargeReturnFocus)
+  document.removeEventListener('visibilitychange', handleCloudRechargeReturnFocus)
   if (completionAudioContext && completionAudioContext.state !== 'closed') {
     completionAudioContext.close().catch(() => {})
   }

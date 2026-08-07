@@ -669,6 +669,98 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 .preflight-item.error { border-color: rgba(248, 113, 113, .32); }
 .preflight-item.error .preflight-item-icon { color: #fecaca; background: rgba(239, 68, 68, .17); }
 .preflight-actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 4px; }
+.cloud-recharge-entry {
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 1px solid rgba(94, 234, 212, .42);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(20, 184, 166, .24), rgba(14, 116, 144, .2));
+  color: #ccfbf1;
+  font-size: .78rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(20, 184, 166, .1);
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+.cloud-recharge-entry:hover:not(:disabled) { transform: translateY(-1px); border-color: rgba(94, 234, 212, .78); background: rgba(20, 184, 166, .3); }
+.cloud-recharge-entry:disabled { cursor: not-allowed; opacity: .5; }
+.cloud-recharge-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow-y: auto;
+  background: rgba(2, 8, 20, .82);
+  backdrop-filter: blur(12px);
+}
+.cloud-recharge-dialog {
+  width: min(920px, 100%);
+  max-height: calc(100vh - 48px);
+  padding: 27px;
+  overflow-y: auto;
+  border: 1px solid rgba(94, 234, 212, .28);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(20, 184, 166, .15), transparent 25rem),
+    linear-gradient(155deg, rgba(15, 32, 51, .99), rgba(5, 13, 27, .99));
+  box-shadow: 0 34px 100px rgba(0, 0, 0, .62), 0 0 42px rgba(45, 212, 191, .09);
+}
+.cloud-recharge-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.cloud-recharge-head h2 { margin: 6px 0 7px; font-size: 1.65rem; letter-spacing: -.025em; }
+.cloud-recharge-head p { margin: 0; color: var(--muted); font-size: .86rem; }
+.cloud-recharge-kicker { color: #5eead4; font-size: .68rem; font-weight: 900; letter-spacing: .16em; }
+.cloud-recharge-close { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: rgba(148, 163, 184, .08); color: var(--soft); font-size: 1.25rem; cursor: pointer; }
+.cloud-recharge-close:hover { border-color: rgba(94, 234, 212, .4); background: rgba(45, 212, 191, .1); }
+.cloud-recharge-account { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(130px, .55fr) auto; gap: 14px; align-items: center; margin: 23px 0; padding: 15px 18px; border: 1px solid rgba(148, 163, 184, .15); border-radius: 15px; background: rgba(2, 8, 23, .38); }
+.cloud-recharge-account > div { display: grid; gap: 4px; min-width: 0; }
+.cloud-recharge-account small { color: var(--muted); font-size: .7rem; }
+.cloud-recharge-account strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.cloud-recharge-account > div:nth-child(2) strong { color: #5eead4; font-size: 1.18rem; }
+.cloud-recharge-secure { display: inline-flex; align-items: center; gap: 7px; color: #99f6e4; font-size: .7rem; font-weight: 750; white-space: nowrap; }
+.cloud-recharge-secure i { width: 7px; height: 7px; border-radius: 50%; background: #2dd4bf; box-shadow: 0 0 0 5px rgba(45, 212, 191, .1); }
+.cloud-recharge-loading { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 180px; color: var(--muted); }
+.cloud-recharge-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.cloud-recharge-section-title strong { font-size: .92rem; }
+.cloud-recharge-section-title span { color: var(--muted); font-size: .72rem; }
+.cloud-recharge-products { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px; }
+.cloud-recharge-product { position: relative; display: grid; min-width: 0; min-height: 142px; gap: 6px; align-content: center; padding: 19px 16px; overflow: hidden; border: 1px solid rgba(148, 163, 184, .18); border-radius: 15px; background: rgba(15, 23, 42, .58); color: var(--text); text-align: left; cursor: pointer; transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.cloud-recharge-product:hover:not(:disabled) { transform: translateY(-2px); border-color: rgba(94, 234, 212, .4); background: rgba(15, 35, 49, .78); }
+.cloud-recharge-product.selected { border-color: rgba(45, 212, 191, .82); background: linear-gradient(145deg, rgba(20, 184, 166, .18), rgba(15, 23, 42, .7)); box-shadow: inset 0 0 0 1px rgba(45, 212, 191, .16), 0 14px 34px rgba(20, 184, 166, .08); }
+.cloud-recharge-product.temporary { border-style: dashed; border-color: rgba(251, 146, 60, .5); background: rgba(124, 45, 18, .12); }
+.cloud-recharge-product.temporary.selected { border-color: #fb923c; background: rgba(154, 52, 18, .2); }
+.cloud-recharge-product:disabled { cursor: not-allowed; opacity: .66; }
+.cloud-recharge-product small { color: var(--muted); font-size: .7rem; }
+.cloud-recharge-product strong { font-size: 1.55rem; letter-spacing: -.035em; }
+.cloud-recharge-product strong em { margin-left: 3px; color: var(--soft); font-size: .7rem; font-style: normal; font-weight: 600; }
+.cloud-recharge-product > span:not(.cloud-product-badge) { color: #99f6e4; font-size: .8rem; font-weight: 750; }
+.cloud-recharge-product > i { position: absolute; right: 12px; bottom: 12px; display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: #2dd4bf; color: #042f2e; font-size: .7rem; font-style: normal; font-weight: 900; opacity: 0; transform: scale(.7); transition: opacity .18s ease, transform .18s ease; }
+.cloud-recharge-product.selected > i { opacity: 1; transform: scale(1); }
+.cloud-product-badge { position: absolute; top: 9px; right: 9px; padding: 3px 7px; border-radius: 999px; background: rgba(251, 146, 60, .18); color: #fdba74; font-size: .6rem; font-weight: 850; }
+.cloud-recharge-order { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 13px; align-items: center; margin-top: 17px; padding: 15px; border: 1px solid rgba(124, 219, 255, .2); border-radius: 14px; background: rgba(14, 116, 144, .08); }
+.cloud-recharge-order.paid { border-color: rgba(45, 212, 191, .34); background: rgba(20, 184, 166, .1); }
+.cloud-recharge-order.cancelled, .cloud-recharge-order.expired, .cloud-recharge-order.refunded { border-color: rgba(251, 113, 133, .28); background: rgba(159, 18, 57, .09); }
+.cloud-order-state-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; background: rgba(124, 219, 255, .1); color: #7dd3fc; font-weight: 900; }
+.cloud-recharge-order.paid .cloud-order-state-icon { background: rgba(45, 212, 191, .16); color: #5eead4; }
+.cloud-recharge-order.cancelled .cloud-order-state-icon, .cloud-recharge-order.expired .cloud-order-state-icon, .cloud-recharge-order.refunded .cloud-order-state-icon { background: rgba(251, 113, 133, .14); color: #fda4af; }
+.cloud-order-spinner { width: 20px; height: 20px; border: 2px solid rgba(125, 211, 252, .22); border-top-color: #7dd3fc; border-radius: 50%; animation: preflight-spin .8s linear infinite; }
+.cloud-recharge-order > div:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.cloud-recharge-order small { overflow: hidden; color: var(--muted); font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-recharge-order strong { font-size: .88rem; }
+.cloud-recharge-order p { margin: 0; color: var(--muted); font-size: .72rem; }
+.cloud-recharge-order > b { color: #ccfbf1; font-size: 1.12rem; }
+.cloud-recharge-message { margin-top: 13px; padding: 10px 12px; border-radius: 10px; font-size: .76rem; line-height: 1.5; }
+.cloud-recharge-message.error { border: 1px solid rgba(251, 113, 133, .25); background: rgba(159, 18, 57, .12); color: #fecdd3; }
+.cloud-recharge-message.success { border: 1px solid rgba(45, 212, 191, .22); background: rgba(20, 184, 166, .09); color: #99f6e4; }
+.cloud-recharge-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.cloud-recharge-actions > div { display: grid; gap: 2px; margin-right: auto; }
+.cloud-recharge-actions > div span { color: var(--muted); font-size: .68rem; }
+.cloud-recharge-actions > div strong { font-size: 1.55rem; }
+.cloud-recharge-pay { min-height: 44px; padding: 0 19px; border: 1px solid rgba(45, 212, 191, .56); border-radius: 11px; background: linear-gradient(135deg, #2dd4bf, #22c1a9); color: #042f2e; font-size: .82rem; font-weight: 900; cursor: pointer; box-shadow: 0 12px 28px rgba(20, 184, 166, .2); transition: transform .18s ease, box-shadow .18s ease; }
+.cloud-recharge-pay:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 16px 32px rgba(20, 184, 166, .26); }
+.cloud-recharge-pay:disabled { cursor: not-allowed; opacity: .48; transform: none; }
+.cloud-recharge-footnote { margin: 12px 0 0; color: rgba(159, 176, 202, .68); font-size: .66rem; line-height: 1.55; text-align: right; }
 #create .hero-panel {
   display: grid;
   grid-template-columns: minmax(380px, 1.08fr) minmax(420px, 0.92fr);
@@ -2075,4 +2167,26 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
     width: 100%;
     text-align: center;
   }
+}
+
+@media (max-width: 900px) {
+  .cloud-recharge-products { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cloud-recharge-account { grid-template-columns: minmax(0, 1fr) auto; }
+  .cloud-recharge-secure { grid-column: 1 / -1; }
+}
+
+@media (max-width: 620px) {
+  .cloud-recharge-overlay { padding: 0; place-items: stretch; }
+  .cloud-recharge-dialog { width: 100%; max-height: 100vh; min-height: 100vh; padding: 21px 16px; border-radius: 0; }
+  .cloud-recharge-head h2 { font-size: 1.35rem; }
+  .cloud-recharge-account { grid-template-columns: 1fr 100px; padding: 13px; }
+  .cloud-recharge-products { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cloud-recharge-product { min-height: 126px; padding: 16px 13px; }
+  .cloud-recharge-product strong { font-size: 1.28rem; }
+  .cloud-recharge-order { grid-template-columns: 42px minmax(0, 1fr); }
+  .cloud-recharge-order > b { grid-column: 2; }
+  .cloud-recharge-actions { align-items: stretch; flex-wrap: wrap; }
+  .cloud-recharge-actions > div { flex: 1 0 100%; }
+  .cloud-recharge-actions > button { flex: 1; }
+  .cloud-recharge-footnote { text-align: left; }
 }

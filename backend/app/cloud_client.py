@@ -19,6 +19,11 @@ import requests
 
 DEFAULT_CONNECT_TIMEOUT = 15.0
 DEFAULT_READ_TIMEOUT = 180.0
+ALIPAY_GATEWAY_HOSTS = {
+    "openapi.alipay.com",
+    "openapi-sandbox.dl.alipaydev.com",
+    "openapi.alipaydev.com",
+}
 
 
 def _float_env(name: str, default: float, *, minimum: float = 0.1) -> float:
@@ -467,9 +472,23 @@ class CloudClient:
         return self._json_request("POST", f"/cloud/jobs/{job_id}/cancel")
 
     def create_recharge_order(self, payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
-        return self._json_request(
+        order = self._json_request(
             "POST", "/recharge/orders", headers={"Idempotency-Key": idempotency_key}, json=payload
         )
+        payment = order.get("payment") if isinstance(order, dict) else None
+        if isinstance(payment, dict) and payment.get("provider") == "alipay":
+            payment_url = str(payment.get("payment_url") or "").strip()
+            parsed = urlparse(payment_url)
+            if parsed.scheme != "https" or parsed.hostname not in ALIPAY_GATEWAY_HOSTS:
+                raise CloudApiError(
+                    "云端返回的支付宝收银台地址不受信任",
+                    status_code=502,
+                    code="CLOUD_PAYMENT_URL_REJECTED",
+                )
+        return order
+
+    def list_recharge_products(self) -> dict[str, Any]:
+        return self._json_request("GET", "/recharge/products")
 
     def get_recharge_order(self, order_id: str) -> dict[str, Any]:
         return self._json_request("GET", f"/recharge/orders/{order_id}")
