@@ -45,7 +45,9 @@ cd frontend && npm install && cd ..
 
 ## 集群 GPU 加速
 
-在 `.env` 中配置集群业务网关，不要填写 Ray Head、Ray Serve 或 MinIO 的内部地址：
+客户端未设置 `CLOUD_API_BASE_URL` 时会自动使用正式业务网关
+`https://oneclickvidgen.com/api/v1`，同步源码后无需手工填写服务器地址。私有部署或本地
+模拟环境可以在 `.env` 中覆盖该地址；不要填写 Ray Head、Ray Serve 或 MinIO 的内部地址：
 
 ```dotenv
 CLOUD_API_BASE_URL=https://oneclickvidgen.com/api/v1

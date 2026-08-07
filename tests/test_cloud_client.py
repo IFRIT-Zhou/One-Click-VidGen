@@ -10,6 +10,8 @@ from backend.app.cloud_client import (
     CloudClient,
     CloudConfig,
     CloudSessionStore,
+    DEFAULT_CLOUD_API_BASE_URL,
+    load_cloud_config,
 )
 
 
@@ -29,6 +31,19 @@ class CloudClientTest(unittest.TestCase):
             config=CloudConfig(base_url="https://cluster.example/api/v1"),
             session_store=self.store,
         )
+
+    def test_official_cloud_gateway_is_used_when_environment_is_empty(self) -> None:
+        with patch.dict("os.environ", {"CLOUD_API_BASE_URL": ""}):
+            config = load_cloud_config()
+
+        self.assertTrue(config.configured)
+        self.assertEqual(config.base_url, DEFAULT_CLOUD_API_BASE_URL)
+
+    def test_cloud_gateway_can_still_be_overridden(self) -> None:
+        with patch.dict("os.environ", {"CLOUD_API_BASE_URL": "https://cluster.example/api/v1/"}):
+            config = load_cloud_config()
+
+        self.assertEqual(config.base_url, "https://cluster.example/api/v1")
 
     def test_login_keeps_tokens_out_of_public_snapshot(self) -> None:
         response = json_response({
@@ -103,13 +118,13 @@ class CloudClientTest(unittest.TestCase):
     def test_recharge_products_and_order_use_authenticated_cloud_session(self) -> None:
         self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
         products = json_response({
-            "items": [{"product_id": "credits_100", "amount_fen": 100, "credits": 100}],
+            "items": [{"product_id": "credits_100", "amount_fen": 10000, "credits": 100}],
             "test_product_enabled": False,
         })
         order = json_response({
             "order_id": "ord_1",
             "status": "pending",
-            "amount_fen": 100,
+            "amount_fen": 10000,
             "credits": 100,
             "payment": {"provider": "alipay", "payment_url": "https://openapi.alipay.com/gateway.do"},
         }, status_code=201)
@@ -120,7 +135,7 @@ class CloudClientTest(unittest.TestCase):
                 idempotency_key="client-order-1",
             )
 
-        self.assertEqual(catalog["items"][0]["amount_fen"], 100)
+        self.assertEqual(catalog["items"][0]["amount_fen"], 10000)
         self.assertEqual(created["payment"]["provider"], "alipay")
         product_call, order_call = request.call_args_list
         self.assertEqual(product_call.args[1], "https://cluster.example/api/v1/recharge/products")

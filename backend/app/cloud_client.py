@@ -19,6 +19,7 @@ import requests
 
 DEFAULT_CONNECT_TIMEOUT = 15.0
 DEFAULT_READ_TIMEOUT = 180.0
+DEFAULT_CLOUD_API_BASE_URL = "https://oneclickvidgen.com/api/v1"
 ALIPAY_GATEWAY_HOSTS = {
     "openapi.alipay.com",
     "openapi-sandbox.dl.alipaydev.com",
@@ -57,8 +58,9 @@ class CloudConfig:
 
 
 def load_cloud_config() -> CloudConfig:
+    configured_base_url = os.getenv("CLOUD_API_BASE_URL", "").strip()
     return CloudConfig(
-        base_url=os.getenv("CLOUD_API_BASE_URL", "").strip().rstrip("/"),
+        base_url=(configured_base_url or DEFAULT_CLOUD_API_BASE_URL).rstrip("/"),
         connect_timeout=_float_env("CLOUD_API_CONNECT_TIMEOUT", DEFAULT_CONNECT_TIMEOUT),
         read_timeout=_float_env("CLOUD_API_READ_TIMEOUT", DEFAULT_READ_TIMEOUT),
         poll_interval=_float_env("CLOUD_JOB_POLL_INTERVAL", 2.0, minimum=0.2),

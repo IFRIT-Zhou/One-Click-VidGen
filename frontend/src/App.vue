@@ -460,8 +460,9 @@
                 </small>
               </div>
               <div v-else-if="ttsEngine === 'cluster'" class="cluster-tts-config">
-                <div v-if="!cloudSession.configured" class="cluster-notice warning">
-                  云端集群服务尚未开放。服务上线后程序会自动连接，不需要手动填写服务器地址。
+                <div v-if="!cloudSession.configured" class="cluster-notice cluster-login-prompt warning">
+                  <span>云端集群连接配置异常，请尝试登录；仍无法连接时请检查网络。</span>
+                  <button class="primary-btn compact-btn" type="button" @click="openCloudLogin">前往登录</button>
                 </div>
                 <template v-else-if="!cloudSession.authenticated">
                   <div class="cluster-notice cluster-login-prompt">
