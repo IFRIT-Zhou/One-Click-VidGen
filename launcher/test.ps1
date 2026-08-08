@@ -1,5 +1,7 @@
 param(
-    [switch]$Lifecycle
+    [switch]$Lifecycle,
+    [switch]$SafeUpdate,
+    [switch]$UpdateCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -25,9 +27,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Runtime smoke-test compilation failed: $LASTEXITCODE" }
     Push-Location $projectRoot
     try {
-        if ($Lifecycle) { & $testExe --lifecycle } else { & $testExe }
+        if ($Lifecycle) { & $testExe --lifecycle }
+        elseif ($UpdateCheck) { & $testExe --update-check }
+        else { & $testExe }
     } finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw "Runtime smoke test failed: $LASTEXITCODE" }
+    if ($SafeUpdate) {
+        & (Join-Path $launcherDir 'tests\SafeUpdateSmoke.ps1')
+        if ($LASTEXITCODE -ne 0) { throw "Safe-update smoke test failed: $LASTEXITCODE" }
+    }
 }
 finally {
     if (Test-Path -LiteralPath $testExe) { Remove-Item -LiteralPath $testExe -Force }

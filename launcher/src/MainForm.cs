@@ -42,9 +42,14 @@ namespace OcvLauncher
         private Button stopButton;
         private Button restartButton;
         private Button checkButton;
+        private Button checkUpdateButton;
+        private Button applyUpdateButton;
+        private Label updateStateValue;
+        private Label updateDetail;
         private RichTextBox logBox;
         private FlowLayoutPanel checkResults;
         private ProgressBar busyProgress;
+        private UpdateCheckResult lastUpdateCheck;
 
         public MainForm()
         {
@@ -83,15 +88,17 @@ namespace OcvLauncher
             root.Padding = new Padding(18);
             root.BackColor = Bg;
             root.ColumnCount = 1;
-            root.RowCount = 3;
+            root.RowCount = 4;
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 92F));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 60F));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 40F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 64F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 118F));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 36F));
             Controls.Add(root);
 
             root.Controls.Add(BuildHeader(), 0, 0);
             root.Controls.Add(BuildMainArea(), 0, 1);
-            root.Controls.Add(BuildLogArea(), 0, 2);
+            root.Controls.Add(BuildUpdateArea(), 0, 2);
+            root.Controls.Add(BuildLogArea(), 0, 3);
         }
 
         private Control BuildHeader()
@@ -157,17 +164,17 @@ namespace OcvLauncher
         {
             var card = CardPanel();
             card.Margin = new Padding(0, 0, 7, 0);
-            card.Padding = new Padding(22, 16, 22, 14);
+            card.Padding = new Padding(22, 12, 22, 10);
 
             var layout = new TableLayoutPanel();
             layout.Dock = DockStyle.Fill;
             layout.RowCount = 6;
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 62F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 8F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 6F));
             card.Controls.Add(layout);
 
             layout.Controls.Add(NewLabel("工作台控制", 9F, FontStyle.Bold, Cyan), 0, 0);
@@ -208,22 +215,80 @@ namespace OcvLauncher
             return card;
         }
 
+        private Control BuildUpdateArea()
+        {
+            var card = CardPanel();
+            card.Margin = new Padding(0, 2, 0, 6);
+            card.Padding = new Padding(18, 8, 18, 8);
+
+            var table = new TableLayoutPanel();
+            table.Dock = DockStyle.Fill;
+            table.ColumnCount = 3;
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 345F));
+            card.Controls.Add(table);
+
+            var title = new TableLayoutPanel();
+            title.Dock = DockStyle.Fill;
+            title.RowCount = 2;
+            title.RowStyles.Add(new RowStyle(SizeType.Percent, 58F));
+            title.RowStyles.Add(new RowStyle(SizeType.Percent, 42F));
+            title.Controls.Add(NewLabel("安全更新", 11F, FontStyle.Bold, Cyan), 0, 0);
+            title.Controls.Add(NewLabel("默认通道 · main（Git / 便携版）", 8F, FontStyle.Regular, TextMuted), 0, 1);
+            table.Controls.Add(title, 0, 0);
+
+            var state = new TableLayoutPanel();
+            state.Dock = DockStyle.Fill;
+            state.RowCount = 2;
+            state.RowStyles.Add(new RowStyle(SizeType.Percent, 52F));
+            state.RowStyles.Add(new RowStyle(SizeType.Percent, 48F));
+            updateStateValue = NewLabel("尚未检查更新", 10F, FontStyle.Bold, TextMain);
+            updateDetail = NewLabel("手动检查，不会在启动时联网；应用更新前会保护用户数据。", 8F, FontStyle.Regular, TextMuted);
+            updateDetail.AutoEllipsis = true;
+            state.Controls.Add(updateStateValue, 0, 0);
+            state.Controls.Add(updateDetail, 0, 1);
+            table.Controls.Add(state, 1, 0);
+
+            var actions = new FlowLayoutPanel();
+            actions.Dock = DockStyle.Fill;
+            actions.FlowDirection = FlowDirection.RightToLeft;
+            actions.WrapContents = false;
+            actions.Padding = new Padding(0, 8, 0, 0);
+            checkUpdateButton = SecondaryButton("检查更新");
+            applyUpdateButton = AccentButton("安全更新", Green, Color.FromArgb(4, 25, 25));
+            applyUpdateButton.AutoSize = true;
+            applyUpdateButton.Dock = DockStyle.None;
+            applyUpdateButton.Height = 40;
+            applyUpdateButton.Padding = new Padding(13, 4, 13, 4);
+            applyUpdateButton.Enabled = false;
+            var historyButton = SecondaryButton("更新备份");
+            checkUpdateButton.Click += CheckUpdateButtonClick;
+            applyUpdateButton.Click += ApplyUpdateButtonClick;
+            historyButton.Click += delegate { runtime.OpenFolder(runtime.UpdateHistoryDirectory); };
+            actions.Controls.Add(applyUpdateButton);
+            actions.Controls.Add(checkUpdateButton);
+            actions.Controls.Add(historyButton);
+            table.Controls.Add(actions, 2, 0);
+            return card;
+        }
+
         private Control BuildStatusCard()
         {
             var card = CardPanel();
             card.Margin = new Padding(7, 0, 0, 0);
-            card.Padding = new Padding(18, 14, 18, 14);
+            card.Padding = new Padding(18, 10, 18, 10);
 
             var layout = new TableLayoutPanel();
             layout.Dock = DockStyle.Fill;
             layout.RowCount = 7;
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 54F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
             card.Controls.Add(layout);
 
             layout.Controls.Add(NewLabel("状态与快捷入口", 11F, FontStyle.Bold, TextMain), 0, 0);
@@ -307,8 +372,17 @@ namespace OcvLauncher
 
         private async void MainFormShown(object sender, EventArgs e)
         {
-            AppendLog("OCV Launcher 第一阶段已启动。");
+            AppendLog("OCV Launcher 第二阶段已启动。");
             AppendLog("项目目录：" + runtime.Root);
+            string updateResult = runtime.ConsumeUpdateResult();
+            if (!string.IsNullOrWhiteSpace(updateResult))
+            {
+                bool succeeded = updateResult.StartsWith("SUCCESS|", StringComparison.OrdinalIgnoreCase);
+                updateStateValue.Text = succeeded ? "上次安全更新已完成" : "上次安全更新失败";
+                updateStateValue.ForeColor = succeeded ? Green : Red;
+                updateDetail.Text = succeeded ? "程序已重启，用户数据与便携环境已保留。" : "请查看 runtime_logs/launcher_update.log。";
+                AppendLog((succeeded ? "安全更新结果：" : "安全更新错误：") + updateResult);
+            }
             InitializeLogOffsets(true);
             LoadRecentLogs();
             await RefreshRuntimeStatus();
@@ -457,6 +531,100 @@ namespace OcvLauncher
             }
         }
 
+        private async void CheckUpdateButtonClick(object sender, EventArgs e)
+        {
+            if (busy) return;
+            SetBusy(true, "正在检查更新");
+            updateStateValue.Text = "正在连接 GitHub";
+            updateStateValue.ForeColor = Amber;
+            updateDetail.Text = "仅读取版本信息，不会改动当前程序。";
+            AppendLog("开始检查安全更新……");
+            try
+            {
+                lastUpdateCheck = await runtime.CheckForUpdatesAsync(AppendLog);
+                if (lastUpdateCheck.CanUpdate)
+                {
+                    updateStateValue.Text = "发现新版本";
+                    updateStateValue.ForeColor = Green;
+                    if (!string.IsNullOrWhiteSpace(lastUpdateCheck.CurrentVersion) || !string.IsNullOrWhiteSpace(lastUpdateCheck.LatestVersion))
+                    {
+                        updateStateValue.Text += "  " + (lastUpdateCheck.CurrentVersion ?? "?") + " → " + (lastUpdateCheck.LatestVersion ?? "?");
+                    }
+                }
+                else if (lastUpdateCheck.IsCurrent)
+                {
+                    updateStateValue.Text = "已是最新版本";
+                    updateStateValue.ForeColor = Green;
+                }
+                else
+                {
+                    updateStateValue.Text = "安全更新已锁定";
+                    updateStateValue.ForeColor = lastUpdateCheck.IsBlocked ? Amber : TextMuted;
+                }
+                updateDetail.Text = lastUpdateCheck.Message ?? "未获取到更新说明。";
+                AppendLog("更新检查：" + updateDetail.Text);
+            }
+            catch (Exception ex)
+            {
+                lastUpdateCheck = null;
+                updateStateValue.Text = "检查更新失败";
+                updateStateValue.ForeColor = Red;
+                updateDetail.Text = ex.Message;
+                AppendLog("检查更新失败：" + ex.Message);
+            }
+            finally
+            {
+                SetBusy(false, null);
+            }
+        }
+
+        private async void ApplyUpdateButtonClick(object sender, EventArgs e)
+        {
+            if (busy || lastUpdateCheck == null || !lastUpdateCheck.CanUpdate) return;
+            RuntimeStatus status = await runtime.GetStatusAsync();
+            if (status.BackendOnline || status.FrontendOnline)
+            {
+                MessageBox.Show(
+                    "OCV 服务仍在运行。\n\n为了不中断正在生成的任务，安全更新不会自动停服务。请等任务完成后，先点击“停止服务”，再执行更新。",
+                    "安全更新保护",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult confirmation = MessageBox.Show(
+                "即将安装已检测到的新版本。\n\n"
+                + "• Git 模式只允许快进同步\n"
+                + "• 便携版会备份被覆盖的程序文件\n"
+                + "• .env、模型、运行环境、作品与用户预设不会被覆盖\n"
+                + "• 更新完成后启动器会自动重启\n\n"
+                + "是否继续？",
+                "安装 OCV 安全更新",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (confirmation != DialogResult.Yes) return;
+
+            SetBusy(true, "正在准备安全更新");
+            try
+            {
+                UpdateLaunchPlan plan = await runtime.PrepareUpdateAsync(lastUpdateCheck, AppendLog);
+                Process helper = runtime.StartUpdateHelper(plan, Process.GetCurrentProcess().Id);
+                if (helper == null) throw new InvalidOperationException("无法启动独立更新助手。");
+                AppendLog("独立更新助手已启动，启动器即将退出并在完成后重启。");
+                closingAfterPrompt = true;
+                statusTimer.Stop();
+                Close();
+            }
+            catch (Exception ex)
+            {
+                updateStateValue.Text = "更新准备失败";
+                updateStateValue.ForeColor = Red;
+                updateDetail.Text = ex.Message;
+                AppendLog("更新准备失败：" + ex.Message);
+                SetBusy(false, null);
+            }
+        }
+
         private async Task RefreshRuntimeStatus()
         {
             RuntimeStatus status = await runtime.GetStatusAsync();
@@ -504,6 +672,8 @@ namespace OcvLauncher
             busyProgress.Visible = value;
             checkButton.Enabled = !value;
             startButton.Enabled = !value;
+            if (checkUpdateButton != null) checkUpdateButton.Enabled = !value;
+            if (applyUpdateButton != null) applyUpdateButton.Enabled = !value && lastUpdateCheck != null && lastUpdateCheck.CanUpdate;
             if (value && !string.IsNullOrEmpty(message))
             {
                 statusPill.Text = "●  " + message;

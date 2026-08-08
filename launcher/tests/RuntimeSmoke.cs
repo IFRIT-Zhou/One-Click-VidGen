@@ -31,6 +31,16 @@ namespace OcvLauncher
                 {
                     return RunLifecycle(runtime);
                 }
+                if (args.Length > 0 && string.Equals(args[0], "--update-check", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpdateCheckResult update = runtime.CheckForUpdatesAsync(Console.WriteLine).GetAwaiter().GetResult();
+                    Console.WriteLine("UPDATE_MODE=" + update.Mode);
+                    Console.WriteLine("UPDATE_CAN_APPLY=" + update.CanUpdate);
+                    Console.WriteLine("UPDATE_CURRENT=" + update.IsCurrent);
+                    Console.WriteLine("UPDATE_BLOCKED=" + update.IsBlocked);
+                    Console.WriteLine("UPDATE_MESSAGE=" + update.Message);
+                    if (string.IsNullOrWhiteSpace(update.Mode) || string.IsNullOrWhiteSpace(update.Message)) return 5;
+                }
                 return 0;
             }
             catch (Exception ex)
