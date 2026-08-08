@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="One-Click VidGen 云端 GPU 配音、音色管理、任务调度及积分计费服务介绍。" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260806.2" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260808.4" />
     <title>产品与服务｜One-Click VidGen</title>
   </head>
   <body data-page="services">
@@ -18,26 +18,42 @@
     </header>
 
     <main>
-      <section class="page-hero">
-        <div class="shell"><div class="eyebrow"><span></span>PRODUCTS &amp; SERVICES</div><h1>为视频创作者提供<br />清晰、可靠的云端能力</h1><p>One-Click VidGen 将配音生成、音色管理和任务调度封装为统一的云端服务，以积分按量结算，适合个人创作者与内容生产团队。</p></div>
+      <section class="page-hero services-hero">
+        <img class="services-hero-image" src="/assets/studio-workflow-preview.webp" alt="One-Click VidGen 云端工作台界面预览" />
+        <div class="shell services-hero-content">
+          <div class="eyebrow"><span></span>PRODUCTS &amp; SERVICES</div>
+          <h1>从一段文案，到一支<br />可以交付的视频</h1>
+          <p>云端 GPU 完成配音与画面生成，浏览器负责素材整理和视频合成。三个模块使用同一账户、音色和任务记录。</p>
+          <div class="hero-service-flow" aria-hidden="true"><span class="flow-node active">文案</span><i></i><span class="flow-node">配音</span><i></i><span class="flow-node">画面</span><i></i><span class="flow-node">视频</span></div>
+          <a class="services-scroll-link" href="#service-navigation">查看服务模块 <span>↓</span></a>
+        </div>
       </section>
 
-      <section class="section shell">
-        <div class="service-stack">
-          <article class="service-row" id="gpu">
-            <div class="number">01</div>
-            <div><h2>云端 GPU 配音</h2><p>客户端将长文案安全提交至云端，系统自动拆分并调度 GPU 节点完成语音合成。生成结果包含高质量音频及可用于后续视频制作的字幕时间信息。</p></div>
+      <section class="section shell services-navigation" id="service-navigation">
+        <div class="section-heading split-heading"><div><div class="eyebrow"><span></span>CORE MODULES</div><h2>选择要了解的功能模块</h2></div><p>点击任一服务可直接定位到对应模块。每项能力既能独立使用，也能在云端工作台中串成完整视频流程。</p></div>
+        <nav class="service-jump-grid" aria-label="服务模块导航">
+          <a class="service-jump" href="#gpu" data-service-link="gpu"><span class="jump-visual jump-gpu" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span><small>01 · VOICE</small><strong>云端 GPU 配音</strong><em>文案切分、合成与字幕时间轴</em></span><b>↘</b></a>
+          <a class="service-jump" href="#voices" data-service-link="voices"><span class="jump-visual jump-voice" aria-hidden="true"><i>A</i><i>B</i><i>C</i></span><span><small>02 · VOICE LIBRARY</small><strong>音色选择与管理</strong><em>默认音色、试听与个人音色</em></span><b>↘</b></a>
+          <a class="service-jump" href="#video" data-service-link="video"><span class="jump-visual jump-video" aria-hidden="true"><i></i><i></i><i></i><span></span></span><span><small>03 · VIDEO</small><strong>视频生成与管理</strong><em>图片、音频、字幕和本地导出</em></span><b>↘</b></a>
+        </nav>
+      </section>
+
+      <section class="section services-detail-band">
+        <div class="shell service-stack">
+          <article class="service-module" id="gpu">
+            <div class="service-motion gpu-motion" aria-hidden="true"><div class="motion-head"><span><i></i>GPU ONLINE</span><b>72%</b></div><div class="motion-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="motion-track"><span></span></div><small>IndexTTS2 · AUDIO SYNTHESIS</small></div>
+            <div class="service-copy"><span>01 / VOICE SYNTHESIS</span><h2>云端 GPU 配音</h2><p>客户端将长文案安全提交至云端，系统自动拆分并调度 GPU 节点完成语音合成。生成结果包含高质量音频及可用于后续视频制作的字幕时间信息。</p><a href="/studio/#script-panel">进入配音文案模块 →</a></div>
             <ul class="check-list"><li>IndexTTS2 中文语音合成</li><li>长文本自动切分与合并</li><li>WAV 音频与字幕时间轴</li><li>任务完成后自动下载回本机</li></ul>
           </article>
-          <article class="service-row" id="voices">
-            <div class="number">02</div>
-            <div><h2>音色选择与管理</h2><p>使用平台提供的默认音色快速开始，也可以上传具有合法使用权的参考音频。个人音色仅对当前账户可见，便于重复用于后续创作任务。</p></div>
+          <article class="service-module" id="voices">
+            <div class="service-motion voice-motion" aria-hidden="true"><div class="voice-rings"><i></i><i></i><i></i><span>声纹</span></div><div class="voice-switches"><span class="active">清朗</span><span>磁性</span><span>沉静</span></div><div class="voice-eq"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+            <div class="service-copy"><span>02 / VOICE LIBRARY</span><h2>音色选择与管理</h2><p>使用平台提供的默认音色快速开始，也可以上传具有合法使用权的参考音频。个人音色仅对当前账户可见，便于重复用于后续创作任务。</p><a href="/studio/#voice-panel">进入音色管理模块 →</a></div>
             <ul class="check-list"><li>多个默认音色在线选择</li><li>音色样例在线试听</li><li>个人参考音频上传</li><li>账户级音色安全隔离</li></ul>
           </article>
-          <article class="service-row" id="tasks">
-            <div class="number">03</div>
-            <div><h2>任务全流程管理</h2><p>每个任务在提交前获得用量报价，提交后可以查看排队、处理和完成状态。出现异常时未使用的预扣积分会被释放，账目变化均由积分账本记录。</p></div>
-            <ul class="check-list"><li>生成前积分用量报价</li><li>排队及生成进度查询</li><li>任务取消与异常恢复</li><li>历史任务及用量记录</li></ul>
+          <article class="service-module" id="video">
+            <div class="service-motion video-motion" aria-hidden="true"><div class="video-screen"><span class="play-mark">▶</span><i></i><i></i></div><div class="video-timeline"><b></b><span></span><span></span><span></span><i></i></div><small>CANVAS · AUDIO · SUBTITLES</small></div>
+            <div class="service-copy"><span>03 / VIDEO WORKFLOW</span><h2>视频生成与管理</h2><p>图片与配音完成后立即下载到当前设备，浏览器按音频时长组织镜头、字幕和时间线并导出视频。云端保留任务状态，重型视频编码不占用控制节点。</p><a href="/studio/#task-panel">进入视频任务模块 →</a></div>
+            <ul class="check-list"><li>配音与图片并行生成</li><li>素材完成后逐项预览</li><li>浏览器本地合成与字幕</li><li>历史任务与项目清单管理</li></ul>
           </article>
         </div>
       </section>
@@ -45,9 +61,20 @@
       <section class="section" id="billing" style="background:#fff">
         <div class="shell">
           <div class="section-heading split-heading"><div><div class="eyebrow"><span></span>PRICING</div><h2>按需充值，按实际生成量结算</h2></div><p>积分用于云端 GPU 配音任务。创建任务时先预估并预扣，任务结束后按实际用量结算；未使用部分返回账户。</p></div>
-          <div class="price-panel">
-            <div class="billing-copy"><h2>简单透明的积分服务</h2><p>无需开通连续包月，不自动续费。购买的积分进入当前账户，可在 One-Click VidGen 客户端登录后用于云端 GPU 任务。</p><div class="big-number">10 积分</div><small>约用于处理 1000 个文案字符，最终以任务报价为准</small></div>
-            <div class="package-preview"><div class="mini-packages"><div class="mini-package"><span>体验包</span><div><strong>100 积分</strong><small>¥100.00</small></div></div><div class="mini-package recommended"><span>标准包 · 推荐</span><div><strong>1,000 积分</strong><small>¥1,000.00</small></div></div><div class="mini-package"><span>创作包</span><div><strong>5,000 积分</strong><small>¥5,000.00</small></div></div></div></div>
+          <div class="price-panel services-price-panel" data-pricing-selector>
+            <div class="billing-copy billing-dynamic" data-selected-product="credits_20">
+              <div class="billing-visual" aria-hidden="true"><div class="credit-orbit"><i></i><i></i><i></i><span id="billing-orbit-value">20</span></div><div class="billing-bars"><i></i><i></i><i></i><i></i><i></i></div></div>
+              <span class="billing-kicker" id="billing-tier-name">标准包</span><h2>当前选择</h2><p id="billing-description">适合日常创作，配音、图片与模型均按实际用量结算。</p><div class="big-number"><span id="billing-credit-value">20</span> 积分</div><strong class="billing-price" id="billing-price-value">¥20.00</strong><small>1 元兑换 1 积分，不自动续费</small><a class="button primary" id="billing-action" href="/recharge/?product=credits_20">选择此套餐</a>
+            </div>
+            <div class="package-preview"><div class="pricing-status"><span>选择充值积分</span><small id="pricing-status">正在读取云端套餐</small></div><div class="mini-packages selectable-packages" id="services-package-list">
+              <button class="mini-package" type="button" data-product-id="credits_1" data-credits="1" data-amount-fen="100"><span>轻量体验</span><div><strong>1 积分</strong><small>¥1.00</small></div></button>
+              <button class="mini-package" type="button" data-product-id="credits_5" data-credits="5" data-amount-fen="500"><span>入门包</span><div><strong>5 积分</strong><small>¥5.00</small></div></button>
+              <button class="mini-package" type="button" data-product-id="credits_10" data-credits="10" data-amount-fen="1000"><span>基础包</span><div><strong>10 积分</strong><small>¥10.00</small></div></button>
+              <button class="mini-package recommended selected" type="button" data-product-id="credits_20" data-credits="20" data-amount-fen="2000"><span>标准包 · 推荐</span><div><strong>20 积分</strong><small>¥20.00</small></div></button>
+              <button class="mini-package" type="button" data-product-id="credits_30" data-credits="30" data-amount-fen="3000"><span>进阶包</span><div><strong>30 积分</strong><small>¥30.00</small></div></button>
+              <button class="mini-package" type="button" data-product-id="credits_50" data-credits="50" data-amount-fen="5000"><span>创作包</span><div><strong>50 积分</strong><small>¥50.00</small></div></button>
+              <button class="mini-package" type="button" data-product-id="credits_100" data-credits="100" data-amount-fen="10000"><span>专业包</span><div><strong>100 积分</strong><small>¥100.00</small></div></button>
+            </div></div>
           </div>
         </div>
       </section>
@@ -56,6 +83,6 @@
     </main>
 
     <footer class="site-footer"><div class="shell footer-grid"><div class="footer-brand"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><p>面向视频创作者的云端 GPU 配音与任务加速服务。</p></div><div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a href="/recharge/">积分充值</a></div><div><strong>服务状态</strong><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div></div><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><span>服务域名：oneclickvidgen.com</span></div></footer>
-    <script src="/assets/site.js?v=20260806.2" defer></script>
+    <script src="/assets/site.js?v=20260808.4" defer></script>
   </body>
 </html>

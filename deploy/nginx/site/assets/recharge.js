@@ -134,12 +134,16 @@
         option.querySelector("strong").textContent = `${Number(product.credits).toLocaleString("zh-CN")} 积分`;
         option.querySelector("small").textContent = `¥${price} · ${description}`;
       });
-      let selected = document.querySelector('input[name="package"]:checked');
+      const requestedId = new URLSearchParams(window.location.search).get("product");
+      const requested = requestedId ? document.querySelector(`input[name="package"][value="${CSS.escape(requestedId)}"]`) : null;
+      let selected = requested && !requested.closest(".package-option").hidden
+        ? requested
+        : document.querySelector('input[name="package"]:checked');
       if (!selected || selected.closest(".package-option").hidden) {
         selected = document.querySelector('input[name="package"][value="credits_20"]')
           || document.querySelector('.package-option:not([hidden]) input[name="package"]');
-        if (selected) selected.checked = true;
       }
+      if (selected) selected.checked = true;
       if (selected) selected.dispatchEvent(new Event("change"));
     } catch (error) {
       document.querySelectorAll('input[name="package"]').forEach((input) => { input.disabled = true; });
