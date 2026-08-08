@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="One-Click VidGen 云端 GPU 服务积分充值页面，支持支付宝电脑网站支付。" />
+    <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260806.3" />
+    <title>积分充值｜One-Click VidGen</title>
+  </head>
+  <body data-page="recharge">
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a>
+        <nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a class="active" href="/recharge/">积分充值</a></nav>
+        <a class="header-action" href="/studio/">开始创作</a>
+      </div>
+    </header>
+
+    <main class="recharge-main">
+      <div class="shell">
+        <div class="recharge-heading"><div><h1>购买云端服务积分</h1><p>选择适合的积分套餐，通过支付宝安全付款，到账后即可用于云端 GPU 配音。</p></div><div class="secure-note">● HTTPS 加密支付环境</div></div>
+        <div class="recharge-layout">
+          <div>
+            <section class="panel">
+              <div class="panel-title"><h2>1. 充值账户</h2><span>积分将充入当前登录账户</span></div>
+              <div class="account-guest" id="account-guest"><p>请先登录 One-Click VidGen 云端账户，支付完成后积分将自动到账。</p><button class="button primary" id="open-login" type="button">登录 / 注册</button></div>
+              <div class="account-summary" id="account-summary"><div><small>当前账户</small><strong id="account-email">—</strong></div><div><small>可用积分</small><strong class="credit-number" id="account-credits">—</strong></div><button class="link-button" id="logout" type="button">退出登录</button></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title"><h2>2. 选择积分套餐</h2><span>积分用于云端 GPU 任务</span></div>
+              <div class="package-grid" id="package-grid">
+                <label class="package-option test-product" id="test-payment-product" hidden><span class="badge">临时测试</span><input type="radio" name="package" value="credits_test_10" data-credits="1" data-price="1.00" /><span>支付测试包</span><strong>1 积分</strong><small>¥1.00 · 用于正式支付联调</small></label>
+                <label class="package-option"><input type="radio" name="package" value="credits_100" data-credits="100" data-price="100.00" /><span>体验包</span><strong>100 积分</strong><small>¥100.00 · 适合功能体验</small></label>
+                <label class="package-option selected"><span class="badge">推荐</span><input type="radio" name="package" value="credits_1000" data-credits="1000" data-price="1000.00" checked /><span>标准包</span><strong>1,000 积分</strong><small>¥1000.00 · 适合日常创作</small></label>
+                <label class="package-option"><input type="radio" name="package" value="credits_5000" data-credits="5000" data-price="5000.00" /><span>创作包</span><strong>5,000 积分</strong><small>¥5000.00 · 适合批量任务</small></label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title"><h2>3. 选择支付方式</h2><span>由支付机构提供交易安全保障</span></div>
+              <div class="payment-method"><div class="alipay-mark">支</div><div><strong>支付宝</strong><small>电脑网站支付 · 跳转至支付宝收银台完成付款</small></div><div class="selected-mark">✓</div></div>
+            </section>
+          </div>
+
+          <aside class="order-card">
+            <h2>订单确认</h2>
+            <div class="order-line"><span>服务商品</span><strong>云端 GPU 服务积分</strong></div>
+            <div class="order-line"><span>充值数量</span><strong id="summary-credits">1,000 积分</strong></div>
+            <div class="order-line"><span>支付方式</span><strong>支付宝</strong></div>
+            <div class="order-total"><span>应付金额</span><strong id="summary-price">¥1000.00</strong></div>
+            <button class="button full" id="pay-button" type="button">登录后提交订单</button>
+            <div class="message" id="order-message" role="status"></div>
+            <p class="order-hint">点击提交即表示确认所选服务。订单创建后将跳转至支付宝官方收银台；支付结果以平台账户实际到账为准。</p>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <dialog class="auth-dialog" id="auth-dialog">
+      <div class="dialog-inner">
+        <div class="dialog-head"><div><h2 id="auth-title">登录云端账户</h2><p>登录后可读取余额并为当前账户充值。</p></div><button class="dialog-close" id="close-dialog" type="button" aria-label="关闭">×</button></div>
+        <div class="auth-tabs"><button class="auth-tab active" data-auth-mode="login" type="button">登录</button><button class="auth-tab" data-auth-mode="register" type="button">注册新账户</button></div>
+        <form id="auth-form">
+          <div class="field"><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div>
+          <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" minlength="10" autocomplete="current-password" placeholder="至少 10 位字符" required /></div>
+          <button class="button primary full" id="auth-submit" type="submit">登录</button>
+          <div class="message" id="auth-message" role="status"></div>
+        </form>
+      </div>
+    </dialog>
+
+    <footer class="site-footer"><div class="shell footer-grid"><div class="footer-brand"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><p>面向视频创作者的云端 GPU 配音与任务加速服务。</p></div><div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a href="/recharge/">积分充值</a></div><div><strong>服务状态</strong><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div></div><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><span>服务域名：oneclickvidgen.com</span></div></footer>
+    <script src="/assets/site.js?v=20260806.3" defer></script>
+    <script src="/assets/recharge.js?v=20260808.1" defer></script>
+  </body>
+</html>

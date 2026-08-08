@@ -7,6 +7,74 @@ import module4_video_render as visual
 
 
 class VisualConstraintsTest(unittest.TestCase):
+    def test_cloud_image_submit_includes_stable_client_job_id(self) -> None:
+        captured_payloads = []
+
+        class Response:
+            ok = True
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"code": 0, "data": {"taskId": "cloud-task-1"}}
+
+        def request(_session, _method, _url, **kwargs):
+            captured_payloads.append(kwargs["json"])
+            return Response()
+
+        macro = {"macro_scene_id": "poster_001", "image_prompt": "雨夜中的城市街道"}
+        config = {
+            "api_key": "cloud-access-token",
+            "endpoint": "https://example.test/image-pool/generate",
+            "ratio": "16:9",
+            "resolution": "1k",
+            "cloud_pool": "1",
+        }
+        with (
+            patch.object(visual, "_request_with_cloud_refresh", side_effect=request),
+            patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-test-123"}, clear=False),
+        ):
+            first = visual._submit_poster_request(macro, config, object())
+            second = visual._submit_poster_request(macro, config, object())
+
+        self.assertEqual(first, "cloud-task-1")
+        self.assertEqual(second, "cloud-task-1")
+        self.assertEqual(captured_payloads[0]["clientJobId"], captured_payloads[1]["clientJobId"])
+        self.assertRegex(
+            captured_payloads[0]["clientJobId"],
+            r"^ocv-job-test-123-poster_001-[0-9a-f]{16}$",
+        )
+
+    def test_direct_runninghub_submit_does_not_include_client_job_id(self) -> None:
+        captured_payload = {}
+
+        class Response:
+            ok = True
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"taskId": "runninghub-task-1"}
+
+        def request(_session, _method, _url, **kwargs):
+            captured_payload.update(kwargs["json"])
+            return Response()
+
+        config = {
+            "api_key": "runninghub-key",
+            "endpoint": "text-to-image",
+            "ratio": "16:9",
+            "resolution": "1k",
+        }
+        with patch.object(visual, "_request_with_cloud_refresh", side_effect=request):
+            visual._submit_poster_request(
+                {"macro_scene_id": "poster_001", "image_prompt": "城市街道"},
+                config,
+                object(),
+            )
+
+        self.assertNotIn("clientJobId", captured_payload)
+
     def test_strict_agent2_failure_aborts_without_local_prompt_fallback(self) -> None:
         scenes = [{
             "slide_id": "scene_001",

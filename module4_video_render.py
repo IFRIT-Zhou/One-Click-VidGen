@@ -2180,6 +2180,14 @@ def _submit_poster_request(
         payload["imageUrls"] = reference_urls
         endpoint = os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
             str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
+    if config.get("cloud_pool") == "1":
+        job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip() or "desktop"
+        scene_id = str(macro.get("macro_scene_id") or "scene").strip()
+        request_fingerprint = hashlib.sha1(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        stable_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{job_id}-{scene_id}").strip("-._")
+        payload["clientJobId"] = f"ocv-{stable_prefix[:80]}-{request_fingerprint}"
     response = _request_with_cloud_refresh(
         session,
         "POST",
