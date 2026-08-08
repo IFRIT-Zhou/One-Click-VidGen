@@ -200,6 +200,62 @@ h1, h2, h3, p { margin-top: 0; }
 .asset-audio { display: block; width: 100%; height: 25px; margin-top: 7px; }
 .local-badge { background: #e8f3f0; color: var(--teal-dark); }.compose-layout { display: grid; grid-template-columns: minmax(0,1.7fr) minmax(185px,.7fr); gap: 14px; }.video-stage { position: relative; overflow: hidden; min-width: 0; border-radius: 12px; background: #081f25; aspect-ratio: 16 / 9; }.video-stage canvas { display: block; width: 100%; height: 100%; object-fit: contain; }.video-placeholder { position: absolute; inset: 0; display: grid; place-items: center; padding: 20px; color: #7e9a9d; font-size: 9px; text-align: center; }.video-placeholder.hidden { display: none; }.compose-actions { padding: 17px; border: 1px solid var(--line); border-radius: 12px; background: #f8fbfa; }.compose-actions > strong { display: block; font-size: 11px; }.compose-actions > p { margin: 8px 0 15px; color: var(--muted); font-size: 8px; line-height: 1.7; }.compose-actions .button { min-height: 39px; font-size: 8px; }.quiet-button.full { width: 100%; margin-top: 8px; }.compose-progress { min-height: 15px; margin-top: 11px; color: var(--teal-dark); font-size: 8px; font-weight: 750; }
 
+/* Studio readability: retain the dense layout while making controls and supporting copy comfortable to read. */
+.studio-page .workspace-label { font-size: 10px; }
+.studio-page .workspace-intro h1 { font-size: 28px; }
+.studio-page .workspace-intro p { font-size: 13px; }
+.studio-page .workspace-steps strong { font-size: 13px; }
+.studio-page .workspace-steps small { font-size: 10px; }
+.studio-page .workspace-help strong { font-size: 11px; }
+.studio-page .workspace-help p, .studio-page .workspace-help a { font-size: 10px; }
+.studio-page .breadcrumb { font-size: 10px; }
+.studio-page .workspace-topbar h2 { font-size: 28px; }
+.studio-page .cloud-state small { font-size: 9px; }
+.studio-page .cloud-state strong { font-size: 12px; }
+.studio-page .auth-wall h2 { font-size: 19px; }
+.studio-page .auth-wall p, .studio-page .auth-wall .button { font-size: 12px; }
+.studio-page .workspace-card-head > div > span { font-size: 9px; }
+.studio-page .workspace-card-head h3 { font-size: 19px; }
+.studio-page .counter, .studio-page .quiet-button { font-size: 11px; }
+.studio-page .script-box textarea { font-size: 15px; }
+.studio-page .script-tools, .studio-page .text-tool { font-size: 10px; }
+.studio-page .voice-loading { font-size: 11px; }
+.studio-page .voice-select strong { font-size: 12px; }
+.studio-page .voice-select small, .studio-page .voice-actions button { font-size: 9px; }
+.studio-page .voice-upload-box strong { font-size: 11px; }
+.studio-page .voice-upload-box p, .studio-page .upload-button span { font-size: 10px; }
+.studio-page .upload-form input, .studio-page .upload-form .button { font-size: 10px; }
+.studio-page .inline-message { font-size: 11px; }
+.studio-page .setting-field strong { font-size: 12px; }
+.studio-page .setting-field small { font-size: 10px; }
+.studio-page .setting-field select, .studio-page .number-input { font-size: 11px; }
+.studio-page .range-field output { font-size: 10px; }
+.studio-page #generate-storyboard { font-size: 12px; }
+.studio-page .agent-progress { font-size: 10px; }
+.studio-page .story-card input { font-size: 13px; }
+.studio-page .story-card label { font-size: 10px; }
+.studio-page .story-card textarea { font-size: 11px; }
+.studio-page .asset-progress-grid span { font-size: 9px; }
+.studio-page .asset-progress-grid strong { font-size: 11px; }
+.studio-page .asset-preview { font-size: 10px; }
+.studio-page .asset-card strong { font-size: 11px; }
+.studio-page .asset-card small { font-size: 9px; }
+.studio-page .asset-tags span { font-size: 8px; }
+.studio-page .current-task.empty strong, .studio-page .task-progress-copy > strong { font-size: 12px; }
+.studio-page .current-task.empty p, .studio-page .task-progress-copy > span, .studio-page .task-progress-copy > small { font-size: 10px; }
+.studio-page .task-progress-ring strong { font-size: 12px; }
+.studio-page .history-head, .studio-page .job-list strong, .studio-page .job-status { font-size: 10px; }
+.studio-page .job-list small { font-size: 9px; }
+.studio-page .mini-card-head, .studio-page .account-mini-card > strong, .studio-page .account-mini-card > a { font-size: 10px; }
+.studio-page .balance-row span, .studio-page .quota-row { font-size: 10px; }
+.studio-page .summary-kicker { font-size: 9px; }
+.studio-page .quote-card h3 { font-size: 19px; }
+.studio-page .quote-line, .studio-page .quote-card .button { font-size: 11px; }
+.studio-page .quote-card > p { font-size: 9px; }
+.studio-page .pool-state, .studio-page .local-badge { font-size: 10px; }
+.studio-page .compose-actions > strong { font-size: 13px; }
+.studio-page .compose-actions > p, .studio-page .compose-actions .button, .studio-page .compose-progress { font-size: 10px; }
+
 /* Motion and interaction */
 .studio-ready .workspace-sidebar { animation: enterLeft .55s cubic-bezier(.2,.8,.2,1) both; }
 .studio-ready .workspace-main { animation: enterUp .55s .08s cubic-bezier(.2,.8,.2,1) both; }
