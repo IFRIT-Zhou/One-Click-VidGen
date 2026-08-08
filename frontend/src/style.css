@@ -756,16 +756,13 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 .cloud-recharge-product { position: relative; display: grid; min-width: 0; min-height: 142px; gap: 6px; align-content: center; padding: 19px 16px; overflow: hidden; border: 1px solid rgba(148, 163, 184, .18); border-radius: 15px; background: rgba(15, 23, 42, .58); color: var(--text); text-align: left; cursor: pointer; transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease; }
 .cloud-recharge-product:hover:not(:disabled) { transform: translateY(-2px); border-color: rgba(94, 234, 212, .4); background: rgba(15, 35, 49, .78); }
 .cloud-recharge-product.selected { border-color: rgba(45, 212, 191, .82); background: linear-gradient(145deg, rgba(20, 184, 166, .18), rgba(15, 23, 42, .7)); box-shadow: inset 0 0 0 1px rgba(45, 212, 191, .16), 0 14px 34px rgba(20, 184, 166, .08); }
-.cloud-recharge-product.temporary { border-style: dashed; border-color: rgba(251, 146, 60, .5); background: rgba(124, 45, 18, .12); }
-.cloud-recharge-product.temporary.selected { border-color: #fb923c; background: rgba(154, 52, 18, .2); }
 .cloud-recharge-product:disabled { cursor: not-allowed; opacity: .66; }
 .cloud-recharge-product small { color: var(--muted); font-size: .7rem; }
 .cloud-recharge-product strong { font-size: 1.55rem; letter-spacing: -.035em; }
 .cloud-recharge-product strong em { margin-left: 3px; color: var(--soft); font-size: .7rem; font-style: normal; font-weight: 600; }
-.cloud-recharge-product > span:not(.cloud-product-badge) { color: #99f6e4; font-size: .8rem; font-weight: 750; }
+.cloud-recharge-product > span { color: #99f6e4; font-size: .8rem; font-weight: 750; }
 .cloud-recharge-product > i { position: absolute; right: 12px; bottom: 12px; display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: #2dd4bf; color: #042f2e; font-size: .7rem; font-style: normal; font-weight: 900; opacity: 0; transform: scale(.7); transition: opacity .18s ease, transform .18s ease; }
 .cloud-recharge-product.selected > i { opacity: 1; transform: scale(1); }
-.cloud-product-badge { position: absolute; top: 9px; right: 9px; padding: 3px 7px; border-radius: 999px; background: rgba(251, 146, 60, .18); color: #fdba74; font-size: .6rem; font-weight: 850; }
 .cloud-recharge-order { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 13px; align-items: center; margin-top: 17px; padding: 15px; border: 1px solid rgba(124, 219, 255, .2); border-radius: 14px; background: rgba(14, 116, 144, .08); }
 .cloud-recharge-order.paid { border-color: rgba(45, 212, 191, .34); background: rgba(20, 184, 166, .1); }
 .cloud-recharge-order.cancelled, .cloud-recharge-order.expired, .cloud-recharge-order.refunded { border-color: rgba(251, 113, 133, .28); background: rgba(159, 18, 57, .09); }

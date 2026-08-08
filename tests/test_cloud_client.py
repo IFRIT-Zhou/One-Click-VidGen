@@ -118,24 +118,24 @@ class CloudClientTest(unittest.TestCase):
     def test_recharge_products_and_order_use_authenticated_cloud_session(self) -> None:
         self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
         products = json_response({
-            "items": [{"product_id": "credits_100", "amount_fen": 10000, "credits": 100}],
+            "items": [{"product_id": "credits_20", "amount_fen": 2000, "credits": 20}],
             "test_product_enabled": False,
         })
         order = json_response({
             "order_id": "ord_1",
             "status": "pending",
-            "amount_fen": 10000,
-            "credits": 100,
+            "amount_fen": 2000,
+            "credits": 20,
             "payment": {"provider": "alipay", "payment_url": "https://openapi.alipay.com/gateway.do"},
         }, status_code=201)
         with patch("backend.app.cloud_client.requests.request", side_effect=[products, order]) as request:
             catalog = self.client.list_recharge_products()
             created = self.client.create_recharge_order(
-                {"product_id": "credits_100", "payment_provider": "alipay"},
+                {"product_id": "credits_20", "payment_provider": "alipay"},
                 idempotency_key="client-order-1",
             )
 
-        self.assertEqual(catalog["items"][0]["amount_fen"], 10000)
+        self.assertEqual(catalog["items"][0]["amount_fen"], 2000)
         self.assertEqual(created["payment"]["provider"], "alipay")
         product_call, order_call = request.call_args_list
         self.assertEqual(product_call.args[1], "https://cluster.example/api/v1/recharge/products")

@@ -118,16 +118,13 @@
   });
 
   async function loadRechargeProducts() {
-    const testOption = document.querySelector("#test-payment-product");
-    const grid = document.querySelector("#package-grid");
     try {
       const catalog = await api("/recharge/products");
       const products = new Map((catalog.items || []).map((item) => [item.product_id, item]));
       document.querySelectorAll(".package-option").forEach((option) => {
         const input = option.querySelector('input[name="package"]');
         const product = products.get(input.value);
-        const isTestProduct = option === testOption;
-        const enabled = Boolean(product && (!isTestProduct || catalog.test_product_enabled));
+        const enabled = Boolean(product);
         option.hidden = !enabled;
         if (!enabled) return;
         const price = (Number(product.amount_fen) / 100).toFixed(2);
@@ -137,17 +134,16 @@
         option.querySelector("strong").textContent = `${Number(product.credits).toLocaleString("zh-CN")} 积分`;
         option.querySelector("small").textContent = `¥${price} · ${description}`;
       });
-      const testEnabled = !testOption.hidden;
-      grid.classList.toggle("test-product-enabled", testEnabled);
-      if (!testEnabled && testOption.querySelector("input").checked) {
-        const fallback = document.querySelector('input[name="package"][value="credits_1000"]');
-        fallback.checked = true;
+      let selected = document.querySelector('input[name="package"]:checked');
+      if (!selected || selected.closest(".package-option").hidden) {
+        selected = document.querySelector('input[name="package"][value="credits_20"]')
+          || document.querySelector('.package-option:not([hidden]) input[name="package"]');
+        if (selected) selected.checked = true;
       }
-      const selected = document.querySelector('input[name="package"]:checked');
       if (selected) selected.dispatchEvent(new Event("change"));
     } catch (error) {
-      testOption.hidden = true;
-      grid.classList.remove("test-product-enabled");
+      document.querySelectorAll('input[name="package"]').forEach((input) => { input.disabled = true; });
+      showMessage(orderMessage, `无法读取充值套餐：${error.message}`, "error");
     }
   }
 

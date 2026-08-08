@@ -1942,12 +1942,11 @@
               v-for="product in cloudRechargeProducts"
               :key="product.product_id"
               class="cloud-recharge-product"
-              :class="{ selected: cloudRechargeSelectedId === product.product_id, temporary: product.temporary }"
+              :class="{ selected: cloudRechargeSelectedId === product.product_id }"
               type="button"
               :disabled="cloudRechargeBusy || cloudRechargeOrder?.status === 'pending'"
               @click="cloudRechargeSelectedId = product.product_id"
             >
-              <span v-if="product.temporary" class="cloud-product-badge">临时测试</span>
               <small>{{ cloudRechargeProductLabel(product) }}</small>
               <strong>{{ Number(product.credits).toLocaleString('zh-CN') }}<em>积分</em></strong>
               <span>¥{{ formatCloudRechargeAmount(product.amount_fen) }}</span>
@@ -3330,11 +3329,14 @@ function formatCloudRechargeAmount(amountFen) {
 }
 
 function cloudRechargeProductLabel(product) {
-  if (product?.temporary) return '支付测试包'
   return {
-    credits_100: '体验包',
-    credits_1000: '标准包',
-    credits_5000: '创作包',
+    credits_1: '轻量体验',
+    credits_5: '入门包',
+    credits_10: '基础包',
+    credits_20: '标准包',
+    credits_30: '进阶包',
+    credits_50: '创作包',
+    credits_100: '专业包',
   }[product?.product_id] || '云端积分包'
 }
 
@@ -3398,12 +3400,11 @@ async function loadCloudRechargeProducts() {
         && Number(product.amount_fen) > 0
         && Number(product.credits) > 0
       ))
-      .sort((left, right) => Number(Boolean(right.temporary)) - Number(Boolean(left.temporary)))
+      .sort((left, right) => Number(left.amount_fen) - Number(right.amount_fen))
     if (!products.length) throw new Error('云端当前没有可购买的积分套餐。')
     cloudRechargeProducts.value = products
     if (!products.some((product) => product.product_id === cloudRechargeSelectedId.value)) {
-      const preferred = products.find((product) => product.product_id === 'credits_1000')
-        || products.find((product) => !product.temporary)
+      const preferred = products.find((product) => product.product_id === 'credits_20')
         || products[0]
       cloudRechargeSelectedId.value = preferred.product_id
     }
