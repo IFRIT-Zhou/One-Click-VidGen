@@ -786,6 +786,61 @@ def ffmpeg_binary() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
+def ffprobe_binary() -> str:
+    local = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe.exe"
+    if local.exists() and os.name == "nt":
+        return str(local)
+    return shutil.which("ffprobe") or "ffprobe"
+
+
+def probe_media_duration(path: Path) -> float:
+    """Read media duration without trusting container file size."""
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise RuntimeError(f"媒体文件不存在或为空：{path}")
+    completed = subprocess.run(
+        [
+            ffprobe_binary(),
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    try:
+        duration = float((completed.stdout or "").strip())
+    except ValueError as exc:
+        detail = (completed.stderr or completed.stdout or "unknown ffprobe error").strip()
+        raise RuntimeError(f"FFprobe 无法读取媒体时长：{path.name}｜{detail}") from exc
+    if completed.returncode != 0 or duration <= 0:
+        detail = (completed.stderr or completed.stdout or "invalid duration").strip()
+        raise RuntimeError(f"FFprobe 媒体校验失败：{path.name}｜{detail}")
+    return duration
+
+
+def validate_media_duration(path: Path, expected_duration: float, *, label: str) -> dict[str, float]:
+    actual = probe_media_duration(path)
+    expected = max(0.01, float(expected_duration))
+    tolerance = max(1.5, expected * 0.005)
+    difference = abs(actual - expected)
+    if difference > tolerance:
+        raise RuntimeError(
+            f"{label}时长校验失败：成片 {actual:.2f} 秒，原音频 {expected:.2f} 秒，"
+            f"相差 {difference:.2f} 秒（允许 {tolerance:.2f} 秒）"
+        )
+    return {
+        "expected_seconds": round(expected, 3),
+        "actual_seconds": round(actual, 3),
+        "difference_seconds": round(difference, 3),
+        "tolerance_seconds": round(tolerance, 3),
+    }
+
+
 SUBTITLE_VIDEO_STYLES: dict[str, dict[str, str]] = {
     "black_white_outline": {"label": "黑字白描边", "ass": "PrimaryColour=&H00000000,OutlineColour=&H00FFFFFF,BorderStyle=1,Outline=2,Shadow=0"},
     "white_black_outline": {"label": "白字黑描边", "ass": "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0"},
@@ -1952,7 +2007,22 @@ def render_semantic_visual_video(
     )
 
 
-def copy_part_outputs(job: Job, part_index: int) -> dict[str, Path]:
+def _copy_file_atomic(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pending = target.with_name(f".{target.name}.{uuid.uuid4().hex}.pending")
+    try:
+        shutil.copy2(source, pending)
+        os.replace(pending, target)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+def copy_part_outputs(
+    job: Job,
+    part_index: int,
+    render_variant: str,
+    expected_duration: float,
+) -> dict[str, Path]:
     part_dir = JOBS_DIR / job.id / "artifacts" / "parts"
     part_dir.mkdir(parents=True, exist_ok=True)
     part_image_dir = part_dir / f"part_{part_index:03d}_images"
@@ -1982,10 +2052,20 @@ def copy_part_outputs(job: Job, part_index: int) -> dict[str, Path]:
         "visual_prompt_plan": WORKSPACE_DIR / "3_visual_template" / "visual_prompt_plan.json",
         "html": WORKSPACE_DIR / "3_visual_template" / "index.html",
     }
+    # Validate the newly rendered workspace before it is allowed to replace a
+    # previously valid part checkpoint.
+    validate_visual_coverage(
+        sources["scene_timeline"],
+        sources["poster_mapping"],
+        WORKSPACE_DIR / "3_visual_template" / "assets",
+        subtitle_path=(sources["subtitle"] if render_variant in {"subtitles", "both"} else None),
+    )
+    for key in _requested_video_keys(render_variant):
+        validate_media_duration(sources[key], expected_duration, label=f"第 {part_index} 段")
     result: dict[str, Path] = {}
     for key, source in sources.items():
         if source.exists():
-            shutil.copy2(source, copied[key])
+            _copy_file_atomic(source, copied[key])
             result[key] = copied[key]
             register_job_asset(job, copied[key], f"generation_part:{key}", {"part_index": part_index})
     source_images = WORKSPACE_DIR / "3_visual_template" / "assets"
@@ -2001,6 +2081,276 @@ def copy_part_outputs(job: Job, part_index: int) -> dict[str, Path]:
                     {"part_index": part_index},
                 )
     return result
+
+
+def long_split_checkpoint_dir(job: Job) -> Path:
+    """Persistent, job-scoped checkpoint used by long-text resume."""
+    return JOBS_DIR / job.id / "artifacts" / "long_split_source"
+
+
+def long_split_state_path(job: Job) -> Path:
+    return JOBS_DIR / job.id / "artifacts" / "long_split_state.json"
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    pending.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(pending, path)
+
+
+def load_long_split_state(job: Job) -> dict[str, Any]:
+    path = long_split_state_path(job)
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def save_long_split_state(job: Job, state: dict[str, Any]) -> None:
+    state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    _write_json_atomic(long_split_state_path(job), state)
+
+
+def initialize_long_split_state(
+    job: Job,
+    groups: list[list[dict[str, Any]]],
+    render_variant: str,
+    *,
+    resume: bool,
+) -> dict[str, Any]:
+    source_payload = [
+        {
+            "slide_id": str(item.get("slide_id") or ""),
+            "start": float(item.get("start") or 0),
+            "end": float(item.get("end") or 0),
+            "text": str(item.get("text_content") or ""),
+        }
+        for group in groups
+        for item in group
+    ]
+    source_fingerprint = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        json.dumps(source_payload, ensure_ascii=False, sort_keys=True),
+    ).hex
+    previous = load_long_split_state(job) if resume else {}
+    if (
+        previous.get("expected_parts") != len(groups)
+        or previous.get("render_variant") != render_variant
+        or previous.get("source_fingerprint") != source_fingerprint
+    ):
+        previous = {}
+    parts = dict(previous.get("parts") or {})
+    for index, group in enumerate(groups, 1):
+        key = f"part_{index:03d}"
+        start = min(float(item.get("start") or 0) for item in group)
+        end = max(float(item.get("end") or start + 0.2) for item in group)
+        expected_ids = [str(item.get("slide_id") or "") for item in group]
+        old = dict(parts.get(key) or {})
+        old.update({
+            "part_index": index,
+            "start_seconds": round(start, 3),
+            "end_seconds": round(end, 3),
+            "expected_duration_seconds": round(end - start, 3),
+            "expected_slide_ids": expected_ids,
+        })
+        old.setdefault("status", "not_started")
+        old.setdefault("validations", {})
+        parts[key] = old
+    state = {
+        "schema_version": 1,
+        "job_id": job.id,
+        "render_variant": render_variant,
+        "source_fingerprint": source_fingerprint,
+        "expected_parts": len(groups),
+        "overall_status": "in_progress",
+        "parts": parts,
+    }
+    save_long_split_state(job, state)
+    return state
+
+
+def update_long_split_part_state(
+    job: Job,
+    state: dict[str, Any],
+    part_index: int,
+    status: str,
+    *,
+    validations: dict[str, Any] | None = None,
+) -> None:
+    allowed = {"not_started", "agent_completed", "images_completed", "video_completed"}
+    if status not in allowed:
+        raise ValueError(f"unknown long split state: {status}")
+    key = f"part_{part_index:03d}"
+    part = dict((state.get("parts") or {}).get(key) or {"part_index": part_index})
+    part["status"] = status
+    if validations is not None:
+        part["validations"] = validations
+    part["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    state.setdefault("parts", {})[key] = part
+    save_long_split_state(job, state)
+
+
+def _requested_video_keys(render_variant: str) -> tuple[str, ...]:
+    return {
+        "subtitles": ("video_with_subtitles",),
+        "raw": ("video_raw",),
+        "both": ("video_with_subtitles", "video_raw"),
+    }.get(render_variant, ("video_with_subtitles", "video_raw"))
+
+
+def _parse_srt_texts(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    content = path.read_text(encoding="utf-8-sig", errors="replace").strip()
+    if not content:
+        return []
+    texts: list[str] = []
+    for block in re.split(r"\r?\n\s*\r?\n", content):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) >= 3 and "-->" in lines[1]:
+            texts.append("\n".join(lines[2:]).strip())
+    return texts
+
+
+def validate_visual_coverage(
+    timeline_path: Path,
+    mapping_path: Path,
+    image_dir: Path,
+    *,
+    subtitle_path: Path | None,
+) -> dict[str, Any]:
+    timeline = _json_list(timeline_path)
+    mapping = _json_list(mapping_path)
+    expected_ids = [str(item.get("slide_id") or "").strip() for item in timeline]
+    expected_ids = [value for value in expected_ids if value]
+    if not expected_ids:
+        raise RuntimeError(f"画面覆盖校验失败：时间轴为空（{timeline_path.name}）")
+    covered_ids = [
+        str(slide_id).strip()
+        for item in mapping
+        for slide_id in (item.get("includes_slides") or [])
+        if str(slide_id).strip()
+    ]
+    missing = [value for value in expected_ids if value not in covered_ids]
+    extras = [value for value in covered_ids if value not in expected_ids]
+    duplicates = sorted({value for value in covered_ids if covered_ids.count(value) > 1})
+    if covered_ids != expected_ids or missing or extras or duplicates:
+        raise RuntimeError(
+            "画面映射未完整覆盖全文："
+            f"缺失 {missing[:8] or '无'}，重复 {duplicates[:8] or '无'}，越界 {extras[:8] or '无'}"
+        )
+    available_images = {
+        path.stem for path in image_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    } if image_dir.is_dir() else set()
+    poster_ids = [str(item.get("macro_scene_id") or "").strip() for item in mapping]
+    missing_images = [
+        value
+        for value in poster_ids
+        if value and not any(stem == value or stem.startswith(f"{value}_") for stem in available_images)
+    ]
+    if missing_images:
+        raise RuntimeError(f"画面文件不完整，缺少：{missing_images[:8]}")
+    subtitle_checked = subtitle_path is not None
+    if subtitle_checked:
+        expected_texts = [str(item.get("text_content") or "").strip() for item in timeline]
+        expected_texts = [value for value in expected_texts if value]
+        subtitle_texts = _parse_srt_texts(subtitle_path)
+        if subtitle_texts != expected_texts:
+            raise RuntimeError(
+                f"字幕未完整覆盖校对后全文：时间轴 {len(expected_texts)} 句，SRT {len(subtitle_texts)} 句"
+            )
+    return {
+        "timeline_slide_count": len(expected_ids),
+        "covered_slide_count": len(covered_ids),
+        "poster_count": len(mapping),
+        "subtitle_checked": subtitle_checked,
+    }
+
+
+def validate_saved_part(
+    job: Job,
+    part_index: int,
+    render_variant: str,
+    expected_duration: float,
+) -> tuple[dict[str, Path], dict[str, Any]]:
+    part_dir = JOBS_DIR / job.id / "artifacts" / "parts"
+    outputs = {
+        "video_with_subtitles": part_dir / f"part_{part_index:03d}_with_subtitles.mp4",
+        "video_raw": part_dir / f"part_{part_index:03d}_raw.mp4",
+    }
+    required = _requested_video_keys(render_variant)
+    if not all(outputs[key].is_file() and outputs[key].stat().st_size > 0 for key in required):
+        raise RuntimeError(f"第 {part_index} 段请求的成片版本不完整")
+    coverage = validate_visual_coverage(
+        part_dir / f"part_{part_index:03d}_scene_timeline.json",
+        part_dir / f"part_{part_index:03d}_poster_mapping.json",
+        part_dir / f"part_{part_index:03d}_images",
+        subtitle_path=(
+            part_dir / f"part_{part_index:03d}.srt"
+            if render_variant in {"subtitles", "both"}
+            else None
+        ),
+    )
+    durations = {
+        key: validate_media_duration(outputs[key], expected_duration, label=f"第 {part_index} 段")
+        for key in required
+    }
+    return {key: outputs[key] for key in required}, {"coverage": coverage, "durations": durations}
+
+
+def restore_long_split_checkpoint(job: Job) -> Path | None:
+    """Restore the full timeline before resume can inspect a leftover part timeline.
+
+    Older jobs wrote this checkpoint into the shared workspace.  That location is
+    accepted only when this exact job already owns completed part artifacts, which
+    avoids borrowing an unrelated job's shared checkpoint.
+    """
+    candidates = [long_split_checkpoint_dir(job)]
+    legacy_dir = WORKSPACE_DIR / "temp_chunks" / "long_split_source"
+    parts_dir = JOBS_DIR / job.id / "artifacts" / "parts"
+    if parts_dir.is_dir() and any(parts_dir.glob("part_*_*.mp4")):
+        candidates.append(legacy_dir)
+    for source_dir in candidates:
+        full_audio = source_dir / "final_output.full.wav"
+        full_srt = source_dir / "final_short.full.srt"
+        full_timeline = source_dir / "scene_timeline.full.json"
+        if not all(path.is_file() and path.stat().st_size > 0 for path in (full_audio, full_srt, full_timeline)):
+            continue
+        audio_dir = WORKSPACE_DIR / "2_audio_srt"
+        visual_dir = WORKSPACE_DIR / "3_visual_template"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        visual_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(full_audio, audio_dir / "final_output.wav")
+        shutil.copy2(full_srt, audio_dir / "final_short.srt")
+        shutil.copy2(full_timeline, visual_dir / "scene_timeline.json")
+        persistent_dir = long_split_checkpoint_dir(job)
+        if source_dir != persistent_dir:
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source_dir, persistent_dir, dirs_exist_ok=True)
+            return persistent_dir
+        return source_dir
+    return None
+
+
+def reusable_part_outputs(
+    job: Job,
+    part_index: int,
+    render_variant: str,
+    expected_duration: float | None = None,
+) -> dict[str, Path]:
+    """Reuse a part only after coverage and duration validations pass again."""
+    if expected_duration is None:
+        return {}
+    try:
+        outputs, _validations = validate_saved_part(job, part_index, render_variant, expected_duration)
+    except RuntimeError:
+        return {}
+    return outputs
 
 
 def _json_list(path: Path) -> list[dict[str, Any]]:
@@ -2225,6 +2575,9 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
 
     try:
+        split_state = long_split_state_path(job)
+        if split_state.is_file():
+            shutil.copy2(split_state, other_dir / "long_split_state.json")
         script_path = JOBS_DIR / job.id / "script.txt"
         fallback_script = WORKSPACE_DIR / "1_original_text.txt"
         selected_script = script_path if script_path.is_file() and script_path.stat().st_size else fallback_script
@@ -2446,36 +2799,105 @@ def organize_subtitle_output(job: Job) -> Path:
     return output_dir
 
 
-def concat_videos(job: Job, store: JobStore, inputs: list[Path], output: Path, label: str) -> None:
+def concat_videos(
+    job: Job,
+    store: JobStore,
+    inputs: list[Path],
+    output: Path,
+    label: str,
+    *,
+    expected_duration: float | None = None,
+) -> dict[str, float]:
     if not inputs:
-        return
+        raise RuntimeError(f"{label}没有可拼接的有效分段")
     output.parent.mkdir(parents=True, exist_ok=True)
-    list_path = output.with_suffix(".concat.txt")
+    token = uuid.uuid4().hex
+    list_path = output.with_name(f".{output.stem}.{token}.concat.txt")
+    pending_output = output.with_name(f".{output.stem}.{token}.pending{output.suffix}")
     lines = []
     for path in inputs:
         escaped = path.resolve().as_posix().replace("'", "'\\''")
         lines.append(f"file '{escaped}'")
     list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    run_command(
-        job,
-        store,
-        [
-            ffmpeg_binary(),
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(list_path),
-            "-c",
-            "copy",
-            str(output),
-        ],
-        label,
-    )
-    list_path.unlink(missing_ok=True)
+    try:
+        run_command(
+            job,
+            store,
+            [
+                ffmpeg_binary(),
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(list_path),
+                "-c",
+                "copy",
+                str(pending_output),
+            ],
+            label,
+        )
+        duration_target = expected_duration
+        if duration_target is None:
+            duration_target = sum(probe_media_duration(path) for path in inputs)
+        validation = validate_media_duration(pending_output, duration_target, label=label)
+        os.replace(pending_output, output)
+    finally:
+        list_path.unlink(missing_ok=True)
+        pending_output.unlink(missing_ok=True)
     register_job_asset(job, output, f"generation_artifact:{label}")
+    return validation
+
+
+def require_validated_output(job: Job, request: dict[str, Any]) -> None:
+    """Validate final output before archive, completion, or workspace cleanup."""
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    path = long_split_state_path(job)
+    if not path.is_file():
+        coverage = validate_visual_coverage(
+            WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
+            WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+            WORKSPACE_DIR / "3_visual_template" / "assets",
+            subtitle_path=(
+                WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
+                if render_variant in {"subtitles", "both"}
+                else None
+            ),
+        )
+        audio_duration = probe_media_duration(WORKSPACE_DIR / "2_audio_srt" / "final_output.wav")
+        for key in _requested_video_keys(render_variant):
+            final_path = (
+                FINAL_DIR / "final_with_subtitles.mp4"
+                if key == "video_with_subtitles"
+                else FINAL_DIR / "final_raw_presentation.mp4"
+            )
+            validate_media_duration(final_path, audio_duration, label="最终成片")
+        return
+    state = load_long_split_state(job)
+    expected = int(state.get("expected_parts") or 0)
+    parts = state.get("parts") or {}
+    completed = [
+        key for key, value in parts.items()
+        if str((value or {}).get("status")) == "video_completed"
+    ]
+    if expected <= 0 or len(parts) != expected or len(completed) != expected:
+        raise RuntimeError(
+            f"长文任务完整性校验失败：应完成 {expected} 段，已验证 {len(completed)} 段；"
+            "不会显示全部完成，也不会清理 workspace"
+        )
+    if state.get("overall_status") != "validated":
+        raise RuntimeError("长文最终成片尚未通过时长校验，已保留旧成片与 workspace")
+    audio_duration = probe_media_duration(WORKSPACE_DIR / "2_audio_srt" / "final_output.wav")
+    for key in _requested_video_keys(render_variant):
+        final_path = (
+            FINAL_DIR / "final_with_subtitles.mp4"
+            if key == "video_with_subtitles"
+            else FINAL_DIR / "final_raw_presentation.mp4"
+        )
+        validate_media_duration(final_path, audio_duration, label="长文最终成片")
 
 
 @contextmanager
@@ -2554,7 +2976,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         render_semantic_visual_video(job, store, request, resume=resume, story_plan_path=story_plan_path)
         return
 
-    source_dir = WORKSPACE_DIR / "temp_chunks" / "long_split_source"
+    source_dir = long_split_checkpoint_dir(job)
     source_dir.mkdir(parents=True, exist_ok=True)
     global_story_context = source_dir / "story_context.full.json"
     global_story_plan = source_dir / "story_plan.full.json"
@@ -2619,10 +3041,17 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     shutil.copy2(WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json", full_timeline)
     store.log(job, "Agent 1：所有视频分段将共用同一份全文故事上下文")
 
+    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+    if render_variant not in {"subtitles", "raw", "both"}:
+        render_variant = "both"
+    split_state = initialize_long_split_state(job, groups, render_variant, resume=resume)
     part_with_subtitles: list[Path] = []
     part_raw: list[Path] = []
     for index, group in enumerate(groups, 1):
         store.raise_if_cancelled(job)
+        group_start = min(float(item.get("start") or 0) for item in group)
+        group_end = max(float(item.get("end") or group_start + 0.2) for item in group)
+        expected_part_duration = group_end - group_start
         progress = min(84, 50 + int(index / len(groups) * 34))
         store.update(
             job,
@@ -2630,6 +3059,24 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             progress=progress,
             message=f"长文分段渲染 {index}/{len(groups)}",
         )
+        if resume:
+            reusable = reusable_part_outputs(job, index, render_variant, expected_part_duration)
+            if reusable:
+                _validated_outputs, validations = validate_saved_part(
+                    job, index, render_variant, expected_part_duration
+                )
+                update_long_split_part_state(
+                    job, split_state, index, "video_completed", validations=validations
+                )
+                store.log(job, f"分段状态 {index}/{len(groups)}：视频完成（已复验并复用）")
+                if "video_with_subtitles" in reusable:
+                    part_with_subtitles.append(reusable["video_with_subtitles"])
+                if "video_raw" in reusable:
+                    part_raw.append(reusable["video_raw"])
+                store.log(job, f"断点续跑：第 {index}/{len(groups)} 段已完整生成，直接复用并加入最终拼接")
+                continue
+        if resume:
+            update_long_split_part_state(job, split_state, index, "not_started", validations={})
         normalized, start, end = normalize_segment_scenes(group)
         segment_plan_path = source_dir / f"story_plan.part_{index:03d}.json"
         segment_plan = project_global_agent1_plan_to_segment(
@@ -2660,16 +3107,71 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             f"切分第 {index} 段音频",
         )
         store.log(job, f"开始渲染第 {index}/{len(groups)} 段: {start:.2f}s - {end:.2f}s")
-        render_semantic_visual_video(
-            job,
-            store,
-            request,
-            resume=resume,
-            story_plan_path=segment_plan_path,
-            story_plan_is_global=segment_plan_is_global,
-            apply_bgm=False,
+        try:
+            render_semantic_visual_video(
+                job,
+                store,
+                request,
+                resume=resume,
+                story_plan_path=segment_plan_path,
+                story_plan_is_global=segment_plan_is_global,
+                apply_bgm=False,
+            )
+        except Exception:
+            # Module 4 may already be complete when module 5 fails.  Preserve
+            # that truthful checkpoint instead of leaving the part as Agent-only.
+            try:
+                visual_validation = validate_visual_coverage(
+                    WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
+                    WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+                    WORKSPACE_DIR / "3_visual_template" / "assets",
+                    subtitle_path=(
+                        WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
+                        if render_variant in {"subtitles", "both"}
+                        else None
+                    ),
+                )
+                update_long_split_part_state(job, split_state, index, "agent_completed")
+                store.log(job, f"分段状态 {index}/{len(groups)}：Agent 完成")
+                update_long_split_part_state(
+                    job,
+                    split_state,
+                    index,
+                    "images_completed",
+                    validations={"coverage": visual_validation},
+                )
+                store.log(job, f"分段状态 {index}/{len(groups)}：图片完成，等待视频重试")
+            except (OSError, ValueError, RuntimeError):
+                pass
+            raise
+        update_long_split_part_state(job, split_state, index, "agent_completed")
+        store.log(job, f"分段状态 {index}/{len(groups)}：Agent 完成")
+        visual_validation = validate_visual_coverage(
+            WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
+            WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+            WORKSPACE_DIR / "3_visual_template" / "assets",
+            subtitle_path=(
+                WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
+                if render_variant in {"subtitles", "both"}
+                else None
+            ),
         )
-        copied = copy_part_outputs(job, index)
+        update_long_split_part_state(
+            job,
+            split_state,
+            index,
+            "images_completed",
+            validations={"coverage": visual_validation},
+        )
+        store.log(job, f"分段状态 {index}/{len(groups)}：图片完成")
+        copied = copy_part_outputs(job, index, render_variant, expected_part_duration)
+        _validated_outputs, validations = validate_saved_part(
+            job, index, render_variant, expected_part_duration
+        )
+        update_long_split_part_state(
+            job, split_state, index, "video_completed", validations=validations
+        )
+        store.log(job, f"分段状态 {index}/{len(groups)}：视频完成并通过时长/覆盖校验")
         if "video_with_subtitles" in copied:
             part_with_subtitles.append(copied["video_with_subtitles"])
         if "video_raw" in copied:
@@ -2686,11 +3188,22 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         shutil.copy2(global_story_plan, WORKSPACE_DIR / "3_visual_template" / "story_plan.json")
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     store.update(job, step="render", progress=88, message="拼接分段视频")
-    render_variant = str(request.get("video_render_variant") or "both").strip().lower()
-    if render_variant not in {"subtitles", "raw", "both"}:
-        render_variant = "both"
+    expected_parts = len(groups)
+    incomplete_parts = [
+        key
+        for key, value in (split_state.get("parts") or {}).items()
+        if str((value or {}).get("status")) != "video_completed"
+    ]
+    if incomplete_parts:
+        raise RuntimeError(f"长文分段状态校验失败，尚未完成：{', '.join(incomplete_parts)}")
+    full_audio_duration = probe_media_duration(full_audio)
+    final_validations: dict[str, Any] = {}
+    if render_variant in {"subtitles", "both"} and len(part_with_subtitles) != expected_parts:
+        raise RuntimeError(f"长文字幕版分段不完整：应有 {expected_parts} 段，实际 {len(part_with_subtitles)} 段；已停止归档")
+    if render_variant in {"raw", "both"} and len(part_raw) != expected_parts:
+        raise RuntimeError(f"长文纯净版分段不完整：应有 {expected_parts} 段，实际 {len(part_raw)} 段；已停止归档")
     if render_variant in {"subtitles", "both"}:
-        concat_videos(
+        final_validations["video_with_subtitles"] = concat_videos(
             job,
             store,
             part_with_subtitles,
@@ -2698,7 +3211,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             "拼接字幕版分段视频",
         )
     if render_variant in {"raw", "both"}:
-        concat_videos(
+        final_validations["video_raw"] = concat_videos(
             job,
             store,
             part_raw,
@@ -2706,11 +3219,35 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             "拼接纯净版分段视频",
         )
     mix_final_videos_with_bgm(job, store, request)
+    for key in _requested_video_keys(render_variant):
+        final_path = (
+            FINAL_DIR / "final_with_subtitles.mp4"
+            if key == "video_with_subtitles"
+            else FINAL_DIR / "final_raw_presentation.mp4"
+        )
+        final_validations[key] = validate_media_duration(
+            final_path, full_audio_duration, label="长文最终成片"
+        )
+    split_state["overall_status"] = "validated"
+    split_state["final_validations"] = final_validations
+    save_long_split_state(job, split_state)
+    subtitle_note = (
+        "字幕与画面映射"
+        if render_variant in {"subtitles", "both"}
+        else "画面映射（纯净版已跳过字幕校验）"
+    )
+    store.log(
+        job,
+        f"长文完整性校验通过：{expected_parts}/{expected_parts} 段视频完成，"
+        f"{subtitle_note}覆盖全文，最终时长与原音频一致",
+    )
     store.log(job, "分段视频已按顺序拼接完成")
 
 
 def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, Any]) -> None:
     store.raise_if_cancelled(job)
+    require_validated_output(job, request)
+    store.log(job, "归档前完整性校验通过；允许生成最终产物")
     store.update(job, step="archive", progress=96, message=STEPS[6][1])
     output_dir = organize_project_output(job, request)
     store.raise_if_cancelled(job)
@@ -2779,6 +3316,10 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     module1_srt_path = WORKSPACE_DIR / "2_audio_srt" / "final_output.srt"
     subtitle_path = WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
     scene_timeline_path = WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json"
+    if resume:
+        restored_checkpoint = restore_long_split_checkpoint(job)
+        if restored_checkpoint is not None:
+            store.log(job, f"断点续跑：已恢复长文全文检查点，避免将失败时的小段误判为完整任务: {restored_checkpoint}")
     skip_existing_tts = (
         resume
         and audio_path.is_file()

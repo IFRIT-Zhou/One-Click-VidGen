@@ -246,6 +246,26 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.api-key-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.api-key-hints code {
+  max-width: 100%;
+  padding: 2px 5px;
+  overflow: hidden;
+  border: 1px solid rgba(153, 246, 228, 0.18);
+  border-radius: 5px;
+  color: #b8fff3;
+  background: rgba(2, 44, 52, 0.38);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .api-key-state-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .api-key-state-bar > button,
 .api-key-state-actions button {

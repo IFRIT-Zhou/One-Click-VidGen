@@ -292,10 +292,16 @@ def build_direct_filter_script(
     return ";\n".join(lines), previous
 
 
-def _run_ffmpeg_with_progress(command: list[str], total_duration: float, phase_label: str) -> tuple[int, str]:
+def _run_ffmpeg_with_progress(
+    command: list[str],
+    total_duration: float,
+    phase_label: str,
+    *,
+    cwd: Path | None = None,
+) -> tuple[int, str]:
     process = subprocess.Popen(
         command,
-        cwd=PROJECT_ROOT,
+        cwd=cwd or PROJECT_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -359,8 +365,14 @@ def render_direct_raw_video(
             except OSError:
                 shutil.copy2(source, staged)
             staged_inputs.append(staged)
+        staged_audio = temp_dir / "audio.wav"
+        try:
+            os.link(audio_path, staged_audio)
+        except OSError:
+            shutil.copy2(audio_path, staged_audio)
         script_path = temp_dir / "filter.txt"
         script_path.write_text(filter_script, encoding="utf-8")
+        staged_output = temp_dir / "rendered.mp4"
         for use_nvenc in dict.fromkeys(attempts):
             label = "NVENC" if use_nvenc else "x264"
             command = [str(PORTABLE_FFMPEG), "-y", "-hide_banner", "-loglevel", "error"]
@@ -368,10 +380,14 @@ def render_direct_raw_video(
                 start = float(timeline[index]["start"])
                 next_start = float(timeline[index + 1]["start"]) if index + 1 < len(timeline) else total_duration
                 duration = max(1 / fps, next_start - start + (fade_duration if index + 1 < len(timeline) else 0))
-                command.extend(["-loop", "1", "-framerate", str(fps), "-t", f"{duration:.6f}", "-i", str(staged)])
+                # Keep every FFmpeg input relative to temp_dir.  On Windows the
+                # complete CreateProcess command line is limited to 32,767
+                # characters.  Repeating the absolute render workspace path for
+                # hundreds of posters used to trigger WinError 206 on long videos.
+                command.extend(["-loop", "1", "-framerate", str(fps), "-t", f"{duration:.6f}", "-i", staged.name])
             audio_index = len(staged_inputs)
             command.extend([
-                "-i", str(audio_path), "-filter_complex_script", str(script_path),
+                "-i", staged_audio.name, "-filter_complex_script", script_path.name,
                 "-map", f"[{output_label}]", "-map", f"{audio_index}:a:0",
                 "-c:a", "aac", "-b:a", "192k", "-t", f"{total_duration:.6f}",
                 "-movflags", "+faststart", "-progress", "pipe:1", "-nostats",
@@ -380,10 +396,19 @@ def render_direct_raw_video(
                 command.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0"])
             else:
                 command.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
-            command.append(str(output))
+            staged_output.unlink(missing_ok=True)
+            command.append(staged_output.name)
             print(f"开始: 纯净版（FFmpeg 直出，{label}）", flush=True)
-            return_code, output_tail = _run_ffmpeg_with_progress(command, total_duration, "纯净版")
-            if return_code == 0 and output.is_file() and output.stat().st_size > 0:
+            return_code, output_tail = _run_ffmpeg_with_progress(
+                command,
+                total_duration,
+                "纯净版",
+                cwd=temp_dir,
+            )
+            if return_code == 0 and staged_output.is_file() and staged_output.stat().st_size > 0:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.unlink(missing_ok=True)
+                shutil.move(str(staged_output), str(output))
                 print(f"[纯净版] 100% Render complete", flush=True)
                 print(f"完成: 纯净版（FFmpeg 直出，{label}）", flush=True)
                 return

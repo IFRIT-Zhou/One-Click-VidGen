@@ -779,6 +779,22 @@ def _common_api_keys(values: dict[str, str]) -> list[str]:
     ])
 
 
+def _masked_api_key(value: str) -> str:
+    """Return a stable, non-reversible display hint without exposing the key."""
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 6:
+        return f"{key[:1]}••••{key[-1:]}"
+    if len(key) <= 12:
+        return f"{key[:3]}••••{key[-3:]}"
+    return f"{key[:6]}••••{key[-4:]}"
+
+
+def _masked_api_keys(values: list[str]) -> list[str]:
+    return [hint for hint in (_masked_api_key(value) for value in values) if hint]
+
+
 def _api_key_status() -> dict[str, Any]:
     values = _parse_env_lines(PROJECT_ROOT / ".env")
     image_keys = _runninghub_api_keys(values)
@@ -792,20 +808,43 @@ def _api_key_status() -> dict[str, Any]:
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
         provider = "gemini"
     selected = LANGUAGE_PROVIDER_OPTIONS[provider]
+    provider_statuses = []
+    for name, config in LANGUAGE_PROVIDER_OPTIONS.items():
+        provider_key = str(values.get(config["key_env"], "")).strip()
+        provider_statuses.append({
+            "value": name,
+            "label": config["label"],
+            "configured": bool(provider_key),
+            "count": 1 if provider_key else 0,
+            "key_hints": _masked_api_keys([provider_key]),
+        })
+    selected_key = str(values.get(selected["key_env"], "")).strip()
+    qwen_tts_key = str(values.get("DASHSCOPE_API_KEY", "")).strip()
     return {
         "language": {
-            "configured": bool(values.get(selected["key_env"], "").strip()),
+            "configured": bool(selected_key),
+            "count": 1 if selected_key else 0,
+            "key_hints": _masked_api_keys([selected_key]),
             "provider": provider,
             "provider_label": selected["label"],
             "model": str(values.get(selected["model_env"]) or selected["default_model"]),
-            "providers": [
-                {"value": name, "label": config["label"], "configured": bool(values.get(config["key_env"], "").strip())}
-                for name, config in LANGUAGE_PROVIDER_OPTIONS.items()
-            ],
+            "providers": provider_statuses,
         },
-        "image": {"configured": bool(image_keys), "count": len(image_keys)},
-        "common": {"configured": bool(common_keys), "count": len(common_keys)},
-        "qwen_tts": {"configured": bool(values.get("DASHSCOPE_API_KEY", "").strip())},
+        "image": {
+            "configured": bool(image_keys),
+            "count": len(image_keys),
+            "key_hints": _masked_api_keys(image_keys),
+        },
+        "common": {
+            "configured": bool(common_keys),
+            "count": len(common_keys),
+            "key_hints": _masked_api_keys(common_keys),
+        },
+        "qwen_tts": {
+            "configured": bool(qwen_tts_key),
+            "count": 1 if qwen_tts_key else 0,
+            "key_hints": _masked_api_keys([qwen_tts_key]),
+        },
     }
 
 

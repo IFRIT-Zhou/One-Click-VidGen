@@ -76,7 +76,11 @@
           </select>
           <input v-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
           <div v-else class="api-key-state-bar" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
-            <span><strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} 已配置`) }}</strong><small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small></span>
+            <span>
+              <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · 已配置 1 个`) }}</strong>
+              <small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small>
+              <span v-else-if="!form.use_cloud_image_pool" class="api-key-hints"><code v-for="hint in currentLanguageProvider.key_hints || []" :key="hint">{{ hint }}</code></span>
+            </span>
             <button type="button" :disabled="form.use_cloud_image_pool" :title="`重新输入 ${currentLanguageProviderLabel} API Key`" @click="editApiKey('language')">✏️</button>
           </div>
         </div>
@@ -94,7 +98,11 @@
             </div>
           </template>
           <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.image }">
-            <span><strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small></span>
+            <span>
+              <strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : `已配置 ${apiKeyStatus.image?.count || 0} 个出图账号` }}</strong>
+              <small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small>
+              <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.image?.key_hints || []" :key="hint">{{ hint }}</code></span>
+            </span>
             <div class="api-key-state-actions">
               <button type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
               <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入图像模型 API Key" @click="editApiKey('image')">✏️</button>
@@ -115,7 +123,11 @@
             </div>
           </template>
           <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.common }">
-            <span><strong>{{ apiKeyRuntimeErrors.common ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.common">{{ apiKeyRuntimeErrors.common }}</small></span>
+            <span>
+              <strong>{{ apiKeyRuntimeErrors.common ? 'ERROR' : `已配置 ${apiKeyStatus.common?.count || 0} 个通用账号` }}</strong>
+              <small v-if="apiKeyRuntimeErrors.common">{{ apiKeyRuntimeErrors.common }}</small>
+              <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.common?.key_hints || []" :key="hint">{{ hint }}</code></span>
+            </span>
             <div class="api-key-state-actions">
               <button type="button" :disabled="form.use_cloud_image_pool" title="新增通用并行账号" @click="addApiKeyAccount('common')">＋</button>
               <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入通用 API Key" @click="editApiKey('common')">✏️</button>
@@ -554,8 +566,12 @@
                 <label v-if="apiKeyFieldOpen('qwen_tts')" class="qwen-key-field">
                   <input v-model="apiKeyForm.qwen_tts_api_key" type="password" autocomplete="off" placeholder="DashScope API Key（sk-...）" />
                 </label>
-                <div v-else class="api-key-state-bar qwen-key-state" :class="{ error: apiKeyRuntimeErrors.qwen_tts }">
-                  <span><strong>{{ apiKeyRuntimeErrors.qwen_tts ? 'ERROR' : 'API 已配置' }}</strong><small v-if="apiKeyRuntimeErrors.qwen_tts">{{ apiKeyRuntimeErrors.qwen_tts }}</small></span>
+          <div v-else class="api-key-state-bar qwen-key-state" :class="{ error: apiKeyRuntimeErrors.qwen_tts }">
+            <span>
+              <strong>{{ apiKeyRuntimeErrors.qwen_tts ? 'ERROR' : 'API 已配置' }}</strong>
+              <small v-if="apiKeyRuntimeErrors.qwen_tts">{{ apiKeyRuntimeErrors.qwen_tts }}</small>
+              <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.qwen_tts?.key_hints || []" :key="hint">{{ hint }}</code></span>
+            </span>
                   <button type="button" title="重新输入 Qwen-TTS API Key" @click="editApiKey('qwen_tts')">✏️</button>
                 </div>
                 <div class="qwen-voice-controls">

@@ -521,6 +521,72 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("林晚", call["system_prompt"])
         self.assertIn("黑色短发", call["system_prompt"])
 
+    def test_agent_two_retries_an_incomplete_json_batch_before_failing(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001", "start": 0, "end": 5,
+            "text_content": "她推开走廊尽头的门。",
+        }]
+        complete = '[{"includes_slides":["scene_001"],"image_prompt":"女人推开旧门"}]'
+        with (
+            patch.object(visual, "generate_gemini_text", side_effect=["[]", complete]) as generate,
+            patch.dict(os.environ, {
+                "REQUIRE_AI_AGENT_SUCCESS": "1",
+                "AGENT2_PLAN_MAX_ATTEMPTS": "3",
+            }, clear=False),
+        ):
+            mapping = visual._plan_mapping_batch(scenes, "系统提示", "长文批次 5/7")
+        self.assertEqual(len(mapping or []), 1)
+        self.assertEqual(generate.call_count, 2)
+
+    def test_agent_two_splits_a_persistently_truncated_batch_on_group_boundaries(self) -> None:
+        groups = [
+            [{"slide_id": "scene_001", "start": 0, "end": 5, "text_content": "第一组"}],
+            [{"slide_id": "scene_002", "start": 5, "end": 10, "text_content": "第二组"}],
+        ]
+        first = '[{"includes_slides":["scene_001"],"image_prompt":"第一个独立镜头"}]'
+        second = '[{"includes_slides":["scene_002"],"image_prompt":"第二个独立镜头"}]'
+        with (
+            patch.object(visual, "generate_gemini_text", side_effect=["[]", "[]", "[]", first, second]),
+            patch.dict(os.environ, {
+                "REQUIRE_AI_AGENT_SUCCESS": "1",
+                "AGENT2_PLAN_MAX_ATTEMPTS": "3",
+            }, clear=False),
+        ):
+            mapping = visual._plan_mapping_groups_resilient(groups, "系统提示", "长文批次 5/7", {})
+        self.assertEqual([item["includes_slides"] for item in mapping or []], [
+            ["scene_001"], ["scene_002"],
+        ])
+
+    def test_repeated_model_terms_do_not_duplicate_one_screen_insert(self) -> None:
+        scenes = [
+            {"slide_id": "scene_001", "start": 0, "end": 3, "text_content": "H3与Seedance的生产成本需要客观比较。"},
+            {"slide_id": "scene_002", "start": 3, "end": 6, "text_content": "电脑屏幕上显示RunningHub的H3工作流页面。"},
+            {"slide_id": "scene_003", "start": 6, "end": 9, "text_content": "H3的int8参数更适合家用显卡。"},
+            {"slide_id": "scene_004", "start": 9, "end": 12, "text_content": "之后会把这套工作流同步给用户。"},
+        ]
+        mapping = [
+            {"includes_slides": [scene["slide_id"]], "image_prompt": f"独立创意镜头 {index}"}
+            for index, scene in enumerate(scenes, 1)
+        ]
+        story_plan = {
+            "key_information_objects": [{
+                "object_id": "workflow", "device_type": "电脑显示器",
+                "content": "RunningHub平台上的MiniMax H3工作流页面",
+            }],
+            "semantic_units": [{
+                "start_slide_id": "scene_001", "end_slide_id": "scene_004",
+                "device_shot_mode": "screen_insert", "device_type": "电脑显示器",
+                "screen_content": "RunningHub平台上的MiniMax H3工作流页面",
+            }],
+        }
+        result = visual._finalize_mapping(mapping, scenes, story_plan)
+        self.assertEqual([item["device_shot_mode"] for item in result], [
+            "none", "screen_insert", "none", "none",
+        ])
+        self.assertIn("独立创意镜头 1", result[0]["image_prompt"])
+        self.assertIn("独立创意镜头 3", result[2]["image_prompt"])
+        self.assertIn("独立创意镜头 4", result[3]["image_prompt"])
+
     def test_character_reference_marker_is_explicit_and_safe_by_default(self) -> None:
         scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
         without_marker = visual._normalize_mapping(

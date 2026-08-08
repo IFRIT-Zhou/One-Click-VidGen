@@ -1239,60 +1239,105 @@ def _plan_mapping_batch(
         "当前随身物品；严禁把‘前期/后期’、‘居家服或骑行服’等多个阶段同时写进一张图。"
         "用户画风中明确写出的主角年龄、发型、帽子等要求高于 Agent 1 的推断，不得改写。"
     )
-    try:
-        response = generate_gemini_text(
-            system_prompt=runtime_prompt,
-            user_prompt=json.dumps({"scenes": scenes, "required_groups": required_slide_groups}, ensure_ascii=False),
-            temperature=0.3,
-            response_mime_type="application/json",
-        )
-        mapping = _normalize_mapping(parse_json_response(response), scenes, required_slide_groups)
-        if mapping and any(_multi_moment_prompt_risk(item["image_prompt"]) for item in mapping):
-            print(f"Gemini {batch_label} 检测到多时刻/多格构图风险，正在自动收束为单镜头。", flush=True)
-            revision = generate_gemini_text(
-                system_prompt=runtime_prompt,
-                user_prompt=json.dumps({
-                    "scenes": scenes,
-                    "required_groups": required_slide_groups,
-                    "previous_output": mapping,
-                    "revision_instruction": (
-                        "保持 includes_slides 和角色连续性不变，重写所有有‘随后、依次、先后过程、分屏或多格’风险的 image_prompt；"
-                        "每组只保留一个最具代表性的瞬间、一个机位、一个连续场景。"
-                    ),
-                }, ensure_ascii=False),
-                temperature=0.2,
+    max_attempts = max(1, min(5, _positive_env_int("AGENT2_PLAN_MAX_ATTEMPTS", 3)))
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        retry_instruction = ""
+        if attempt > 1:
+            retry_instruction = (
+                "\n\n【本次为完整性重试】上次输出可能被截断或遗漏。"
+                "请从头输出完整 JSON 数组，严格一组对应一项，不要附加解释。"
+            )
+        try:
+            response = generate_gemini_text(
+                system_prompt=runtime_prompt + retry_instruction,
+                user_prompt=json.dumps({"scenes": scenes, "required_groups": required_slide_groups}, ensure_ascii=False),
+                temperature=0.3 if attempt == 1 else 0.15,
                 response_mime_type="application/json",
             )
-            revised_mapping = _normalize_mapping(
-                parse_json_response(revision),
-                scenes,
-                required_slide_groups,
-            )
-            if revised_mapping:
-                mapping = revised_mapping
-        if mapping:
+            mapping = _normalize_mapping(parse_json_response(response), scenes, required_slide_groups)
+            if not mapping:
+                raise RuntimeError("模型返回的海报映射不完整或无法解析")
+            if any(_multi_moment_prompt_risk(item["image_prompt"]) for item in mapping):
+                print(f"Gemini {batch_label} 检测到多时刻/多格构图风险，正在自动收束为单镜头。", flush=True)
+                try:
+                    revision = generate_gemini_text(
+                        system_prompt=runtime_prompt,
+                        user_prompt=json.dumps({
+                            "scenes": scenes,
+                            "required_groups": required_slide_groups,
+                            "previous_output": mapping,
+                            "revision_instruction": (
+                                "保持 includes_slides 和角色连续性不变，重写所有有‘随后、依次、先后过程、分屏或多格’风险的 image_prompt；"
+                                "每组只保留一个最具代表性的瞬间、一个机位、一个连续场景。"
+                            ),
+                        }, ensure_ascii=False),
+                        temperature=0.2,
+                        response_mime_type="application/json",
+                    )
+                    revised_mapping = _normalize_mapping(
+                        parse_json_response(revision), scenes, required_slide_groups,
+                    )
+                    if revised_mapping:
+                        mapping = revised_mapping
+                except (GeminiError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
+                    # The original mapping is already complete.  A cosmetic
+                    # single-shot rewrite must never throw away valid planning.
+                    print(f"Gemini {batch_label} 单镜头优化失败，保留原始完整规划: {exc}", flush=True)
             print(f"Gemini {batch_label} 已规划 {len(mapping)} 张海报。", flush=True)
             return mapping
-        print(f"Gemini {batch_label} 返回的海报映射不完整。", flush=True)
-        if require_ai_success:
-            raise RuntimeError("模型返回的海报映射不完整或无法解析")
-    except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        print(f"Gemini {batch_label} 规划失败: {exc}", flush=True)
-        if require_ai_success:
-            raise RuntimeError(
-                f"Agent 2 {batch_label}语言模型规划失败，已在提交 Image2 前安全终止；"
-                "配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
-                f"原始错误：{exc}"
-            ) from exc
-    except RuntimeError as exc:
-        if require_ai_success:
-            raise RuntimeError(
-                f"Agent 2 {batch_label}语言模型规划失败，已在提交 Image2 前安全终止；"
-                "配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
-                f"原始错误：{exc}"
-            ) from exc
-        print(f"Gemini {batch_label} 规划失败: {exc}", flush=True)
+        except (GeminiError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
+            last_error = exc
+            if attempt < max_attempts:
+                print(
+                    f"Gemini {batch_label} 第 {attempt}/{max_attempts} 次输出不完整，正在自动重试: {exc}",
+                    flush=True,
+                )
+                continue
+            print(f"Gemini {batch_label} 连续 {max_attempts} 次规划失败: {exc}", flush=True)
+    if require_ai_success:
+        raise RuntimeError(
+            f"Agent 2 {batch_label}语言模型规划失败，已在提交 Image2 前安全终止；"
+            "配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
+            f"原始错误：{last_error}"
+        ) from last_error
     return None
+
+
+def _plan_mapping_groups_resilient(
+    batch_groups: list[list[dict[str, Any]]],
+    system_prompt: str,
+    batch_label: str,
+    story_context: dict[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    """Retry a malformed Agent 2 batch at a smaller, group-safe size."""
+    batch = [scene for group in batch_groups for scene in group]
+    try:
+        mapping = _plan_mapping_batch(
+            batch,
+            system_prompt,
+            batch_label,
+            story_context,
+            required_groups=batch_groups,
+        )
+    except RuntimeError:
+        if len(batch_groups) <= 1:
+            raise
+        mapping = None
+    if mapping is not None or len(batch_groups) <= 1:
+        return mapping
+    midpoint = max(1, len(batch_groups) // 2)
+    left_groups = batch_groups[:midpoint]
+    right_groups = batch_groups[midpoint:]
+    print(
+        f"Agent 2 {batch_label}完整重试仍失败，改为 {len(left_groups)}+{len(right_groups)} 个固定分组缩小重试。",
+        flush=True,
+    )
+    left = _plan_mapping_groups_resilient(left_groups, system_prompt, f"{batch_label}-A", story_context)
+    right = _plan_mapping_groups_resilient(right_groups, system_prompt, f"{batch_label}-B", story_context)
+    if left is None or right is None:
+        return None
+    return [*left, *right]
 
 
 def _synchronized_reference_image_ids(
@@ -1469,10 +1514,138 @@ def _localize_key_information_object(
     return device_type, content
 
 
+_DEVICE_EVIDENCE_CUE_RE = re.compile(
+    r"手机|平板|电脑|显示器|屏幕|网页|页面|界面|短信|消息|聊天记录|"
+    r"报告|账单|照片|文件|票据|档案|动态|记录|表格|清单|截图|打印"
+)
+
+
+def _device_insert_assignments(
+    mapping: list[dict[str, Any]],
+    story_plan: dict[str, Any] | None,
+    scenes: list[dict[str, Any]],
+) -> dict[int, tuple[str, str]]:
+    """Assign each structured screen/document object to at most one child shot.
+
+    Agent 1 semantic units can be wider than Python's fixed image groups.  The old
+    per-item fuzzy lookup consequently copied one cost table or workflow page into
+    every later group that happened to repeat words such as H3 or RunningHub.  This
+    global assignment keeps the useful anaphora recovery, but requires local
+    evidence and consumes a structured object only once.
+    """
+    if not mapping or not story_plan:
+        return {}
+    scene_ids = [str(scene.get("slide_id") or "") for scene in scenes]
+    positions = {slide_id: index for index, slide_id in enumerate(scene_ids) if slide_id}
+    text_by_id = {
+        str(scene.get("slide_id") or ""): str(scene.get("text_content") or "")
+        for scene in scenes
+    }
+    groups: list[tuple[set[int], str, str]] = []
+    for item in mapping:
+        item_positions = {
+            positions[slide_id]
+            for slide_id in (str(value) for value in item.get("includes_slides", []))
+            if slide_id in positions
+        }
+        group_text = "".join(
+            text_by_id.get(str(value), "") for value in item.get("includes_slides", [])
+        )
+        groups.append((item_positions, group_text, _compact_device_text(group_text)))
+
+    screen_ranges: list[tuple[int, int]] = []
+    semantic_records: list[tuple[str, str, tuple[int, int]]] = []
+    for unit in story_plan.get("semantic_units", []):
+        if not isinstance(unit, dict) or str(unit.get("device_shot_mode") or "none") != "screen_insert":
+            continue
+        start = positions.get(str(unit.get("start_slide_id") or ""))
+        end = positions.get(str(unit.get("end_slide_id") or ""))
+        if start is None or end is None:
+            continue
+        bounds = tuple(sorted((start, end)))
+        screen_ranges.append(bounds)
+        contents = _device_content_parts(str(unit.get("screen_content") or ""))
+        types = _device_type_parts(str(unit.get("device_type") or ""))
+        for content_index, content in enumerate(contents):
+            device_type = (
+                types[content_index]
+                if len(types) == len(contents) and content_index < len(types)
+                else str(unit.get("device_type") or "").strip()
+            )
+            semantic_records.append((device_type, content, bounds))
+    if not screen_ranges:
+        return {}
+
+    records: list[tuple[str, str, tuple[int, int]]] = []
+    # Agent 0's registry is usually more precise than Agent 1's combined summary.
+    for record in story_plan.get("key_information_objects", []):
+        if not isinstance(record, dict) or not str(record.get("content") or "").strip():
+            continue
+        for bounds in screen_ranges:
+            records.append((
+                str(record.get("device_type") or "").strip(),
+                str(record.get("content") or "").strip(),
+                bounds,
+            ))
+    records.extend(semantic_records)
+
+    deduplicated: list[tuple[str, str, tuple[int, int]]] = []
+    seen_records: set[tuple[str, int, int]] = set()
+    for device_type, content, bounds in records:
+        signature = (_compact_device_text(content), bounds[0], bounds[1])
+        if not signature[0] or signature in seen_records:
+            continue
+        seen_records.add(signature)
+        deduplicated.append((device_type, content, bounds))
+
+    candidate_pairs: list[tuple[int, int, str, str, str]] = []
+    for device_type, content, (start, end) in deduplicated:
+        compact_content = _compact_device_text(content)
+        for item_index, (item_positions, group_text, compact_group) in enumerate(groups):
+            if not item_positions or not any(start <= value <= end for value in item_positions):
+                continue
+            score = _device_content_local_score(content, group_text)
+            if score <= 0:
+                continue
+            direct = bool(
+                compact_content in compact_group
+                or (len(compact_group) >= 4 and compact_group in compact_content)
+            )
+            reference_only = bool(re.search(
+                r"(?:这|那|该|上述|前述)(?:条|张|份|个)?(?:消息|短信|照片|文件|报告|账单|记录|网页|画面)",
+                group_text,
+            ))
+            previous_tail = groups[item_index - 1][1][-60:] if item_index > 0 else ""
+            evidence_cue = bool(_DEVICE_EVIDENCE_CUE_RE.search(group_text))
+            continuation_cue = bool(
+                previous_tail
+                and _DEVICE_EVIDENCE_CUE_RE.search(previous_tail)
+                and score >= 40
+            )
+            if not (direct or reference_only or ((evidence_cue or continuation_cue) and score >= 20)):
+                continue
+            rank = score + (10000 if direct else 0) + (2000 if reference_only else 0) + (500 if evidence_cue else 0)
+            candidate_pairs.append((rank, item_index, device_type, content, compact_content))
+
+    assignments: dict[int, tuple[str, str]] = {}
+    used_contents: set[str] = set()
+    # Sort only by confidence. Python's stable sort preserves Agent 0/Agent 1
+    # source order when two evidence fragments score equally.
+    for _rank, item_index, device_type, content, compact_content in sorted(
+        candidate_pairs, key=lambda value: value[0], reverse=True
+    ):
+        if item_index in assignments or compact_content in used_contents:
+            continue
+        assignments[item_index] = (device_type or "设备", content)
+        used_contents.add(compact_content)
+    return assignments
+
+
 def _device_shot_for_item(
     item: dict[str, Any],
     story_plan: dict[str, Any] | None,
     scenes: list[dict[str, Any]],
+    assigned_insert: tuple[str, str] | None = None,
 ) -> tuple[str, str, str]:
     """Resolve Agent 1's structured device direction for one fixed image group."""
     included = {str(value) for value in item.get("includes_slides", [])}
@@ -1518,15 +1691,8 @@ def _device_shot_for_item(
         device_type = device_type or source_device_type
         screen_content = explicit_source_content
     elif mode == "screen_insert":
-        localized_type, localized_content = _localize_key_information_object(
-            story_plan, group_text
-        )
-        if not localized_content:
-            localized_type, localized_content = _localize_device_insert(
-                device_type, screen_content, group_text
-            )
-        if localized_content:
-            device_type, screen_content = localized_type, localized_content
+        if assigned_insert:
+            device_type, screen_content = assigned_insert
         else:
             # The parent semantic unit discusses a screen or file somewhere,
             # but this fixed child group no longer does. Keep Agent 2's unique
@@ -1602,6 +1768,12 @@ def _finalize_mapping(
     medium_lock = _illustration_medium_lock(clean_forced_style)
     expanded_character_names = 0
     recovered_reference_ids = 0
+    device_insert_assignments = _device_insert_assignments(mapping, story_plan, scenes)
+    if device_insert_assignments:
+        print(
+            f"设备内容镜头局部证据校验已应用：锁定 {len(device_insert_assignments)} 个不重复信息特写。",
+            flush=True,
+        )
     for index, item in enumerate(mapping, 1):
         item["macro_scene_id"] = f"poster_{index:03d}"
         prompt = _single_scene_guard(_apply_visual_safety_guard(str(item.get("image_prompt") or "")))
@@ -1616,7 +1788,10 @@ def _finalize_mapping(
         prompt = prompt.replace(legacy_quality_requirement, "").strip(" \n，。")
         original_prompt = prompt
         device_shot_mode, device_type, screen_content = _device_shot_for_item(
-            item, story_plan, scenes
+            item,
+            story_plan,
+            scenes,
+            device_insert_assignments.get(index - 1),
         )
         explicit_character_ids = [
             str(value).strip()
@@ -1784,12 +1959,11 @@ def build_macro_mapping(
     for index, batch_groups in enumerate(batches, 1):
         batch = [scene for group in batch_groups for scene in group]
         batch_label = f"画面规划批次 {index}/{len(batches)}"
-        mapping = _plan_mapping_batch(
-            batch,
+        mapping = _plan_mapping_groups_resilient(
+            batch_groups,
             system_prompt,
             batch_label,
             story_context,
-            required_groups=batch_groups,
         )
         if mapping is None:
             if require_ai_success:

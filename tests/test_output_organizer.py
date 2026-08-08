@@ -133,6 +133,7 @@ class OutputOrganizerTest(unittest.TestCase):
             with (
                 patch.object(pipeline, "organize_project_output", return_value=output_dir),
                 patch.object(pipeline, "copy_artifacts", return_value={"audio": "/audio"}),
+                patch.object(pipeline, "require_validated_output"),
                 patch.object(pipeline, "reset_generation_workspace") as cleanup,
             ):
                 pipeline.finalize_completed_pipeline(job, store, {"project_name": "项目"})
@@ -147,6 +148,7 @@ class OutputOrganizerTest(unittest.TestCase):
             with (
                 patch.object(pipeline, "organize_project_output", return_value=output_dir),
                 patch.object(pipeline, "copy_artifacts", return_value={}),
+                patch.object(pipeline, "require_validated_output"),
                 patch.object(pipeline, "reset_generation_workspace") as cleanup,
             ):
                 pipeline.finalize_completed_pipeline(job, store, {"project_name": "项目"})
