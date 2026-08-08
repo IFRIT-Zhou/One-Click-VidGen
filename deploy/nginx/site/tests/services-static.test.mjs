@@ -5,7 +5,8 @@ import test from "node:test";
 const html = fs.readFileSync(new URL("../services/index.html", import.meta.url), "utf8");
 const siteJavascript = fs.readFileSync(new URL("../assets/site.js", import.meta.url), "utf8");
 const rechargeJavascript = fs.readFileSync(new URL("../assets/recharge.js", import.meta.url), "utf8");
-const preview = new URL("../assets/studio-workflow-preview-v2.webp", import.meta.url);
+const css = fs.readFileSync(new URL("../assets/site.css", import.meta.url), "utf8");
+const preview = new URL("../assets/video-editing-hero-v3.webp", import.meta.url);
 
 test("services page exposes the three requested linked modules", () => {
   const links = [...html.matchAll(/data-service-link="([^"]+)"/g)].map((match) => match[1]);
@@ -34,6 +35,10 @@ test("selected service package is carried into the recharge page", () => {
 });
 
 test("services hero uses a real workflow preview asset", () => {
-  assert.match(html, /studio-workflow-preview-v2\.webp/);
+  assert.match(html, /video-editing-hero-v3\.webp/);
+  assert.match(html, /hero-edit-motion/);
+  assert.match(css, /@keyframes heroPhotoDrift/);
+  assert.match(css, /@keyframes heroEditWave/);
+  assert.match(css, /@keyframes heroPlayhead/);
   assert.ok(fs.statSync(preview).size > 10_000, "workflow preview is unexpectedly small");
 });
