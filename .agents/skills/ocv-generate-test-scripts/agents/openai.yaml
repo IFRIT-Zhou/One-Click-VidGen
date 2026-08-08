@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCV 测试文案生成器"
+  short_description: "生成适合稳定演示的一键成片测试文案与三项完整画面设定"
+  default_prompt: "Use $ocv-generate-test-scripts to create an OCV-friendly Chinese test script and its three visual-setting fields."

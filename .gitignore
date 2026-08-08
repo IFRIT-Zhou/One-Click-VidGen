@@ -27,9 +27,17 @@ Vocal/
 tools/*
 !tools/portable_preflight.py
 !tools/local_service_watchdog.py
+!tools/create_portable_archive.py
 Sound Material/
+测试文案/
 venv_audio_vedio/
-.agents/
+launcher/bin/
+launcher/ui-preview.png
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/ocv-generate-test-scripts/
+!.agents/skills/ocv-generate-test-scripts/**
 
 *.log
 *.mp4

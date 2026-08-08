@@ -282,10 +282,15 @@
               <button v-if="canContinueStepMode" class="primary-btn" type="button" :disabled="resumingGeneration" @click="resumeGeneration">
                 {{ stepModeContinueLabel }}
               </button>
-              <button class="primary-btn launch-generation-btn" type="button" :disabled="submitting || !canSubmitGeneration" @click="submit">
-                {{ submitButtonText }}
-              </button>
-              <small v-if="generationSubmitMessage" class="generation-submit-message">{{ generationSubmitMessage }}</small>
+              <div class="launch-generation-control">
+                <button class="primary-btn launch-generation-btn" type="button" :disabled="!canSubmitGeneration" @click="submit">
+                  {{ submitButtonText }}
+                </button>
+                <small v-if="generationBlockReason" class="generation-block-reason" role="status">
+                  <span>{{ generationBlockReason.code }}</span>{{ generationBlockReason.message }}
+                </small>
+              </div>
+              <small v-if="generationSubmitMessage" class="generation-submit-message"><span>[SUBMIT_FAILED]</span>{{ generationSubmitMessage }}</small>
             </div>
             <template v-if="session.user">
               <button class="toolbar-save-button" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
@@ -2786,27 +2791,49 @@ const cloudVoiceModel = computed({
     cloudQuote.value = {}
   },
 })
-const hasPendingGeneration = computed(() => (
-  [activeJob.value, ...jobs.value].filter(Boolean).some((job) => (
+const pendingGenerationJob = computed(() => (
+  [activeJob.value, ...jobs.value].filter(Boolean).find((job) => (
     ['queued', 'running', 'waiting_confirmation'].includes(job.status)
-  ))
+  )) || null
 ))
-const canSubmitGeneration = computed(() => {
-  if (!session.value.user) return false
-  if (hasPendingGeneration.value) return false
-  if (!form.project_name.trim()) return false
-  if (scriptTooLong.value) return false
-  if (form.bgm_enabled && !form.bgm_tracks.length) return false
-  if (form.use_cloud_image_pool && !cloudSession.value.authenticated) return false
-  if (form.skip_tts) {
-    if (!form.source_audio_id) return false
-    return form.skip_text_correction || form.script.trim().length > 0
+const hasPendingGeneration = computed(() => Boolean(pendingGenerationJob.value))
+const generationBlockReason = computed(() => {
+  const block = (code, message) => ({ code: `[${code}]`, message })
+  if (submitting.value) return block('SUBMITTING', '任务正在提交，请稍候。')
+  if (!session.value.user) return block('LOGIN_REQUIRED', '请先登录本地工作台。')
+  if (hasPendingGeneration.value) {
+    const status = pendingGenerationJob.value?.status
+    if (status === 'queued') return block('JOB_QUEUED', '已有任务正在排队，完成或停止后才能开始新任务。')
+    if (status === 'waiting_confirmation') return block('STEP_CONFIRMATION_REQUIRED', '分步任务正在等待确认，请点击“继续生成”。')
+    return block('JOB_RUNNING', '当前任务还未执行完毕，请等待完成或先停止生成。')
   }
-  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return false
-  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return false
-  if (ttsEngine.value === 'cluster' && !cloudReady.value) return false
-  return form.script.trim().length > 0
+  if (!form.project_name.trim()) return block('PROJECT_NAME_REQUIRED', '请先填写项目名称。')
+  if (String(form.script || '').length > MAX_SCRIPT_CHARACTERS) {
+    return block('SCRIPT_TOO_LONG', `文案超过 ${MAX_SCRIPT_CHARACTERS.toLocaleString('zh-CN')} 字，请缩短后再生成。`)
+  }
+  if (form.bgm_enabled && !form.bgm_tracks.length) return block('BGM_REQUIRED', '你已开启添加 BGM，但还没有选择音乐。')
+  if (form.use_cloud_image_pool && !cloudSession.value.authenticated) return block('CLOUD_LOGIN_REQUIRED', '使用云端号池前，请先登录云端账户。')
+  if (form.skip_tts) {
+    if (!form.source_audio_id) return block('AUDIO_REQUIRED', '已选择跳过配音，请先上传已有配音。')
+    if (!form.skip_text_correction && !form.script.trim()) return block('SCRIPT_REQUIRED', '请填写与已有配音对应的文案，或选择“没有文案”。')
+    return null
+  }
+  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) {
+    return block('QWEN_API_KEY_REQUIRED', '请先保存 Qwen-TTS API Key。')
+  }
+  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) {
+    return block('QWEN_INSTRUCTIONS_UNSUPPORTED', '当前 Qwen 音色不支持配音描述，请清空描述或更换音色。')
+  }
+  if (ttsEngine.value === 'cluster' && !cloudSession.value.authenticated) {
+    return block('CLUSTER_LOGIN_REQUIRED', '使用集群配音前，请先登录云端账户。')
+  }
+  if (ttsEngine.value === 'cluster' && !cloudReady.value) {
+    return block('CLUSTER_VOICE_REQUIRED', '请选择一个可用的集群音色。')
+  }
+  if (!form.script.trim()) return block('SCRIPT_REQUIRED', '请上传或填写口播文案。')
+  return null
 })
+const canSubmitGeneration = computed(() => !generationBlockReason.value)
 const canSubmitModule1 = computed(() => Boolean(
   session.value.user
   && (
