@@ -42,3 +42,11 @@ test("image submissions share a stable batch-scoped idempotency key", () => {
   assert.match(javascript, /JSON\.stringify\(\{\s*clientJobId,\s*prompt:/);
   assert.doesNotMatch(javascript, /web-image-\$\{Date\.now\(\)\}/);
 });
+
+test("protected studio links require login before entering their target", () => {
+  assert.match(javascript, /new Set\(\["script-panel", "voice-panel", "task-panel"\]\)/);
+  assert.match(javascript, /guardProtectedTarget\(\)/);
+  assert.match(javascript, /pendingProtectedTarget = target/);
+  assert.match(javascript, /enterPendingProtectedTarget\(\)/);
+  assert.match(javascript, /scrollIntoView\(\{ block: "start" \}\)/);
+});

@@ -12,6 +12,8 @@
   };
   const element = (selector) => document.querySelector(selector);
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const protectedTargets = new Set(["script-panel", "voice-panel", "task-panel"]);
+  let pendingProtectedTarget = protectedTargets.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : null;
 
   function readSession() { try { return JSON.parse(sessionStorage.getItem("ocvg-cloud-session")) || null; } catch (_) { return null; } }
   function saveSession(session) { state.session = session; if (session) sessionStorage.setItem("ocvg-cloud-session", JSON.stringify(session)); else sessionStorage.removeItem("ocvg-cloud-session"); }
@@ -328,13 +330,29 @@
   const stableUrls = new Map(); function rememberStableUrl(blob, key) { if (!stableUrls.has(key)) stableUrls.set(key, rememberUrl(blob)); return stableUrls.get(key); }
   function escapeHtml(value) { const div = document.createElement("div"); div.textContent = String(value || ""); return div.innerHTML; }
   function escapeAttribute(value) { return escapeHtml(value).replace(/"/g, "&quot;"); }
-  function openAuth() { element("#auth-message").className = "message"; element("#auth-dialog").showModal(); }
+  function openAuth() { element("#auth-message").className = "message"; if (!element("#auth-dialog").open) element("#auth-dialog").showModal(); }
+  function protectedTargetFromHash() { const target = window.location.hash.slice(1); return protectedTargets.has(target) ? target : null; }
+  function guardProtectedTarget() {
+    const target = protectedTargetFromHash();
+    if (!target || state.session) return;
+    pendingProtectedTarget = target;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    window.scrollTo({ top: 0, behavior: "auto" });
+    openAuth();
+  }
+  function enterPendingProtectedTarget() {
+    if (!pendingProtectedTarget) return;
+    const target = pendingProtectedTarget;
+    pendingProtectedTarget = null;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${target}`);
+    window.requestAnimationFrame(() => element(`#${target}`)?.scrollIntoView({ block: "start" }));
+  }
   function logout(showNotice = true) { saveSession(null); state.account = null; state.voices = []; state.selectedVoice = null; state.modelReady = false; element("#studio-credits").textContent = "—"; element("#studio-daily").textContent = "—"; element("#studio-concurrency").textContent = "—"; element("#voice-grid").innerHTML = ""; element("#model-pool-state").textContent = "尚未检测"; renderAuth(); if (showNotice) openAuth(); }
 
   let authMode = "login";
   element("#studio-login").addEventListener("click", openAuth); element("#header-account").addEventListener("click", () => state.session ? (window.confirm("是否退出当前账户？") && logout()) : openAuth()); element("#close-dialog").addEventListener("click", () => element("#auth-dialog").close()); element("#auth-dialog").addEventListener("click", (event) => { if (event.target === element("#auth-dialog")) event.currentTarget.close(); });
   document.querySelectorAll("[data-auth-mode]").forEach((tab) => tab.addEventListener("click", () => { authMode = tab.dataset.authMode; document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab)); element("#auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户"; element("#auth-submit").textContent = authMode === "login" ? "登录" : "注册并继续"; element("#password").autocomplete = authMode === "login" ? "current-password" : "new-password"; element("#auth-message").className = "message"; }));
-  element("#auth-form").addEventListener("submit", async (event) => { event.preventDefault(); const submit = element("#auth-submit"); submit.disabled = true; const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value }; try { if (authMode === "register") await api("/auth/register", { method: "POST", body: JSON.stringify(credentials) }); const login = await api("/auth/login", { method: "POST", body: JSON.stringify(credentials) }); saveSession(login); element("#auth-dialog").close(); renderAuth(); await Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]); scheduleQuote(); } catch (error) { const node = element("#auth-message"); node.textContent = errorText(error); node.className = "message show error"; } finally { submit.disabled = false; submit.textContent = authMode === "login" ? "登录" : "注册并继续"; } });
+  element("#auth-form").addEventListener("submit", async (event) => { event.preventDefault(); const submit = element("#auth-submit"); submit.disabled = true; const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value }; try { if (authMode === "register") await api("/auth/register", { method: "POST", body: JSON.stringify(credentials) }); const login = await api("/auth/login", { method: "POST", body: JSON.stringify(credentials) }); saveSession(login); element("#auth-dialog").close(); renderAuth(); enterPendingProtectedTarget(); await Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]); scheduleQuote(); } catch (error) { const node = element("#auth-message"); node.textContent = errorText(error); node.className = "message show error"; } finally { submit.disabled = false; submit.textContent = authMode === "login" ? "登录" : "注册并继续"; } });
 
   element("#script-input").addEventListener("input", () => { state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#clear-script").addEventListener("click", () => { element("#script-input").value = ""; state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#generate-storyboard").addEventListener("click", generateStoryboard);
   element("#speed").addEventListener("input", (event) => { element("#speed-value").textContent = `${Number(event.target.value).toFixed(2)}×`; scheduleQuote(); }); element("#pitch").addEventListener("input", (event) => { const value = Number(event.target.value); element("#pitch-value").textContent = value > 0 ? `+${value}` : String(value); scheduleQuote(); }); element("#emotion-weight").addEventListener("input", (event) => { element("#emotion-weight-value").textContent = `${Math.round(Number(event.target.value) * 100)}%`; scheduleQuote(); }); element("#emotion").addEventListener("change", scheduleQuote);
@@ -343,5 +361,6 @@
 
   window.addEventListener("beforeunload", () => state.objectUrls.forEach((url) => URL.revokeObjectURL(url))); window.requestAnimationFrame(() => document.body.classList.add("studio-ready"));
   if ("IntersectionObserver" in window) { const stepObserver = new IntersectionObserver((entries) => { const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (!visible) return; document.querySelectorAll(".workspace-steps a").forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`)); }, { threshold: [0.2, 0.55], rootMargin: "-90px 0px -50%" }); document.querySelectorAll(".workspace-card").forEach((section) => stepObserver.observe(section)); }
-  renderAuth(); updateTextSummary(); updateAssetProgress(); checkHealth(); window.setInterval(checkHealth, 30000); if (state.session) Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]).then(scheduleQuote);
+  window.addEventListener("hashchange", guardProtectedTarget);
+  renderAuth(); updateTextSummary(); updateAssetProgress(); checkHealth(); window.setInterval(checkHealth, 30000); guardProtectedTarget(); if (state.session) Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]).then(scheduleQuote);
 })();
