@@ -73,7 +73,7 @@ namespace OcvLauncher
             if (workingArea.Width < 1180 || workingArea.Height < 760) WindowState = FormWindowState.Maximized;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Dpi;
-            Icon = SystemIcons.Application;
+            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         }
 
         private void BuildInterface()

@@ -12,6 +12,7 @@ $rootExe = Join-Path $projectRoot 'OCV_Launcher.exe'
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $logo = Join-Path $projectRoot 'frontend\public\one-click-vidgen-logo.png'
+$icon = Join-Path $launcherDir 'assets\one-click-vidgen.ico'
 $manifest = Join-Path $launcherDir 'OcvLauncher.manifest'
 
 if (-not (Test-Path -LiteralPath $compiler)) {
@@ -19,6 +20,9 @@ if (-not (Test-Path -LiteralPath $compiler)) {
 }
 if (-not (Test-Path -LiteralPath $logo)) {
     throw "OCV logo was not found: $logo"
+}
+if (-not (Test-Path -LiteralPath $icon)) {
+    throw "OCV Windows icon was not found: $icon"
 }
 
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
@@ -31,6 +35,7 @@ $arguments = @(
     '/platform:anycpu',
     "/out:$outputExe",
     "/win32manifest:$manifest",
+    "/win32icon:$icon",
     "/resource:$logo,OcvLauncher.Logo.png",
     "/reference:$(Join-Path $framework 'System.dll')",
     "/reference:$(Join-Path $framework 'System.Core.dll')",
