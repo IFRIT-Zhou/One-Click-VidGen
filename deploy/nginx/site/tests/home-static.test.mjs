@@ -38,3 +38,10 @@ test("home hero backgrounds only crossfade", () => {
   assert.match(css, /prefers-reduced-motion[\s\S]*\.home-hero-frame:first-child/);
   assert.doesNotMatch(css, /@keyframes homeHeroCycle[^}]*translate|@keyframes homeHeroCycle[^}]*scale/);
 });
+
+test("home hero indicator is centered and marks the current image", () => {
+  assert.match(css, /\.home-hero-progress[^}]*left:\s*50%[^}]*translateX\(-50%\)/);
+  assert.match(css, /@keyframes homeHeroIndicator/);
+  assert.match(css, /@keyframes homeHeroIndicator[^}]*background:\s*#fff/);
+  assert.doesNotMatch(css, /homeHeroProgress|\.home-hero-progress span::after/);
+});
