@@ -37,7 +37,8 @@ test("selected service package is carried into the recharge page", () => {
 test("services hero uses the generated One-Click VidGen workflow asset", () => {
   assert.match(html, /oneclickvidgen-ai-workflow-hero-v4\.webp/);
   assert.match(html, /hero-render-signal/);
-  assert.match(css, /@keyframes heroPhotoDrift/);
+  assert.match(css, /\.services-hero-image[^}]*animation:\s*none[^}]*transform:\s*none/);
+  assert.doesNotMatch(css, /@keyframes heroPhotoDrift/);
   assert.match(css, /@keyframes heroRenderScan/);
   assert.match(css, /@keyframes heroRenderPlayhead/);
   assert.ok(fs.statSync(preview).size > 10_000, "workflow preview is unexpectedly small");
