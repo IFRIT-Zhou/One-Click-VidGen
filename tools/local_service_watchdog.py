@@ -37,6 +37,27 @@ def _terminate_process_tree(pid: int, log_path: Path | None) -> None:
         pass
 
 
+def _has_live_peer_heartbeat(heartbeat: Path, stale_after: float) -> bool:
+    """Return whether another launcher is still actively using shared services."""
+    now = time.time()
+    try:
+        own_path = heartbeat.resolve(strict=False)
+        candidates = heartbeat.parent.glob("launcher_*.heartbeat")
+    except OSError:
+        return False
+
+    for candidate in candidates:
+        try:
+            if candidate.resolve(strict=False) == own_path:
+                continue
+            age = now - candidate.stat().st_mtime
+        except OSError:
+            continue
+        if age <= stale_after:
+            return True
+    return False
+
+
 def monitor(
     heartbeat: Path,
     pids: list[int],
@@ -61,7 +82,18 @@ def monitor(
             break
         time.sleep(poll_interval)
 
-    _append_log(log_path, "launcher heartbeat stopped; cleaning owned services")
+    if _has_live_peer_heartbeat(heartbeat, stale_after):
+        _append_log(
+            log_path,
+            "launcher heartbeat stopped; another launcher is active, leaving shared services running",
+        )
+        try:
+            heartbeat.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+
+    _append_log(log_path, "launcher heartbeat stopped; no active launcher remains, cleaning shared services")
     for pid in pids:
         _terminate_process_tree(pid, log_path)
     try:

@@ -24,6 +24,23 @@ class LocalServiceWatchdogTest(unittest.TestCase):
                 self.assertFalse(worker.is_alive())
                 self.assertEqual([call.args[0] for call in terminate.call_args_list], [101, 202])
 
+    def test_stale_heartbeat_keeps_services_when_another_launcher_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            heartbeat = Path(temp_dir) / "launcher_own.heartbeat"
+            heartbeat.write_text("alive", encoding="utf-8")
+            with (
+                patch("tools.local_service_watchdog._has_live_peer_heartbeat", return_value=True),
+                patch("tools.local_service_watchdog._terminate_process_tree") as terminate,
+            ):
+                monitor(
+                    heartbeat,
+                    [101, 202],
+                    stale_after=0.02,
+                    poll_interval=0.005,
+                )
+                terminate.assert_not_called()
+                self.assertFalse(heartbeat.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
