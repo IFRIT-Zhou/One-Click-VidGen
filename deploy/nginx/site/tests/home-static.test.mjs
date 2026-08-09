@@ -21,6 +21,24 @@ test("home page headlines use clean two-line copy", () => {
   assert.doesNotMatch(html, /把繁重的配音计算，|从一段文案，/);
 });
 
+test("home page removes the requested supporting copy", () => {
+  assert.doesNotMatch(html, /HTTPS 安全连接|按实际用量计费|结果自动回传/);
+  assert.doesNotMatch(html, /云端并行完成配音与画面生成/);
+});
+
+test("home service titles link to their matching modules", () => {
+  assert.match(html, /<h3><a href="\/services\/#gpu">云端 GPU 配音加速<\/a><\/h3>/);
+  assert.match(html, /<h3><a href="\/studio\/#storyboard-panel">AI 分镜与画面生成<\/a><\/h3>/);
+  assert.match(html, /<h3><a href="\/studio\/#compose-panel">视频生成与任务管理<\/a><\/h3>/);
+});
+
+test("home service focus follows the active card", () => {
+  assert.match(css, /\.feature-card:hover,\.feature-card:focus-within/);
+  assert.match(css, /\.feature-grid:has\(\.feature-card:hover\)/);
+  assert.match(css, /\.feature-icon[^}]*font-size:\s*18px/);
+  assert.match(css, /\.feature-card:hover \.feature-media img,\.feature-card:focus-within \.feature-media img/);
+});
+
 test("home page presents the three generated video workflow visuals", () => {
   assets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));

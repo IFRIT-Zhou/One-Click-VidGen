@@ -122,12 +122,15 @@ h1, h2, h3, p { margin-top: 0; }
 .centered { max-width: 680px; margin-right: auto; margin-left: auto; text-align: center; }
 .centered .eyebrow { justify-content: center; }.centered h2 { margin-bottom: 15px; }.centered p { margin-bottom: 0; }
 .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-.feature-card { min-height: 440px; overflow: hidden; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
-.feature-card.featured { background: var(--teal-pale); }
-.feature-media { overflow: hidden; margin: 0; background: var(--ink-deep); aspect-ratio: 16 / 9; }.feature-media img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .45s ease; }.feature-card:hover .feature-media img { transform: scale(1.025); }.feature-card-body { padding: 24px 27px 28px; }
-.feature-icon { display: grid; width: 44px; height: 44px; margin-bottom: 46px; place-items: center; border-radius: 12px; background: var(--ink-deep); color: white; font-size: 11px; font-weight: 800; }
+.feature-card { min-height: 440px; overflow: hidden; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); transition: transform .32s ease, border-color .32s ease, background .32s ease, box-shadow .32s ease; }
+.feature-card:first-child { background: var(--teal-pale); }
+.feature-grid:has(.feature-card:hover) .feature-card:first-child:not(:hover),.feature-grid:has(.feature-card:focus-within) .feature-card:first-child:not(:focus-within) { background: var(--paper); }
+.feature-card:hover,.feature-card:focus-within { border-color: rgba(22,168,149,.5); background: var(--teal-pale); box-shadow: 0 24px 48px rgba(8,38,45,.16); transform: translateY(-8px); }
+.feature-media { overflow: hidden; margin: 0; background: var(--ink-deep); aspect-ratio: 16 / 9; }.feature-media img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .55s cubic-bezier(.2,.8,.2,1),filter .55s ease; }.feature-card:hover .feature-media img,.feature-card:focus-within .feature-media img { filter: saturate(1.12) contrast(1.04); transform: scale(1.065); }.feature-card-body { padding: 24px 27px 28px; }
+.feature-icon { display: grid; width: 48px; height: 48px; margin-bottom: 24px; place-items: center; border-radius: 10px; background: var(--ink-deep); color: white; font-size: 18px; font-weight: 850; }
 .feature-kicker { color: var(--teal-dark); font-size: 9px; font-weight: 850; letter-spacing: .13em; }
 .feature-card h3 { margin: 10px 0 14px; font-size: 21px; letter-spacing: -.025em; }
+.feature-card h3 a { color: var(--ink); font-size: inherit; text-decoration: none; }.feature-card h3 a:hover,.feature-card h3 a:focus-visible { color: var(--teal-dark); }
 .feature-card p { min-height: 76px; margin-bottom: 24px; color: var(--muted); font-size: 14px; line-height: 1.8; }
 .feature-card a { color: var(--teal-dark); font-size: 12px; font-weight: 800; text-decoration: none; }
 .workflow-section { background: white; }
