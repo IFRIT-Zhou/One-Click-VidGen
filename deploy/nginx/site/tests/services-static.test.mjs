@@ -9,6 +9,8 @@ const css = fs.readFileSync(new URL("../assets/site.css", import.meta.url), "utf
 const preview = new URL("../assets/oneclickvidgen-ai-workflow-hero-v4.webp", import.meta.url);
 
 test("services page exposes the three requested linked modules", () => {
+  assert.match(html, /<h1>从一段文案<br \/>到可以发布的视频<\/h1>/);
+  assert.doesNotMatch(html, /可以交付的视频/);
   const links = [...html.matchAll(/data-service-link="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(links, ["gpu", "voices", "video"]);
   ["云端 GPU 配音", "音色选择与管理", "视频生成与管理"].forEach((title) => {
