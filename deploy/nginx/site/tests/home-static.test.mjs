@@ -15,6 +15,12 @@ const heroAssets = [
   "home-hero-release-horizon-v2-4k.webp",
 ];
 
+test("home page headlines use clean two-line copy", () => {
+  assert.match(html, /<h1>把繁重的配音计算<em>交给云端 GPU<\/em><\/h1>/);
+  assert.match(html, /<h2>从一段文案<br \/>到可以发布的视频<\/h2>/);
+  assert.doesNotMatch(html, /把繁重的配音计算，|从一段文案，/);
+});
+
 test("home page presents the three generated video workflow visuals", () => {
   assets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));
