@@ -10,9 +10,9 @@ const assets = [
   "home-video-publish-v1.webp",
 ];
 const heroAssets = [
-  "home-hero-compute-city-v1.webp",
-  "home-hero-production-stage-v1.webp",
-  "home-hero-release-horizon-v1.webp",
+  "home-hero-compute-city-v2-4k.webp",
+  "home-hero-production-stage-v2-4k.webp",
+  "home-hero-release-horizon-v2-4k.webp",
 ];
 
 test("home page presents the three generated video workflow visuals", () => {
@@ -26,10 +26,10 @@ test("home page presents the three generated video workflow visuals", () => {
 test("home hero uses separate blurred backgrounds", () => {
   heroAssets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));
-    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 100_000);
+    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 400_000);
   });
   assert.equal((html.match(/class="home-hero-frame"/g) || []).length, 3);
-  assert.match(css, /\.home-hero-frame[^}]*filter:\s*blur\(4px\)/);
+  assert.match(css, /\.home-hero-frame[^}]*filter:\s*blur\(1px\)/);
 });
 
 test("home hero backgrounds only crossfade", () => {

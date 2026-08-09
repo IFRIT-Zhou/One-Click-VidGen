@@ -64,7 +64,7 @@ h1, h2, h3, p { margin-top: 0; }
 
 .hero.home-hero { position: relative; display: block; width: 100%; min-height: 720px; max-width: none; overflow: hidden; margin: 0; padding: 0 max(24px,calc((100vw - 1180px)/2)); background: #061b21; color: white; isolation: isolate; }
 .home-hero-frames { position: absolute; z-index: -3; inset: -10px; overflow: hidden; }
-.home-hero-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; opacity: 0; filter: blur(4px) saturate(.88); animation: homeHeroCycle 18s linear infinite; transform: scale(1.02); }
+.home-hero-frame { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; opacity: 0; filter: blur(1px) saturate(.94); animation: homeHeroCycle 18s linear infinite; transform: scale(1.005); }
 .home-hero-frame:nth-child(2) { animation-delay: 6s; }.home-hero-frame:nth-child(3) { animation-delay: 12s; }
 .home-hero-shade { position: absolute; z-index: -2; inset: 0; background: linear-gradient(90deg,rgba(3,18,23,.94) 0%,rgba(3,18,23,.82) 38%,rgba(3,18,23,.42) 66%,rgba(3,18,23,.18) 100%); }
 .home-hero .hero-copy { width: min(690px,64%); padding: 118px 0 126px; }
