@@ -6,7 +6,7 @@ const html = fs.readFileSync(new URL("../services/index.html", import.meta.url),
 const siteJavascript = fs.readFileSync(new URL("../assets/site.js", import.meta.url), "utf8");
 const rechargeJavascript = fs.readFileSync(new URL("../assets/recharge.js", import.meta.url), "utf8");
 const css = fs.readFileSync(new URL("../assets/site.css", import.meta.url), "utf8");
-const preview = new URL("../assets/video-editing-hero-v3.webp", import.meta.url);
+const preview = new URL("../assets/oneclickvidgen-ai-workflow-hero-v4.webp", import.meta.url);
 
 test("services page exposes the three requested linked modules", () => {
   const links = [...html.matchAll(/data-service-link="([^"]+)"/g)].map((match) => match[1]);
@@ -34,11 +34,11 @@ test("selected service package is carried into the recharge page", () => {
   assert.match(rechargeJavascript, /CSS\.escape\(requestedId\)/);
 });
 
-test("services hero uses a real workflow preview asset", () => {
-  assert.match(html, /video-editing-hero-v3\.webp/);
-  assert.match(html, /hero-edit-motion/);
+test("services hero uses the generated One-Click VidGen workflow asset", () => {
+  assert.match(html, /oneclickvidgen-ai-workflow-hero-v4\.webp/);
+  assert.match(html, /hero-render-signal/);
   assert.match(css, /@keyframes heroPhotoDrift/);
-  assert.match(css, /@keyframes heroEditWave/);
-  assert.match(css, /@keyframes heroPlayhead/);
+  assert.match(css, /@keyframes heroRenderScan/);
+  assert.match(css, /@keyframes heroRenderPlayhead/);
   assert.ok(fs.statSync(preview).size > 10_000, "workflow preview is unexpectedly small");
 });
