@@ -44,7 +44,7 @@ test("image submissions share a stable batch-scoped idempotency key", () => {
 });
 
 test("protected studio links require login before entering their target", () => {
-  assert.match(javascript, /new Set\(\["script-panel", "voice-panel", "task-panel"\]\)/);
+  assert.match(javascript, /new Set\(\["script-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"\]\)/);
   assert.match(javascript, /guardProtectedTarget\(\)/);
   assert.match(javascript, /pendingProtectedTarget = target/);
   assert.match(javascript, /enterPendingProtectedTarget\(\)/);

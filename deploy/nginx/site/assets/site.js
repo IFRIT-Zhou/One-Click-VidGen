@@ -126,8 +126,114 @@
     }
   }
 
+  function setupCreationFlowAuth() {
+    const links = [...document.querySelectorAll("[data-creation-target]")];
+    const authDialog = document.querySelector("#home-auth-dialog");
+    if (!links.length || !authDialog) return;
+
+    const authForm = document.querySelector("#home-auth-form");
+    const authMessage = document.querySelector("#home-auth-message");
+    const authSubmit = document.querySelector("#home-auth-submit");
+    const statusDialog = document.querySelector("#home-status-dialog");
+    let authMode = "login";
+    let pendingCreation = null;
+
+    function readSession() {
+      try { return JSON.parse(sessionStorage.getItem("ocvg-cloud-session")) || null; }
+      catch (_) { return null; }
+    }
+
+    function saveSession(session) {
+      sessionStorage.setItem("ocvg-cloud-session", JSON.stringify(session));
+    }
+
+    function isLoggedIn() {
+      const session = readSession();
+      return Boolean(session && session.access_token);
+    }
+
+    async function authRequest(path, body) {
+      const response = await fetch(`/api/v1${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      let payload = {};
+      try { payload = text ? JSON.parse(text) : {}; } catch (_) { payload = {}; }
+      if (!response.ok) throw new Error(payload.detail || payload.message || `请求失败（${response.status}）`);
+      return payload;
+    }
+
+    function openAuth() {
+      authMessage.className = "message";
+      authMessage.textContent = "";
+      if (!authDialog.open) authDialog.showModal();
+    }
+
+    function showLoggedIn() {
+      if (!statusDialog.open) statusDialog.showModal();
+    }
+
+    function continueCreation(target, href) {
+      if (target === "account") showLoggedIn();
+      else window.location.assign(href);
+    }
+
+    links.forEach((link) => link.addEventListener("click", (event) => {
+      const target = link.dataset.creationTarget;
+      if (isLoggedIn()) {
+        if (target !== "account") return;
+        event.preventDefault();
+        showLoggedIn();
+        return;
+      }
+      event.preventDefault();
+      pendingCreation = { target, href: link.href };
+      openAuth();
+    }));
+
+    document.querySelectorAll("[data-home-auth-mode]").forEach((tab) => tab.addEventListener("click", () => {
+      authMode = tab.dataset.homeAuthMode;
+      document.querySelectorAll("[data-home-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab));
+      document.querySelector("#home-auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户";
+      authSubmit.textContent = authMode === "login" ? "登录" : "注册并继续";
+      document.querySelector("#home-password").autocomplete = authMode === "login" ? "current-password" : "new-password";
+      authMessage.className = "message";
+    }));
+
+    authForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value };
+      authSubmit.disabled = true;
+      authSubmit.textContent = authMode === "login" ? "正在登录…" : "正在注册…";
+      try {
+        if (authMode === "register") await authRequest("/auth/register", credentials);
+        const session = await authRequest("/auth/login", credentials);
+        saveSession(session);
+        authDialog.close();
+        const destination = pendingCreation;
+        pendingCreation = null;
+        if (destination) continueCreation(destination.target, destination.href);
+      } catch (error) {
+        authMessage.textContent = error.message || "登录失败，请稍后重试";
+        authMessage.className = "message show error";
+      } finally {
+        authSubmit.disabled = false;
+        authSubmit.textContent = authMode === "login" ? "登录" : "注册并继续";
+      }
+    });
+
+    document.querySelector("#home-auth-close").addEventListener("click", () => authDialog.close());
+    document.querySelector("#home-status-close").addEventListener("click", () => statusDialog.close());
+    [authDialog, statusDialog].forEach((dialog) => dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    }));
+  }
+
   setupServicesPricing();
   setupServiceNavigation();
+  setupCreationFlowAuth();
   enableMotion();
   refreshHealth();
   window.setInterval(refreshHealth, 30000);

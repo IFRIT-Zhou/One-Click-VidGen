@@ -4,6 +4,7 @@ import test from "node:test";
 
 const html = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = fs.readFileSync(new URL("../assets/site.css", import.meta.url), "utf8");
+const javascript = fs.readFileSync(new URL("../assets/site.js", import.meta.url), "utf8");
 const assets = [
   "home-cloud-voice-v1.webp",
   "home-ai-storyboard-v1.webp",
@@ -40,12 +41,28 @@ test("home service focus follows the active card", () => {
 });
 
 test("home page exposes the five-step creation flow", () => {
-  assert.match(html, /<h2>开启创作的流程<\/h2>/);
+  assert.match(html, /<h2>开启创作流程<\/h2>/);
   assert.doesNotMatch(html, /四步连接云端创作服务|无需改变原有创作习惯/);
   assert.deepEqual(
-    [...html.matchAll(/class="creation-copy"><small>[^<]+<\/small><h3>([^<]+)<\/h3>/g)].map((match) => match[1]),
+    [...html.matchAll(/class="creation-title"[^>]*>([^<]+)<\/a><\/h3>/g)].map((match) => match[1]),
     ["创建账户", "上传文案", "选择音色", "提交任务", "下载结果"],
   );
+});
+
+test("creation flow links enforce login and route to studio modules", () => {
+  const targets = [...html.matchAll(/data-creation-target="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(targets, [
+    "account", "account", "script-panel", "script-panel", "voice-panel",
+    "voice-panel", "task-panel", "task-panel", "compose-panel", "compose-panel",
+  ]);
+  assert.match(javascript, /sessionStorage\.getItem\("ocvg-cloud-session"\)/);
+  assert.match(javascript, /if \(isLoggedIn\(\)\)/);
+  assert.match(javascript, /target === "account"/);
+  assert.match(javascript, /showLoggedIn\(\)/);
+  assert.match(javascript, /window\.location\.assign\(href\)/);
+  assert.match(javascript, /\/auth\/login/);
+  assert.match(html, /id="home-auth-dialog"/);
+  assert.match(html, /<h2>您已登录<\/h2>/);
 });
 
 test("creation flow adapts from horizontal rail to mobile stepper", () => {

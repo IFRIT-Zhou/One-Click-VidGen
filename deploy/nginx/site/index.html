@@ -6,7 +6,7 @@
     <meta name="description" content="One-Click VidGen 为视频创作者提供云端 GPU 配音加速、音色管理与任务调度服务。" />
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260809.8" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260809.9" />
     <title>One-Click VidGen｜云端 GPU 视频创作服务</title>
   </head>
   <body data-page="home">
@@ -87,13 +87,13 @@
 
       <section class="section workflow-section">
         <div class="shell">
-          <div class="section-heading workflow-heading"><div class="eyebrow"><span></span>CREATION FLOW</div><h2>开启创作的流程</h2></div>
+          <div class="section-heading workflow-heading"><div class="eyebrow"><span></span>CREATION FLOW</div><h2>开启创作流程</h2></div>
           <div class="creation-flow">
-            <article class="creation-step"><div class="creation-marker"><span>01</span><i></i></div><div class="creation-copy"><small>ACCOUNT</small><h3>创建账户</h3><p>注册云端账户并准备创作积分。</p></div></article>
-            <article class="creation-step"><div class="creation-marker"><span>02</span><i></i></div><div class="creation-copy"><small>SCRIPT</small><h3>上传文案</h3><p>粘贴或输入需要制作的视频文案。</p></div></article>
-            <article class="creation-step"><div class="creation-marker"><span>03</span><i></i></div><div class="creation-copy"><small>VOICE</small><h3>选择音色</h3><p>试听平台音色或上传自己的参考声音。</p></div></article>
-            <article class="creation-step"><div class="creation-marker"><span>04</span><i></i></div><div class="creation-copy"><small>GENERATE</small><h3>提交任务</h3><p>确认分镜与参数，提交云端生成任务。</p></div></article>
-            <article class="creation-step"><div class="creation-marker"><span>05</span><i></i></div><div class="creation-copy"><small>RESULT</small><h3>下载结果</h3><p>下载音频、字幕与项目素材继续编辑。</p></div></article>
+            <article class="creation-step"><a class="creation-marker" data-creation-target="account" href="/studio/" aria-label="创建账户"><span>01</span><i></i></a><div class="creation-copy"><small>ACCOUNT</small><h3><a class="creation-title" data-creation-target="account" href="/studio/">创建账户</a></h3><p>注册云端账户并准备创作积分。</p></div></article>
+            <article class="creation-step"><a class="creation-marker" data-creation-target="script-panel" href="/studio/#script-panel" aria-label="上传文案"><span>02</span><i></i></a><div class="creation-copy"><small>SCRIPT</small><h3><a class="creation-title" data-creation-target="script-panel" href="/studio/#script-panel">上传文案</a></h3><p>粘贴或输入需要制作的视频文案。</p></div></article>
+            <article class="creation-step"><a class="creation-marker" data-creation-target="voice-panel" href="/studio/#voice-panel" aria-label="选择音色"><span>03</span><i></i></a><div class="creation-copy"><small>VOICE</small><h3><a class="creation-title" data-creation-target="voice-panel" href="/studio/#voice-panel">选择音色</a></h3><p>试听平台音色或上传自己的参考声音。</p></div></article>
+            <article class="creation-step"><a class="creation-marker" data-creation-target="task-panel" href="/studio/#task-panel" aria-label="提交任务"><span>04</span><i></i></a><div class="creation-copy"><small>GENERATE</small><h3><a class="creation-title" data-creation-target="task-panel" href="/studio/#task-panel">提交任务</a></h3><p>确认分镜与参数，提交云端生成任务。</p></div></article>
+            <article class="creation-step"><a class="creation-marker" data-creation-target="compose-panel" href="/studio/#compose-panel" aria-label="下载结果"><span>05</span><i></i></a><div class="creation-copy"><small>RESULT</small><h3><a class="creation-title" data-creation-target="compose-panel" href="/studio/#compose-panel">下载结果</a></h3><p>下载音频、字幕与项目素材继续编辑。</p></div></article>
           </div>
         </div>
       </section>
@@ -114,6 +114,16 @@
       </div>
       <div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><span>服务域名：oneclickvidgen.com</span></div>
     </footer>
-    <script src="/assets/site.js?v=20260806.2" defer></script>
+    <dialog class="auth-dialog" id="home-auth-dialog">
+      <div class="dialog-inner">
+        <div class="dialog-head"><div><h2 id="home-auth-title">登录云端账户</h2><p>登录后继续进入对应的创作步骤。</p></div><button class="dialog-close" id="home-auth-close" type="button" aria-label="关闭">×</button></div>
+        <div class="auth-tabs"><button class="auth-tab active" data-home-auth-mode="login" type="button">登录</button><button class="auth-tab" data-home-auth-mode="register" type="button">注册新账户</button></div>
+        <form id="home-auth-form"><div class="field"><label for="home-email">邮箱</label><input id="home-email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div><div class="field"><label for="home-password">密码</label><input id="home-password" name="password" type="password" minlength="10" autocomplete="current-password" placeholder="至少 10 位字符" required /></div><button class="button primary full" id="home-auth-submit" type="submit">登录</button><div class="message" id="home-auth-message" role="status"></div></form>
+      </div>
+    </dialog>
+    <dialog class="auth-dialog status-dialog" id="home-status-dialog">
+      <div class="dialog-inner"><div class="status-mark">✓</div><h2>您已登录</h2><button class="button primary full" id="home-status-close" type="button">知道了</button></div>
+    </dialog>
+    <script src="/assets/site.js?v=20260809.1" defer></script>
   </body>
 </html>

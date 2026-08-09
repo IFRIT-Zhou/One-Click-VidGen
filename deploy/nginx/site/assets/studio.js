@@ -12,7 +12,7 @@
   };
   const element = (selector) => document.querySelector(selector);
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-  const protectedTargets = new Set(["script-panel", "voice-panel", "task-panel"]);
+  const protectedTargets = new Set(["script-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]);
   let pendingProtectedTarget = protectedTargets.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : null;
 
   function readSession() { try { return JSON.parse(sessionStorage.getItem("ocvg-cloud-session")) || null; } catch (_) { return null; } }
