@@ -6,7 +6,7 @@
     <meta name="description" content="One-Click VidGen 为视频创作者提供云端 GPU 配音加速、音色管理与任务调度服务。" />
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260806.2" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260809.3" />
     <title>One-Click VidGen｜云端 GPU 视频创作服务</title>
   </head>
   <body data-page="home">
@@ -43,26 +43,14 @@
           </div>
         </div>
 
-        <div class="studio-card" aria-label="云端任务运行示意">
-          <div class="studio-top">
-            <div><span class="window-dot"></span><span class="window-dot"></span><span class="window-dot"></span></div>
-            <div class="live-pill"><i></i> CLOUD ONLINE</div>
+        <div class="home-visual" aria-label="文案、配音、分镜与视频成片流程展示">
+          <div class="home-visual-frames">
+            <img class="home-visual-frame" src="/assets/home-cloud-voice-v1.webp" alt="文案经过云端 GPU 转化为配音和字幕时间轴" fetchpriority="high" />
+            <img class="home-visual-frame" src="/assets/home-ai-storyboard-v1.webp" alt="文案转化为连续的电影感 AI 分镜画面" loading="lazy" />
+            <img class="home-visual-frame" src="/assets/home-video-publish-v1.webp" alt="画面、配音和字幕在时间线上合成为可发布视频" loading="lazy" />
           </div>
-          <div class="task-title">
-            <div class="task-icon">V</div>
-            <div><small>当前任务</small><strong>知识口播 · 云端配音</strong></div>
-            <span class="task-state">生成中</span>
-          </div>
-          <div class="waveform" aria-hidden="true">
-            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-          </div>
-          <div class="progress-copy"><span>GPU 正在合成语音</span><strong>72%</strong></div>
-          <div class="progress"><span></span></div>
-          <div class="studio-metrics">
-            <div><small>任务分块</small><strong>12 段</strong></div>
-            <div><small>输出格式</small><strong>WAV</strong></div>
-            <div><small>结果处理</small><strong>自动回传</strong></div>
-          </div>
+          <div class="home-visual-top" aria-hidden="true"><span><i></i>CLOUD PIPELINE</span><b>AI VIDEO</b></div>
+          <div class="home-visual-progress" aria-hidden="true"><span></span><span></span><span></span></div>
         </div>
       </section>
 
@@ -70,37 +58,28 @@
         <div class="shell proof-grid">
           <div><strong>GPU 集群</strong><span>弹性调度计算资源</span></div>
           <div><strong>IndexTTS2</strong><span>自然中文语音合成</span></div>
-          <div><strong>多种音色</strong><span>默认试听与自定义上传</span></div>
-          <div><strong>全程可追踪</strong><span>报价、排队、生成、下载</span></div>
+          <div><strong>AI 分镜</strong><span>文案生成镜头与画面提示</span></div>
+          <div><strong>视频成片</strong><span>素材预览、字幕与本地导出</span></div>
         </div>
       </section>
 
       <section class="section shell">
         <div class="section-heading split-heading">
-          <div><div class="eyebrow"><span></span>CORE SERVICES</div><h2>从文案到配音结果，<br />每一步都更省心</h2></div>
-          <p>云端服务专注处理最耗费计算资源的配音环节，客户端继续完成视频理解、画面生成、字幕与最终合成，工作边界清晰可靠。</p>
+          <div><div class="eyebrow"><span></span>CORE SERVICES</div><h2>从一段文案，<br />到可以发布的视频</h2></div>
+          <p>云端并行完成配音与画面生成，浏览器负责素材整理、字幕和视频合成。每一步都能预览、追踪并继续编辑。</p>
         </div>
         <div class="feature-grid">
           <article class="feature-card featured">
-            <div class="feature-icon">01</div>
-            <span class="feature-kicker">GPU VOICE</span>
-            <h3>云端 GPU 配音加速</h3>
-            <p>长文案自动分块并进入 Ray GPU 集群并行处理，生成高质量 WAV 音频和字幕时间轴。</p>
-            <a href="/services/#gpu">了解服务详情 →</a>
+            <figure class="feature-media"><img src="/assets/home-cloud-voice-v1.webp" alt="云端 GPU 配音生成过程" loading="lazy" /></figure>
+            <div class="feature-card-body"><div class="feature-icon">01</div><span class="feature-kicker">GPU VOICE</span><h3>云端 GPU 配音加速</h3><p>长文案自动分块并进入 Ray GPU 集群处理，生成高质量 WAV 音频和字幕时间轴。</p><a href="/services/#gpu">了解服务详情 →</a></div>
           </article>
           <article class="feature-card">
-            <div class="feature-icon">02</div>
-            <span class="feature-kicker">VOICE LIBRARY</span>
-            <h3>云端音色管理</h3>
-            <p>在线试听平台默认音色，也可上传自己的参考声音，音色按账户安全隔离。</p>
-            <a href="/services/#voices">查看音色能力 →</a>
+            <figure class="feature-media"><img src="/assets/home-ai-storyboard-v1.webp" alt="文案生成连续 AI 分镜画面" loading="lazy" /></figure>
+            <div class="feature-card-body"><div class="feature-icon">02</div><span class="feature-kicker">AI STORYBOARD</span><h3>AI 分镜与画面生成</h3><p>模型把文案整理成可编辑镜头，并通过云端图片号池并行生成风格统一的画面。</p><a href="/studio/#script-panel">进入分镜模块 →</a></div>
           </article>
           <article class="feature-card">
-            <div class="feature-icon">03</div>
-            <span class="feature-kicker">TASK CONTROL</span>
-            <h3>任务与用量管理</h3>
-            <p>生成前获得积分报价，实时查看排队与处理进度，并按实际完成量结算。</p>
-            <a href="/services/#billing">查看计费方式 →</a>
+            <figure class="feature-media"><img src="/assets/home-video-publish-v1.webp" alt="音频、画面和字幕合成为可发布视频" loading="lazy" /></figure>
+            <div class="feature-card-body"><div class="feature-icon">03</div><span class="feature-kicker">VIDEO PUBLISH</span><h3>视频生成与任务管理</h3><p>逐项预览图片和音频，在浏览器中组织字幕与时间线，并管理项目和导出结果。</p><a href="/services/#video">查看视频流程 →</a></div>
           </article>
         </div>
       </section>
