@@ -25,6 +25,10 @@ test("home page headlines use clean two-line copy", () => {
 test("home page removes the requested supporting copy", () => {
   assert.doesNotMatch(html, /HTTPS 安全连接|按实际用量计费|结果自动回传/);
   assert.doesNotMatch(html, /云端并行完成配音与画面生成/);
+  assert.doesNotMatch(html, /弹性调度计算资源|自然中文语音合成|素材预览、字幕与本地导出/);
+  assert.doesNotMatch(html, /proof-strip|proof-grid/);
+  assert.doesNotMatch(css, /proof-strip|proof-grid/);
+  assert.doesNotMatch(javascript, /proof-grid/);
 });
 
 test("home service titles link to their matching modules", () => {

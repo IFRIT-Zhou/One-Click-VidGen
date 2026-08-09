@@ -27,7 +27,7 @@
     document.documentElement.classList.add("motion-enabled");
     const selectors = [
       ".section-heading", ".feature-card", ".service-row", ".service-jump", ".service-module", ".price-panel",
-      ".steps article", ".cta-panel", ".proof-grid > div", ".site-footer .footer-grid",
+      ".steps article", ".cta-panel", ".site-footer .footer-grid",
     ];
     const nodes = document.querySelectorAll(selectors.join(","));
     nodes.forEach((node, index) => {
