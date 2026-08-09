@@ -39,6 +39,22 @@ test("home service focus follows the active card", () => {
   assert.match(css, /\.feature-card:hover \.feature-media img,\.feature-card:focus-within \.feature-media img/);
 });
 
+test("home page exposes the five-step creation flow", () => {
+  assert.match(html, /<h2>开启创作的流程<\/h2>/);
+  assert.doesNotMatch(html, /四步连接云端创作服务|无需改变原有创作习惯/);
+  assert.deepEqual(
+    [...html.matchAll(/class="creation-copy"><small>[^<]+<\/small><h3>([^<]+)<\/h3>/g)].map((match) => match[1]),
+    ["创建账户", "上传文案", "选择音色", "提交任务", "下载结果"],
+  );
+});
+
+test("creation flow adapts from horizontal rail to mobile stepper", () => {
+  assert.match(css, /\.creation-flow[^}]*grid-template-columns:\s*repeat\(5/);
+  assert.match(css, /@keyframes creationFlowSweep/);
+  assert.match(css, /@media \(max-width:\s*760px\)[\s\S]*\.creation-flow[^}]*grid-template-columns:\s*1fr/);
+  assert.match(css, /@keyframes creationFlowSweepY/);
+});
+
 test("home page presents the three generated video workflow visuals", () => {
   assets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));
