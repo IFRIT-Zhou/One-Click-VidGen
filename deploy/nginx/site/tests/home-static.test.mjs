@@ -10,10 +10,10 @@ const assets = [
   "home-ai-storyboard-v1.webp",
   "home-video-publish-v1.webp",
 ];
-const heroAssets = [
-  "home-hero-compute-city-v2-4k.webp",
-  "home-hero-production-stage-v2-4k.webp",
-  "home-hero-release-horizon-v2-4k.webp",
+const sectionAssets = [
+  "home-hero-cloud-compute-2k-v1.webp",
+  "home-services-network-2k-v1.webp",
+  "home-creation-flow-network-2k-v1.webp",
 ];
 
 test("home page headlines use clean two-line copy", () => {
@@ -80,25 +80,19 @@ test("home page presents the three generated video workflow visuals", () => {
   assert.equal((html.match(/class="feature-media"/g) || []).length, 3);
 });
 
-test("home hero uses separate blurred backgrounds", () => {
-  heroAssets.forEach((asset) => {
+test("home uses three dedicated high resolution section backgrounds", () => {
+  sectionAssets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));
-    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 400_000);
+    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 250_000);
   });
-  assert.equal((html.match(/class="home-hero-frame"/g) || []).length, 3);
-  assert.match(css, /\.home-hero-frame[^}]*filter:\s*blur\(1px\)/);
+  assert.equal((html.match(/class="home-hero-frame"/g) || []).length, 1);
+  assert.equal((html.match(/class="home-section-backdrop"/g) || []).length, 2);
 });
 
-test("home hero backgrounds only crossfade", () => {
-  assert.match(css, /@keyframes homeHeroCycle/);
-  assert.match(css, /\.home-hero-frame[^}]*animation: homeHeroCycle/);
-  assert.match(css, /prefers-reduced-motion[\s\S]*\.home-hero-frame:first-child/);
-  assert.doesNotMatch(css, /@keyframes homeHeroCycle[^}]*translate|@keyframes homeHeroCycle[^}]*scale/);
-});
-
-test("home hero indicator is centered and marks the current image", () => {
-  assert.match(css, /\.home-hero-progress[^}]*left:\s*50%[^}]*translateX\(-50%\)/);
-  assert.match(css, /@keyframes homeHeroIndicator/);
-  assert.match(css, /@keyframes homeHeroIndicator[^}]*background:\s*#fff/);
-  assert.doesNotMatch(css, /homeHeroProgress|\.home-hero-progress span::after/);
+test("home section backgrounds are static and use section-specific crops", () => {
+  assert.match(css, /\.home-hero-frame[^}]*animation:\s*none[^}]*transform:\s*none/);
+  assert.match(css, /\.home-section-backdrop[^}]*animation:\s*none[^}]*transform:\s*none/);
+  assert.doesNotMatch(css, /homeHeroCycle|homeHeroIndicator|home-hero-progress/);
+  assert.match(css, /\.home-services-section \.home-section-backdrop[^}]*object-position:\s*50% 46%/);
+  assert.match(css, /\.workflow-section \.home-section-backdrop[^}]*object-position:\s*center 48%/);
 });
