@@ -11,9 +11,9 @@ const assets = [
   "home-video-publish-v1.webp",
 ];
 const sectionAssets = [
-  "home-hero-cloud-compute-2k-v1.webp",
-  "home-services-network-2k-v1.webp",
-  "home-creation-flow-network-2k-v1.webp",
+  "home-studio-hero-2k-v3.webp",
+  "home-studio-services-2k-v3.webp",
+  "home-studio-flow-2k-v3.webp",
 ];
 
 test("home page headlines use clean two-line copy", () => {
@@ -87,16 +87,19 @@ test("home page presents the three generated video workflow visuals", () => {
 test("home uses three dedicated high resolution section backgrounds", () => {
   sectionAssets.forEach((asset) => {
     assert.match(html, new RegExp(asset.replace(".", "\\.")));
-    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 250_000);
+    assert.ok(fs.statSync(new URL(`../assets/${asset}`, import.meta.url)).size > 75_000);
   });
   assert.equal((html.match(/class="home-hero-frame"/g) || []).length, 1);
   assert.equal((html.match(/class="home-section-backdrop"/g) || []).length, 2);
 });
 
-test("home section backgrounds are static and use section-specific crops", () => {
+test("home backgrounds stay static while dedicated ambient layers animate", () => {
   assert.match(css, /\.home-hero-frame[^}]*animation:\s*none[^}]*transform:\s*none/);
   assert.match(css, /\.home-section-backdrop[^}]*animation:\s*none[^}]*transform:\s*none/);
   assert.doesNotMatch(css, /homeHeroCycle|homeHeroIndicator|home-hero-progress/);
-  assert.match(css, /\.home-services-section \.home-section-backdrop[^}]*object-position:\s*50% 46%/);
-  assert.match(css, /\.workflow-section \.home-section-backdrop[^}]*object-position:\s*center 48%/);
+  assert.equal((html.match(/class="home-motion /g) || []).length, 3);
+  assert.match(css, /@keyframes homeSignalTravel/);
+  assert.match(css, /@keyframes homeSignalPulse/);
+  assert.match(css, /@keyframes homeAmbientBreath/);
+  assert.match(css, /prefers-reduced-motion/);
 });
