@@ -103,3 +103,14 @@ test("home backgrounds stay static while dedicated ambient layers animate", () =
   assert.match(css, /@keyframes homeAmbientBreath/);
   assert.match(css, /prefers-reduced-motion/);
 });
+
+test("home scenes crossfade vertically instead of meeting at hard section edges", () => {
+  assert.match(css, /--home-scene-overlap:\s*clamp\(140px,12vw,190px\)/);
+  assert.match(css, /margin-top:\s*calc\(-1 \* var\(--home-scene-overlap\)\)/);
+  assert.match(css, /home-services-section \.home-section-backdrop[^}]*radial-gradient\(ellipse 108% var\(--home-scene-overlap\)/);
+  assert.match(css, /workflow-section \.home-section-backdrop[^}]*radial-gradient\(ellipse 108% var\(--home-scene-overlap\)/);
+  assert.match(css, /home-services-section \.home-section-backdrop[^}]*mask-composite:\s*intersect/);
+  assert.match(css, /home-services-section[^}]*background:\s*transparent/);
+  assert.match(css, /workflow-section[^}]*background:\s*transparent/);
+  assert.match(css, /home-services-section::after,\.workflow-section::after[^}]*backdrop-filter:\s*blur\(22px\)/);
+});
