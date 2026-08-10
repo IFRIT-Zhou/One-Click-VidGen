@@ -101,6 +101,11 @@ test("home backgrounds stay static while dedicated ambient layers animate", () =
   assert.match(css, /@keyframes homeSignalTravel/);
   assert.match(css, /@keyframes homeSignalPulse/);
   assert.match(css, /@keyframes homeAmbientBreath/);
+  assert.match(css, /@keyframes homeVerticalScan/);
+  assert.match(css, /@keyframes homeRibbonDrift/);
+  assert.match(css, /@keyframes homeTransitionDrift/);
+  assert.match(css, /@keyframes homeMarkerBeacon/);
+  assert.match(css, /creation-step:nth-child\(5\) \.creation-marker[^}]*animation:\s*homeMarkerBeacon/);
   assert.match(css, /prefers-reduced-motion/);
 });
 
