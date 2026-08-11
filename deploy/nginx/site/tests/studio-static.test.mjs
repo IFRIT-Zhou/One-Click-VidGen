@@ -35,6 +35,17 @@ test("browser bundle contains no upstream credential fields", () => {
   assert.match(javascript, /captureStream/);
 });
 
+test("document upload parses TXT and DOCX into the script without submitting a job", () => {
+  assert.match(html, /id="document-file"[^>]+accept="[^"]*\.txt,[^"]*\.docx/);
+  assert.match(html, /id="document-upload-status"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(javascript, /api\("\/documents\/parse",\s*\{\s*method:\s*"POST",\s*body:\s*form\s*\}\)/);
+  assert.match(javascript, /form\.append\("file", file\)/);
+  assert.match(javascript, /result\.text\.length > script\.maxLength/);
+  assert.match(javascript, /script\.value = result\.text/);
+  assert.match(javascript, /script\.dispatchEvent\(new Event\("input", \{ bubbles: true \}\)\)/);
+  assert.doesNotMatch(javascript, /parseDocument[\s\S]{0,1500}submitJob\(/);
+});
+
 test("image submissions share a stable batch-scoped idempotency key", () => {
   assert.match(javascript, /generateAllImages\(clientJobId\)/);
   assert.match(javascript, /`\$\{batchId\}-image-\$\{item\.scene\.index\}`/);

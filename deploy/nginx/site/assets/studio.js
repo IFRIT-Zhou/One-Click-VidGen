@@ -159,6 +159,46 @@
   }
 
   async function deleteVoice(voice) { if (!window.confirm(`确认删除音色“${voice.display_name}”吗？`)) return; try { await api(`/cloud/voices/${encodeURIComponent(voice.id)}`, { method: "DELETE" }); state.selectedVoice = null; await loadVoices(); message(element("#voice-message"), "音色已删除。", "success"); } catch (error) { message(element("#voice-message"), errorText(error)); } }
+  function setDocumentStatus(text, type = "") {
+    const node = element("#document-upload-status");
+    node.textContent = text;
+    node.className = `document-upload-status ${type}`.trim();
+  }
+
+  async function parseDocument() {
+    const input = element("#document-file");
+    const file = input.files[0];
+    if (!file) return;
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (!new Set(["txt", "docx"]).has(extension)) {
+      setDocumentStatus("仅支持 TXT 或 DOCX 文档。", "error");
+      input.value = "";
+      return;
+    }
+    input.disabled = true;
+    setDocumentStatus(`正在解析 ${file.name}…`, "loading");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = unwrap(await api("/documents/parse", { method: "POST", body: form }));
+      if (!result || typeof result.text !== "string") throw new Error("文档解析结果无效");
+      const script = element("#script-input");
+      if (script.maxLength > 0 && result.text.length > script.maxLength) {
+        throw new Error(`文档正文 ${result.text.length.toLocaleString("zh-CN")} 字，超过 ${script.maxLength.toLocaleString("zh-CN")} 字上限，请拆分后上传。`);
+      }
+      script.value = result.text;
+      script.dispatchEvent(new Event("input", { bubbles: true }));
+      const parsedName = result.filename || file.name;
+      setDocumentStatus(`已导入 ${parsedName}（${result.text.length.toLocaleString("zh-CN")} 字）`, "success");
+      script.focus();
+    } catch (error) {
+      setDocumentStatus(errorText(error), "error");
+    } finally {
+      input.disabled = false;
+      input.value = "";
+    }
+  }
+
   async function uploadVoice() {
     const file = element("#voice-file").files[0]; const name = element("#voice-name").value.trim(); if (!file || !name) { message(element("#voice-message"), "请选择音频文件并填写音色名称。"); return; }
     const button = element("#upload-voice"); button.disabled = true; button.textContent = "正在上传…";
@@ -354,7 +394,7 @@
   document.querySelectorAll("[data-auth-mode]").forEach((tab) => tab.addEventListener("click", () => { authMode = tab.dataset.authMode; document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab)); element("#auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户"; element("#auth-submit").textContent = authMode === "login" ? "登录" : "注册并继续"; element("#password").autocomplete = authMode === "login" ? "current-password" : "new-password"; element("#auth-message").className = "message"; }));
   element("#auth-form").addEventListener("submit", async (event) => { event.preventDefault(); const submit = element("#auth-submit"); submit.disabled = true; const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value }; try { if (authMode === "register") await api("/auth/register", { method: "POST", body: JSON.stringify(credentials) }); const login = await api("/auth/login", { method: "POST", body: JSON.stringify(credentials) }); saveSession(login); element("#auth-dialog").close(); renderAuth(); enterPendingProtectedTarget(); await Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]); scheduleQuote(); } catch (error) { const node = element("#auth-message"); node.textContent = errorText(error); node.className = "message show error"; } finally { submit.disabled = false; submit.textContent = authMode === "login" ? "登录" : "注册并继续"; } });
 
-  element("#script-input").addEventListener("input", () => { state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#clear-script").addEventListener("click", () => { element("#script-input").value = ""; state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#generate-storyboard").addEventListener("click", generateStoryboard);
+  element("#script-input").addEventListener("input", () => { state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#document-file").addEventListener("change", parseDocument); element("#clear-script").addEventListener("click", () => { element("#script-input").value = ""; state.storyboard = []; renderStoryboard(); scheduleQuote(); setDocumentStatus(""); }); element("#generate-storyboard").addEventListener("click", generateStoryboard);
   element("#speed").addEventListener("input", (event) => { element("#speed-value").textContent = `${Number(event.target.value).toFixed(2)}×`; scheduleQuote(); }); element("#pitch").addEventListener("input", (event) => { const value = Number(event.target.value); element("#pitch-value").textContent = value > 0 ? `+${value}` : String(value); scheduleQuote(); }); element("#emotion-weight").addEventListener("input", (event) => { element("#emotion-weight-value").textContent = `${Math.round(Number(event.target.value) * 100)}%`; scheduleQuote(); }); element("#emotion").addEventListener("change", scheduleQuote);
   element("#reset-settings").addEventListener("click", () => { element("#emotion").value = ""; element("#speed").value = 1; element("#pitch").value = 0; element("#emotion-weight").value = .65; element("#aspect-ratio").value = "16:9"; element("#image-resolution").value = "1k"; element("#speed-value").textContent = "1.00×"; element("#pitch-value").textContent = "0"; element("#emotion-weight-value").textContent = "65%"; scheduleQuote(); });
   element("#refresh-voices").addEventListener("click", loadVoices); element("#voice-file").addEventListener("change", (event) => { element("#upload-form").classList.toggle("show", Boolean(event.target.files[0])); if (event.target.files[0] && !element("#voice-name").value) element("#voice-name").value = event.target.files[0].name.replace(/\.[^.]+$/, ""); }); element("#upload-voice").addEventListener("click", uploadVoice); element("#submit-job").addEventListener("click", submitJob); element("#refresh-jobs").addEventListener("click", loadJobs); element("#compose-video").addEventListener("click", composeVideo); element("#download-project").addEventListener("click", downloadProject);

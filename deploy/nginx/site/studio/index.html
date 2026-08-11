@@ -6,7 +6,7 @@
     <meta name="description" content="One-Click VidGen 云端视频工作台，从文案、分镜、配音和图片生成到浏览器本地视频合成。" />
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260808.6" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260811.1" />
     <title>云端视频工作台｜One-Click VidGen</title>
   </head>
   <body class="studio-body" data-page="studio">
@@ -48,7 +48,14 @@
               <div class="workspace-card-head"><div><span>STEP 01</span><h3>输入配音文案</h3></div><div class="counter" id="text-counter">0 / 5,000</div></div>
               <div class="script-box">
                 <textarea id="script-input" maxlength="5000" placeholder="在这里输入或粘贴需要配音的文案…&#10;&#10;建议使用完整的标点和自然段，系统会根据语义自动拆分长文本。"></textarea>
-                <div class="script-tools"><button class="text-tool" id="clear-script" type="button">清空文案</button><span>支持中文、英文、数字及常用标点</span></div>
+                <div class="script-tools">
+                  <div class="script-tool-actions">
+                    <label class="document-upload-button"><input id="document-file" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" /><span>导入 TXT / Word</span></label>
+                    <button class="text-tool" id="clear-script" type="button">清空文案</button>
+                  </div>
+                  <span>支持中文、英文、数字及常用标点</span>
+                </div>
+                <div class="document-upload-status" id="document-upload-status" role="status" aria-live="polite"></div>
               </div>
             </section>
 
@@ -135,6 +142,6 @@
         <form id="auth-form"><div class="field"><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div><div class="field"><label for="password">密码</label><input id="password" name="password" type="password" minlength="10" autocomplete="current-password" placeholder="至少 10 位字符" required /></div><button class="button primary full" id="auth-submit" type="submit">登录</button><div class="message" id="auth-message" role="status"></div></form>
       </div>
     </dialog>
-    <script src="/assets/studio.js?v=20260809.1" defer></script>
+    <script src="/assets/studio.js?v=20260811.1" defer></script>
   </body>
 </html>
