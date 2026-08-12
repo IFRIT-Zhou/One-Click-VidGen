@@ -5,6 +5,13 @@ from backend.app import gemini_client
 
 
 class GeminiClientTest(unittest.TestCase):
+    def test_timeout_uses_short_connect_and_long_read_windows(self) -> None:
+        with patch.dict(
+            gemini_client.os.environ,
+            {"GEMINI_CONNECT_TIMEOUT_SECONDS": "7", "GEMINI_READ_TIMEOUT_SECONDS": "90"},
+        ):
+            self.assertEqual(gemini_client._gemini_timeout(), (7.0, 90.0))
+
     def test_deepseek_uses_its_own_key_model_and_openai_endpoint(self) -> None:
         response = Mock()
         response.ok = True

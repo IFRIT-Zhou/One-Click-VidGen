@@ -5,6 +5,44 @@ from backend.app.pipeline import Job, JobStore, parse_noisy_progress_log
 
 
 class PipelineLoggingTest(unittest.TestCase):
+    def test_cancelled_job_can_be_explicitly_resumed(self) -> None:
+        job = Job(
+            id="resume-cancelled",
+            status="cancelled",
+            request={"tts_engine": "cluster", "_cloud_job_id": "old-cloud-job"},
+        )
+        store = JobStore()
+        store._jobs[job.id] = job
+        with (
+            patch("backend.app.pipeline.append_generation_job_log"),
+            patch("backend.app.pipeline.upsert_generation_job"),
+            patch.object(store, "run_async") as run_async,
+        ):
+            payload = store.resume(job)
+
+        self.assertEqual(payload["status"], "queued")
+        self.assertEqual(payload["step"], "queued")
+        self.assertNotIn("_cloud_job_id", job.request)
+        run_async.assert_called_once_with(job, resume=True, priority=True)
+
+    def test_load_persisted_resumes_queued_but_fails_running_job(self) -> None:
+        rows = [
+            {"id": "running", "user_id": 7, "status": "running", "created_at": 1},
+            {"id": "queued", "user_id": 7, "status": "queued", "created_at": 2},
+        ]
+        store = JobStore()
+        with (
+            patch("backend.app.pipeline.load_generation_jobs", return_value=rows),
+            patch("backend.app.pipeline.append_generation_job_log"),
+            patch("backend.app.pipeline.upsert_generation_job"),
+            patch.object(store, "run_async") as run_async,
+        ):
+            store.load_persisted()
+
+        self.assertEqual(store.get("running").status, "failed")
+        self.assertEqual(store.get("queued").status, "queued")
+        run_async.assert_called_once_with(store.get("queued"))
+
     def test_retry_tts_restarts_only_from_audio_review_checkpoint(self) -> None:
         job = Job(
             id="retry-tts-test",
@@ -27,7 +65,7 @@ class PipelineLoggingTest(unittest.TestCase):
         self.assertEqual(payload["progress"], 0)
         self.assertEqual(payload["artifacts"], {})
         self.assertNotIn("_step_mode_stage", job.request)
-        run_async.assert_called_once_with(job, resume=False)
+        run_async.assert_called_once_with(job, resume=False, priority=True)
 
     def test_tts_sentence_progress_updates_job_without_progress_bar_noise(self) -> None:
         job = Job(id="tts-test", status="running", step="tts", progress=8)
@@ -52,17 +90,49 @@ class PipelineLoggingTest(unittest.TestCase):
         self.assertEqual(subtitle, ("字幕版 1/2 Streaming frame", 36))
         self.assertEqual(clean, ("纯净版 2/2 Streaming frame", 12))
 
-    def test_new_job_is_blocked_while_pipeline_is_stopping_or_pending(self) -> None:
+    def test_new_job_is_queued_while_pipeline_is_stopping_or_pending(self) -> None:
         store = JobStore()
         stopping = Job(id="stopping", user_id=7, status="cancelled")
         pending = Job(id="pending", user_id=7, status="queued")
         store._jobs = {stopping.id: stopping, pending.id: pending}
         store._pipeline_owner_id = stopping.id
 
-        self.assertIn("正在停止", store.new_job_block_reason(7) or "")
+        self.assertIsNone(store.new_job_block_reason(7))
 
         store._pipeline_owner_id = None
-        self.assertIn("等待或运行中", store.new_job_block_reason(7) or "")
+        self.assertIsNone(store.new_job_block_reason(7))
+
+    def test_dispatcher_runs_queued_jobs_in_fifo_order(self) -> None:
+        store = JobStore()
+        first = Job(id="first", user_id=7, created_at=1)
+        second = Job(id="second", user_id=7, created_at=2)
+        store._jobs = {first.id: first, second.id: second}
+        order: list[str] = []
+
+        def run(job: Job, resume: bool = False) -> None:
+            order.append(job.id)
+            job.status = "completed"
+
+        with patch.object(store, "_run_guarded", side_effect=run):
+            store._pending_runs = {second.id: (False, False), first.id: (False, False)}
+            store._dispatcher_running = True
+            store._dispatch_loop()
+
+        self.assertEqual(order, ["first", "second"])
+
+    def test_dispatcher_preserves_step_mode_workspace(self) -> None:
+        store = JobStore()
+        paused = Job(id="paused", status="waiting_confirmation")
+        queued = Job(id="queued", status="queued")
+        store._jobs = {paused.id: paused, queued.id: queued}
+        store._pending_runs = {queued.id: (False, False)}
+        store._dispatcher_running = True
+
+        with patch.object(store, "_run_guarded") as run:
+            store._dispatch_loop()
+
+        run.assert_not_called()
+        self.assertFalse(store._dispatcher_running)
 
     def test_tts_cancel_requests_graceful_stop_without_taskkill(self) -> None:
         job = Job(id="safe-tts-stop", status="running", step="tts")

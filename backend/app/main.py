@@ -869,6 +869,19 @@ def _api_key_status() -> dict[str, Any]:
     }
 
 
+def _required_job_config_error(data: dict[str, Any]) -> str | None:
+    main_workflow = not bool(data.get("module1_only")) and not bool(data.get("subtitle_only"))
+    if not main_workflow or bool(data.get("use_cloud_image_pool")):
+        return None
+    status = _api_key_status()
+    if not status["language"]["configured"]:
+        return "完整视频生成需要语言模型 API Key，请先在接口配置中保存后再启动"
+    visual_backend = str(data.get("visual_backend") or "poster").lower()
+    if visual_backend in {"poster", "online-poster", "runninghub"} and not status["image"]["configured"]:
+        return "在线海报生成需要 RUNNINGHUB_API_KEY，请先在接口配置中保存后再启动"
+    return None
+
+
 def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
@@ -1491,6 +1504,9 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     data["project_name"] = normalize_project_name(data.get("project_name"))
     if data.get("tts_engine") == "cluster" and not str(data.get("cluster_voice_id") or "").strip():
         raise HTTPException(status_code=400, detail="使用集群配音前请选择一个云端音色")
+    config_error = _required_job_config_error(data)
+    if config_error:
+        raise HTTPException(status_code=400, detail=config_error)
     if data.get("use_cloud_image_pool") and not data.get("module1_only") and not data.get("subtitle_only"):
         client = cloud_client_for(int(user["id"]))
         cloud_state = client.session_snapshot()
@@ -1576,9 +1592,6 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     elif data.get("skip_text_correction"):
         raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
-    block_reason = store.new_job_block_reason(int(user["id"]))
-    if block_reason:
-        raise HTTPException(status_code=409, detail=block_reason)
     job = store.create(data, user_id=int(user["id"]))
     store.run_async(job)
     return job.snapshot()

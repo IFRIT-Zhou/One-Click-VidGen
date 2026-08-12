@@ -65,6 +65,27 @@ class PreflightProbeTest(unittest.TestCase):
         self.assertIn("1/2", message)
         self.assertIn("1 个无效账号", message)
 
+    def test_full_poster_job_requires_image_key_before_start(self) -> None:
+        status = {
+            "language": {"configured": True},
+            "image": {"configured": False},
+        }
+        with patch.object(main, "_api_key_status", return_value=status):
+            error = main._required_job_config_error({"visual_backend": "poster"})
+        self.assertIn("RUNNINGHUB_API_KEY", error)
+
+    def test_module1_job_does_not_require_visual_keys(self) -> None:
+        with patch.object(main, "_api_key_status") as api_key_status:
+            error = main._required_job_config_error({"module1_only": True, "visual_backend": "poster"})
+        self.assertIsNone(error)
+        api_key_status.assert_not_called()
+
+    def test_cloud_pool_job_uses_cloud_credentials_instead_of_local_keys(self) -> None:
+        with patch.object(main, "_api_key_status") as api_key_status:
+            error = main._required_job_config_error({"use_cloud_image_pool": True, "visual_backend": "poster"})
+        self.assertIsNone(error)
+        api_key_status.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

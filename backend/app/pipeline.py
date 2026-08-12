@@ -212,6 +212,8 @@ class JobStore:
         self._lock = threading.Lock()
         self._pipeline_lock = threading.Lock()
         self._pipeline_owner_id: str | None = None
+        self._pending_runs: dict[str, tuple[bool, bool]] = {}
+        self._dispatcher_running = False
 
     def create(self, request: dict[str, Any], user_id: int | None = None) -> Job:
         job = Job(id=uuid.uuid4().hex[:12], user_id=user_id, request=request)
@@ -224,6 +226,7 @@ class JobStore:
     def load_persisted(self) -> None:
         loaded: dict[str, Job] = {}
         interrupted: list[Job] = []
+        queued: list[Job] = []
         for row in load_generation_jobs():
             job = Job(
                 id=str(row["id"]),
@@ -239,12 +242,14 @@ class JobStore:
                 error=row.get("error"),
                 request=dict(row.get("request") or {}),
             )
-            if job.status in {"queued", "running"}:
+            if job.status == "running":
                 job.status = "failed"
                 job.message = "服务重启，任务已中断"
                 job.error = "backend restarted before task completion"
                 job.updated_at = time.time()
                 interrupted.append(job)
+            elif job.status == "queued":
+                queued.append(job)
             loaded[job.id] = job
         with self._lock:
             self._jobs = loaded
@@ -254,6 +259,9 @@ class JobStore:
         for job in interrupted:
             self.log(job, "服务重启，未完成任务已标记为失败")
             upsert_generation_job(job.snapshot())
+        for job in sorted(queued, key=lambda item: item.created_at):
+            self.log(job, "服务重启后已恢复本地排队")
+            self.run_async(job)
 
     def import_legacy_jobs(self, default_user_id: int | None) -> int:
         if not JOBS_DIR.is_dir():
@@ -443,36 +451,74 @@ class JobStore:
         if tts_progress is not None or poster_progress is not None or render_progress_changed:
             upsert_generation_job(job.snapshot())
 
-    def run_async(self, job: Job, *, resume: bool = False) -> None:
-        thread = threading.Thread(target=self._run_guarded, args=(job, resume), daemon=True)
-        thread.start()
+    def run_async(self, job: Job, *, resume: bool = False, priority: bool = False) -> None:
+        """Queue a pipeline run and execute jobs serially against the shared workspace."""
+        with self._lock:
+            previous = self._pending_runs.get(job.id)
+            self._pending_runs[job.id] = (
+                resume or bool(previous and previous[0]),
+                priority or bool(previous and previous[1]),
+            )
+            ahead = sum(
+                item.status in {"queued", "running", "waiting_confirmation"}
+                for item in self._jobs.values()
+                if item.id != job.id
+            )
+            if ahead:
+                job.status = "queued"
+                job.step = "queued"
+                job.message = f"已进入本地队列，前方 {ahead} 个任务"
+                job.updated_at = time.time()
+        if ahead:
+            upsert_generation_job(job.snapshot())
+        with self._lock:
+            self._ensure_dispatcher_locked()
+
+    def _ensure_dispatcher_locked(self) -> None:
+        if self._dispatcher_running:
+            return
+        self._dispatcher_running = True
+        threading.Thread(target=self._dispatch_loop, daemon=True).start()
+
+    def _dispatch_loop(self) -> None:
+        while True:
+            with self._lock:
+                # A step-mode checkpoint owns the shared workspace until the
+                # user resumes or cancels it. Starting another job would erase
+                # that checkpoint.
+                if any(job.status == "waiting_confirmation" for job in self._jobs.values()):
+                    self._dispatcher_running = False
+                    return
+                candidates = [
+                    (job, options)
+                    for job_id, options in self._pending_runs.items()
+                    if (job := self._jobs.get(job_id)) is not None and job.status == "queued"
+                ]
+                if not candidates:
+                    self._dispatcher_running = False
+                    return
+                job, (resume, _priority) = min(
+                    candidates,
+                    key=lambda item: (not item[1][1], item[0].created_at),
+                )
+                self._pending_runs.pop(job.id, None)
+            self._run_guarded(job, resume)
 
     def new_job_block_reason(self, user_id: int) -> str | None:
-        """The pipeline owns shared workspace/GPU state, so it is intentionally single-job."""
-        with self._lock:
-            if self._pipeline_owner_id:
-                owner = self._jobs.get(self._pipeline_owner_id)
-                if owner and owner.status == "cancelled":
-                    return "上一个任务正在停止并释放 TTS/GPU 资源，请稍候再开始新任务"
-                return "当前已有任务正在运行，请先等待完成或停止后再开始新任务"
-            pending = next(
-                (
-                    item for item in self._jobs.values()
-                    if item.user_id == user_id and item.status in {"queued", "running", "waiting_confirmation"}
-                ),
-                None,
-            )
-        if pending:
-            return "当前已有任务正在等待或运行中，请先完成、停止或断点续跑该任务"
+        """Jobs share a workspace but are serialized by the local FIFO dispatcher."""
         return None
 
     def resume(self, job: Job) -> dict[str, Any]:
         with self._lock:
             if job.status in {"queued", "running"}:
                 return job.snapshot()
+            previous_status = job.status
             self._cancel_events[job.id] = threading.Event()
+            # This is an explicit user transition. Move out of cancelled before
+            # update() applies its guard against stale worker-thread updates.
+            job.status = "queued"
         if str(job.request.get("tts_engine") or "") == "cluster" and (
-            job.status == "cancelled"
+            previous_status == "cancelled"
             or str(job.request.get("_cloud_job_status") or "") in {"failed", "cancelled", "expired"}
         ):
             job.request.pop("_cloud_job_id", None)
@@ -489,7 +535,7 @@ class JobStore:
             message="等待断点续跑",
             error=None,
         )
-        self.run_async(job, resume=True)
+        self.run_async(job, resume=True, priority=True)
         return job.snapshot()
 
     def retry_tts(self, job: Job) -> dict[str, Any]:
@@ -519,7 +565,7 @@ class JobStore:
             error=None,
             artifacts={},
         )
-        self.run_async(job, resume=False)
+        self.run_async(job, resume=False, priority=True)
         return job.snapshot()
 
     def is_cancelled(self, job: Job) -> bool:
@@ -587,6 +633,8 @@ class JobStore:
                 _request_graceful_tts_stop(process)
             else:
                 _terminate_process_tree(process)
+        with self._lock:
+            self._ensure_dispatcher_locked()
         return job.snapshot()
 
     def delete(self, job: Job) -> None:
@@ -629,9 +677,11 @@ class JobStore:
             self._jobs.pop(job.id, None)
             self._cancel_events.pop(job.id, None)
             self._processes.pop(job.id, None)
+            self._pending_runs.pop(job.id, None)
             self._last_progress_log.pop(job.id, None)
             if self._pipeline_owner_id == job.id:
                 self._pipeline_owner_id = None
+            self._ensure_dispatcher_locked()
         delete_generation_job(job.id, job.user_id)
 
     def _run_guarded(self, job: Job, resume: bool = False) -> None:

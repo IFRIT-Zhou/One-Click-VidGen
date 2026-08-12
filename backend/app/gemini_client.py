@@ -172,6 +172,18 @@ def _gemini_retry_delay(attempt: int) -> float:
     return min(30.0, base_delay * (2 ** max(0, attempt - 1)))
 
 
+def _gemini_timeout() -> tuple[float, float]:
+    try:
+        connect = max(1.0, float(os.getenv("GEMINI_CONNECT_TIMEOUT_SECONDS", "10")))
+    except ValueError:
+        connect = 10.0
+    try:
+        read = max(connect, float(os.getenv("GEMINI_READ_TIMEOUT_SECONDS", "120")))
+    except ValueError:
+        read = 120.0
+    return connect, read
+
+
 def _extract_error_message(response: requests.Response) -> str:
     try:
         data = response.json()
@@ -237,7 +249,7 @@ def _generate_openai_compatible_text(
                     url,
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                     json=payload,
-                    timeout=120,
+                    timeout=_gemini_timeout(),
                 )
             except requests.RequestException as exc:
                 errors.append(f"{model}: 网络异常 {type(exc).__name__}")
@@ -332,7 +344,7 @@ def generate_gemini_text(
                     url,
                     headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
                     json=payload,
-                    timeout=120,
+                    timeout=_gemini_timeout(),
                 )
             except requests.RequestException as exc:
                 errors.append(f"{model}: 网络异常 {type(exc).__name__}")
