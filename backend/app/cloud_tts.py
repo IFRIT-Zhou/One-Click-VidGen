@@ -232,7 +232,12 @@ def synthesize_cloud_tts(
         on_log(f"断点续跑：继续查询云端任务 {remote_job_id}")
         remote = client.get_job(remote_job_id)
     else:
-        payload = build_job_payload(request, chunks, client_job_id=local_job_id)
+        # The deployed Cloud API treats ``client_job_id`` and the HTTP
+        # Idempotency-Key as the same request identity.  Include the TTS
+        # attempt in both values so a deliberate retry can create a fresh
+        # remote job while repeated delivery of the same attempt remains
+        # idempotent.
+        payload = build_job_payload(request, chunks, client_job_id=idempotency_key)
         on_log(f"正在提交集群 TTS：{len(chunks)} 个分块将全部入队，由空闲 GPU 自动调度")
         remote = client.create_job(payload, idempotency_key=idempotency_key)
         remote_job_id = str(remote.get("job_id") or "").strip()

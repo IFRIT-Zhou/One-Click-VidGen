@@ -82,6 +82,8 @@ class CloudTtsTest(unittest.TestCase):
                 self.idempotency_key = ""
 
             def create_job(self, payload, *, idempotency_key):
+                if payload["client_job_id"] != idempotency_key:
+                    raise AssertionError("Cloud API requires client_job_id to match Idempotency-Key")
                 self.created = payload
                 self.idempotency_key = idempotency_key
                 return {
@@ -127,7 +129,7 @@ class CloudTtsTest(unittest.TestCase):
             )
 
             self.assertEqual(client.idempotency_key, "local-001:tts:v1")
-            self.assertEqual(client.created["client_job_id"], "local-001")
+            self.assertEqual(client.created["client_job_id"], "local-001:tts:v1")
             self.assertEqual([item["index"] for item in client.created["chunks"]], [0, 1])
             self.assertTrue(Path(result["audio_path"]).is_file())
             with wave.open(result["audio_path"], "rb") as audio:
