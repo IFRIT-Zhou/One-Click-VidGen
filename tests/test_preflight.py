@@ -5,6 +5,36 @@ from backend.app import main
 
 
 class PreflightProbeTest(unittest.TestCase):
+    def test_project_config_values_prefers_runtime_environment(self) -> None:
+        with (
+            patch.object(main, "_parse_env_lines", return_value={"GEMINI_API_KEY": "file-key"}),
+            patch.dict(main.os.environ, {"GEMINI_API_KEY": "runtime-key"}),
+        ):
+            values = main._project_config_values()
+        self.assertEqual(values["GEMINI_API_KEY"], "runtime-key")
+
+    def test_ffmpeg_preflight_accepts_system_binaries(self) -> None:
+        with (
+            patch.object(main.Path, "is_file", return_value=False),
+            patch.object(main.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        ):
+            ready, message = main._ffmpeg_preflight()
+        self.assertTrue(ready)
+        self.assertIn("/usr/bin/ffmpeg", message)
+
+    def test_ffmpeg_preflight_reports_missing_binary(self) -> None:
+        with (
+            patch.object(main.Path, "is_file", return_value=False),
+            patch.object(
+                main.shutil,
+                "which",
+                side_effect=lambda name: None if name == "ffprobe" else "/usr/bin/ffmpeg",
+            ),
+        ):
+            ready, message = main._ffmpeg_preflight()
+        self.assertFalse(ready)
+        self.assertIn("FFprobe", message)
+
     @patch.object(main.requests, "get")
     def test_language_probe_rejects_invalid_key(self, request_get: Mock) -> None:
         request_get.return_value.status_code = 401

@@ -83,6 +83,27 @@ MAX_SCRIPT_CHARACTERS = 12_000
 SERVER_STARTED_AT = time.time()
 
 
+def _project_config_values() -> dict[str, str]:
+    """Return effective configuration using the same precedence as runtime code."""
+    values = _parse_env_lines(PROJECT_ROOT / ".env")
+    values.update({key: value for key, value in os.environ.items() if value is not None})
+    return values
+
+
+def _ffmpeg_preflight() -> tuple[bool, str]:
+    portable_dir = PROJECT_ROOT / "tools" / "ffmpeg" / "bin"
+    portable_ffmpeg = portable_dir / "ffmpeg.exe"
+    portable_ffprobe = portable_dir / "ffprobe.exe"
+    if portable_ffmpeg.is_file() and portable_ffprobe.is_file():
+        return True, "便携 FFmpeg 与 FFprobe 完整"
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg and ffprobe:
+        return True, f"系统 FFmpeg 与 FFprobe 可用（{ffmpeg}）"
+    missing = [name for name, path in (("FFmpeg", ffmpeg), ("FFprobe", ffprobe)) if not path]
+    return False, f"缺少 {' 和 '.join(missing)}"
+
+
 def _open_windows_explorer(path: Path, *, select_file: bool = False) -> None:
     """Open Explorer visibly even when the backend itself was launched hidden."""
     if os.name != "nt":
@@ -796,7 +817,7 @@ def _masked_api_keys(values: list[str]) -> list[str]:
 
 
 def _api_key_status() -> dict[str, Any]:
-    values = _parse_env_lines(PROJECT_ROOT / ".env")
+    values = _project_config_values()
     image_keys = _runninghub_api_keys(values)
     common_keys = _common_api_keys(values)
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
@@ -1024,7 +1045,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             add("gpu", "GPU 显存", "warning", "未找到 nvidia-smi，无法提前评估显存")
 
     if main_workflow:
-        values = _parse_env_lines(PROJECT_ROOT / ".env")
+        values = _project_config_values()
         language_required = True
         image_required = str(data.get("visual_backend") or "poster").lower() in {"poster", "online-poster", "runninghub"}
         use_cloud_pool = bool(data.get("use_cloud_image_pool"))
@@ -1099,12 +1120,13 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         bgm_errors.append(str(exc))
                 add("bgm", "背景音乐", "error" if bgm_errors else "passed", bgm_errors[0] if bgm_errors else f"{len(data['bgm_tracks'])} 首 BGM 可用，将按列表循环")
 
-        ffmpeg = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
-        ffprobe = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffprobe.exe"
-        if ffmpeg.is_file() and ffprobe.is_file():
-            add("ffmpeg", "视频渲染环境", "passed", "便携 FFmpeg 与 FFprobe 完整")
-        else:
-            add("ffmpeg", "视频渲染环境", "error", "整合包缺少 FFmpeg 或 FFprobe")
+        ffmpeg_ready, ffmpeg_message = _ffmpeg_preflight()
+        add(
+            "ffmpeg",
+            "视频渲染环境",
+            "passed" if ffmpeg_ready else "error",
+            ffmpeg_message,
+        )
         node = PROJECT_ROOT / "runtime" / "node" / "node.exe"
         hyperframes = PROJECT_ROOT / "node_modules" / "hyperframes" / "dist" / "cli.js"
         browser_root = PROJECT_ROOT / "runtime" / "hyperframes" / ".cache" / "hyperframes" / "chrome"
