@@ -125,6 +125,7 @@ export const api = {
   startTts: () => requestJSON('/api/tts/start', { method: 'POST' }),
   settings: () => requestJSON('/api/settings'),
   apiKeySettings: () => requestJSON('/api/api-keys'),
+  deleteApiKey: (kind, index, provider = '') => requestJSON(`/api/api-keys/${encodeURIComponent(kind)}/${index}${provider ? `?provider=${encodeURIComponent(provider)}` : ''}`, { method: 'DELETE' }),
   saveApiKeySettings: (payload) => requestJSON('/api/api-keys', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),

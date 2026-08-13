@@ -290,8 +290,6 @@ class ApiKeySettingsRequest(BaseModel):
     language_api_key: str | None = Field(default=None, max_length=2048)
     image_api_key: str | None = Field(default=None, max_length=2048)
     image_api_keys: list[str] = Field(default_factory=list, max_length=10)
-    common_api_key: str | None = Field(default=None, max_length=2048)
-    common_api_keys: list[str] = Field(default_factory=list, max_length=10)
     qwen_tts_api_key: str | None = Field(default=None, max_length=2048)
 
 
@@ -793,13 +791,6 @@ def _runninghub_api_keys(values: dict[str, str]) -> list[str]:
     return _unique_api_keys(candidates)
 
 
-def _common_api_keys(values: dict[str, str]) -> list[str]:
-    return _unique_api_keys([
-        values.get("APP_COMMON_API_KEY", ""),
-        values.get("APP_COMMON_API_KEYS", ""),
-    ])
-
-
 def _masked_api_key(value: str) -> str:
     """Return a stable, non-reversible display hint without exposing the key."""
     key = str(value or "").strip()
@@ -819,7 +810,6 @@ def _masked_api_keys(values: list[str]) -> list[str]:
 def _api_key_status() -> dict[str, Any]:
     values = _project_config_values()
     image_keys = _runninghub_api_keys(values)
-    common_keys = _common_api_keys(values)
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
         legacy = str(values.get("GEMINI_PROVIDER") or "google").strip().lower()
@@ -855,11 +845,6 @@ def _api_key_status() -> dict[str, Any]:
             "configured": bool(image_keys),
             "count": len(image_keys),
             "key_hints": _masked_api_keys(image_keys),
-        },
-        "common": {
-            "configured": bool(common_keys),
-            "count": len(common_keys),
-            "key_hints": _masked_api_keys(common_keys),
         },
         "qwen_tts": {
             "configured": bool(qwen_tts_key),
@@ -1181,28 +1166,19 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     language = str(payload.language_api_key or "").strip()
     image = str(payload.image_api_key or "").strip()
     image_additions = _unique_api_keys(payload.image_api_keys)
-    common = str(payload.common_api_key or "").strip()
-    common_additions = _unique_api_keys(payload.common_api_keys)
     qwen_tts = str(payload.qwen_tts_api_key or "").strip()
-    all_supplied = [language, image, common, qwen_tts, *image_additions, *common_additions]
+    all_supplied = [language, image, qwen_tts, *image_additions]
     if not any(all_supplied) and not language_provider:
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
     if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
 
     existing = _parse_env_lines(PROJECT_ROOT / ".env")
-    existing_common = _common_api_keys(existing)
-    supplied_common = _unique_api_keys([common, *common_additions])
-    common_pool = _unique_api_keys([*existing_common, *supplied_common])
-    common_primary = common or existing.get("APP_COMMON_API_KEY", "").strip() or (common_pool[0] if common_pool else "")
-
     existing_image = _runninghub_api_keys(existing)
     supplied_image = _unique_api_keys([image, *image_additions])
-    # Every common RunningHub-style account is also eligible for Image2 work.
-    image_pool = _unique_api_keys([*existing_image, *supplied_image, *common_pool])
+    image_pool = _unique_api_keys([*existing_image, *supplied_image])
     image_primary = (
         image
-        or common
         or existing.get("RUNNINGHUB_API_KEY", "").strip()
         or (image_pool[0] if image_pool else "")
     )
@@ -1218,14 +1194,14 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     elif language:
         # Preserve the old behavior for callers which do not send a provider.
         updates["GEMINI_API_KEY"] = language
-    if supplied_common:
-        updates["APP_COMMON_API_KEY"] = common_primary
-        updates["APP_COMMON_API_KEYS"] = ",".join(key for key in common_pool if key != common_primary)
-    if (language_provider in {None, "gemini"} and (language or common)):
-        updates["GEMINI_API_KEY"] = language or common
-    if supplied_image or supplied_common:
+    if language_provider in {None, "gemini"} and language:
+        updates["GEMINI_API_KEY"] = language
+    if supplied_image:
         updates["RUNNINGHUB_API_KEY"] = image_primary
         updates["RUNNINGHUB_API_KEYS"] = ",".join(key for key in image_pool if key != image_primary)
+        for name in existing:
+            if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name):
+                updates[name] = ""
     if qwen_tts:
         updates["DASHSCOPE_API_KEY"] = qwen_tts
     try:
@@ -1236,6 +1212,44 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         "keys": _api_key_status(),
         "message": "API Key 已保存到本机 .env；语言模型将按当前选择的提供商调用。",
     }
+
+
+@app.delete("/api/api-keys/{kind}/{index}")
+def delete_api_key(kind: str, index: int, request: Request, provider: str | None = None) -> dict[str, Any]:
+    require_user(request)
+    if kind not in {"language", "image"} or index < 0:
+        raise HTTPException(status_code=400, detail="无效的 API Key 类型或序号")
+    values = _parse_env_lines(PROJECT_ROOT / ".env")
+    if kind == "language":
+        provider_name = str(provider or values.get("LANGUAGE_PROVIDER") or "gemini").strip().lower()
+        provider_config = LANGUAGE_PROVIDER_OPTIONS.get(provider_name)
+        if not provider_config or index != 0:
+            raise HTTPException(status_code=404, detail="找不到要删除的语言模型 API Key")
+        key_env = provider_config["key_env"]
+        if not str(values.get(key_env) or "").strip():
+            raise HTTPException(status_code=404, detail="找不到要删除的语言模型 API Key")
+        try:
+            save_project_env_values({key_env: ""})
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"删除 API Key 失败: {exc}") from exc
+        return {"keys": _api_key_status(), "message": f"{provider_config['label']} API Key 已删除。"}
+    image_pool = _runninghub_api_keys(values)
+    pool = image_pool
+    if index >= len(pool):
+        raise HTTPException(status_code=404, detail="找不到要删除的 API Key")
+    removed = pool.pop(index)
+    updates = {
+        "RUNNINGHUB_API_KEY": image_pool[0] if image_pool else "",
+        "RUNNINGHUB_API_KEYS": ",".join(image_pool[1:]) if image_pool else "",
+    }
+    for name in values:
+        if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name):
+            updates[name] = ""
+    try:
+        save_project_env_values(updates)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"删除 API Key 失败: {exc}") from exc
+    return {"keys": _api_key_status(), "message": "API Key 已删除。"}
 
 
 @app.get("/api/scripts/{name}")

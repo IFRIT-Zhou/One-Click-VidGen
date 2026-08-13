@@ -266,9 +266,7 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.api-key-state-actions { display: flex; flex: 0 0 auto; gap: 6px; }
-.api-key-state-bar > button,
-.api-key-state-actions button {
+.api-key-state-bar > button {
   flex: 0 0 32px;
   width: 32px;
   min-height: 30px;
@@ -279,21 +277,52 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   background: rgba(6, 78, 59, 0.35);
   cursor: pointer;
 }
-.api-key-state-bar > button:hover,
-.api-key-state-actions button:hover { border-color: rgba(153, 246, 228, 0.7); background: rgba(13, 148, 136, 0.3); }
+.api-key-state-bar > button:hover { border-color: rgba(153, 246, 228, 0.7); background: rgba(13, 148, 136, 0.3); }
 .api-key-state-bar.error {
   border-color: rgba(248, 113, 113, 0.5);
   color: #fecaca;
   background: linear-gradient(135deg, rgba(185, 28, 28, 0.24), rgba(248, 113, 113, 0.08));
   box-shadow: inset 3px 0 0 rgba(248, 113, 113, 0.82);
 }
-.api-key-state-bar.error > button,
-.api-key-state-bar.error .api-key-state-actions button { border-color: rgba(254, 202, 202, 0.3); color: #fee2e2; background: rgba(127, 29, 29, 0.3); }
+.api-key-state-bar.error > button { border-color: rgba(254, 202, 202, 0.3); color: #fee2e2; background: rgba(127, 29, 29, 0.3); }
 .api-key-message { font-size: 0.78rem; line-height: 1.45; color: #9bd9ff; }
 .api-key-pool-field { padding-bottom: 2px; }
-.api-key-extra-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 6px; }
-.api-key-extra-row button,
-.api-key-add-btn {
+.api-key-pool-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 10px;
+}
+.api-key-pool-heading { display: grid; gap: 2px; min-width: 0; }
+.api-key-account-list { display: grid; gap: 5px; min-width: 0; }
+.api-key-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.api-key-account-row code {
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 7px;
+  overflow: hidden;
+  border: 1px solid rgba(153, 246, 228, 0.18);
+  border-radius: 6px;
+  color: #b8fff3;
+  background: rgba(2, 44, 52, 0.38);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-key-delete-btn,
+.api-key-corner-add {
   min-height: 30px;
   border: 1px solid rgba(91, 209, 255, 0.3);
   border-radius: 9px;
@@ -303,10 +332,10 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   line-height: 1;
   cursor: pointer;
 }
-.api-key-extra-row button:hover,
-.api-key-add-btn:hover { background: rgba(43, 148, 204, 0.35); border-color: rgba(103, 218, 255, 0.7); }
-.api-key-field-footer { display: flex; align-items: center; justify-content: space-between; min-height: 30px; }
-.api-key-add-btn { width: 30px; padding: 0; font-weight: 750; }
+.api-key-delete-btn { justify-self: end; width: 30px; padding: 0; color: #fecaca; border-color: rgba(248, 113, 113, 0.3); background: rgba(127, 29, 29, 0.22); }
+.api-key-corner-add { justify-self: end; width: 30px; padding: 0; font-size: 1rem; font-weight: 750; }
+.api-key-delete-btn:hover { background: rgba(185, 28, 28, 0.36); border-color: rgba(254, 202, 202, 0.62); }
+.api-key-corner-add:hover { background: rgba(43, 148, 204, 0.35); border-color: rgba(103, 218, 255, 0.7); }
 .account-form {
   display: grid;
   gap: 10px;
@@ -579,8 +608,9 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   flex: 0 0 auto;
   flex-direction: column;
   align-items: stretch;
-  min-width: 148px;
-  max-width: 230px;
+  width: 170px;
+  min-width: 170px;
+  max-width: 170px;
 }
 .launch-generation-control .launch-generation-btn { width: 100%; }
 .generation-block-reason {
@@ -588,7 +618,7 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   width: 100%;
   margin-top: 4px;
   color: #fbbf24;
-  font-size: .62rem;
+  font-size: .58rem;
   line-height: 1.28;
   text-align: center;
   white-space: normal;
