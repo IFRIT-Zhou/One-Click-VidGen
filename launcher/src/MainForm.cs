@@ -89,9 +89,9 @@ namespace OcvLauncher
             root.BackColor = Bg;
             root.ColumnCount = 1;
             root.RowCount = 4;
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 92F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 64F));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 118F));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 128F));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 36F));
             Controls.Add(root);
 
@@ -109,6 +109,8 @@ namespace OcvLauncher
             var table = new TableLayoutPanel();
             table.Dock = DockStyle.Fill;
             table.ColumnCount = 3;
+            table.RowCount = 1;
+            table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 66F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210F));
@@ -123,15 +125,17 @@ namespace OcvLauncher
 
             var titlePanel = new TableLayoutPanel();
             titlePanel.Dock = DockStyle.Fill;
+            titlePanel.ColumnCount = 1;
             titlePanel.RowCount = 2;
-            titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 58F));
-            titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 42F));
-            titlePanel.Controls.Add(NewLabel("一键成片 · OCV Launcher", 16F, FontStyle.Bold, TextMain), 0, 0);
+            titlePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+            titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            titlePanel.Controls.Add(NewLabel("一键成片 · OCV Launcher", 15F, FontStyle.Bold, TextMain), 0, 0);
             titlePanel.Controls.Add(NewLabel("启动、体检与管理 One-Click VidGen", 8.5F, FontStyle.Regular, TextMuted), 0, 1);
             table.Controls.Add(titlePanel, 1, 0);
 
             var versionPanel = new TableLayoutPanel();
             versionPanel.Dock = DockStyle.Fill;
+            versionPanel.ColumnCount = 1;
             versionPanel.RowCount = 2;
             versionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 48F));
             versionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 52F));
@@ -171,7 +175,7 @@ namespace OcvLauncher
             layout.RowCount = 6;
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 6F));
@@ -181,8 +185,10 @@ namespace OcvLauncher
             statusTitle = NewLabel("正在读取运行状态", 16F, FontStyle.Bold, TextMain);
             layout.Controls.Add(statusTitle, 0, 1);
             statusDetail = NewLabel("管理器会检测本地前端与后端，不会读取或修改你的作品。", 9F, FontStyle.Regular, TextMuted);
-            statusDetail.MaximumSize = new Size(620, 0);
-            statusDetail.AutoSize = true;
+            statusDetail.AutoSize = false;
+            statusDetail.AutoEllipsis = false;
+            statusDetail.Dock = DockStyle.Fill;
+            statusDetail.Padding = new Padding(0, 2, 0, 2);
             layout.Controls.Add(statusDetail, 0, 2);
 
             startButton = AccentButton("▶  启动 OCV", Cyan, Color.FromArgb(4, 16, 29));
@@ -193,11 +199,18 @@ namespace OcvLauncher
             var controls = new FlowLayoutPanel();
             controls.Dock = DockStyle.Fill;
             controls.FlowDirection = FlowDirection.LeftToRight;
-            controls.WrapContents = true;
-            controls.Padding = new Padding(0, 8, 0, 0);
+            controls.WrapContents = false;
+            controls.Padding = new Padding(0, 5, 0, 0);
             stopButton = SecondaryButton("■  停止服务");
             restartButton = SecondaryButton("↻  重新启动");
             var openButton = SecondaryButton("打开工作台");
+            foreach (Button button in new[] { stopButton, restartButton, openButton })
+            {
+                button.AutoSize = false;
+                button.AutoEllipsis = true;
+                button.Size = new Size(126, 36);
+                button.Padding = new Padding(4, 2, 4, 2);
+            }
             stopButton.Click += StopButtonClick;
             restartButton.Click += RestartButtonClick;
             openButton.Click += delegate { SafeOpenWorkspace(); };
@@ -224,9 +237,9 @@ namespace OcvLauncher
             var table = new TableLayoutPanel();
             table.Dock = DockStyle.Fill;
             table.ColumnCount = 3;
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 345F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 390F));
             card.Controls.Add(table);
 
             var title = new TableLayoutPanel();
@@ -250,25 +263,43 @@ namespace OcvLauncher
             state.Controls.Add(updateDetail, 0, 1);
             table.Controls.Add(state, 1, 0);
 
-            var actions = new FlowLayoutPanel();
+            var actions = new TableLayoutPanel();
             actions.Dock = DockStyle.Fill;
-            actions.FlowDirection = FlowDirection.RightToLeft;
-            actions.WrapContents = false;
-            actions.Padding = new Padding(0, 8, 0, 0);
+            actions.ColumnCount = 3;
+            actions.RowCount = 1;
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            actions.Padding = new Padding(2, 8, 0, 8);
             checkUpdateButton = SecondaryButton("检查更新");
             applyUpdateButton = AccentButton("安全更新", Green, Color.FromArgb(4, 25, 25));
-            applyUpdateButton.AutoSize = true;
-            applyUpdateButton.Dock = DockStyle.None;
-            applyUpdateButton.Height = 40;
-            applyUpdateButton.Padding = new Padding(13, 4, 13, 4);
+            checkUpdateButton.AutoSize = false;
+            checkUpdateButton.AutoEllipsis = true;
+            checkUpdateButton.Dock = DockStyle.Fill;
+            checkUpdateButton.Margin = new Padding(4, 0, 4, 0);
+            checkUpdateButton.Padding = new Padding(2);
+            checkUpdateButton.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Regular);
+            applyUpdateButton.AutoSize = false;
+            applyUpdateButton.AutoEllipsis = true;
+            applyUpdateButton.Dock = DockStyle.Fill;
+            applyUpdateButton.Margin = new Padding(4, 0, 0, 0);
+            applyUpdateButton.Padding = new Padding(2);
+            applyUpdateButton.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Bold);
             applyUpdateButton.Enabled = false;
             var historyButton = SecondaryButton("更新备份");
+            historyButton.AutoSize = false;
+            historyButton.AutoEllipsis = true;
+            historyButton.Dock = DockStyle.Fill;
+            historyButton.Margin = new Padding(0, 0, 4, 0);
+            historyButton.Padding = new Padding(2);
+            historyButton.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Regular);
             checkUpdateButton.Click += CheckUpdateButtonClick;
             applyUpdateButton.Click += ApplyUpdateButtonClick;
             historyButton.Click += delegate { runtime.OpenFolder(runtime.UpdateHistoryDirectory); };
-            actions.Controls.Add(applyUpdateButton);
-            actions.Controls.Add(checkUpdateButton);
-            actions.Controls.Add(historyButton);
+            actions.Controls.Add(historyButton, 0, 0);
+            actions.Controls.Add(checkUpdateButton, 1, 0);
+            actions.Controls.Add(applyUpdateButton, 2, 0);
             table.Controls.Add(actions, 2, 0);
             return card;
         }
@@ -288,7 +319,7 @@ namespace OcvLauncher
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36F));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44F));
             card.Controls.Add(layout);
 
             layout.Controls.Add(NewLabel("状态与快捷入口", 11F, FontStyle.Bold, TextMain), 0, 0);
@@ -309,16 +340,31 @@ namespace OcvLauncher
             checkResults.BackColor = Color.Transparent;
             layout.Controls.Add(checkResults, 0, 5);
 
-            var quick = new FlowLayoutPanel();
+            var quick = new TableLayoutPanel();
             quick.Dock = DockStyle.Fill;
-            quick.FlowDirection = FlowDirection.LeftToRight;
-            quick.WrapContents = false;
+            quick.ColumnCount = 2;
+            quick.RowCount = 1;
+            quick.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            quick.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            quick.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             var outputButton = SecondaryButton("打开输出目录");
             var logsButton = SecondaryButton("打开日志目录");
+            outputButton.AutoSize = false;
+            outputButton.AutoEllipsis = true;
+            outputButton.Dock = DockStyle.Fill;
+            outputButton.Margin = new Padding(0, 2, 4, 2);
+            outputButton.Padding = new Padding(2);
+            outputButton.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Regular);
+            logsButton.AutoSize = false;
+            logsButton.AutoEllipsis = true;
+            logsButton.Dock = DockStyle.Fill;
+            logsButton.Margin = new Padding(4, 2, 0, 2);
+            logsButton.Padding = new Padding(2);
+            logsButton.Font = new Font("Microsoft YaHei UI", 8.5F, FontStyle.Regular);
             outputButton.Click += delegate { runtime.OpenFolder(runtime.OutputDirectory); };
             logsButton.Click += delegate { runtime.OpenFolder(runtime.LogsDirectory); };
-            quick.Controls.Add(outputButton);
-            quick.Controls.Add(logsButton);
+            quick.Controls.Add(outputButton, 0, 0);
+            quick.Controls.Add(logsButton, 1, 0);
             layout.Controls.Add(quick, 0, 6);
             return card;
         }
