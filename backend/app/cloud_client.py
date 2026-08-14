@@ -346,6 +346,10 @@ class CloudClient:
             **(session.public_snapshot() if session else {"authenticated": False, "user": None}),
         }
 
+    def cluster_health(self) -> dict[str, Any]:
+        """Check the public control API and its downstream Ray Serve state."""
+        return self._json_request("GET", "/health", authenticated=False)
+
     def image_pool_runtime(self) -> dict[str, str]:
         """Provide short-lived credentials only to the local image worker.
 

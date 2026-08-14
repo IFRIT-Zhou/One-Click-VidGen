@@ -271,6 +271,19 @@ def synthesize_cloud_tts(
         except (TypeError, ValueError):
             progress = 0
         message = str(remote.get("message") or "").strip() or f"云端任务 {status or '处理中'}"
+        remote_error = remote.get("error")
+        if status in {"failed", "cancelled", "expired"}:
+            if isinstance(remote_error, dict):
+                error_message = str(
+                    remote_error.get("message")
+                    or remote_error.get("detail")
+                    or remote_error.get("code")
+                    or ""
+                ).strip()
+            else:
+                error_message = str(remote_error or "").strip()
+            if error_message:
+                message = error_message
         ready_chunks = _result_chunks_by_index(remote, len(chunks))
         completed_chunks = max(
             len(ready_chunks),
@@ -312,7 +325,7 @@ def synthesize_cloud_tts(
             if len(downloaded_wavs) == len(chunks):
                 break
         if status in {"failed", "cancelled", "expired"}:
-            code = str(remote.get("error", {}).get("code") or "") if isinstance(remote.get("error"), dict) else ""
+            code = str(remote_error.get("code") or "") if isinstance(remote_error, dict) else ""
             raise RuntimeError(f"云端任务{status}：{message}{f' ({code})' if code else ''}")
         if time.monotonic() >= deadline:
             raise RuntimeError(f"等待云端任务超时（{int(client.config.max_wait_seconds)} 秒）")

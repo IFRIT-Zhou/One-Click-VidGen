@@ -55,9 +55,55 @@ test("image submissions share a stable batch-scoped idempotency key", () => {
 });
 
 test("protected studio links require login before entering their target", () => {
-  assert.match(javascript, /new Set\(\["script-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"\]\)/);
+  assert.match(javascript, /new Set\(\["script-panel", "one-click-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"\]\)/);
   assert.match(javascript, /guardProtectedTarget\(\)/);
   assert.match(javascript, /pendingProtectedTarget = target/);
   assert.match(javascript, /enterPendingProtectedTarget\(\)/);
   assert.match(javascript, /scrollIntoView\(\{ block: "start" \}\)/);
+});
+
+test("one-click video is the primary workflow and keeps the advanced flow", () => {
+  assert.match(html, /id="one-click-panel"/);
+  assert.match(html, /id="create-video-job"/);
+  assert.match(html, /id="video-job"[^>]+aria-live="polite"/);
+  assert.match(html, /<details class="advanced-workflow" id="advanced-workflow">/);
+  ["storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]
+    .forEach((id) => assert.ok(html.includes(`id="${id}"`), `advanced workflow lost ${id}`));
+});
+
+test("one-click video uses the frozen server orchestration contracts", () => {
+  assert.match(javascript, /api\("\/video-jobs", \{ method: "POST"/);
+  assert.match(javascript, /api\("\/video-jobs\?page=1&page_size=8"\)/);
+  assert.match(javascript, /api\(`\/video-jobs\/\$\{encodeURIComponent\(jobId\)\}`\)/);
+  assert.match(javascript, /`\/video-jobs\/\$\{encodeURIComponent\(state\.videoJob\.job_id\)\}\/cancel`/);
+  assert.match(javascript, /`\/api\/v1\/video-jobs\/\$\{encodeURIComponent\(state\.videoJob\.job_id\)\}\/result`/);
+  ["client_job_id", "script", "voice", "aspect_ratio", "resolution", "scene_count", "visual_style", "speed", "pitch", "emotion", "emotion_weight"]
+    .forEach((field) => assert.match(javascript, new RegExp(`${field}:`), `missing create field ${field}`));
+  assert.match(javascript, /function videoJobPayload\(\)[\s\S]{0,500}state\.selectedVoice\.type === "preset" \? "preset" : "user"/);
+  ["storyboard", "tts", "images", "compose", "publish"]
+    .forEach((step) => assert.ok(javascript.includes(`\"${step}\"`), `missing progress step ${step}`));
+});
+
+test("recent complete video jobs recover across refresh and download MP4", () => {
+  assert.match(javascript, /localStorage\.setItem\("ocvg-recent-video-job", job\.job_id\)/);
+  assert.match(javascript, /localStorage\.getItem\("ocvg-recent-video-job"\)/);
+  assert.match(javascript, /pollVideoJob\(job\.job_id\)/);
+  assert.match(javascript, /downloadBlob\(blob, `OneClickVidGen_\$\{state\.videoJob\.job_id\}\.mp4`\)/);
+});
+
+test("video job stages and statuses never expose internal English values", () => {
+  [
+    ["storyboarding", "生成分镜中"],
+    ["generating_assets", "生成素材中"],
+    ["composing", "合成视频中"],
+    ["publishing", "发布结果中"],
+    ["cancel_requested", "正在取消"],
+    ["cancelled", "已取消"],
+  ].forEach(([status, label]) => assert.ok(javascript.includes(`${status}: \"${label}\"`), `missing status label ${status}`));
+  assert.match(javascript, /function videoStageLabel\(stage\)/);
+  assert.match(javascript, /function videoStepStatusLabel\(status\)/);
+  assert.match(javascript, /function videoJobMessage\(job\)/);
+  assert.match(javascript, /videoStageLabel\(job\.stage\)/);
+  assert.match(javascript, /videoStepStatusLabel\(status\)/);
+  assert.doesNotMatch(javascript, /\[status\] \|\| status \|\| "未知"/);
 });

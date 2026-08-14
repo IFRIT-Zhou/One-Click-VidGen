@@ -9,10 +9,11 @@
     quote: null, cloudReady: false, modelReady: false, storyboard: [],
     currentJob: null, pollTimer: null, audioBlobs: new Map(),
     imageJobs: [], imageBlobs: new Map(), objectUrls: [], composing: false,
+    videoJob: null, videoJobPolling: false,
   };
   const element = (selector) => document.querySelector(selector);
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-  const protectedTargets = new Set(["script-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]);
+  const protectedTargets = new Set(["script-panel", "one-click-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]);
   let pendingProtectedTarget = protectedTargets.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : null;
 
   function readSession() { try { return JSON.parse(sessionStorage.getItem("ocvg-cloud-session")) || null; } catch (_) { return null; } }
@@ -125,7 +126,7 @@
     element("#auth-wall").classList.toggle("hidden", loggedIn); element("#workspace-form").classList.toggle("is-locked", !loggedIn);
     element("#header-account").textContent = loggedIn ? (state.session.user && state.session.user.email || "账户中心") : "登录账户";
     element("#studio-email").textContent = loggedIn ? (state.session.user && state.session.user.email || "已登录") : "尚未登录";
-    updateSubmit(); updateStoryboardButton();
+    updateSubmit(); updateStoryboardButton(); updateVideoJobButton();
   }
 
   async function loadAccount() {
@@ -251,9 +252,116 @@
     updateSubmit();
   }
   function updateTextSummary() { const text = element("#script-input").value; element("#text-counter").textContent = `${text.length.toLocaleString("zh-CN")} / 5,000`; element("#summary-characters").textContent = text.length.toLocaleString("zh-CN"); element("#summary-chunks").textContent = `${ttsChunks().length} / ${state.storyboard.length}`; }
+  function updateVideoJobButton() {
+    const button = element("#create-video-job"); if (!button) return;
+    const active = state.videoJob && !TERMINAL.has(state.videoJob.status);
+    const text = element("#script-input").value.trim();
+    button.disabled = !state.session || !state.selectedVoice || !text || active;
+    if (!state.session) button.textContent = "登录后开始生成";
+    else if (!text) button.textContent = "请先输入文案";
+    else if (!state.selectedVoice) button.textContent = "请选择配音音色";
+    else if (active) button.textContent = "完整视频正在生成";
+    else button.textContent = "一键生成完整 MP4";
+  }
+
+  function videoJobPayload() {
+    const emotion = element("#emotion").value;
+    return {
+      client_job_id: `web_video_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      script: element("#script-input").value.trim(),
+      voice: { type: state.selectedVoice.type === "preset" ? "preset" : "user", id: state.selectedVoice.id },
+      video: {
+        aspect_ratio: element("#aspect-ratio").value,
+        resolution: element("#image-resolution").value,
+        scene_count: Math.max(2, Math.min(16, Number(element("#scene-count").value) || 6)),
+        visual_style: element("#visual-style").value,
+      },
+      audio: {
+        speed: Number(element("#speed").value), pitch: Number(element("#pitch").value),
+        emotion: emotion || null, emotion_weight: Number(element("#emotion-weight").value),
+      },
+    };
+  }
+
+  function videoStepLabel(key) { return ({ storyboard: "智能分镜", tts: "生成配音", images: "生成画面", compose: "合成视频", publish: "发布结果" })[key] || key; }
+  function videoStepState(step) { return typeof step === "string" ? step : String(step && step.status || "pending"); }
+  function videoStepStatusLabel(status) { return ({ pending: "等待处理", running: "正在处理", completed: "已完成", failed: "处理失败", cancelled: "已取消" })[status] || "状态未知"; }
+  function videoStageLabel(stage) { return ({ storyboard: "智能分镜", tts: "生成配音", images: "生成画面", compose: "合成视频", publish: "发布结果" })[stage] || "等待调度"; }
+  function videoJobMessage(job) {
+    if (job.message) return job.message;
+    return ({
+      queued: "任务已进入云端队列", storyboarding: "正在规划视频分镜",
+      generating_assets: "正在生成配音和画面", composing: "正在合成 MP4",
+      publishing: "正在整理视频结果", completed: "完整视频已生成",
+      failed: "完整视频生成失败", cancel_requested: "正在取消任务",
+      cancelled: "任务已取消",
+    })[job.status] || "云端正在处理完整视频";
+  }
+  function renderVideoJob() {
+    const node = element("#video-job"); const job = state.videoJob;
+    if (!job) { node.className = "video-job empty"; node.innerHTML = "<strong>尚未开始</strong><p>输入文案并选择音色后即可一次生成完整视频。</p>"; updateVideoJobButton(); return; }
+    const progress = Math.max(0, Math.min(100, Number(job.progress || 0))); const steps = job.steps || {};
+    const stepMarkup = ["storyboard", "tts", "images", "compose", "publish"].map((key) => { const value = steps[key]; const status = videoStepState(value); const detail = value && typeof value === "object" ? (value.message || (value.progress !== undefined ? `${value.progress}%` : videoStepStatusLabel(status))) : videoStepStatusLabel(status); return `<li class="${escapeAttribute(status)}"><i></i><span><strong>${videoStepLabel(key)}</strong><small>${escapeHtml(detail)}</small></span></li>`; }).join("");
+    const error = job.error && (job.error.message || job.error.detail || job.error); const credits = job.credits && (job.credits.used || job.credits.charged || job.credits.reserved);
+    node.className = `video-job ${escapeAttribute(job.status || "queued")}`;
+    node.innerHTML = `<div class="video-job-head"><div><span>${statusLabel(job.status)} · ${videoStageLabel(job.stage)}</span><strong>${escapeHtml(videoJobMessage(job))}</strong></div><b>${progress}%</b></div><div class="video-job-bar"><i style="width:${progress}%"></i></div><ol class="video-job-steps">${stepMarkup}</ol><div class="video-job-meta"><small>任务编号 ${escapeHtml(job.job_id)}</small>${credits !== undefined ? `<small>积分 ${escapeHtml(credits)}</small>` : ""}</div>${error ? `<p class="video-job-error">${escapeHtml(error)}</p>` : ""}<div class="video-job-actions">${!TERMINAL.has(job.status) ? '<button class="quiet-button" data-video-cancel type="button">取消任务</button>' : ""}${job.status === "completed" ? '<button class="button primary" data-video-download type="button">下载 MP4</button>' : ""}</div>`;
+    const cancel = node.querySelector("[data-video-cancel]"); if (cancel) cancel.addEventListener("click", cancelVideoJob);
+    const download = node.querySelector("[data-video-download]"); if (download) download.addEventListener("click", downloadVideoResult);
+    updateVideoJobButton();
+  }
+
+  async function createVideoJob() {
+    const button = element("#create-video-job"); clearMessage(element("#video-job-message")); button.disabled = true; button.textContent = "正在创建完整任务…";
+    try {
+      const payload = videoJobPayload(); const job = unwrap(await api("/video-jobs", { method: "POST", headers: { "Idempotency-Key": payload.client_job_id }, body: JSON.stringify(payload) }));
+      state.videoJob = job; localStorage.setItem("ocvg-recent-video-job", job.job_id); renderVideoJob(); pollVideoJob(job.job_id);
+    } catch (error) { message(element("#video-job-message"), errorText(error)); updateVideoJobButton(); }
+  }
+
+  async function getVideoJob(jobId) { return unwrap(await api(`/video-jobs/${encodeURIComponent(jobId)}`)); }
+  async function pollVideoJob(jobId) {
+    if (state.videoJobPolling) return; state.videoJobPolling = true;
+    try {
+      while (state.session && state.videoJob && state.videoJob.job_id === jobId && !TERMINAL.has(state.videoJob.status)) {
+        await sleep(2400); state.videoJob = await getVideoJob(jobId); renderVideoJob();
+      }
+      if (state.videoJob && state.videoJob.status === "completed") message(element("#video-job-message"), "完整视频已生成，可以下载 MP4。", "success");
+      await loadAccount();
+    } catch (error) { message(element("#video-job-message"), errorText(error)); }
+    finally { state.videoJobPolling = false; updateVideoJobButton(); }
+  }
+
+  async function cancelVideoJob() {
+    if (!state.videoJob) return;
+    try { state.videoJob = unwrap(await api(`/video-jobs/${encodeURIComponent(state.videoJob.job_id)}/cancel`, { method: "POST" })); renderVideoJob(); await loadVideoJobs(); }
+    catch (error) { message(element("#video-job-message"), errorText(error)); }
+  }
+
+  async function downloadVideoResult() {
+    if (!state.videoJob) return; const button = element("#video-job").querySelector("[data-video-download]"); if (button) { button.disabled = true; button.textContent = "正在下载…"; }
+    try { const blob = await authenticatedBlob(`/api/v1/video-jobs/${encodeURIComponent(state.videoJob.job_id)}/result`); downloadBlob(blob, `OneClickVidGen_${state.videoJob.job_id}.mp4`); }
+    catch (error) { message(element("#video-job-message"), errorText(error)); }
+    finally { if (button) { button.disabled = false; button.textContent = "下载 MP4"; } }
+  }
+
+  async function restoreVideoJob(jobId) {
+    try { state.videoJob = await getVideoJob(jobId); localStorage.setItem("ocvg-recent-video-job", jobId); renderVideoJob(); if (!TERMINAL.has(state.videoJob.status)) pollVideoJob(jobId); }
+    catch (error) { message(element("#video-job-message"), errorText(error)); }
+  }
+
+  async function loadVideoJobs() {
+    if (!state.session) return; const history = element("#video-job-history");
+    try {
+      const data = unwrap(await api("/video-jobs?page=1&page_size=8")); const items = data.items || [];
+      history.innerHTML = items.length ? `<div class="history-head"><span>最近完整视频</span><span>状态 / 进度</span></div>${items.map((job) => `<button type="button" data-video-job-id="${escapeAttribute(job.job_id)}"><span><strong>${escapeHtml(job.job_id)}</strong><small>${new Date(job.created_at).toLocaleString("zh-CN")}</small></span><span><i class="job-status ${escapeAttribute(job.status)}">${statusLabel(job.status)}</i><small>${Number(job.progress || 0)}%</small></span></button>`).join("")}` : "";
+      history.querySelectorAll("[data-video-job-id]").forEach((item) => item.addEventListener("click", () => restoreVideoJob(item.dataset.videoJobId)));
+      const storedId = localStorage.getItem("ocvg-recent-video-job"); const recentId = items.some((job) => job.job_id === storedId) ? storedId : (items[0] && items[0].job_id); if (recentId && (!state.videoJob || state.videoJob.job_id !== recentId)) await restoreVideoJob(recentId);
+    } catch (error) { history.innerHTML = ""; message(element("#video-job-message"), errorText(error)); }
+  }
+
   function updateSubmit() {
     const button = element("#submit-job"); const ready = Boolean(state.session && state.selectedVoice && state.storyboard.length && state.quote && state.cloudReady && !state.composing);
-    button.disabled = !ready;
+    button.disabled = !ready; updateVideoJobButton();
     if (!state.session) button.textContent = "登录后开始创作"; else if (!state.storyboard.length) button.textContent = "请先生成 AI 分镜"; else if (!state.cloudReady) button.textContent = "配音集群维护中"; else if (!state.selectedVoice) button.textContent = "请选择音色"; else if (!state.quote) button.textContent = "正在计算配音报价…"; else button.textContent = `并行生成全部素材 · 配音 ${state.quote.estimated_credits} 积分`;
   }
 
@@ -295,7 +403,7 @@
     } catch (error) { item.status = "FAILED"; item.error = errorText(error); renderAssets(); updateAssetProgress(); }
   }
 
-  function statusLabel(status) { return ({ queued: "排队中", running: "生成中", finalizing: "整理结果", completed: "已完成", failed: "失败", cancelled: "已取消", cancel_requested: "正在取消" })[status] || status || "未知"; }
+  function statusLabel(status) { return ({ queued: "排队中", running: "生成中", finalizing: "整理结果", storyboarding: "生成分镜中", generating_assets: "生成素材中", composing: "合成视频中", publishing: "发布结果中", completed: "已完成", failed: "失败", cancelled: "已取消", cancel_requested: "正在取消" })[status] || "状态未知"; }
   function renderCurrentJob() {
     const node = element("#current-task"); const job = state.currentJob;
     if (!job) { node.className = "current-task empty"; node.innerHTML = '<div class="empty-illustration">◎</div><div><strong>还没有正在处理的任务</strong><p>完成分镜和配音设置后，可并行生成全部素材。</p></div>'; return; }
@@ -374,7 +482,8 @@
   function protectedTargetFromHash() { const target = window.location.hash.slice(1); return protectedTargets.has(target) ? target : null; }
   function guardProtectedTarget() {
     const target = protectedTargetFromHash();
-    if (!target || state.session) return;
+    if (!target) return;
+    if (state.session) { if (!["script-panel", "one-click-panel"].includes(target)) element("#advanced-workflow").open = true; window.requestAnimationFrame(() => element(`#${target}`)?.scrollIntoView({ block: "start" })); return; }
     pendingProtectedTarget = target;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -384,23 +493,24 @@
     if (!pendingProtectedTarget) return;
     const target = pendingProtectedTarget;
     pendingProtectedTarget = null;
+    if (!["script-panel", "one-click-panel"].includes(target)) element("#advanced-workflow").open = true;
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${target}`);
     window.requestAnimationFrame(() => element(`#${target}`)?.scrollIntoView({ block: "start" }));
   }
-  function logout(showNotice = true) { saveSession(null); state.account = null; state.voices = []; state.selectedVoice = null; state.modelReady = false; element("#studio-credits").textContent = "—"; element("#studio-daily").textContent = "—"; element("#studio-concurrency").textContent = "—"; element("#voice-grid").innerHTML = ""; element("#model-pool-state").textContent = "尚未检测"; renderAuth(); if (showNotice) openAuth(); }
+  function logout(showNotice = true) { saveSession(null); state.account = null; state.voices = []; state.selectedVoice = null; state.modelReady = false; state.videoJob = null; element("#studio-credits").textContent = "—"; element("#studio-daily").textContent = "—"; element("#studio-concurrency").textContent = "—"; element("#voice-grid").innerHTML = ""; element("#model-pool-state").textContent = "尚未检测"; element("#video-job-history").innerHTML = ""; renderVideoJob(); renderAuth(); if (showNotice) openAuth(); }
 
   let authMode = "login";
   element("#studio-login").addEventListener("click", openAuth); element("#header-account").addEventListener("click", () => state.session ? (window.confirm("是否退出当前账户？") && logout()) : openAuth()); element("#close-dialog").addEventListener("click", () => element("#auth-dialog").close()); element("#auth-dialog").addEventListener("click", (event) => { if (event.target === element("#auth-dialog")) event.currentTarget.close(); });
   document.querySelectorAll("[data-auth-mode]").forEach((tab) => tab.addEventListener("click", () => { authMode = tab.dataset.authMode; document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab)); element("#auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户"; element("#auth-submit").textContent = authMode === "login" ? "登录" : "注册并继续"; element("#password").autocomplete = authMode === "login" ? "current-password" : "new-password"; element("#auth-message").className = "message"; }));
-  element("#auth-form").addEventListener("submit", async (event) => { event.preventDefault(); const submit = element("#auth-submit"); submit.disabled = true; const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value }; try { if (authMode === "register") await api("/auth/register", { method: "POST", body: JSON.stringify(credentials) }); const login = await api("/auth/login", { method: "POST", body: JSON.stringify(credentials) }); saveSession(login); element("#auth-dialog").close(); renderAuth(); enterPendingProtectedTarget(); await Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]); scheduleQuote(); } catch (error) { const node = element("#auth-message"); node.textContent = errorText(error); node.className = "message show error"; } finally { submit.disabled = false; submit.textContent = authMode === "login" ? "登录" : "注册并继续"; } });
+  element("#auth-form").addEventListener("submit", async (event) => { event.preventDefault(); const submit = element("#auth-submit"); submit.disabled = true; const credentials = { email: event.currentTarget.email.value.trim(), password: event.currentTarget.password.value }; try { if (authMode === "register") await api("/auth/register", { method: "POST", body: JSON.stringify(credentials) }); const login = await api("/auth/login", { method: "POST", body: JSON.stringify(credentials) }); saveSession(login); element("#auth-dialog").close(); renderAuth(); enterPendingProtectedTarget(); await Promise.all([loadAccount(), loadVoices(), loadJobs(), loadVideoJobs(), checkModelPool()]); scheduleQuote(); } catch (error) { const node = element("#auth-message"); node.textContent = errorText(error); node.className = "message show error"; } finally { submit.disabled = false; submit.textContent = authMode === "login" ? "登录" : "注册并继续"; } });
 
   element("#script-input").addEventListener("input", () => { state.storyboard = []; renderStoryboard(); scheduleQuote(); }); element("#document-file").addEventListener("change", parseDocument); element("#clear-script").addEventListener("click", () => { element("#script-input").value = ""; state.storyboard = []; renderStoryboard(); scheduleQuote(); setDocumentStatus(""); }); element("#generate-storyboard").addEventListener("click", generateStoryboard);
   element("#speed").addEventListener("input", (event) => { element("#speed-value").textContent = `${Number(event.target.value).toFixed(2)}×`; scheduleQuote(); }); element("#pitch").addEventListener("input", (event) => { const value = Number(event.target.value); element("#pitch-value").textContent = value > 0 ? `+${value}` : String(value); scheduleQuote(); }); element("#emotion-weight").addEventListener("input", (event) => { element("#emotion-weight-value").textContent = `${Math.round(Number(event.target.value) * 100)}%`; scheduleQuote(); }); element("#emotion").addEventListener("change", scheduleQuote);
   element("#reset-settings").addEventListener("click", () => { element("#emotion").value = ""; element("#speed").value = 1; element("#pitch").value = 0; element("#emotion-weight").value = .65; element("#aspect-ratio").value = "16:9"; element("#image-resolution").value = "1k"; element("#speed-value").textContent = "1.00×"; element("#pitch-value").textContent = "0"; element("#emotion-weight-value").textContent = "65%"; scheduleQuote(); });
-  element("#refresh-voices").addEventListener("click", loadVoices); element("#voice-file").addEventListener("change", (event) => { element("#upload-form").classList.toggle("show", Boolean(event.target.files[0])); if (event.target.files[0] && !element("#voice-name").value) element("#voice-name").value = event.target.files[0].name.replace(/\.[^.]+$/, ""); }); element("#upload-voice").addEventListener("click", uploadVoice); element("#submit-job").addEventListener("click", submitJob); element("#refresh-jobs").addEventListener("click", loadJobs); element("#compose-video").addEventListener("click", composeVideo); element("#download-project").addEventListener("click", downloadProject);
+  element("#refresh-voices").addEventListener("click", loadVoices); element("#voice-file").addEventListener("change", (event) => { element("#upload-form").classList.toggle("show", Boolean(event.target.files[0])); if (event.target.files[0] && !element("#voice-name").value) element("#voice-name").value = event.target.files[0].name.replace(/\.[^.]+$/, ""); }); element("#upload-voice").addEventListener("click", uploadVoice); element("#create-video-job").addEventListener("click", createVideoJob); element("#refresh-video-jobs").addEventListener("click", loadVideoJobs); element("#submit-job").addEventListener("click", submitJob); element("#refresh-jobs").addEventListener("click", loadJobs); element("#compose-video").addEventListener("click", composeVideo); element("#download-project").addEventListener("click", downloadProject);
 
   window.addEventListener("beforeunload", () => state.objectUrls.forEach((url) => URL.revokeObjectURL(url))); window.requestAnimationFrame(() => document.body.classList.add("studio-ready"));
   if ("IntersectionObserver" in window) { const stepObserver = new IntersectionObserver((entries) => { const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0]; if (!visible) return; document.querySelectorAll(".workspace-steps a").forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`)); }, { threshold: [0.2, 0.55], rootMargin: "-90px 0px -50%" }); document.querySelectorAll(".workspace-card").forEach((section) => stepObserver.observe(section)); }
   window.addEventListener("hashchange", guardProtectedTarget);
-  renderAuth(); updateTextSummary(); updateAssetProgress(); checkHealth(); window.setInterval(checkHealth, 30000); guardProtectedTarget(); if (state.session) Promise.all([loadAccount(), loadVoices(), loadJobs(), checkModelPool()]).then(scheduleQuote);
+  renderAuth(); renderVideoJob(); updateTextSummary(); updateAssetProgress(); checkHealth(); window.setInterval(checkHealth, 30000); guardProtectedTarget(); if (state.session) Promise.all([loadAccount(), loadVoices(), loadJobs(), loadVideoJobs(), checkModelPool()]).then(scheduleQuote);
 })();

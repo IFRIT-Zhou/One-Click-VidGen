@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="One-Click VidGen 云端视频工作台，从文案、分镜、配音和图片生成到浏览器本地视频合成。" />
+    <meta name="description" content="One-Click VidGen 云端视频工作台，从文案和生成参数一键完成分镜、配音、画面与 MP4 视频。" />
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260811.1" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260811.2" />
     <title>云端视频工作台｜One-Click VidGen</title>
   </head>
   <body class="studio-body" data-page="studio">
@@ -21,16 +21,17 @@
     <main class="studio-page">
       <div class="studio-shell">
         <aside class="workspace-sidebar">
-          <div class="workspace-intro"><span class="workspace-label">CLOUD STUDIO</span><h1>文案生成视频</h1><p>云端生成分镜、语音和画面，浏览器在本机完成视频合成。</p></div>
+          <div class="workspace-intro"><span class="workspace-label">CLOUD STUDIO</span><h1>文案生成视频</h1><p>从文案一键生成云端 MP4；手动分镜和浏览器 WebM 保留在高级流程。</p></div>
           <nav class="workspace-steps" aria-label="创作步骤">
             <a class="active" href="#script-panel"><b>01</b><span><strong>文案内容</strong><small>输入或粘贴配音文本</small></span></a>
-            <a href="#storyboard-panel"><b>02</b><span><strong>AI 分镜</strong><small>规划镜头与生图提示词</small></span></a>
-            <a href="#voice-panel"><b>03</b><span><strong>音色选择</strong><small>默认音色或个人音色</small></span></a>
-            <a href="#settings-panel"><b>04</b><span><strong>生成参数</strong><small>语速、情绪与画幅</small></span></a>
-            <a href="#task-panel"><b>05</b><span><strong>云端素材</strong><small>并行生成语音和图片</small></span></a>
-            <a href="#compose-panel"><b>06</b><span><strong>视频导出</strong><small>在当前设备完成合成</small></span></a>
+            <a href="#one-click-panel"><b>02</b><span><strong>一键成片</strong><small>云端生成并导出 MP4</small></span></a>
+            <a href="#storyboard-panel"><b>03</b><span><strong>AI 分镜</strong><small>规划镜头与生图提示词</small></span></a>
+            <a href="#voice-panel"><b>04</b><span><strong>音色选择</strong><small>默认音色或个人音色</small></span></a>
+            <a href="#settings-panel"><b>05</b><span><strong>生成参数</strong><small>语速、情绪与画幅</small></span></a>
+            <a href="#task-panel"><b>06</b><span><strong>云端素材</strong><small>并行生成语音和图片</small></span></a>
+            <a href="#compose-panel"><b>07</b><span><strong>视频导出</strong><small>高级浏览器 WebM 合成</small></span></a>
           </nav>
-          <div class="workspace-help"><strong>隐私与性能</strong><p>云端密钥不会发送到浏览器。图片、音频和最终视频只在当前设备内存中合成。</p><a href="/services/">查看服务说明 →</a></div>
+          <div class="workspace-help"><strong>隐私与性能</strong><p>云端密钥不会发送到浏览器。完整 MP4 由云端生成；高级流程的临时素材和 WebM 保留在当前设备。</p><a href="/services/">查看服务说明 →</a></div>
         </aside>
 
         <div class="workspace-main">
@@ -59,8 +60,20 @@
               </div>
             </section>
 
+            <section class="workspace-card one-click-card" id="one-click-panel">
+              <div class="workspace-card-head"><div><span>ONE-CLICK VIDEO</span><h3>一键生成完整视频</h3></div><span class="one-click-badge">推荐</span></div>
+              <p class="one-click-lead">直接使用上方文案、当前音色和生成参数，云端自动完成分镜、配音、画面与 MP4 合成。</p>
+              <div class="one-click-actions"><button class="button primary" id="create-video-job" type="button" disabled>登录后开始生成</button><button class="quiet-button" id="refresh-video-jobs" type="button">恢复最近任务</button></div>
+              <div class="video-job empty" id="video-job" aria-live="polite"><strong>尚未开始</strong><p>输入文案并选择音色后即可一次生成完整视频。</p></div>
+              <div class="video-job-history" id="video-job-history"></div>
+              <div class="inline-message" id="video-job-message" role="status"></div>
+            </section>
+
+            <details class="advanced-workflow" id="advanced-workflow">
+              <summary><span><strong>高级创作与兼容流程</strong><small>手动生成和修改分镜、分别生成素材，或在浏览器导出 WebM</small></span><b>展开</b></summary>
+              <div class="advanced-workflow-content">
             <section class="workspace-card" id="storyboard-panel">
-              <div class="workspace-card-head"><div><span>STEP 02</span><h3>AI 规划分镜与画面</h3></div><span class="pool-state" id="model-pool-state">尚未检测</span></div>
+              <div class="workspace-card-head"><div><span>STEP 03</span><h3>AI 规划分镜与画面</h3></div><span class="pool-state" id="model-pool-state">尚未检测</span></div>
               <div class="story-controls">
                 <label class="setting-field"><span><strong>视觉风格</strong><small>应用于所有镜头</small></span><select id="visual-style"><option value="电影感写实摄影">电影感写实</option><option value="精致二维动画">二维动画</option><option value="中国风水墨插画">中国风水墨</option><option value="商业扁平插画">商业插画</option><option value="赛博朋克概念艺术">赛博朋克</option></select></label>
                 <label class="setting-field"><span><strong>目标镜头数</strong><small>建议 3 — 12 个</small></span><input class="number-input" id="scene-count" type="number" min="2" max="16" value="6" /></label>
@@ -72,7 +85,7 @@
             </section>
 
             <section class="workspace-card" id="voice-panel">
-              <div class="workspace-card-head"><div><span>STEP 03</span><h3>选择配音音色</h3></div><button class="quiet-button" id="refresh-voices" type="button">刷新音色</button></div>
+              <div class="workspace-card-head"><div><span>STEP 04</span><h3>选择配音音色</h3></div><button class="quiet-button" id="refresh-voices" type="button">刷新音色</button></div>
               <div class="voice-loading" id="voice-loading">正在读取云端音色…</div>
               <div class="voice-grid" id="voice-grid"></div>
               <div class="voice-upload-box">
@@ -84,7 +97,7 @@
             </section>
 
             <section class="workspace-card" id="settings-panel">
-              <div class="workspace-card-head"><div><span>STEP 04</span><h3>调整生成参数</h3></div><button class="quiet-button" id="reset-settings" type="button">恢复默认</button></div>
+              <div class="workspace-card-head"><div><span>STEP 05</span><h3>调整生成参数</h3></div><button class="quiet-button" id="reset-settings" type="button">恢复默认</button></div>
               <div class="settings-grid">
                 <label class="setting-field"><span><strong>表达情绪</strong><small>选择整体语气倾向</small></span><select id="emotion"><option value="">自然</option><option value="calm">平静</option><option value="happy">愉快</option><option value="sad">悲伤</option><option value="melancholic">低沉</option><option value="surprised">惊讶</option></select></label>
                 <label class="setting-field range-field"><span><strong>语速</strong><small>0.5× — 2.0×</small></span><div><input id="speed" type="range" min="0.5" max="2" step="0.05" value="1" /><output id="speed-value">1.00×</output></div></label>
@@ -96,7 +109,7 @@
             </section>
 
             <section class="workspace-card task-section" id="task-panel">
-              <div class="workspace-card-head"><div><span>STEP 05</span><h3>云端素材生成</h3></div><button class="quiet-button" id="refresh-jobs" type="button">刷新记录</button></div>
+              <div class="workspace-card-head"><div><span>STEP 06</span><h3>云端素材生成</h3></div><button class="quiet-button" id="refresh-jobs" type="button">刷新记录</button></div>
               <div class="asset-progress-grid"><div><span>配音素材</span><strong id="audio-progress-label">未开始</strong><div class="task-bar"><i id="audio-progress-bar"></i></div></div><div><span>画面素材</span><strong id="image-progress-label">未开始</strong><div class="task-bar image"><i id="image-progress-bar"></i></div></div></div>
               <div class="current-task empty" id="current-task"><div class="empty-illustration">◎</div><div><strong>还没有正在处理的任务</strong><p>完成分镜和配音设置后，可并行生成全部素材。</p></div></div>
               <div class="asset-results" id="asset-results"></div>
@@ -104,10 +117,12 @@
             </section>
 
             <section class="workspace-card" id="compose-panel">
-              <div class="workspace-card-head"><div><span>STEP 06</span><h3>在浏览器中合成视频</h3></div><span class="local-badge">不占用云端算力</span></div>
+              <div class="workspace-card-head"><div><span>STEP 07 · ADVANCED</span><h3>在浏览器中合成 WebM</h3></div><span class="local-badge">兼容导出</span></div>
               <div class="compose-layout"><div class="video-stage"><canvas id="video-canvas" width="1280" height="720"></canvas><div class="video-placeholder" id="video-placeholder">素材准备完成后可预览并导出</div></div><div class="compose-actions"><strong>本地视频</strong><p>按配音时长自动分配镜头，生成带画面、配音和字幕的 WebM 视频。</p><button class="button primary full" id="compose-video" type="button" disabled>等待素材完成</button><button class="quiet-button full" id="download-project" type="button">下载项目清单</button><div class="compose-progress" id="compose-progress"></div></div></div>
               <div class="inline-message" id="compose-message" role="status"></div>
             </section>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -121,15 +136,15 @@
             <a href="/recharge/">充值积分 <span>→</span></a>
           </div>
           <div class="quote-card">
-            <span class="summary-kicker">TASK ESTIMATE</span><h3>本次任务预估</h3>
+            <span class="summary-kicker">ADVANCED ESTIMATE</span><h3>高级素材预估</h3>
             <div class="quote-line"><span>文案字符</span><strong id="summary-characters">0</strong></div>
             <div class="quote-line"><span>语音分段 / 镜头</span><strong id="summary-chunks">0 / 0</strong></div>
             <div class="quote-line"><span>配音预估</span><strong id="summary-cost">—</strong></div>
             <div class="quote-line"><span>图片与模型</span><strong>按实际结算</strong></div>
             <div class="quote-divider"></div>
-            <button class="button primary full" id="submit-job" type="button" disabled>登录后开始创作</button>
+            <button class="button primary full" id="submit-job" type="button" disabled>高级：生成云端素材</button>
             <div class="inline-message" id="job-message" role="status"></div>
-            <p>文本模型、配音和图片分别由服务端按实际用量计费；失败任务自动释放预扣积分。</p>
+            <p>仅用于高级手动分镜与素材流程；一键 MP4 的费用和结果由完整视频任务统一管理。</p>
           </div>
         </aside>
       </div>
@@ -142,6 +157,6 @@
         <form id="auth-form"><div class="field"><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div><div class="field"><label for="password">密码</label><input id="password" name="password" type="password" minlength="10" autocomplete="current-password" placeholder="至少 10 位字符" required /></div><button class="button primary full" id="auth-submit" type="submit">登录</button><div class="message" id="auth-message" role="status"></div></form>
       </div>
     </dialog>
-    <script src="/assets/studio.js?v=20260811.1" defer></script>
+    <script src="/assets/studio.js?v=20260811.2" defer></script>
   </body>
 </html>

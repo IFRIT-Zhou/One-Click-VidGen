@@ -23,6 +23,44 @@ def write_wav(path: Path, frames: int, value: int = 1000) -> None:
 
 
 class CloudTtsTest(unittest.TestCase):
+    def test_failed_job_surfaces_remote_error_instead_of_stale_message(self) -> None:
+        class FakeClient:
+            config = CloudConfig(
+                base_url="https://cluster.example/api/v1",
+                poll_interval=0.001,
+                max_wait_seconds=30,
+            )
+
+            def create_job(self, payload, *, idempotency_key):
+                return {
+                    "job_id": "job_failed_1",
+                    "status": "failed",
+                    "progress": 0,
+                    "message": "Submitting to Ray",
+                    "error": "Ray service is unavailable",
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "Ray service is unavailable"):
+                synthesize_cloud_tts(
+                    client=FakeClient(),
+                    local_job_id="local-failed-001",
+                    request={
+                        "script": "unused",
+                        "cluster_voice_type": "preset",
+                        "cluster_voice_id": "voice_01.wav",
+                    },
+                    output_dir=root / "output",
+                    segment_archive_dir=root / "segments",
+                    temp_dir=root / "temp",
+                    is_cancelled=lambda: False,
+                    on_progress=lambda *_: None,
+                    on_log=lambda *_: None,
+                    on_remote_job=lambda *_: None,
+                    chunks_override=["测试。"],
+                )
+
     def test_payload_normalizes_custom_voice_for_deployed_cloud_contract(self) -> None:
         request = {
             "script": "这是一段足够长的集群配音测试文案，用于确认报价和任务参数保持一致。",

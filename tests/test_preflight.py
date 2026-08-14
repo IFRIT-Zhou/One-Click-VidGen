@@ -5,6 +5,12 @@ from backend.app import main
 
 
 class PreflightProbeTest(unittest.TestCase):
+    def test_cluster_health_error_blocks_only_unhealthy_service(self) -> None:
+        self.assertIsNone(main._cluster_health_error({"ok": True}))
+        message = main._cluster_health_error({"ok": False, "ray_error": "timed out"})
+        self.assertIn("timed out", message)
+        self.assertIn("不会预扣积分", message)
+
     def test_project_config_values_prefers_runtime_environment(self) -> None:
         with (
             patch.object(main, "_parse_env_lines", return_value={"GEMINI_API_KEY": "file-key"}),

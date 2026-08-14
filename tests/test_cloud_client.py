@@ -79,6 +79,15 @@ class CloudClientTest(unittest.TestCase):
         self.assertEqual(second_call.kwargs["headers"]["Authorization"], "Bearer new-access")
         self.assertEqual(self.store.get(7).refresh_token, "new-refresh")
 
+    def test_cluster_health_does_not_require_login(self) -> None:
+        response = json_response({"ok": False, "control_api": True, "ray_error": "timed out"})
+        with patch("backend.app.cloud_client.requests.request", return_value=response) as request:
+            payload = self.client.cluster_health()
+
+        self.assertFalse(payload["ok"])
+        self.assertNotIn("Authorization", request.call_args.kwargs["headers"])
+        self.assertEqual(request.call_args.args[1], "https://cluster.example/api/v1/health")
+
     def test_download_rejects_cross_origin_url_without_leaking_token(self) -> None:
         self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
         with tempfile.TemporaryDirectory() as directory, patch("backend.app.cloud_client.requests.request") as request:

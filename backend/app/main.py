@@ -882,6 +882,13 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
     return None
 
 
+def _cluster_health_error(payload: dict[str, Any]) -> str | None:
+    if payload.get("ok") is True:
+        return None
+    detail = str(payload.get("ray_error") or "Ray 服务未就绪").strip()
+    return f"集群 GPU 服务当前不可用：{detail}。请稍后重试，任务尚未提交且不会预扣积分"
+
+
 def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
@@ -1005,25 +1012,29 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             add("tts", "集群 GPU", "error", "请先登录集群云端账户")
         else:
             try:
-                account = client.account_summary()
-                quote = client.quote(build_quote_payload(data))
-                credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
-                quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
-                available = int(credits.get("available") or 0)
-                estimated = int(quote.get("estimated_credits") or 0)
-                running = int(quota.get("running_jobs") or 0)
-                maximum = int(quota.get("max_concurrent_jobs") or 0)
-                if estimated > available:
-                    add("tts", "集群 GPU", "error", f"预计消耗 {estimated} 积分，可用积分仅 {available}")
-                elif maximum > 0 and running >= maximum:
-                    add("tts", "集群 GPU", "error", f"云端并发已满：{running}/{maximum}")
+                health_error = _cluster_health_error(client.cluster_health())
+                if health_error:
+                    add("tts", "集群 GPU", "error", health_error)
                 else:
-                    add(
-                        "tts",
-                        "集群 GPU",
-                        "passed",
-                        f"云端已登录；预计 {estimated} 积分，可用 {available}，并发 {running}/{maximum or '-'}",
-                    )
+                    account = client.account_summary()
+                    quote = client.quote(build_quote_payload(data))
+                    credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
+                    quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
+                    available = int(credits.get("available") or 0)
+                    estimated = int(quote.get("estimated_credits") or 0)
+                    running = int(quota.get("running_jobs") or 0)
+                    maximum = int(quota.get("max_concurrent_jobs") or 0)
+                    if estimated > available:
+                        add("tts", "集群 GPU", "error", f"预计消耗 {estimated} 积分，可用积分仅 {available}")
+                    elif maximum > 0 and running >= maximum:
+                        add("tts", "集群 GPU", "error", f"云端并发已满：{running}/{maximum}")
+                    else:
+                        add(
+                            "tts",
+                            "集群 GPU",
+                            "passed",
+                            f"云端已登录；预计 {estimated} 积分，可用 {available}，并发 {running}/{maximum or '-'}",
+                        )
             except (CloudApiError, ValueError) as exc:
                 add("tts", "集群 GPU", "error", str(exc))
     elif str(data.get("tts_engine") or "indextts2") == "qwen":
@@ -1585,6 +1596,9 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         if not cloud_state.get("authenticated"):
             raise HTTPException(status_code=401, detail="请先登录集群云端账户")
         try:
+            health_error = _cluster_health_error(client.cluster_health())
+            if health_error:
+                raise HTTPException(status_code=503, detail=health_error)
             client.quote(build_quote_payload(data))
         except CloudApiError as exc:
             raise _cloud_error(exc) from exc
