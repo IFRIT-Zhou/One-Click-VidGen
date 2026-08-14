@@ -75,63 +75,37 @@
             </option>
           </select>
           <input v-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
-          <div v-else class="api-key-state-bar" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
-            <span>
+          <div v-else class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
+            <div class="api-key-pool-heading">
               <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · 已配置 1 个`) }}</strong>
               <small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small>
-              <span v-else-if="!form.use_cloud_image_pool" class="api-key-hints"><code v-for="hint in currentLanguageProvider.key_hints || []" :key="hint">{{ hint }}</code></span>
-            </span>
-            <button type="button" :disabled="form.use_cloud_image_pool" :title="`重新输入 ${currentLanguageProviderLabel} API Key`" @click="editApiKey('language')">✏️</button>
+            </div>
+            <div v-if="!form.use_cloud_image_pool && !apiKeyRuntimeErrors.language" class="api-key-account-list">
+              <div v-for="(hint, index) in currentLanguageProvider.key_hints || []" :key="hint + index" class="api-key-account-row">
+                <code>{{ hint }}</code>
+                <button type="button" class="api-key-delete-btn" :disabled="deletingApiKey" :title="`删除此 ${currentLanguageProviderLabel} API Key`" @click="deleteConfiguredApiKey('language', index)">×</button>
+              </div>
+            </div>
+            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" :title="`添加 ${currentLanguageProviderLabel} API Key`" :aria-label="`添加 ${currentLanguageProviderLabel} API Key`" @click="addApiKeyAccount('language')">＋</button>
           </div>
         </div>
         <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>图像模型 API Key</span>
           <template v-if="apiKeyFieldOpen('image')">
             <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="第三方图像接口 API Key" />
-            <div v-for="(_, index) in apiKeyForm.image_api_keys" :key="`image-key-${index}`" class="api-key-extra-row">
-              <input v-model="apiKeyForm.image_api_keys[index]" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" :placeholder="`新增图像账号 ${index + 2}`" />
-              <button type="button" :disabled="form.use_cloud_image_pool" title="移除此账号输入框" @click="removeApiKeyField('image_api_keys', index)">×</button>
-            </div>
-            <div class="api-key-field-footer">
-              <span class="muted small">可继续添加并行账号</span>
-              <button class="api-key-add-btn" type="button" :disabled="form.use_cloud_image_pool" title="增加图像模型账号" @click="addApiKeyField('image_api_keys')">＋</button>
-            </div>
           </template>
-          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.image }">
-            <span>
+          <div v-else class="api-key-state-bar api-key-pool-state" :class="{ error: apiKeyRuntimeErrors.image }">
+            <div class="api-key-pool-heading">
               <strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : `已配置 ${apiKeyStatus.image?.count || 0} 个出图账号` }}</strong>
               <small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small>
-              <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.image?.key_hints || []" :key="hint">{{ hint }}</code></span>
-            </span>
-            <div class="api-key-state-actions">
-              <button type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
-              <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入图像模型 API Key" @click="editApiKey('image')">✏️</button>
             </div>
-          </div>
-        </div>
-        <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
-          <span>通用 API Key</span>
-          <template v-if="apiKeyFieldOpen('common')">
-            <input v-model="apiKeyForm.common_api_key" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="仅填此项会同时用于语言和图像" />
-            <div v-for="(_, index) in apiKeyForm.common_api_keys" :key="`common-key-${index}`" class="api-key-extra-row">
-              <input v-model="apiKeyForm.common_api_keys[index]" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" :placeholder="`新增通用账号 ${index + 2}`" />
-              <button type="button" :disabled="form.use_cloud_image_pool" title="移除此账号输入框" @click="removeApiKeyField('common_api_keys', index)">×</button>
+            <div v-if="!apiKeyRuntimeErrors.image" class="api-key-account-list">
+              <div v-for="(hint, index) in apiKeyStatus.image?.key_hints || []" :key="hint + index" class="api-key-account-row">
+                <code>{{ hint }}</code>
+                <button type="button" class="api-key-delete-btn" :disabled="form.use_cloud_image_pool || deletingApiKey" title="删除此图像 API Key" @click="deleteConfiguredApiKey('image', index)">×</button>
+              </div>
             </div>
-            <div class="api-key-field-footer">
-              <span class="muted small">可继续添加通用账号</span>
-              <button class="api-key-add-btn" type="button" :disabled="form.use_cloud_image_pool" title="增加通用账号" @click="addApiKeyField('common_api_keys')">＋</button>
-            </div>
-          </template>
-          <div v-else class="api-key-state-bar" :class="{ error: apiKeyRuntimeErrors.common }">
-            <span>
-              <strong>{{ apiKeyRuntimeErrors.common ? 'ERROR' : `已配置 ${apiKeyStatus.common?.count || 0} 个通用账号` }}</strong>
-              <small v-if="apiKeyRuntimeErrors.common">{{ apiKeyRuntimeErrors.common }}</small>
-              <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.common?.key_hints || []" :key="hint">{{ hint }}</code></span>
-            </span>
-            <div class="api-key-state-actions">
-              <button type="button" :disabled="form.use_cloud_image_pool" title="新增通用并行账号" @click="addApiKeyAccount('common')">＋</button>
-              <button type="button" :disabled="form.use_cloud_image_pool" title="重新输入通用 API Key" @click="editApiKey('common')">✏️</button>
-            </div>
+            <button class="api-key-corner-add" type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" aria-label="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
           </div>
         </div>
         <div class="cloud-pool-toggle-row">
@@ -148,7 +122,7 @@
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
         </div>
-        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人文本、图像或通用 API Key。' : '语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；各家的 Key 分开保存。通用 Key 仍只用于原有第三方接口工作流。' }}</div>
+        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : '语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；文本与图像 Key 分开保存。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
         <button v-if="apiKeyEditorVisible" class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
           {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
@@ -2244,9 +2218,10 @@ const diagnosticMessage = ref('')
 const generationSubmitMessage = ref('')
 const apiKeyStatus = ref({ language: {}, image: {}, common: {}, qwen_tts: {} })
 const apiKeyMessage = ref('')
-const apiKeyEditing = reactive({ language: false, image: false, common: false, qwen_tts: false })
-const apiKeyRuntimeErrors = reactive({ language: '', image: '', common: '', qwen_tts: '' })
+const apiKeyEditing = reactive({ language: false, image: false, qwen_tts: false })
+const apiKeyRuntimeErrors = reactive({ language: '', image: '', qwen_tts: '' })
 const savingApiKeys = ref(false)
+const deletingApiKey = ref(false)
 const savingQwenTtsKey = ref(false)
 const qwenTtsKeyMessage = ref('')
 const ttsEngine = ref('indextts2')
@@ -2419,8 +2394,6 @@ const apiKeyForm = reactive({
   language_api_key: '',
   image_api_key: '',
   image_api_keys: [],
-  common_api_key: '',
-  common_api_keys: [],
   qwen_tts_api_key: '',
 })
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
@@ -2439,7 +2412,7 @@ const currentLanguageProvider = computed(() => (
 const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
 const apiKeyEditorVisible = computed(() => (
   !form.use_cloud_image_pool
-  && ['language', 'image', 'common'].some((kind) => apiKeyFieldOpen(kind))
+  && ['language', 'image'].some((kind) => apiKeyFieldOpen(kind))
 ))
 const parameterPresets = ref([])
 const selectedParameterPreset = ref('')
@@ -2820,7 +2793,7 @@ const generationBlockReason = computed(() => {
     const status = pendingGenerationJob.value?.status
     if (status === 'queued') return block('JOB_QUEUED', '已有任务正在排队，完成或停止后才能开始新任务。')
     if (status === 'waiting_confirmation') return block('STEP_CONFIRMATION_REQUIRED', '分步任务正在等待确认，请点击“继续生成”。')
-    return block('JOB_RUNNING', '当前任务还未执行完毕，请等待完成或先停止生成。')
+    return block('JOB_RUNNING', '任务运行中，请等待或先停止。')
   }
   if (!form.project_name.trim()) return block('PROJECT_NAME_REQUIRED', '请先填写项目名称。')
   if (String(form.script || '').length > MAX_SCRIPT_CHARACTERS) {
@@ -3085,9 +3058,6 @@ function syncApiRuntimeErrors(jobCandidates) {
     const reason = apiFailureReason(text)
     apiKeyRuntimeErrors[kind] = reason && contexts[kind].test(text) ? reason : ''
   }
-  apiKeyRuntimeErrors.common = apiKeyStatus.value.common?.configured
-    ? (apiKeyRuntimeErrors.language || apiKeyRuntimeErrors.image)
-    : ''
 }
 
 async function refresh() {
@@ -3749,7 +3719,7 @@ async function refreshCloudQuote() {
 }
 
 function apiKeyFieldOpen(kind) {
-  if (form.use_cloud_image_pool && ['language', 'image', 'common'].includes(kind)) return false
+  if (form.use_cloud_image_pool && ['language', 'image'].includes(kind)) return false
   if (kind === 'language') {
     return !currentLanguageProvider.value?.configured || Boolean(apiKeyEditing.language)
   }
@@ -3763,27 +3733,44 @@ function editApiKey(kind) {
   if (kind === 'qwen_tts') qwenTtsKeyMessage.value = ''
 }
 
-function onLanguageProviderChanged() {
-  // Selecting a provider is a pending configuration change.  Keep the key box
-  // visible even when this provider had been configured previously, so the
-  // user can either replace its key or simply save to activate it.
-  apiKeyEditing.language = true
+async function onLanguageProviderChanged() {
   apiKeyRuntimeErrors.language = ''
   apiKeyMessage.value = ''
+  apiKeyEditing.language = !currentLanguageProvider.value?.configured
+  if (currentLanguageProvider.value?.configured) {
+    await saveApiKeySettings()
+  }
 }
 
 function addApiKeyAccount(kind) {
   if (form.use_cloud_image_pool) return
-  const field = kind === 'image' ? 'image_api_keys' : 'common_api_keys'
   editApiKey(kind)
-  addApiKeyField(field)
+}
+
+async function deleteConfiguredApiKey(kind, index) {
+  if (form.use_cloud_image_pool || deletingApiKey.value) return
+  const targetLabel = kind === 'language' ? `${currentLanguageProviderLabel.value} API Key` : '这个已保存的 API Key'
+  if (!window.confirm(`确定删除${targetLabel}吗？`)) return
+  deletingApiKey.value = true
+  try {
+    const provider = kind === 'language' ? apiKeyForm.language_provider : ''
+    const result = await api.deleteApiKey(kind, index, provider)
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    if (kind === 'language') apiKeyEditing.language = true
+    if (kind === 'image' && !apiKeyStatus.value.image?.configured) apiKeyEditing.image = true
+    apiKeyMessage.value = result.message || 'API Key 已删除。'
+  } catch (error) {
+    apiKeyMessage.value = error.message || '删除 API Key 失败。'
+  } finally {
+    deletingApiKey.value = false
+  }
 }
 
 async function loadApiKeySettings() {
   if (!session.value.user) return
   try {
     const payload = await api.apiKeySettings()
-    apiKeyStatus.value = payload.keys || { language: {}, image: {}, common: {}, qwen_tts: {} }
+    apiKeyStatus.value = payload.keys || { language: {}, image: {}, qwen_tts: {} }
     apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini'
     apiKeyStatusLoaded = true
   } catch (error) {
@@ -3793,11 +3780,11 @@ async function loadApiKeySettings() {
 
 async function saveApiKeySettings() {
   const payload = { language_provider: apiKeyForm.language_provider }
-  for (const key of ['language_api_key', 'image_api_key', 'common_api_key']) {
+  for (const key of ['language_api_key', 'image_api_key']) {
     const value = String(apiKeyForm[key] || '').trim()
     if (value) payload[key] = value
   }
-  for (const key of ['image_api_keys', 'common_api_keys']) {
+  for (const key of ['image_api_keys']) {
     const values = apiKeyForm[key].map((value) => String(value || '').trim()).filter(Boolean)
     if (values.length) payload[key] = values
   }
@@ -3815,11 +3802,6 @@ async function saveApiKeySettings() {
     const touched = new Set()
     if (payload.language_api_key || payload.language_provider) touched.add('language')
     if (payload.image_api_key || payload.image_api_keys?.length) touched.add('image')
-    if (payload.common_api_key || payload.common_api_keys?.length) {
-      touched.add('common')
-      touched.add('language')
-      touched.add('image')
-    }
     for (const kind of touched) {
       apiKeyEditing[kind] = false
       apiKeyRuntimeErrors[kind] = ''
@@ -3827,25 +3809,11 @@ async function saveApiKeySettings() {
     apiKeyForm.language_api_key = ''
     apiKeyForm.image_api_key = ''
     apiKeyForm.image_api_keys = []
-    apiKeyForm.common_api_key = ''
-    apiKeyForm.common_api_keys = []
   } catch (error) {
     apiKeyMessage.value = error.message || '保存 API Key 失败。'
   } finally {
     savingApiKeys.value = false
   }
-}
-
-function addApiKeyField(key) {
-  if (apiKeyForm[key].length >= 9) {
-    apiKeyMessage.value = '单次最多可追加 9 个账号。'
-    return
-  }
-  apiKeyForm[key].push('')
-}
-
-function removeApiKeyField(key, index) {
-  apiKeyForm[key].splice(index, 1)
 }
 
 async function saveQwenTtsKey() {

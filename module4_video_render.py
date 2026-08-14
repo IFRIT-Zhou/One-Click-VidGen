@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
+import mimetypes
 import os
 import re
 import sys
@@ -365,6 +367,10 @@ class RunningHubQueueFull(RuntimeError):
 
 class RunningHubTransientError(RuntimeError):
     """A temporary RunningHub or network failure that can be retried safely."""
+
+
+class RunningHubReferenceUploadError(RuntimeError):
+    """A reference upload response is valid but contains no usable image URL."""
 
 
 class RunningHubResultRetryableError(RuntimeError):
@@ -2241,7 +2247,12 @@ def _find_image_url(value: Any) -> str | None:
             return value
         return None
     if isinstance(value, dict):
-        for key in ("fileUrl", "fileURL", "imageUrl", "imageURL", "url", "downloadUrl", "downloadURL"):
+        for key in (
+            "fileUrl", "fileURL", "file_url",
+            "imageUrl", "imageURL", "image_url",
+            "downloadUrl", "downloadURL", "download_url",
+            "url",
+        ):
             found = _find_image_url(value.get(key))
             if found:
                 return found
@@ -2844,6 +2855,7 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
         cached = _REFERENCE_IMAGE_URLS.get(cache_key)
         if cached:
             return cached
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         try:
             with path.open("rb") as handle:
                 with _new_session() as session:
@@ -2853,7 +2865,7 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
                         config.get("upload_url") or f"{RUNNINGHUB_HOST}/openapi/v2/media/upload/binary",
                         config=config,
                         headers={"Authorization": f"Bearer {config['api_key']}"},
-                        files={"file": (path.name, handle, "application/octet-stream")},
+                        files={"file": (path.name, handle, mime_type)},
                         timeout=120,
                     )
             payload = response.json()
@@ -2861,12 +2873,42 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
             raise RunningHubTransientError(f"主角参考图上传失败: {type(exc).__name__}") from exc
         if not response.ok or not isinstance(payload, dict):
             raise RunningHubTransientError("主角参考图上传失败")
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        url = str(data.get("download_url") or data.get("downloadUrl") or "").strip()
+        # RunningHub and the OCV cloud pool use slightly different response
+        # envelopes and camel/snake-case field names. Search the complete
+        # payload so a successful upload is not mistaken for a network error.
+        url = str(_find_image_url(payload) or "").strip()
         if not url:
-            raise RunningHubTransientError("主角参考图上传成功但未返回可用链接")
+            # Standard-model resource fields such as ``imageUrls`` accept a
+            # Base64 Data URI as well as a public URL. Some RunningHub account
+            # types return a successful upload envelope without ``download_url``;
+            # falling back locally keeps redraw/reference-image tasks usable and
+            # avoids repeatedly submitting a paid generation request.
+            try:
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            except OSError as exc:
+                raise RunningHubReferenceUploadError(
+                    f"参考图无法读取，不能继续重绘：{path.name}"
+                ) from exc
+            if mime_type == "application/octet-stream":
+                suffix_mime = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".webp": "image/webp",
+                }.get(path.suffix.lower())
+                if not suffix_mime:
+                    raise RunningHubReferenceUploadError(
+                        f"参考图格式不受支持：{path.suffix or '未知格式'}"
+                    )
+                mime_type = suffix_mime
+            url = f"data:{mime_type};base64,{encoded}"
+            print(
+                f"参考图上传响应未提供图片链接，已改用 Base64 直传: {path.name}",
+                flush=True,
+            )
         _REFERENCE_IMAGE_URLS[cache_key] = url
-        print(f"参考图已上传至 RunningHub: {path.name}", flush=True)
+        if url.startswith("http://") or url.startswith("https://"):
+            print(f"参考图已上传至 RunningHub: {path.name}", flush=True)
         return url
 
 
