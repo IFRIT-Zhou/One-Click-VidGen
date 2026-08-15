@@ -229,9 +229,9 @@ def _authenticated_email(authorization: str | None = Header(default=None)) -> st
     return email
 
 
-def _estimate_credits(chunks: list[dict[str, Any]]) -> int:
+def _estimate_credits(chunks: list[dict[str, Any]]) -> float:
     characters = sum(len(str(item.get("text") or "")) for item in chunks)
-    return max(1, math.ceil(characters / 100))
+    return round(math.ceil(characters / 200) * 0.1, 1)
 
 
 def _active_jobs(email: str) -> list[dict[str, Any]]:
@@ -242,14 +242,14 @@ def _settle_job(job: dict[str, Any], status: str) -> None:
     if job.get("settled"):
         return
     user = state.users[job["email"]]
-    reserved = int(job["reserved_credits"])
+    reserved = float(job["reserved_credits"])
     if status == "completed":
         job["consumed_credits"] = reserved
         job["released_credits"] = 0
         entry_type = "consume"
         amount = -reserved
     else:
-        user["credits"] += reserved
+        user["credits"] = round(float(user["credits"]) + reserved, 1)
         job["consumed_credits"] = 0
         job["released_credits"] = reserved
         entry_type = "release"
@@ -388,7 +388,7 @@ def account_summary(email: str = Depends(_authenticated_email)) -> dict[str, Any
             if job["email"] == email:
                 _update_job(job)
         active = _active_jobs(email)
-        reserved = sum(int(job["reserved_credits"]) for job in active)
+        reserved = round(sum(float(job["reserved_credits"]) for job in active), 1)
         user = state.users[email]
         return {
             "user": _public_user(user),
@@ -610,7 +610,7 @@ def create_job(
         if len(_active_jobs(email)) >= int(user["max_concurrent_jobs"]):
             raise MockCloudError(429, "CONCURRENCY_LIMIT", "模拟账户并发已满，请稍后重试")
         estimated = _estimate_credits(chunks)
-        if int(user["credits"]) < estimated:
+        if float(user["credits"]) < estimated:
             raise MockCloudError(403, "INSUFFICIENT_CREDITS", f"模拟积分不足：需要 {estimated}，当前 {user['credits']}")
         voice = body.get("voice") or {}
         _owned_voice(str(voice.get("id") or ""), email)

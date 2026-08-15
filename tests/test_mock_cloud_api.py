@@ -25,6 +25,17 @@ class MockCloudApiTest(unittest.TestCase):
         self.assertEqual(account.json()["credits"]["available"], 5000)
         self.assertEqual(voices.json()["items"][0]["type"], "preset")
 
+    def test_tts_quote_is_point_one_credit_per_started_200_characters(self) -> None:
+        headers = self.login()
+        for characters, expected in ((1, 0.1), (200, 0.1), (201, 0.2), (1000, 0.5)):
+            response = self.client.post(
+                "/api/v1/cloud/quotes",
+                headers=headers,
+                json={"chunks": [{"index": 0, "text": "字" * characters}]},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["estimated_credits"], expected)
+
     def test_job_completes_and_audio_is_valid_wav(self) -> None:
         headers = {**self.login(), "Idempotency-Key": "unit-job-1"}
         payload = {

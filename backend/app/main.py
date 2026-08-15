@@ -1005,12 +1005,12 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                     quote = client.quote(build_quote_payload(data))
                     credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
                     quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
-                    available = int(credits.get("available") or 0)
-                    estimated = int(quote.get("estimated_credits") or 0)
+                    available = float(credits.get("available") or 0)
+                    estimated = float(quote.get("estimated_credits") or 0)
                     running = int(quota.get("running_jobs") or 0)
                     maximum = int(quota.get("max_concurrent_jobs") or 0)
                     if estimated > available:
-                        add("tts", "集群 GPU", "error", f"预计消耗 {estimated} 积分，可用积分仅 {available}")
+                        add("tts", "集群 GPU", "error", f"预计消耗 {estimated:g} 积分，可用积分仅 {available:g}")
                     elif maximum > 0 and running >= maximum:
                         add("tts", "集群 GPU", "error", f"云端并发已满：{running}/{maximum}")
                     else:
@@ -1018,7 +1018,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                             "tts",
                             "集群 GPU",
                             "passed",
-                            f"云端已登录；预计 {estimated} 积分，可用 {available}，并发 {running}/{maximum or '-'}",
+                            f"云端已登录；预计 {estimated:g} 积分，可用 {available:g}，并发 {running}/{maximum or '-'}",
                         )
             except (CloudApiError, ValueError) as exc:
                 add("tts", "集群 GPU", "error", str(exc))
@@ -1090,9 +1090,9 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         client.model_pool_status()
                         client.image_pool_status()
                         credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
-                        available = int(credits.get("available") or 0)
+                        available = float(credits.get("available") or 0)
                         pool_status = "passed" if available > 0 else "error"
-                        pool_message = f"云端账户已登录，可用积分 {available}" if available > 0 else "云端账户积分不足"
+                        pool_message = f"云端账户已登录，可用积分 {available:g}" if available > 0 else "云端账户积分不足"
                         add("language_api", "云端文本号池", pool_status, pool_message)
                         add(
                             "image_api",
@@ -1544,7 +1544,7 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             client.model_pool_status()
             client.image_pool_status()
             credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
-            if int(credits.get("available") or 0) <= 0:
+            if float(credits.get("available") or 0) <= 0:
                 raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")
         except CloudApiError as exc:
             if exc.status_code == 404:
