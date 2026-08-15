@@ -1,9 +1,9 @@
 {
-  "release_id": "2026.08.08.1",
-  "release_order": 2026080801,
-  "display_version": "2026.08.08 安全更新版",
+  "release_id": "2026.08.15.1",
+  "release_order": 2026081501,
+  "display_version": "2026.08.15 计费与集群修正版",
   "branch": "main",
   "portable_overlay_safe": true,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "OCV Launcher 第二阶段：检查更新、快进同步、便携版保护性覆盖与失败回滚。"
+  "notes": "更新云端 TTS 计费规则（每 200 字 0.1 积分）、小数积分显示与校验，并修复集群健康诊断和云端工作台相关问题。"
 }
