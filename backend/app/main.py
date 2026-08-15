@@ -37,7 +37,13 @@ from .db import (
     list_media_assets,
     sole_user_id,
 )
-from .gemini_client import LANGUAGE_PROVIDER_OPTIONS, language_provider_status
+from .gemini_client import (
+    LANGUAGE_PROVIDER_OPTIONS,
+    language_model_allowed,
+    language_provider_configured,
+    language_provider_models,
+    language_provider_status,
+)
 from .indextts2_local import EMOTIONS, load_indextts2_config, resolve_voice_reference
 from .qwen_tts import DEFAULT_VOICE as DEFAULT_QWEN_VOICE, voice_supports_instructions
 from .editor import (
@@ -286,7 +292,10 @@ class CloudRechargeRequest(BaseModel):
 
 
 class ApiKeySettingsRequest(BaseModel):
-    language_provider: Literal["gemini", "runninghub", "deepseek", "openai", "kimi", "glm"] | None = None
+    language_provider: Literal[
+        "gemini", "runninghub", "anthropic", "deepseek", "openai", "qwen", "kimi", "glm", "custom"
+    ] | None = None
+    language_model: str | None = Field(default=None, max_length=256)
     language_api_key: str | None = Field(default=None, max_length=2048)
     image_api_key: str | None = Field(default=None, max_length=2048)
     image_api_keys: list[str] = Field(default_factory=list, max_length=10)
@@ -818,22 +827,33 @@ def _api_key_status() -> dict[str, Any]:
         )
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
         provider = "gemini"
+    if provider == "runninghub":
+        provider = "gemini"
     selected = LANGUAGE_PROVIDER_OPTIONS[provider]
     provider_statuses = []
     for name, config in LANGUAGE_PROVIDER_OPTIONS.items():
+        if config.get("hidden"):
+            continue
         provider_key = str(values.get(config["key_env"], "")).strip()
+        provider_configured = language_provider_configured(name, values) and not bool(config.get("disabled"))
         provider_statuses.append({
             "value": name,
             "label": config["label"],
-            "configured": bool(provider_key),
-            "count": 1 if provider_key else 0,
-            "key_hints": _masked_api_keys([provider_key]),
+            "configured": provider_configured,
+            "count": 1 if provider_key and provider_configured else 0,
+            "key_hints": _masked_api_keys([provider_key]) if not config.get("disabled") else [],
+            "selected_model": str(values.get(config["model_env"]) or config["default_model"]),
+            "models": language_provider_models(name),
+            "allow_custom_model": bool(config.get("allow_custom_model")),
+            "disabled": bool(config.get("disabled")),
+            "disabled_reason": str(config.get("disabled_reason") or ""),
         })
     selected_key = str(values.get(selected["key_env"], "")).strip()
+    selected_configured = language_provider_configured(provider, values)
     qwen_tts_key = str(values.get("DASHSCOPE_API_KEY", "")).strip()
     return {
         "language": {
-            "configured": bool(selected_key),
+            "configured": selected_configured,
             "count": 1 if selected_key else 0,
             "key_hints": _masked_api_keys([selected_key]),
             "provider": provider,
@@ -883,16 +903,28 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
         )
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
         provider = "gemini"
+    if provider == "runninghub":
+        provider = "gemini"
     config = LANGUAGE_PROVIDER_OPTIONS[provider]
     api_key = str(values.get(config["key_env"]) or "").strip()
-    if not api_key:
+    if not api_key and not config.get("optional_key"):
         return "error", f"未配置 {config['label']} API Key"
+    if config.get("optional_key") and not language_provider_configured(provider, values):
+        return "error", f"请在 .env 中填写 {config['base_env']} 和 {config['model_env']}"
     try:
         if config["protocol"] == "openai":
             base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             response = requests.get(
                 f"{base_url}/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers=headers,
+                timeout=(3, 6),
+            )
+        elif config["protocol"] == "anthropic":
+            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            response = requests.get(
+                f"{base_url}/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
                 timeout=(3, 6),
             )
         else:
@@ -1174,12 +1206,13 @@ def get_api_key_settings(request: Request) -> dict[str, Any]:
 def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> dict[str, Any]:
     require_user(request)
     language_provider = payload.language_provider
+    language_model = str(payload.language_model or "").strip()
     language = str(payload.language_api_key or "").strip()
     image = str(payload.image_api_key or "").strip()
     image_additions = _unique_api_keys(payload.image_api_keys)
     qwen_tts = str(payload.qwen_tts_api_key or "").strip()
     all_supplied = [language, image, qwen_tts, *image_additions]
-    if not any(all_supplied) and not language_provider:
+    if not any(all_supplied) and not language_provider and not language_model:
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
     if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
@@ -1194,18 +1227,27 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         or (image_pool[0] if image_pool else "")
     )
 
-    # A common RunningHub-style key fills either dedicated field left blank.
-    # It intentionally never fills third-party providers such as DeepSeek.
+    # The language selector chooses a model family on one shared third-party
+    # node. Switching families must never require or overwrite a second key.
     updates: dict[str, str] = {}
     if language_provider:
         provider_config = LANGUAGE_PROVIDER_OPTIONS[language_provider]
-        updates["LANGUAGE_PROVIDER"] = language_provider
+        if provider_config.get("disabled"):
+            raise HTTPException(
+                status_code=400,
+                detail=str(provider_config.get("disabled_reason") or "当前模型家族暂不可用"),
+            )
+        if language_model and not language_model_allowed(language_provider, language_model):
+            raise HTTPException(status_code=400, detail="所选 Agent 模型不属于当前模型家族")
+        updates["LANGUAGE_PROVIDER"] = "gemini" if language_provider == "runninghub" else language_provider
+        if language_model:
+            updates[provider_config["model_env"]] = language_model
         if language:
             updates[provider_config["key_env"]] = language
     elif language:
         # Preserve the old behavior for callers which do not send a provider.
         updates["GEMINI_API_KEY"] = language
-    if language_provider in {None, "gemini"} and language:
+    if language:
         updates["GEMINI_API_KEY"] = language
     if supplied_image:
         updates["RUNNINGHUB_API_KEY"] = image_primary
@@ -1221,7 +1263,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         raise HTTPException(status_code=500, detail=f"保存 API Key 失败: {exc}") from exc
     return {
         "keys": _api_key_status(),
-        "message": "API Key 已保存到本机 .env；语言模型将按当前选择的提供商调用。",
+        "message": "语言节点 API Key 与模型选择已保存到本机 .env。",
     }
 
 
@@ -1243,7 +1285,7 @@ def delete_api_key(kind: str, index: int, request: Request, provider: str | None
             save_project_env_values({key_env: ""})
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail=f"删除 API Key 失败: {exc}") from exc
-        return {"keys": _api_key_status(), "message": f"{provider_config['label']} API Key 已删除。"}
+        return {"keys": _api_key_status(), "message": "三方语言节点 API Key 已删除。"}
     image_pool = _runninghub_api_keys(values)
     pool = image_pool
     if index >= len(pool):

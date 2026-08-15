@@ -17,23 +17,30 @@ from .config import load_project_env
 load_project_env()
 
 
-DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+DEFAULT_GEMINI_MODEL = "google/gemini-3.6-flash"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://llm.runninghub.ai/v1"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 
-# The original Gemini variable names are retained for backwards compatibility.
-# New providers keep their own key/model variables so switching in the UI never
-# overwrites a key the user has already configured for another provider.
-LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, str]] = {
+# The configured third-party node is the transport; provider names below are
+# model families, not separate API accounts. All visible families therefore
+# share one base URL and one language-model key while retaining their own last
+# selected model. ``runninghub`` remains as a hidden legacy alias only.
+LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
     "gemini": {
         "label": "Google Gemini",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "GEMINI_MODEL",
-        "default_base": DEFAULT_GEMINI_BASE_URL,
-        "default_model": DEFAULT_GEMINI_MODEL,
-        "protocol": "gemini",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "google/gemini-3.6-flash",
+        "protocol": "openai",
+        "models": [
+            {"value": "google/gemini-3.6-flash", "label": "Gemini 3.6 Flash（推荐）"},
+            {"value": "google/gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite（省钱）"},
+            {"value": "google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview（高质量）"},
+            {"value": "google/gemini-3.1-flash-lite-preview", "label": "Gemini 3.1 Flash-Lite（兼容旧任务）"},
+        ],
     },
     "runninghub": {
         "label": "第三方兼容接口",
@@ -43,42 +50,103 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, str]] = {
         "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
         "default_model": DEFAULT_GEMINI_MODEL,
         "protocol": "openai",
+        "models": [],
+        "allow_custom_model": True,
+        "hidden": True,
+    },
+    "anthropic": {
+        "label": "Anthropic Claude",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
+        "model_env": "ANTHROPIC_MODEL",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "anthropic/claude-sonnet-5",
+        "protocol": "openai",
+        "models": [
+            {"value": "anthropic/claude-sonnet-5", "label": "Claude Sonnet 5（推荐）"},
+            {"value": "anthropic/claude-opus-5", "label": "Claude Opus 5（高质量）"},
+            {"value": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5（省钱）"},
+        ],
     },
     "deepseek": {
         "label": "DeepSeek",
-        "key_env": "DEEPSEEK_API_KEY",
-        "base_env": "DEEPSEEK_API_BASE",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
         "model_env": "DEEPSEEK_MODEL",
-        "default_base": "https://api.deepseek.com",
-        "default_model": "deepseek-v4-flash",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "deepseek/deepseek-v4-flash",
         "protocol": "openai",
+        "models": [
+            {"value": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash（推荐）"},
+            {"value": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro（高质量）"},
+        ],
     },
     "openai": {
         "label": "OpenAI GPT",
-        "key_env": "OPENAI_API_KEY",
-        "base_env": "OPENAI_API_BASE",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
         "model_env": "OPENAI_MODEL",
-        "default_base": "https://api.openai.com/v1",
-        "default_model": "gpt-4.1-mini",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "openai/gpt-5.6-terra",
         "protocol": "openai",
+        "models": [
+            {"value": "openai/gpt-5.6-terra", "label": "GPT-5.6 Terra（推荐）"},
+            {"value": "openai/gpt-5.6-sol", "label": "GPT-5.6 Sol（高质量）"},
+            {"value": "openai/gpt-5.6-luna", "label": "GPT-5.6 Luna（省钱）"},
+            {"value": "openai/gpt-5.4-mini", "label": "GPT-5.4 mini（兼顾速度）"},
+        ],
+    },
+    "qwen": {
+        "label": "阿里云 Qwen",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
+        "model_env": "QWEN_MODEL",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "qwen/qwen3.7-plus",
+        "protocol": "openai",
+        "models": [
+            {"value": "qwen/qwen3.8-max", "label": "Qwen3.8 Max（高质量）"},
+            {"value": "qwen/qwen3.7-plus", "label": "Qwen3.7 Plus（推荐）"},
+            {"value": "qwen/qwen3.6-flash", "label": "Qwen3.6 Flash（省钱）"},
+        ],
     },
     "kimi": {
-        "label": "Kimi",
-        "key_env": "MOONSHOT_API_KEY",
-        "base_env": "MOONSHOT_API_BASE",
+        "label": "Kimi（当前节点未开放）",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
         "model_env": "MOONSHOT_MODEL",
-        "default_base": "https://api.moonshot.cn/v1",
-        "default_model": "kimi-k2.5",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "kimi-k3",
         "protocol": "openai",
+        "models": [],
+        "disabled": True,
+        "disabled_reason": "当前三方节点的 /models 列表尚未开放 Kimi",
     },
     "glm": {
         "label": "智谱 GLM",
-        "key_env": "ZAI_API_KEY",
-        "base_env": "ZAI_API_BASE",
+        "key_env": "GEMINI_API_KEY",
+        "base_env": "GEMINI_API_BASE",
         "model_env": "ZAI_MODEL",
-        "default_base": "https://open.bigmodel.cn/api/paas/v4",
-        "default_model": "glm-4.7-flash",
+        "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+        "default_model": "glm-5.2",
         "protocol": "openai",
+        "models": [
+            {"value": "glm-5.2", "label": "GLM-5.2（推荐）"},
+            {"value": "glm-5-turbo", "label": "GLM-5 Turbo（高速）"},
+            {"value": "glm-5.1", "label": "GLM-5.1（兼顾成本）"},
+        ],
+    },
+    "custom": {
+        "label": "自定义兼容接口（高级）",
+        "key_env": "CUSTOM_LLM_API_KEY",
+        "base_env": "CUSTOM_LLM_API_BASE",
+        "model_env": "CUSTOM_LLM_MODEL",
+        "default_base": "http://127.0.0.1:1234/v1",
+        "default_model": "local-model",
+        "protocol": "openai",
+        "models": [],
+        "allow_custom_model": True,
+        "optional_key": True,
     },
 }
 
@@ -92,23 +160,22 @@ class GeminiOutputTruncated(GeminiError):
 
 
 def gemini_configured() -> bool:
-    config = language_provider_config()
-    return bool(os.getenv(config["key_env"], "").strip())
+    return language_provider_configured()
 
 
 def _provider() -> str:
     selected = os.getenv("LANGUAGE_PROVIDER", "").strip().lower()
     if selected in LANGUAGE_PROVIDER_OPTIONS:
-        return selected
+        return "gemini" if selected == "runninghub" else selected
     legacy = os.getenv("GEMINI_PROVIDER", "google").strip().lower() or "google"
     if legacy in {"google", "gemini"}:
         return "gemini"
     if legacy in {"openai", "openai_compatible", "runninghub"}:
-        return "runninghub"
+        return "gemini"
     return legacy
 
 
-def language_provider_config(provider: str | None = None) -> dict[str, str]:
+def language_provider_config(provider: str | None = None) -> dict[str, Any]:
     """Return the selected provider config, while accepting legacy relays."""
     provider_name = (provider or _provider()).strip().lower()
     if provider_name in LANGUAGE_PROVIDER_OPTIONS:
@@ -121,31 +188,77 @@ def language_provider_config(provider: str | None = None) -> dict[str, str]:
         "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
         "default_model": DEFAULT_GEMINI_MODEL,
         "protocol": "openai",
+        "models": [],
+        "allow_custom_model": True,
     }
+
+
+def language_provider_models(provider: str | None = None) -> list[dict[str, str]]:
+    config = language_provider_config(provider)
+    return [
+        {"value": str(item.get("value") or ""), "label": str(item.get("label") or item.get("value") or "")}
+        for item in config.get("models", [])
+        if str(item.get("value") or "").strip()
+    ]
+
+
+def language_model(provider: str | None = None) -> str:
+    config = language_provider_config(provider)
+    return os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
+
+
+def language_model_allowed(provider: str, model: str) -> bool:
+    config = language_provider_config(provider)
+    if config.get("allow_custom_model"):
+        return bool(model.strip())
+    candidate = model.strip()
+    configured = os.getenv(config["model_env"], "").strip()
+    return candidate == configured or candidate in {item["value"] for item in language_provider_models(provider)}
+
+
+def language_provider_configured(provider: str | None = None, values: Any | None = None) -> bool:
+    config = language_provider_config(provider)
+    source = values if values is not None else os.environ
+    if config.get("optional_key"):
+        return bool(
+            str(source.get(config["base_env"], "")).strip()
+            and str(source.get(config["model_env"], "")).strip()
+        )
+    return bool(str(source.get(config["key_env"], "")).strip())
 
 
 def language_provider_status() -> dict[str, Any]:
     selected = _provider()
-    options = [
-        {"value": name, "label": config["label"], "configured": bool(os.getenv(config["key_env"], "").strip())}
-        for name, config in LANGUAGE_PROVIDER_OPTIONS.items()
-    ]
+    options = []
+    for name, config in LANGUAGE_PROVIDER_OPTIONS.items():
+        if config.get("hidden"):
+            continue
+        options.append({
+            "value": name,
+            "label": config["label"],
+            "configured": language_provider_configured(name) and not bool(config.get("disabled")),
+            "selected_model": language_model(name),
+            "models": language_provider_models(name),
+            "allow_custom_model": bool(config.get("allow_custom_model")),
+            "disabled": bool(config.get("disabled")),
+            "disabled_reason": str(config.get("disabled_reason") or ""),
+        })
     config = language_provider_config(selected)
     return {
         "provider": selected,
         "provider_label": config["label"],
-        "configured": bool(os.getenv(config["key_env"], "").strip()),
-        "model": os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"],
+        "configured": language_provider_configured(selected),
+        "model": language_model(selected),
         "providers": options,
     }
 
 
 def _gemini_models(provider: str | None = None) -> list[str]:
     config = language_provider_config(provider)
-    primary = os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
+    primary = language_model(provider)
     fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS", "").strip()
     models = [primary]
-    if fallback_raw:
+    if fallback_raw and (provider or _provider()) in {"gemini", "runninghub"}:
         models.extend(re.split(r"[,;\s]+", fallback_raw))
     unique: list[str] = []
     for model in models:
@@ -236,7 +349,7 @@ def _generate_openai_compatible_text(
         }
         # Existing RunningHub relays historically accept this wrapper; official
         # OpenAI-compatible providers expect these fields at the request root.
-        if provider in {"deepseek", "openai", "kimi", "glm"}:
+        if provider in {"deepseek", "openai", "qwen", "kimi", "glm"}:
             payload.update(extra_body)
         elif extra_body:
             payload["extra_body"] = extra_body
@@ -245,9 +358,12 @@ def _generate_openai_compatible_text(
         response = None
         for attempt in range(1, _gemini_retry_count() + 1):
             try:
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
                 response = requests.post(
                     url,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers=headers,
                     json=payload,
                     timeout=_gemini_timeout(),
                 )
@@ -304,8 +420,12 @@ def generate_gemini_text(
     provider = _provider()
     config = language_provider_config(provider)
     api_key = os.getenv(config["key_env"], "").strip()
-    if not api_key:
+    if not api_key and not config.get("optional_key"):
         raise GeminiError(f"未配置 {config['key_env']}")
+    if config.get("optional_key") and not language_provider_configured(provider):
+        raise GeminiError(
+            f"自定义语言接口未配置完整，请在 .env 中填写 {config['base_env']} 和 {config['model_env']}"
+        )
 
     if config["protocol"] == "openai":
         return _generate_openai_compatible_text(
@@ -317,7 +437,6 @@ def generate_gemini_text(
             max_output_tokens=max_output_tokens,
             provider=provider,
         )
-
     base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
     payload: dict[str, Any] = {
         "contents": [

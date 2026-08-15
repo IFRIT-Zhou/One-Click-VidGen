@@ -222,6 +222,20 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 }
 .api-key-entry { display: grid; gap: 5px; font-size: 0.82rem; color: var(--muted); }
 .language-provider-select { min-width: 0; font-size: 0.84rem; }
+.api-model-field-label { margin-top: 2px; color: #7890ad; font-size: 0.7rem; }
+.api-custom-provider-guide {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(246, 190, 75, 0.35);
+  border-radius: 12px;
+  color: #b9c9db;
+  background: rgba(97, 68, 17, 0.16);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.api-custom-provider-guide strong { color: #f3c96c; }
+.api-custom-provider-guide code { overflow-wrap: anywhere; color: #8bdff0; }
 .api-key-state-bar {
   display: flex;
   align-items: center;

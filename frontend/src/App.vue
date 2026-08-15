@@ -69,15 +69,29 @@
         <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
         <div class="api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>语言模型</span>
+          <small class="api-model-field-label">模型家族</small>
           <select v-model="apiKeyForm.language_provider" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageProviderChanged">
-            <option v-for="provider in languageProviderOptions" :key="provider.value" :value="provider.value">
-              {{ provider.label }}{{ provider.configured ? '（已配置）' : '' }}
+            <option v-for="provider in languageProviderOptions" :key="provider.value" :value="provider.value" :disabled="provider.disabled">
+              {{ provider.label }}
             </option>
           </select>
-          <input v-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
-          <div v-else class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
+          <small class="api-model-field-label">Agent 模型</small>
+          <select v-if="currentLanguageModels.length && !customLanguageProvider" v-model="apiKeyForm.language_model" class="language-provider-select language-model-select" :disabled="form.use_cloud_image_pool" @change="onLanguageModelChanged">
+            <option v-for="model in currentLanguageModels" :key="model.value" :value="model.value">{{ model.label }}</option>
+          </select>
+          <input v-else v-model="apiKeyForm.language_model" class="language-model-input" type="text" :disabled="form.use_cloud_image_pool" placeholder="填写服务商提供的模型 ID" @change="onLanguageModelChanged" />
+          <div v-if="customLanguageProvider" class="api-custom-provider-guide">
+            <strong>高级功能：仅支持 OpenAI 兼容接口</strong>
+            <span>请编辑项目根目录的 <code>.env</code>，填写以下配置并重启 OCV：</span>
+            <code>CUSTOM_LLM_API_BASE=http://127.0.0.1:端口/v1</code>
+            <code>CUSTOM_LLM_MODEL=你的模型ID</code>
+            <code>CUSTOM_LLM_API_KEY=可选，本地服务无鉴权时留空</code>
+            <small>本地模型需支持 /chat/completions、足够的上下文长度与稳定 JSON 输出；不保证所有模型都能完成 Agent 规划。</small>
+          </div>
+          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" placeholder="三方语言节点 API Key（所有模型共用）" />
+          <div v-else-if="!customLanguageProvider" class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
             <div class="api-key-pool-heading">
-              <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · 已配置 1 个`) }}</strong>
+              <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · ${currentLanguageModelLabel}`) }}</strong>
               <small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small>
             </div>
             <div v-if="!form.use_cloud_image_pool && !apiKeyRuntimeErrors.language" class="api-key-account-list">
@@ -86,7 +100,7 @@
                 <button type="button" class="api-key-delete-btn" :disabled="deletingApiKey" :title="`删除此 ${currentLanguageProviderLabel} API Key`" @click="deleteConfiguredApiKey('language', index)">×</button>
               </div>
             </div>
-            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" :title="`添加 ${currentLanguageProviderLabel} API Key`" :aria-label="`添加 ${currentLanguageProviderLabel} API Key`" @click="addApiKeyAccount('language')">＋</button>
+            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加三方语言节点 API Key" aria-label="添加三方语言节点 API Key" @click="addApiKeyAccount('language')">＋</button>
           </div>
         </div>
         <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
@@ -122,7 +136,7 @@
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
         </div>
-        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : '语言模型可独立选择 Gemini、DeepSeek、GPT、Kimi 或 GLM；文本与图像 Key 分开保存。' }}</div>
+        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : 'Agent 0 / 1 / 2 共用同一枚三方语言 Key；切换模型不需要重新填写。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
         <button v-if="apiKeyEditorVisible" class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
           {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
@@ -2391,6 +2405,7 @@ const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
   language_provider: 'gemini',
+  language_model: 'google/gemini-3.6-flash',
   language_api_key: '',
   image_api_key: '',
   image_api_keys: [],
@@ -2398,11 +2413,13 @@ const apiKeyForm = reactive({
 })
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
   { value: 'gemini', label: 'Google Gemini', configured: false },
-  { value: 'runninghub', label: '第三方兼容接口', configured: false },
+  { value: 'anthropic', label: 'Anthropic Claude', configured: false },
   { value: 'deepseek', label: 'DeepSeek', configured: false },
   { value: 'openai', label: 'OpenAI GPT', configured: false },
-  { value: 'kimi', label: 'Kimi', configured: false },
+  { value: 'qwen', label: '阿里云 Qwen', configured: false },
+  { value: 'kimi', label: 'Kimi（当前节点未开放）', configured: false, disabled: true },
   { value: 'glm', label: '智谱 GLM', configured: false },
+  { value: 'custom', label: '自定义兼容接口（高级）', configured: false },
 ])
 const currentLanguageProvider = computed(() => (
   languageProviderOptions.value.find((item) => item.value === apiKeyForm.language_provider)
@@ -2410,6 +2427,20 @@ const currentLanguageProvider = computed(() => (
   || { value: 'gemini', label: 'Google Gemini', configured: false }
 ))
 const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
+const customLanguageProvider = computed(() => apiKeyForm.language_provider === 'custom')
+const currentLanguageModels = computed(() => {
+  const models = [...(currentLanguageProvider.value?.models || [])]
+  const selected = String(currentLanguageProvider.value?.selected_model || '').trim()
+  if (selected && !models.some((item) => item.value === selected)) {
+    models.unshift({ value: selected, label: `${selected}（当前配置）` })
+  }
+  return models
+})
+const currentLanguageModelLabel = computed(() => (
+  currentLanguageModels.value.find((item) => item.value === apiKeyForm.language_model)?.label
+  || apiKeyForm.language_model
+  || '未选择模型'
+))
 const apiKeyEditorVisible = computed(() => (
   !form.use_cloud_image_pool
   && ['language', 'image'].some((kind) => apiKeyFieldOpen(kind))
@@ -3721,6 +3752,7 @@ async function refreshCloudQuote() {
 function apiKeyFieldOpen(kind) {
   if (form.use_cloud_image_pool && ['language', 'image'].includes(kind)) return false
   if (kind === 'language') {
+    if (customLanguageProvider.value) return false
     return !currentLanguageProvider.value?.configured || Boolean(apiKeyEditing.language)
   }
   return !apiKeyStatus.value[kind]?.configured || Boolean(apiKeyEditing[kind])
@@ -3737,9 +3769,19 @@ async function onLanguageProviderChanged() {
   apiKeyRuntimeErrors.language = ''
   apiKeyMessage.value = ''
   apiKeyEditing.language = !currentLanguageProvider.value?.configured
-  if (currentLanguageProvider.value?.configured) {
+  apiKeyForm.language_model = currentLanguageProvider.value?.selected_model
+    || currentLanguageModels.value[0]?.value
+    || ''
+  if (currentLanguageProvider.value?.configured || customLanguageProvider.value) {
     await saveApiKeySettings()
   }
+}
+
+async function onLanguageModelChanged() {
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+  if (!String(apiKeyForm.language_model || '').trim()) return
+  await saveApiKeySettings()
 }
 
 function addApiKeyAccount(kind) {
@@ -3749,7 +3791,7 @@ function addApiKeyAccount(kind) {
 
 async function deleteConfiguredApiKey(kind, index) {
   if (form.use_cloud_image_pool || deletingApiKey.value) return
-  const targetLabel = kind === 'language' ? `${currentLanguageProviderLabel.value} API Key` : '这个已保存的 API Key'
+  const targetLabel = kind === 'language' ? '三方语言节点 API Key' : '这个已保存的 API Key'
   if (!window.confirm(`确定删除${targetLabel}吗？`)) return
   deletingApiKey.value = true
   try {
@@ -3772,6 +3814,10 @@ async function loadApiKeySettings() {
     const payload = await api.apiKeySettings()
     apiKeyStatus.value = payload.keys || { language: {}, image: {}, qwen_tts: {} }
     apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini'
+    apiKeyForm.language_model = apiKeyStatus.value.language?.model
+      || currentLanguageProvider.value?.selected_model
+      || currentLanguageModels.value[0]?.value
+      || ''
     apiKeyStatusLoaded = true
   } catch (error) {
     apiKeyMessage.value = error.message || '无法读取 API Key 配置状态'
@@ -3779,7 +3825,10 @@ async function loadApiKeySettings() {
 }
 
 async function saveApiKeySettings() {
-  const payload = { language_provider: apiKeyForm.language_provider }
+  const payload = {
+    language_provider: apiKeyForm.language_provider,
+    language_model: String(apiKeyForm.language_model || '').trim(),
+  }
   for (const key of ['language_api_key', 'image_api_key']) {
     const value = String(apiKeyForm[key] || '').trim()
     if (value) payload[key] = value
