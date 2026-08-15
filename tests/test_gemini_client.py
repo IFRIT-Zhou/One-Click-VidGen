@@ -59,6 +59,32 @@ class GeminiClientTest(unittest.TestCase):
                 )
         self.assertIn("max_tokens=8192", str(raised.exception))
 
+    def test_openai_array_request_does_not_force_json_object_mode(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "openai",
+                "GEMINI_API_KEY": "shared-relay-key",
+                "GEMINI_API_BASE": "https://llm.runninghub.ai/v1",
+                "OPENAI_MODEL": "openai/gpt-5.6-terra",
+            }, clear=False),
+        ):
+            text = gemini_client.generate_gemini_text(
+                system_prompt="strict JSON array",
+                user_prompt="[]",
+                response_mime_type="application/json",
+                json_root="array",
+            )
+        self.assertEqual(text, "[]")
+        payload = request_post.call_args.kwargs["json"]
+        self.assertNotIn("response_format", payload)
+        self.assertNotIn("extra_body", payload)
+
     def test_anthropic_family_uses_same_openai_compatible_relay(self) -> None:
         response = Mock()
         response.ok = True

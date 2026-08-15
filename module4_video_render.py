@@ -1260,8 +1260,21 @@ def _plan_mapping_batch(
                 user_prompt=json.dumps({"scenes": scenes, "required_groups": required_slide_groups}, ensure_ascii=False),
                 temperature=0.3 if attempt == 1 else 0.15,
                 response_mime_type="application/json",
+                json_root="array",
             )
-            mapping = _normalize_mapping(parse_json_response(response), scenes, required_slide_groups)
+            raw_mapping = parse_json_response(response)
+            if isinstance(raw_mapping, dict):
+                for wrapper_key in ("items", "mapping", "posters", "results", "scenes"):
+                    wrapped = raw_mapping.get(wrapper_key)
+                    if isinstance(wrapped, list):
+                        raw_mapping = wrapped
+                        break
+                else:
+                    if len(required_slide_groups) == 1 and {
+                        "includes_slides", "image_prompt",
+                    }.issubset(raw_mapping):
+                        raw_mapping = [raw_mapping]
+            mapping = _normalize_mapping(raw_mapping, scenes, required_slide_groups)
             if not mapping:
                 raise RuntimeError("模型返回的海报映射不完整或无法解析")
             if any(_multi_moment_prompt_risk(item["image_prompt"]) for item in mapping):
@@ -1280,10 +1293,21 @@ def _plan_mapping_batch(
                         }, ensure_ascii=False),
                         temperature=0.2,
                         response_mime_type="application/json",
+                        json_root="array",
                     )
-                    revised_mapping = _normalize_mapping(
-                        parse_json_response(revision), scenes, required_slide_groups,
-                    )
+                    raw_revision = parse_json_response(revision)
+                    if isinstance(raw_revision, dict):
+                        for wrapper_key in ("items", "mapping", "posters", "results", "scenes"):
+                            wrapped = raw_revision.get(wrapper_key)
+                            if isinstance(wrapped, list):
+                                raw_revision = wrapped
+                                break
+                        else:
+                            if len(required_slide_groups) == 1 and {
+                                "includes_slides", "image_prompt",
+                            }.issubset(raw_revision):
+                                raw_revision = [raw_revision]
+                    revised_mapping = _normalize_mapping(raw_revision, scenes, required_slide_groups)
                     if revised_mapping:
                         mapping = revised_mapping
                 except (GeminiError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:

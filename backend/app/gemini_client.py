@@ -322,6 +322,7 @@ def _generate_openai_compatible_text(
     response_mime_type: str | None,
     max_output_tokens: int | None,
     provider: str | None = None,
+    json_root: str | None = None,
 ) -> str:
     config = language_provider_config(provider)
     base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
@@ -329,7 +330,10 @@ def _generate_openai_compatible_text(
     reasoning_effort = os.getenv("GEMINI_REASONING_EFFORT", "none").strip()
     if reasoning_effort and reasoning_effort.lower() != "none":
         extra_body["reasoning_effort"] = reasoning_effort
-    if response_mime_type == "application/json":
+    # OpenAI's json_object mode requires a top-level object. Agent 2, however,
+    # intentionally returns a top-level array. Enabling json_object for that
+    # request makes GPT collapse a multi-item storyboard into one object.
+    if response_mime_type == "application/json" and json_root != "array":
         extra_body["response_format"] = {"type": "json_object"}
 
     errors: list[str] = []
@@ -416,6 +420,7 @@ def generate_gemini_text(
     temperature: float = 0.3,
     response_mime_type: str | None = None,
     max_output_tokens: int | None = None,
+    json_root: str | None = None,
 ) -> str:
     provider = _provider()
     config = language_provider_config(provider)
@@ -436,6 +441,7 @@ def generate_gemini_text(
             response_mime_type=response_mime_type,
             max_output_tokens=max_output_tokens,
             provider=provider,
+            json_root=json_root,
         )
     base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
     payload: dict[str, Any] = {
