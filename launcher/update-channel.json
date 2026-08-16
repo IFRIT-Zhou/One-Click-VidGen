@@ -5,5 +5,5 @@
   "branch": "main",
   "portable_overlay_safe": true,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "将 Agent 与图像生成迁移到 RunningHub 全球站接口，补充模型可用性预检，并改进余额不足、权限拒绝、审核拦截、执行超时及多账号切换处理。"
+  "notes": "将 Agent 与图像生成迁移到 RunningHub 全球站接口，补充模型可用性预检，并改进余额不足、权限拒绝、审核拦截、执行超时及多账号切换处理；更新云端 TTS 计费规则（每 200 字 0.2 积分），文生图按 RunningHub 实际成本上浮 5% 结算，同时保留小数积分显示与校验，并修复集群健康诊断和云端工作台相关问题。"
 }

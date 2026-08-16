@@ -231,7 +231,7 @@ def _authenticated_email(authorization: str | None = Header(default=None)) -> st
 
 def _estimate_credits(chunks: list[dict[str, Any]]) -> float:
     characters = sum(len(str(item.get("text") or "")) for item in chunks)
-    return round(math.ceil(characters / 200) * 0.1, 1)
+    return round(math.ceil(characters / 200) * 0.2, 1)
 
 
 def _active_jobs(email: str) -> list[dict[str, Any]]:
