@@ -37,7 +37,7 @@ class VideoRenderAccelerationTest(unittest.TestCase):
         ):
             self.assertEqual(
                 module5_video_render.find_ffmpeg_binary(),
-                Path("/usr/bin/ffmpeg"),
+                Path("/usr/bin/ffmpeg").resolve(),
             )
 
     def test_linux_hyperframes_can_use_system_chrome(self) -> None:

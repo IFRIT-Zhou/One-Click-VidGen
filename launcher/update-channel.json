@@ -1,9 +1,9 @@
 {
-  "release_id": "2026.08.16.1",
-  "release_order": 2026081601,
-  "display_version": "2026.08.16 RunningHub 全球站修正版",
+  "release_id": "2026.08.16.2",
+  "release_order": 2026081602,
+  "display_version": "2026.08.16 云端计费与渲染修正版",
   "branch": "main",
   "portable_overlay_safe": true,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "将 Agent 与图像生成迁移到 RunningHub 全球站接口，补充模型可用性预检，并改进余额不足、权限拒绝、审核拦截、执行超时及多账号切换处理；更新云端 TTS 计费规则（每 200 字 0.2 积分），文生图按 RunningHub 实际成本上浮 5% 结算，同时保留小数积分显示与校验，并修复集群健康诊断和云端工作台相关问题。"
+  "notes": "更新云端 TTS 计费规则（每 200 字 0.2 积分），文生图按 RunningHub 实际成本上浮 5% 结算；恢复云端出图任务全量入队，并修复 FFmpeg 与浏览器在便携版及源码部署中的路径兼容问题。"
 }
