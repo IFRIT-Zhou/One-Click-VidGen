@@ -17,6 +17,69 @@ class VideoRenderAccelerationTest(unittest.TestCase):
                     configured.resolve(),
                 )
 
+    def test_windows_prefers_portable_ffmpeg_exe(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            portable_dir = Path(temporary)
+            portable = portable_dir / "ffmpeg.exe"
+            portable.touch()
+            with (
+                patch.object(module5_video_render, "IS_WINDOWS", True),
+                patch.object(module5_video_render, "PORTABLE_FFMPEG_DIR", portable_dir),
+                patch.object(module5_video_render.shutil, "which", return_value="C:/system/ffmpeg.exe"),
+            ):
+                self.assertEqual(module5_video_render.find_ffmpeg_binary(), portable.resolve())
+
+    def test_linux_uses_system_ffmpeg_when_portable_native_binary_is_missing(self) -> None:
+        with (
+            patch.object(module5_video_render, "IS_WINDOWS", False),
+            patch.object(Path, "is_file", return_value=False),
+            patch.object(module5_video_render.shutil, "which", return_value="/usr/bin/ffmpeg"),
+        ):
+            self.assertEqual(
+                module5_video_render.find_ffmpeg_binary(),
+                Path("/usr/bin/ffmpeg"),
+            )
+
+    def test_linux_hyperframes_can_use_system_chrome(self) -> None:
+        with (
+            patch.object(module5_video_render, "IS_WINDOWS", False),
+            patch.object(Path, "is_file", return_value=False),
+            patch.object(Path, "is_dir", return_value=False),
+            patch.object(
+                module5_video_render.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/google-chrome" if name == "google-chrome" else None,
+            ),
+        ):
+            self.assertEqual(
+                module5_video_render.find_portable_hyperframes_browser(),
+                Path("/usr/bin/google-chrome").resolve(),
+            )
+
+    def test_windows_source_checkout_can_use_installed_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            program_files = Path(temporary)
+            edge = program_files / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+            edge.parent.mkdir(parents=True)
+            edge.touch()
+            with (
+                patch.object(module5_video_render, "IS_WINDOWS", True),
+                patch.object(Path, "is_dir", return_value=False),
+                patch.object(module5_video_render.shutil, "which", return_value=None),
+                patch.dict(
+                    os.environ,
+                    {
+                        "PROGRAMFILES": str(program_files),
+                        "PROGRAMFILES(X86)": "",
+                        "LOCALAPPDATA": "",
+                    },
+                ),
+            ):
+                self.assertEqual(
+                    module5_video_render.find_portable_hyperframes_browser(),
+                    edge.resolve(),
+                )
+
     def build(self) -> list[str]:
         return module5_video_render.build_render_command(
             "node",

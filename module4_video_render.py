@@ -2088,6 +2088,12 @@ def _worker_count(name: str, default: int, task_count: int) -> int:
     return max(1, min(task_count, _positive_env_int(name, default)))
 
 
+def _poster_worker_count(provider_configs: list[dict[str, str]], task_count: int) -> int:
+    if any(config.get("cloud_pool") == "1" for config in provider_configs):
+        return max(1, task_count)
+    return _worker_count("RUNNINGHUB_ACTIVE_TASK_CONCURRENCY", 1, task_count)
+
+
 def _positive_env_int(name: str, default: int) -> int:
     raw_value = os.getenv(name, str(default)).strip()
     try:
@@ -2674,14 +2680,15 @@ def render_posters_concurrently(
     if not mapping:
         return []
 
-    active_workers = _worker_count("RUNNINGHUB_ACTIVE_TASK_CONCURRENCY", 1, len(mapping))
+    uses_cloud_pool = any(config.get("cloud_pool") == "1" for config in provider_configs)
+    active_workers = _poster_worker_count(provider_configs, len(mapping))
     account_pool = RunningHubAccountPool(provider_configs)
     mapping = [
         {**macro, "progress_label": f"{macro['macro_scene_id']} ({index}/{len(mapping)})"}
         for index, macro in enumerate(mapping, 1)
     ]
     print(
-        f"提交 {len(mapping)} 张海报任务（本地工作并发 {active_workers}，"
+        f"提交 {len(mapping)} 张海报任务（{'云端全量入队' if uses_cloud_pool else '本地工作并发'} {active_workers}，"
         f"{len(provider_configs)} 个账号可轮换，421 优先切账号后再入队）...",
         flush=True,
     )

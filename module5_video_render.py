@@ -18,6 +18,7 @@ from bgm_mixer import mix_bgm_into_videos, tracks_from_env
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+IS_WINDOWS = os.name == "nt"
 
 
 def configured_path(name: str, default: Path) -> Path:
@@ -52,12 +53,84 @@ def env_flag(name: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def find_ffmpeg_binary() -> Path | None:
+    """Resolve FFmpeg without changing the Windows portable-package priority."""
+    configured = str(os.getenv("FFMPEG_BINARY") or "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        if candidate.is_file():
+            return candidate.resolve()
+
+    portable_names = ("ffmpeg.exe", "ffmpeg") if IS_WINDOWS else ("ffmpeg",)
+    for name in portable_names:
+        candidate = PORTABLE_FFMPEG_DIR / name
+        if candidate.is_file() and (IS_WINDOWS or os.access(candidate, os.X_OK)):
+            return candidate.resolve()
+    system_ffmpeg = shutil.which("ffmpeg")
+    return Path(system_ffmpeg).resolve() if system_ffmpeg else None
+
+
+def require_ffmpeg_binary() -> Path:
+    binary = find_ffmpeg_binary()
+    if binary is not None:
+        return binary
+    raise RuntimeError(
+        "未找到 FFmpeg。Windows 整合包应包含 tools/ffmpeg/bin/ffmpeg.exe；"
+        "Linux/macOS 请安装 ffmpeg 或设置 FFMPEG_BINARY。"
+    )
+
+
 def find_portable_hyperframes_browser() -> Path | None:
-    """Find Chrome bundled with this portable package, independent of USERPROFILE."""
-    if not PORTABLE_HYPERFRAMES_BROWSER_DIR.is_dir():
-        return None
-    candidates = sorted(PORTABLE_HYPERFRAMES_BROWSER_DIR.rglob("chrome-headless-shell.exe"))
-    return candidates[-1] if candidates else None
+    """Prefer the portable browser, then use an installed Chromium browser."""
+    configured = str(os.getenv("HYPERFRAMES_BROWSER_PATH") or "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return candidate.resolve()
+
+    names = ("chrome-headless-shell.exe",) if IS_WINDOWS else (
+        "chrome-headless-shell", "chrome", "chromium",
+    )
+    if PORTABLE_HYPERFRAMES_BROWSER_DIR.is_dir():
+        for name in names:
+            candidates = sorted(PORTABLE_HYPERFRAMES_BROWSER_DIR.rglob(name))
+            if candidates:
+                return candidates[-1].resolve()
+
+    executable_names = (
+        ("chrome.exe", "msedge.exe", "chromium.exe")
+        if IS_WINDOWS
+        else ("google-chrome", "chromium", "chromium-browser", "chrome")
+    )
+    for name in executable_names:
+        system_browser = shutil.which(name)
+        if system_browser:
+            return Path(system_browser).resolve()
+
+    if IS_WINDOWS:
+        installed_candidates: list[Path] = []
+        local_app_data = str(os.getenv("LOCALAPPDATA") or "").strip()
+        program_files = str(os.getenv("PROGRAMFILES") or "").strip()
+        program_files_x86 = str(os.getenv("PROGRAMFILES(X86)") or "").strip()
+        if local_app_data:
+            installed_candidates.append(
+                Path(local_app_data) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            )
+        for root in (program_files, program_files_x86):
+            if not root:
+                continue
+            installed_candidates.extend(
+                (
+                    Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                    Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                )
+            )
+        for candidate in installed_candidates:
+            if candidate.is_file():
+                return candidate.resolve()
+    return None
 
 
 def render_workers() -> str:
@@ -148,6 +221,7 @@ def build_subtitle_burn_command(
     output: Path,
     *,
     use_nvenc: bool,
+    ffmpeg: Path | None = None,
 ) -> list[str]:
     """Build the much cheaper second pass used for the subtitle variant.
 
@@ -168,7 +242,7 @@ def build_subtitle_burn_command(
         f"force_style='{force_style}'"
     )
     command = [
-        str(PORTABLE_FFMPEG), "-y", "-i", str(source), "-vf", subtitle_filter,
+        str(ffmpeg or require_ffmpeg_binary()), "-y", "-i", str(source), "-vf", subtitle_filter,
         "-c:a", "copy", "-movflags", "+faststart",
     ]
     if use_nvenc:
@@ -186,8 +260,7 @@ def render_subtitle_variant_from_raw(source: Path, srt_path: Path, output: Path)
     fallback so portable packages continue to work on machines without a usable
     NVIDIA encoder.
     """
-    if not PORTABLE_FFMPEG.is_file():
-        raise RuntimeError(f"找不到项目内便携 FFmpeg: {PORTABLE_FFMPEG}")
+    ffmpeg = require_ffmpeg_binary()
     output.unlink(missing_ok=True)
     attempts = [env_flag("VIDEO_RENDER_GPU_ENCODING", True), False]
     errors: list[str] = []
@@ -195,7 +268,9 @@ def render_subtitle_variant_from_raw(source: Path, srt_path: Path, output: Path)
         label = "NVENC" if use_nvenc else "x264"
         print(f"开始: 字幕版（复用纯净版画面，FFmpeg {label}）", flush=True)
         process = subprocess.run(
-            build_subtitle_burn_command(source, srt_path, output, use_nvenc=use_nvenc),
+            build_subtitle_burn_command(
+                source, srt_path, output, use_nvenc=use_nvenc, ffmpeg=ffmpeg
+            ),
             cwd=PROJECT_ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -336,8 +411,7 @@ def render_direct_raw_video(
     total_duration: float | None = None,
 ) -> None:
     """Render posters, transitions and audio directly with FFmpeg."""
-    if not PORTABLE_FFMPEG.is_file():
-        raise RuntimeError(f"找不到项目内便携 FFmpeg: {PORTABLE_FFMPEG}")
+    ffmpeg = require_ffmpeg_binary()
     audio_path = AUDIO_DIR / "final_output.wav"
     if not audio_path.is_file():
         raise FileNotFoundError(f"找不到配音文件: {audio_path}")
@@ -375,7 +449,7 @@ def render_direct_raw_video(
         staged_output = temp_dir / "rendered.mp4"
         for use_nvenc in dict.fromkeys(attempts):
             label = "NVENC" if use_nvenc else "x264"
-            command = [str(PORTABLE_FFMPEG), "-y", "-hide_banner", "-loglevel", "error"]
+            command = [str(ffmpeg), "-y", "-hide_banner", "-loglevel", "error"]
             for index, staged in enumerate(staged_inputs):
                 start = float(timeline[index]["start"])
                 next_start = float(timeline[index + 1]["start"]) if index + 1 < len(timeline) else total_duration
@@ -424,19 +498,17 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
     cli = PROJECT_ROOT / "node_modules" / "hyperframes" / "dist" / "cli.js"
     if not node or not cli.exists():
         raise RuntimeError("未找到 Hyperframes CLI，请先安装 Node 依赖")
-    if not PORTABLE_FFMPEG.is_file():
-        raise RuntimeError(f"未找到项目内便携 FFmpeg: {PORTABLE_FFMPEG}")
+    ffmpeg = require_ffmpeg_binary()
 
     command = build_render_command(node, cli, composition, output)
     render_env = os.environ.copy()
-    # Hyperframes launches ffmpeg by name. Put the portable copy first so a
-    # broken system/Chocolatey shim can never affect an exported project.
-    render_env["PATH"] = f"{PORTABLE_FFMPEG_DIR}{os.pathsep}{render_env.get('PATH', '')}"
+    # Hyperframes launches ffmpeg by name. Keep the resolved binary first in PATH.
+    render_env["PATH"] = f"{ffmpeg.parent}{os.pathsep}{render_env.get('PATH', '')}"
     browser = find_portable_hyperframes_browser()
     if browser is None:
         raise RuntimeError(
-            "未找到整合包内 Hyperframes Chrome Headless Shell。"
-            "请覆盖浏览器热修补丁，或重新下载完整整合包。"
+            "未找到 Hyperframes 可用浏览器。Windows 整合包应包含 Chrome Headless Shell；"
+            "源码部署请安装 Chrome、Edge 或 Chromium，或设置 HYPERFRAMES_BROWSER_PATH。"
         )
     # Do not trust a stale value inherited from an already-running backend.
     # Hyperframes otherwise falls back to C:\\Users\\<name>\\.cache and fails

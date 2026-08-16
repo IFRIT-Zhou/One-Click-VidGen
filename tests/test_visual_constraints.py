@@ -172,6 +172,14 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertEqual(len(results), 3)
         self.assertIn(results[1], {results[0], results[2]})
 
+    def test_cloud_pool_always_enqueues_the_whole_image_batch(self) -> None:
+        with patch.dict(os.environ, {"RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "1"}):
+            self.assertEqual(
+                visual._poster_worker_count([{"cloud_pool": "1"}], 12),
+                12,
+            )
+            self.assertEqual(visual._poster_worker_count([{}], 12), 1)
+
     def test_moderation_failure_is_rewritten_for_single_image_retry(self) -> None:
         self.assertTrue(visual._looks_like_moderation_failure("content safety blocked"))
         with self.assertRaises(visual.RunningHubModerationError):
