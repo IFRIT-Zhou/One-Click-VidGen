@@ -1,9 +1,9 @@
 {
-  "release_id": "2026.08.15.1",
-  "release_order": 2026081501,
-  "display_version": "2026.08.15 计费与集群修正版",
+  "release_id": "2026.08.16.1",
+  "release_order": 2026081601,
+  "display_version": "2026.08.16 RunningHub 全球站修正版",
   "branch": "main",
   "portable_overlay_safe": true,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "更新云端 TTS 计费规则（每 200 字 0.1 积分）、小数积分显示与校验，并修复集群健康诊断和云端工作台相关问题。"
+  "notes": "将 Agent 与图像生成迁移到 RunningHub 全球站接口，补充模型可用性预检，并改进余额不足、权限拒绝、审核拦截、执行超时及多账号切换处理。"
 }
