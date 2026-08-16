@@ -8,6 +8,8 @@ from typing import Any
 
 import requests
 
+from .gemini_client import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
@@ -90,7 +92,7 @@ def validate_hyperframes_html(content: str) -> None:
     ]
     missing = [item for item in required if item not in content]
     if missing:
-        raise HtmlGenerationError(f"GPT 返回 HTML 缺少必要结构: {', '.join(missing)}")
+        raise HtmlGenerationError(f"语言模型返回 HTML 缺少必要结构: {', '.join(missing)}")
 
 
 def call_openai_compatible_html(
@@ -102,7 +104,7 @@ def call_openai_compatible_html(
     model: str,
     style: str,
 ) -> str:
-    base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    base = (base_url or DEFAULT_OPENAI_COMPATIBLE_BASE_URL).rstrip("/")
     url = f"{base}/chat/completions"
     compact_scenes = [
         {
@@ -164,7 +166,7 @@ scene_timeline:
     try:
         content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise HtmlGenerationError(f"无法解析 GPT 响应: {payload}") from exc
+        raise HtmlGenerationError(f"无法解析语言模型响应: {payload}") from exc
     cleaned = clean_model_html(content)
     validate_hyperframes_html(cleaned)
     return cleaned
@@ -399,21 +401,21 @@ def generate_visual_html(
 
     provider = "fallback"
     content: str
-    key = api_key or os.getenv("OPENAI_API_KEY", "")
+    key = api_key or os.getenv("GEMINI_API_KEY", "")
     if key:
       try:
           content = call_openai_compatible_html(
               scenes=scenes,
               duration=duration,
               api_key=key,
-              base_url=base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-              model=model or os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+              base_url=base_url or os.getenv("GEMINI_API_BASE", DEFAULT_OPENAI_COMPATIBLE_BASE_URL),
+              model=model or os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
               style=style,
           )
-          provider = "gpt"
+          provider = "runninghub_gemini"
       except Exception as exc:
           content = fallback_html(scenes, duration, f"{style} / fallback: {exc}")
-          provider = f"fallback_after_gpt_error: {exc}"
+          provider = f"fallback_after_language_model_error: {exc}"
     else:
         content = fallback_html(scenes, duration, style)
 

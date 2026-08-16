@@ -2405,7 +2405,7 @@ const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
   language_provider: 'gemini',
-  language_model: 'google/gemini-3.6-flash',
+  language_model: 'google/gemini-3.1-flash-lite-preview',
   language_api_key: '',
   image_api_key: '',
   image_api_keys: [],

@@ -17,7 +17,7 @@ from .config import load_project_env
 load_project_env()
 
 
-DEFAULT_GEMINI_MODEL = "google/gemini-3.6-flash"
+DEFAULT_GEMINI_MODEL = "google/gemini-3.1-flash-lite-preview"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://llm.runninghub.ai/v1"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
@@ -33,13 +33,13 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "base_env": "GEMINI_API_BASE",
         "model_env": "GEMINI_MODEL",
         "default_base": DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
-        "default_model": "google/gemini-3.6-flash",
+        "default_model": DEFAULT_GEMINI_MODEL,
         "protocol": "openai",
         "models": [
-            {"value": "google/gemini-3.6-flash", "label": "Gemini 3.6 Flash（推荐）"},
+            {"value": "google/gemini-3.1-flash-lite-preview", "label": "Gemini 3.1 Flash-Lite（推荐）"},
+            {"value": "google/gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
             {"value": "google/gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite（省钱）"},
             {"value": "google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview（高质量）"},
-            {"value": "google/gemini-3.1-flash-lite-preview", "label": "Gemini 3.1 Flash-Lite（兼容旧任务）"},
         ],
     },
     "runninghub": {

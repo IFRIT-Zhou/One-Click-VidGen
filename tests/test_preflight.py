@@ -61,6 +61,40 @@ class PreflightProbeTest(unittest.TestCase):
         self.assertEqual(status, "warning")
         self.assertIn("仍可尝试启动", message)
 
+    @patch.object(main.requests, "get")
+    def test_language_probe_rejects_model_missing_from_runninghub(self, request_get: Mock) -> None:
+        request_get.return_value.status_code = 200
+        request_get.return_value.json.return_value = {
+            "data": [{"id": "google/gemini-2.5-flash"}],
+        }
+        status, message = main._probe_language_api({
+            "LANGUAGE_PROVIDER": "gemini",
+            "GEMINI_API_KEY": "configured",
+            "GEMINI_MODEL": "google/gemini-3.1-flash-lite-preview",
+        })
+        self.assertEqual(status, "error")
+        self.assertIn("google/gemini-3.1-flash-lite-preview", message)
+
+    @patch.object(main.requests, "post")
+    def test_image_probe_uses_global_low_price_endpoint_without_creating_task(
+        self, request_post: Mock
+    ) -> None:
+        request_post.return_value.status_code = 200
+        request_post.return_value.json.return_value = {
+            "taskId": "",
+            "errorCode": "1007",
+            "errorMessage": "field 'prompt' is required, can not be empty",
+        }
+        with patch.dict(main.os.environ, {}, clear=False):
+            main.os.environ.pop("RUNNINGHUB_BASE_URL", None)
+            status, detail = main._probe_one_image_key("global-key")
+        self.assertEqual((status, detail), ("valid", "global"))
+        self.assertEqual(
+            request_post.call_args.args[0],
+            "https://www.runninghub.ai/openapi/v2/rhart-image-g-2/text-to-image",
+        )
+        self.assertNotIn("prompt", request_post.call_args.kwargs["json"])
+
     def test_image_pool_keeps_valid_account_and_reports_invalid_one(self) -> None:
         def probe(key: str) -> tuple[str, str]:
             return ("valid", "0") if key == "good" else ("invalid", "HTTP 401")

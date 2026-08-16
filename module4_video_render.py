@@ -38,7 +38,7 @@ ASSETS_DIR = VISUAL_DIR / "assets"
 TIMELINE_PATH = VISUAL_DIR / "fine_grained_timeline.json"
 POSTER_MAPPING_PATH = VISUAL_DIR / "poster_mapping.json"
 VISUAL_PROMPT_PLAN_PATH = VISUAL_DIR / "visual_prompt_plan.json"
-RUNNINGHUB_HOST = "https://www.runninghub.cn"
+DEFAULT_RUNNINGHUB_BASE_URL = "https://www.runninghub.ai"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _CLOUD_TOKEN_REFRESH_LOCK = threading.Lock()
@@ -382,19 +382,19 @@ class RunningHubModerationError(RunningHubResultRetryableError):
 
 
 class RunningHubPowerInsufficient(RuntimeError):
-    """The selected RunningHub WebApp has no remaining power-value quota."""
+    """The selected RunningHub account has insufficient balance or compute quota."""
 
 
 class RunningHubAccessDenied(RuntimeError):
-    """The selected API key is not allowed to call the standard model endpoint."""
+    """The selected API key cannot call the endpoint on the configured site."""
 
 
 class RunningHubAllAccountsPowerInsufficient(RuntimeError):
-    """Every configured RunningHub account returned power-value error 414."""
+    """Every configured RunningHub account reported insufficient balance or quota."""
 
 
 class RunningHubAllAccountsAccessDenied(RuntimeError):
-    """Every configured RunningHub account returned access-denied error 1014."""
+    """Every configured RunningHub account was denied by the selected endpoint."""
 
 
 class RunningHubAllAccountsBusy(RuntimeError):
@@ -402,7 +402,7 @@ class RunningHubAllAccountsBusy(RuntimeError):
 
 
 class RunningHubAccountPool:
-    """Round-robin accounts, retire 414 accounts, and temporarily skip 421 accounts."""
+    """Round-robin accounts, retire depleted accounts, and temporarily skip 421 accounts."""
 
     def __init__(self, configs: list[dict[str, str]]) -> None:
         self._configs = configs
@@ -441,10 +441,10 @@ class RunningHubAccountPool:
                     )
                 if self._access_denied:
                     raise RunningHubAllAccountsAccessDenied(
-                        "所有已配置的 RunningHub 账号均返回访问拒绝（1014）"
+                        "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
                     )
                 raise RunningHubAllAccountsPowerInsufficient(
-                    "所有已配置的 RunningHub 账号均返回 power value 不足（414）"
+                    "所有已配置的 RunningHub 账号余额或算力均不足"
                 )
             config = available[self._next_index % len(available)]
             self._next_index = (self._next_index + 1) % len(available)
@@ -486,10 +486,10 @@ class RunningHubAccountPool:
             if not available:
                 if self._access_denied:
                     raise RunningHubAllAccountsAccessDenied(
-                        "所有已配置的 RunningHub 账号均返回访问拒绝（1014）"
+                        "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
                     )
                 raise RunningHubAllAccountsPowerInsufficient(
-                    "所有已配置的 RunningHub 账号均返回 power value 不足（414）"
+                    "所有已配置的 RunningHub 账号余额或算力均不足"
                 )
             config = available[self._next_index % len(available)]
             self._next_index = (self._next_index + 1) % len(available)
@@ -2128,7 +2128,7 @@ def _account_active_task_count(config: dict[str, str]) -> int:
         payload = _request_json(
             session,
             "POST",
-            config.get("account_url") or f"{RUNNINGHUB_HOST}/uc/openapi/accountStatus",
+            config.get("account_url") or _runninghub_url("/uc/openapi/accountStatus"),
             headers={"Authorization": f"Bearer {config['api_key']}"},
             config=config,
             json={"apikey": config["api_key"]},
@@ -2198,11 +2198,11 @@ def _runninghub_error_message(payload: dict[str, Any]) -> str:
 def _looks_like_power_insufficient(code: int | None, message: str) -> bool:
     """Recognize quota exhaustion from both submit and asynchronous task results.
 
-    RunningHub can report a depleted account as a normal task failure instead of
-    returning 414 at submit time.  That must retire the account immediately;
+    RunningHub can report a depleted account as a normal task failure or with
+    one of several balance codes. That must retire the account immediately;
     retrying the same key cannot ever succeed and starves the remaining pool.
     """
-    if code == 414:
+    if code in {414, 416, 812}:
         return True
     normalized = str(message or "").lower()
     markers = (
@@ -2296,7 +2296,12 @@ def _runninghub_generate_url(config: dict[str, str], endpoint: str | None = None
     endpoint = endpoint or config["endpoint"]
     if endpoint.startswith("http://") or endpoint.startswith("https://"):
         return endpoint
-    return f"{RUNNINGHUB_HOST}/openapi/v2/{endpoint.lstrip('/')}"
+    return _runninghub_url(f"/openapi/v2/{endpoint.lstrip('/')}")
+
+
+def _runninghub_url(path: str) -> str:
+    base_url = os.getenv("RUNNINGHUB_BASE_URL", "").strip() or DEFAULT_RUNNINGHUB_BASE_URL
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
 def _runninghub_headers(config: dict[str, str]) -> dict[str, str]:
@@ -2313,20 +2318,29 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
         raise RunningHubQueueFull("RunningHub 队列已满（421）")
     if _looks_like_power_insufficient(code, message):
         raise RunningHubPowerInsufficient(
-            "当前 RunningHub 工作流的 power value 不足（414）。"
-            "请为该工作流充值/补充算力值后再试。"
+            f"当前 RunningHub 账号余额或算力不足（{code or '云端返回'}）。"
+            "请充值或补充算力后再试。"
         )
-    if code == 1014:
+    if code in {1014, 40310}:
         detail = f" 原因: {message}" if message else ""
+        if code == 40310:
+            raise RunningHubAccessDenied(
+                "当前 API Key 与 RunningHub 站点不匹配（40310），"
+                "低价模型需要全球站 Enterprise-Shared API Key。" + detail
+            )
         raise RunningHubAccessDenied(
             "RunningHub 标准模型 API 只允许企业级-共享 API Key 调用。"
             "当前配置的 API Key 被拒绝（1014）。" + detail
         )
+    if code == 1501 or _looks_like_moderation_failure(message):
+        raise RunningHubModerationError(f"RunningHub 审核拦截: {message or code}")
+    if code == 1504:
+        raise RunningHubResultRetryableError(
+            f"RunningHub 模型执行超时（1504）{f': {message}' if message else ''}"
+        )
     if code in {408, 409, 429, 500, 502, 503, 504, 1005, 1010, 1011, 1012}:
         detail = f"，原因: {message}" if message else ""
         raise RunningHubTransientError(f"RunningHub 临时不可用，错误码: {code}{detail}")
-    if _looks_like_moderation_failure(message):
-        raise RunningHubModerationError(f"RunningHub 审核拦截: {message or code}")
     detail = f"，原因: {message}" if message else ""
     raise RunningHubTransientError(f"RunningHub 提交失败，错误码: {code}{detail}")
 
@@ -2483,7 +2497,7 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
             result = _request_json(
                 session,
                 "POST",
-                config.get("query_url") or f"{RUNNINGHUB_HOST}/openapi/v2/query",
+                config.get("query_url") or _runninghub_url("/openapi/v2/query"),
                 headers=_runninghub_headers(config),
                 config=config,
                 json={"taskId": task.task_id},
@@ -2519,13 +2533,17 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
                 raise RunningHubPowerInsufficient(
                     f"{poster_id} 的账号算力/余额不足（{error_code or '云端返回'}）: {message or status}"
                 )
+            if error_code in {1014, 40310}:
+                raise RunningHubAccessDenied(
+                    f"{poster_id} 的账号或站点无权调用当前图像模型（{error_code}）: {message or status}"
+                )
+            if error_code == 1501 or _looks_like_moderation_failure(message):
+                raise RunningHubModerationError(
+                    f"{poster_id} 的提示词被云端审核拦截: {message or status}"
+                )
             if error_code == 1516:
                 raise RunningHubResultRetryableError(
                     f"{poster_id} 云端返图文件异常（1516）: {message or status}"
-                )
-            if _looks_like_moderation_failure(message):
-                raise RunningHubModerationError(
-                    f"{poster_id} 的提示词被云端审核拦截: {message or status}"
                 )
             raise RunningHubResultRetryableError(
                 f"{poster_id} 的云端图像工作流执行失败: {message or status}"
@@ -2582,7 +2600,7 @@ def _render_poster_with_retry(
         except RunningHubPowerInsufficient:
             account_pool.mark_power_exhausted(config)
             print(
-                f"{poster_id} 的 {config['account_label']} 返回 414，切换到下一个账号。",
+                f"{poster_id} 的 {config['account_label']} 余额或算力不足，切换到下一个账号。",
                 flush=True,
             )
             try:
@@ -2595,7 +2613,7 @@ def _render_poster_with_retry(
         except RunningHubAccessDenied:
             account_pool.mark_access_denied(config)
             print(
-                f"{poster_id} 的 {config['account_label']} 返回 1014，切换到下一个账号。",
+                f"{poster_id} 的 {config['account_label']} 被当前站点或模型拒绝，切换到下一个账号。",
                 flush=True,
             )
             try:
@@ -2685,19 +2703,19 @@ def render_posters_concurrently(
                 for pending in futures:
                     pending.cancel()
                 raise RuntimeError(
-                    "所有已配置的 RunningHub 账号都返回 power value 不足（414），"
-                    "已停止后续海报提交。请补充任一账号的工作流算力值后重新生成。"
+                    "所有已配置的 RunningHub 账号余额或算力均不足，"
+                    "已停止后续海报提交。请充值后重新生成。"
                 ) from exc
             except RunningHubAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
-                raise RuntimeError(f"RunningHub 标准模型接口拒绝访问（1014）：{exc}") from exc
+                raise RuntimeError(f"RunningHub 当前站点或模型拒绝访问：{exc}") from exc
             except RunningHubAllAccountsAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
                 raise RuntimeError(
-                    "所有已配置的 RunningHub 账号都返回访问拒绝（1014）。"
-                    "已停止后续海报提交，请确认这些 key 在 RunningHub 后台属于企业级-共享 API Key。"
+                    "所有已配置的 RunningHub 账号都被当前站点或模型拒绝访问。"
+                    "已停止后续海报提交，请确认 key 属于全球站 Enterprise-Shared 类型。"
                 ) from exc
             except Exception as exc:
                 failures[index] = str(exc)
@@ -2886,7 +2904,7 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
                     response = _request_with_cloud_refresh(
                         session,
                         "POST",
-                        config.get("upload_url") or f"{RUNNINGHUB_HOST}/openapi/v2/media/upload/binary",
+                        config.get("upload_url") or _runninghub_url("/openapi/v2/media/upload/binary"),
                         config=config,
                         headers={"Authorization": f"Bearer {config['api_key']}"},
                         files={"file": (path.name, handle, mime_type)},

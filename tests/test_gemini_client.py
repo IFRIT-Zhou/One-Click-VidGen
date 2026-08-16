@@ -1,10 +1,37 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from backend.app import gemini_client
+from backend.app import gemini_client, html_generator
 
 
 class GeminiClientTest(unittest.TestCase):
+    def test_gemini_defaults_to_runninghub_flash_lite_preview(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "gemini",
+                "GEMINI_API_KEY": "runninghub-key",
+            }, clear=True),
+        ):
+            text = gemini_client.generate_gemini_text(system_prompt="system", user_prompt="user")
+
+        self.assertEqual(text, "OK")
+        self.assertEqual(
+            request_post.call_args.args[0],
+            "https://llm.runninghub.ai/v1/chat/completions",
+        )
+        self.assertEqual(
+            request_post.call_args.kwargs["json"]["model"],
+            "google/gemini-3.1-flash-lite-preview",
+        )
+
     def test_timeout_uses_short_connect_and_long_read_windows(self) -> None:
         with patch.dict(
             gemini_client.os.environ,
@@ -150,6 +177,72 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(text, "[]")
         self.assertNotIn("Authorization", request_post.call_args.kwargs["headers"])
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "local-test-model")
+
+    def test_html_generation_reuses_runninghub_gemini_settings(self) -> None:
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            with (
+                patch.object(html_generator, "VISUAL_DIR", output_dir),
+                patch.object(html_generator, "load_scenes", return_value=[{
+                    "scene_id": "scene_001",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                    "text_content": "test",
+                }]),
+                patch.object(html_generator, "audio_duration_seconds", return_value=1.0),
+                patch.object(
+                    html_generator,
+                    "call_openai_compatible_html",
+                    return_value="<html>generated</html>",
+                ) as generate,
+                patch.dict("os.environ", {
+                    "GEMINI_API_KEY": "runninghub-key",
+                    "GEMINI_API_BASE": "https://llm.runninghub.ai/v1",
+                    "GEMINI_MODEL": "google/gemini-3.1-flash-lite-preview",
+                }, clear=True),
+            ):
+                path, provider = html_generator.generate_visual_html()
+
+        self.assertEqual(provider, "runninghub_gemini")
+        self.assertEqual(path, output_dir / "index.html")
+        self.assertEqual(generate.call_args.kwargs["api_key"], "runninghub-key")
+        self.assertEqual(generate.call_args.kwargs["base_url"], "https://llm.runninghub.ai/v1")
+        self.assertEqual(
+            generate.call_args.kwargs["model"],
+            "google/gemini-3.1-flash-lite-preview",
+        )
+
+    def test_html_generation_keeps_explicit_model_overrides(self) -> None:
+        with TemporaryDirectory() as directory:
+            with (
+                patch.object(html_generator, "VISUAL_DIR", Path(directory)),
+                patch.object(html_generator, "load_scenes", return_value=[{
+                    "scene_id": "scene_001",
+                    "start_time": 0.0,
+                    "end_time": 1.0,
+                    "text_content": "test",
+                }]),
+                patch.object(html_generator, "audio_duration_seconds", return_value=1.0),
+                patch.object(
+                    html_generator,
+                    "call_openai_compatible_html",
+                    return_value="<html>generated</html>",
+                ) as generate,
+                patch.dict("os.environ", {
+                    "GEMINI_API_KEY": "environment-key",
+                    "GEMINI_API_BASE": "https://llm.runninghub.ai/v1",
+                    "GEMINI_MODEL": "google/gemini-3.1-flash-lite-preview",
+                }, clear=True),
+            ):
+                html_generator.generate_visual_html(
+                    api_key="explicit-key",
+                    base_url="https://relay.example/v1",
+                    model="explicit-model",
+                )
+
+        self.assertEqual(generate.call_args.kwargs["api_key"], "explicit-key")
+        self.assertEqual(generate.call_args.kwargs["base_url"], "https://relay.example/v1")
+        self.assertEqual(generate.call_args.kwargs["model"], "explicit-model")
 
 
 if __name__ == "__main__":

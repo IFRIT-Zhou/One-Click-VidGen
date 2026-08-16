@@ -173,8 +173,8 @@ class GenerateRequest(BaseModel):
     qwen_tts_voice: str = Field(default=DEFAULT_QWEN_VOICE, min_length=1, max_length=80)
     qwen_tts_optimize_instructions: bool = False
     api_key: str | None = None
-    base_url: str | None = "https://api.openai.com/v1"
-    model: str | None = "gpt-4o-mini"
+    base_url: str | None = None
+    model: str | None = None
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     use_cloud_image_pool: bool = False
@@ -937,7 +937,20 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
     except requests.RequestException as exc:
         return "warning", f"Key 已配置，但联网验证失败：{type(exc).__name__}；仍可尝试启动"
     if response.status_code == 200:
-        return "passed", "语言模型接口可访问，Key 验证通过"
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        models = payload.get("data") if isinstance(payload, dict) else None
+        available_models = {
+            str(item.get("id") or "").strip()
+            for item in models or []
+            if isinstance(item, dict) and str(item.get("id") or "").strip()
+        }
+        selected_model = str(values.get(config["model_env"]) or config["default_model"]).strip()
+        if available_models and selected_model not in available_models:
+            return "error", f"语言节点不支持当前模型 {selected_model}，请更新模型配置"
+        return "passed", f"语言模型接口可访问，{selected_model} 验证通过"
     if response.status_code in {401, 403}:
         return "error", f"语言模型拒绝了当前 Key（HTTP {response.status_code}）"
     if response.status_code == 429:
@@ -946,11 +959,14 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
 
 
 def _probe_one_image_key(api_key: str) -> tuple[str, str]:
+    base_url = os.getenv("RUNNINGHUB_BASE_URL", "https://www.runninghub.ai").strip().rstrip("/")
     try:
         response = requests.post(
-            "https://www.runninghub.cn/uc/openapi/accountStatus",
+            f"{base_url}/openapi/v2/rhart-image-g-2/text-to-image",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={"apikey": api_key},
+            # Missing prompt intentionally validates the key, account region,
+            # and model entitlement without creating a billable task.
+            json={"aspectRatio": "1:1", "resolution": "1k"},
             timeout=(3, 6),
         )
     except requests.RequestException as exc:
@@ -961,12 +977,13 @@ def _probe_one_image_key(api_key: str) -> tuple[str, str]:
         body = response.json()
     except ValueError:
         body = {}
-    if response.status_code == 200 and body.get("code") == 0 and isinstance(body.get("data"), dict):
-        active = body["data"].get("currentTaskCounts", 0)
-        return "valid", str(active)
-    if response.status_code == 429:
-        return "limited", "HTTP 429"
-    return "invalid", f"HTTP {response.status_code} / code {body.get('code', 'unknown')}"
+    code = str(body.get("errorCode") or body.get("code") or "")
+    message = str(body.get("errorMessage") or body.get("message") or "")
+    if response.status_code == 200 and code == "1007":
+        return "valid", "global"
+    if response.status_code == 429 or code in {"416", "421", "812"}:
+        return "limited", message or code or f"HTTP {response.status_code}"
+    return "invalid", f"HTTP {response.status_code} / code {code or 'unknown'}"
 
 
 def _probe_image_api_pool(api_keys: list[str]) -> tuple[str, str]:

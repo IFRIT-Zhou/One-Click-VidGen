@@ -75,6 +75,50 @@ class VisualConstraintsTest(unittest.TestCase):
 
         self.assertNotIn("clientJobId", captured_payload)
 
+    def test_direct_runninghub_urls_use_global_configurable_base(self) -> None:
+        config = {"endpoint": "/rhart-image-g-2/text-to-image"}
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("RUNNINGHUB_BASE_URL", None)
+            self.assertEqual(
+                visual._runninghub_generate_url(config),
+                "https://www.runninghub.ai/openapi/v2/rhart-image-g-2/text-to-image",
+            )
+            self.assertEqual(
+                visual._runninghub_url("/openapi/v2/query"),
+                "https://www.runninghub.ai/openapi/v2/query",
+            )
+        with patch.dict(
+            os.environ,
+            {"RUNNINGHUB_BASE_URL": "https://images.example.test/root/"},
+            clear=False,
+        ):
+            self.assertEqual(
+                visual._runninghub_generate_url(config),
+                "https://images.example.test/root/openapi/v2/rhart-image-g-2/text-to-image",
+            )
+            self.assertEqual(
+                visual._runninghub_url("/uc/openapi/accountStatus"),
+                "https://images.example.test/root/uc/openapi/accountStatus",
+            )
+            self.assertEqual(
+                visual._runninghub_url("/openapi/v2/media/upload/binary"),
+                "https://images.example.test/root/openapi/v2/media/upload/binary",
+            )
+
+        cloud_url = "https://cloud.example.test/api/v1/image-pool/generate"
+        self.assertEqual(visual._runninghub_generate_url({"endpoint": cloud_url}), cloud_url)
+
+    def test_runninghub_documented_errors_use_bounded_categories(self) -> None:
+        for code in (416, 812):
+            with self.subTest(code=code), self.assertRaises(visual.RunningHubPowerInsufficient):
+                visual._handle_runninghub_submit_error({"errorCode": code})
+        with self.assertRaises(visual.RunningHubAccessDenied):
+            visual._handle_runninghub_submit_error({"errorCode": 40310})
+        with self.assertRaises(visual.RunningHubModerationError):
+            visual._handle_runninghub_submit_error({"errorCode": 1501})
+        with self.assertRaises(visual.RunningHubResultRetryableError):
+            visual._handle_runninghub_submit_error({"errorCode": 1504})
+
     def test_strict_agent2_failure_aborts_without_local_prompt_fallback(self) -> None:
         scenes = [{
             "slide_id": "scene_001",
