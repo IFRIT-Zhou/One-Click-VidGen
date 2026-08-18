@@ -29,8 +29,8 @@ app = FastAPI(title="One-Click VidGen Mock Cloud API", version="1.0.0-mock")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FFMPEG = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
 DEFAULT_VOICE_SAMPLES = {
-    "mock_voice_sample_a": PROJECT_ROOT / "tools" / "IndexTTS2" / "examples" / "voice_01.wav",
-    "mock_voice_sample_b": PROJECT_ROOT / "tools" / "IndexTTS2" / "examples" / "voice_02.wav",
+    "mock_voice_sample_a": PROJECT_ROOT / "tools" / "IndexTTS25" / "examples" / "voice_01.wav",
+    "mock_voice_sample_b": PROJECT_ROOT / "tools" / "IndexTTS25" / "examples" / "voice_02.wav",
 }
 
 
@@ -195,7 +195,7 @@ def _voice_audio_bytes(voice: dict[str, Any]) -> bytes:
             return voice["audio"]
         except (OSError, MockCloudError, wave.Error):
             pass
-    # Source-only Git deployments may not contain the portable IndexTTS2
+    # Source-only Git deployments may not contain the portable IndexTTS-2.5
     # examples. Keep a deterministic fallback so contract tests still work.
     voice["audio"] = _wav_bytes(frequency=int(voice.get("frequency") or 300))
     return voice["audio"]
@@ -314,7 +314,7 @@ def dashboard() -> str:
     return """<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><title>OCV 模拟云端</title>
     <style>body{font-family:system-ui;background:#07111f;color:#e5eefc;max-width:920px;margin:48px auto;padding:0 24px}h1{color:#67e8f9}table{width:100%;border-collapse:collapse;background:#0f1d31}td,th{padding:12px;border:1px solid #28405f;text-align:left}code{color:#99f6e4}button{padding:10px 16px;border:0;border-radius:9px;background:#60a5fa;color:#07111f;font-weight:700;cursor:pointer}.ok{padding:12px;border:1px solid #2dd4bf;background:#0f766e33;border-radius:12px}</style></head>
     <body><h1>One-Click VidGen 模拟云端</h1><p class='ok'>服务运行正常：<code>http://127.0.0.1:8030/api/v1</code></p>
-    <p>所有账号密码均为 <code>demo12345</code>。数据仅保存在内存中，关闭窗口即消失。默认音色优先使用整合包自带的 IndexTTS2 真人示例；模拟任务只回传测试样本，不会朗读新文案。</p>
+    <p>所有账号密码均为 <code>demo12345</code>。数据仅保存在内存中，关闭窗口即消失。默认音色优先使用整合包自带的 IndexTTS-2.5 真人示例；模拟任务只回传测试样本，不会朗读新文案。</p>
     <table><tr><th>账号</th><th>用途</th></tr><tr><td>demo@example.com</td><td>正常登录、积分、报价和配音完成</td></tr><tr><td>low@example.com</td><td>模拟积分不足</td></tr><tr><td>fail@example.com</td><td>模拟任务失败与积分释放</td></tr><tr><td>slow@example.com</td><td>模拟慢任务，适合测试停止与取消</td></tr></table>
     <p><button onclick="fetch('/api/v1/mock/reset',{method:'POST'}).then(()=>alert('模拟数据已重置'))">重置模拟数据</button></p>
     <p>请回到 One-Click VidGen 右上角点击“登录”进行测试。</p></body></html>"""

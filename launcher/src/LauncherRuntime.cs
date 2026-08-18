@@ -194,7 +194,8 @@ namespace OcvLauncher
                 AddFileCheck(items, "FFmpeg", Path.Combine(root, "tools", "ffmpeg", "bin", "ffmpeg.exe"));
                 AddDirectoryCheck(items, "根目录依赖", Path.Combine(root, "node_modules", "hyperframes"));
                 AddDirectoryCheck(items, "前端依赖", Path.Combine(root, "frontend", "node_modules"));
-                AddDirectoryCheck(items, "IndexTTS2 模型", Path.Combine(root, "tools", "IndexTTS2", "checkpoints"));
+                AddDirectoryCheck(items, "IndexTTS-2.5 模型", Path.Combine(root, "tools", "IndexTTS25", "checkpoints"));
+                AddDirectoryCheck(items, "Faster-Whisper 模型", Path.Combine(root, "tools", "whisper_models", "faster-whisper-base"));
 
                 string browserRoot = Path.Combine(root, "runtime", "hyperframes", ".cache", "hyperframes", "chrome");
                 bool browserFound = Directory.Exists(browserRoot) && Directory.GetFiles(browserRoot, "chrome-headless-shell.exe", SearchOption.AllDirectories).Length > 0;

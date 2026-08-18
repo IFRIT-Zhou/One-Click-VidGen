@@ -8,10 +8,10 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = PROJECT_ROOT / "tools" / "IndexTTS2" / "checkpoints"
-INDEXTTS_CONFIG = PROJECT_ROOT / "runtime" / "data" / "indextts2" / "appdata" / "IndexTTS" / "config.toml"
+MODEL_DIR = PROJECT_ROOT / "tools" / "IndexTTS25" / "checkpoints"
+WHISPER_MODEL_DIR = PROJECT_ROOT / "tools" / "whisper_models" / "faster-whisper-base"
 HYPERFRAMES_BROWSER_DIR = PROJECT_ROOT / "runtime" / "hyperframes" / ".cache" / "hyperframes" / "chrome"
-PORTABLE_ENV_KEYS = ("INDEXTTS2_ROOT", "INDEXTTS2_MODEL_DIR")
+PORTABLE_ENV_KEYS = ("INDEXTTS25_ROOT", "INDEXTTS25_MODEL_DIR", "INDEXTTS25_PACKAGES_DIR")
 
 
 def is_inside_project(path: Path) -> bool:
@@ -20,14 +20,6 @@ def is_inside_project(path: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def repair_indextts_config() -> None:
-    """The official CLI persists this path and reads it before CLI arguments."""
-    INDEXTTS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    model_path = MODEL_DIR.resolve(strict=False).as_posix().replace('"', '\\"')
-    INDEXTTS_CONFIG.write_text(f'model_dir = "{model_path}"\n', encoding="utf-8")
-    print(f"[portable] IndexTTS2 runtime config: {INDEXTTS_CONFIG}")
 
 
 def find_hyperframes_browser() -> Path | None:
@@ -60,8 +52,31 @@ def validate_portable_env() -> list[str]:
 
 
 def main() -> int:
-    repair_indextts_config()
     problems = validate_portable_env()
+    required_25 = (
+        MODEL_DIR / "config.yaml",
+        MODEL_DIR / "gpt.pth",
+        MODEL_DIR / "multilingual_zh_ja_yue_char_del.tiktoken",
+        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "tiktoken",
+    )
+    missing_25 = [str(path.relative_to(PROJECT_ROOT)) for path in required_25 if not path.exists()]
+    if missing_25:
+        problems.append("IndexTTS-2.5 runtime is incomplete: " + ", ".join(missing_25))
+    else:
+        print(f"[portable] IndexTTS-2.5 model: {MODEL_DIR}")
+    required_whisper = (
+        WHISPER_MODEL_DIR / "config.json",
+        WHISPER_MODEL_DIR / "model.bin",
+        WHISPER_MODEL_DIR / "tokenizer.json",
+        WHISPER_MODEL_DIR / "vocabulary.txt",
+    )
+    missing_whisper = [
+        str(path.relative_to(PROJECT_ROOT)) for path in required_whisper if not path.is_file()
+    ]
+    if missing_whisper:
+        problems.append("Faster-Whisper Base runtime is incomplete: " + ", ".join(missing_whisper))
+    else:
+        print(f"[portable] Faster-Whisper model: {WHISPER_MODEL_DIR}")
     browser = find_hyperframes_browser()
     if browser is None:
         problems.append(

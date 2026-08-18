@@ -629,7 +629,7 @@ class JobStore:
         )
         if process is not None:
             if is_tts:
-                self.log(job, "安全停止：已请求 IndexTTS2 在当前推理点退出，不再强制杀死 CUDA 进程")
+                self.log(job, "安全停止：已请求 IndexTTS-2.5 在当前推理点退出，不再强制杀死 CUDA 进程")
                 _request_graceful_tts_stop(process)
             else:
                 _terminate_process_tree(process)
@@ -712,7 +712,7 @@ class JobStore:
                         self.log(job, "集群云端任务已停止")
                         self.update(job, step="cancelled", message="已停止集群云端生成", error=None)
                     else:
-                        self.log(job, "IndexTTS2 已安全退出，显存释放完成")
+                        self.log(job, "IndexTTS-2.5 已安全退出，显存释放完成")
                         self.update(job, step="cancelled", message="已安全停止生成", error=None)
             except Exception as exc:
                 if self.is_cancelled(job):
@@ -764,7 +764,7 @@ def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
 def _request_graceful_tts_stop(process: subprocess.Popen[Any]) -> None:
     """Ask the outer TTS Python process to unwind without taskkill /T /F.
 
-    A hard taskkill while two IndexTTS2 CUDA children are mid-kernel can leave
+    A hard taskkill while two IndexTTS-2.5 CUDA children are mid-kernel can leave
     the Windows display driver in a bad state.  Ctrl+Break lets Python unwind
     normally; `run_command` then waits for the process tree to release GPU
     resources instead of escalating automatically.
@@ -1255,13 +1255,13 @@ def run_command(
                 if job.step != "tts":
                     _terminate_process_tree(process)
                     raise GenerationCancelled("用户已停止生成")
-                # IndexTTS2 owns one or more CUDA child processes.  Do not use
+                # IndexTTS-2.5 owns one or more CUDA child processes. Do not use
                 # taskkill here: wait for Ctrl+Break to let those processes
                 # release their CUDA contexts cleanly.
                 if not safe_stop_requested:
                     safe_stop_requested = True
                     safe_stop_notice_at = time.monotonic()
-                    store.log(job, "安全停止进行中：等待当前 IndexTTS2 推理结束并释放显存…")
+                    store.log(job, "安全停止进行中：等待当前 IndexTTS-2.5 推理结束并释放显存…")
                     _request_graceful_tts_stop(process)
                 elif time.monotonic() - safe_stop_notice_at >= 30:
                     safe_stop_notice_at = time.monotonic()
@@ -2460,7 +2460,7 @@ def organize_tts_output(job: Job, request: dict[str, Any]) -> Path:
                     "job_id": job.id,
                     "project_name": final_dir.name,
                     "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "tts_engine": request.get("tts_engine") or "indextts2",
+                    "tts_engine": "indextts25" if request.get("tts_engine") == "indextts2" else (request.get("tts_engine") or "indextts25"),
                     "tts_voice_id": request.get("tts_voice_id"),
                     "tts_speed": request.get("tts_speed"),
                     "tts_volume": request.get("tts_volume"),
@@ -2640,11 +2640,12 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
         segment_archive = JOBS_DIR / job.id / "artifacts" / "tts_segments"
         if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
             shutil.copytree(segment_archive, other_dir / "tts_segments", dirs_exist_ok=True)
-        if str(request.get("tts_engine") or "indextts2") == "indextts2" and job.user_id is not None:
+        if str(request.get("tts_engine") or "indextts25") in {"indextts2", "indextts25"} and job.user_id is not None:
             try:
-                from .indextts2_local import load_indextts2_config, resolve_voice_reference
+                from .indextts25_local import load_indextts25_config, resolve_voice_reference
+                config = load_indextts25_config()
                 voice_source = resolve_voice_reference(
-                    load_indextts2_config(),
+                    config,
                     str(request.get("tts_voice_id") or "voice_05.wav"),
                     user_id=int(job.user_id),
                 )
@@ -3387,15 +3388,21 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         store.log(job, "已跳过模块 1：使用上传配音作为 final_output.wav")
     else:
         store.update(job, status="running", step="tts", progress=8, message=STEPS[0][1])
-        tts_engine = str(request.get("tts_engine") or "indextts2").strip().lower()
-        if tts_engine not in {"indextts2", "cluster", "qwen"}:
-            tts_engine = "indextts2"
+        tts_engine = str(request.get("tts_engine") or "indextts25").strip().lower()
+        if tts_engine == "indextts2":
+            tts_engine = "indextts25"
+            request["tts_engine"] = "indextts25"
+            store.log(job, "历史任务的 IndexTTS2 本地引擎已自动迁移为 IndexTTS-2.5")
+        if tts_engine not in {"indextts25", "cluster", "qwen"}:
+            tts_engine = "indextts25"
         if tts_engine == "cluster":
             store.log(job, "模块 1：使用集群 GPU 加速配音，通过 cloud-api 提交、轮询并下载分块 WAV")
         elif tts_engine == "qwen":
             store.log(job, "模块 1：使用 Qwen-TTS 云端配音，逐句下载并合并本地 WAV")
+        elif tts_engine == "indextts25":
+            store.log(job, "模块 1：使用官方 IndexTTS-2.5 本地 GPU 配音")
         else:
-            store.log(job, "模块 1：使用官方 IndexTTS2 本地 GPU 配音")
+            raise RuntimeError(f"不支持的配音引擎: {tts_engine}")
         if tts_engine == "cluster":
             if job.user_id is None:
                 raise RuntimeError("集群 GPU 模式需要本地用户身份")

@@ -22,17 +22,19 @@ TTS_Output/
 saved_parameters/
 saved_agent_prompts/
 Vocal/
-# Keep source-deployment helper scripts in Git. Bundled FFmpeg, IndexTTS2
+# Keep source-deployment helper scripts in Git. Bundled FFmpeg, IndexTTS-2.5
 # checkpoints and other portable binaries stay in the downloadable package.
 tools/*
 !tools/portable_preflight.py
 !tools/local_service_watchdog.py
 !tools/create_portable_archive.py
+!tools/deploy_indextts25.ps1
 Sound Material/
 测试文案/
 venv_audio_vedio/
 launcher/bin/
 launcher/ui-preview.png
+/OCV_Launcher.pre*.running.exe
 .agents/*
 !.agents/skills/
 .agents/skills/*

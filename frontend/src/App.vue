@@ -253,7 +253,7 @@
             @click="activePage = 'module1'"
           >
             <span>模块 1 · 仅配音</span>
-            <small>只运行 IndexTTS2</small>
+            <small>只运行 IndexTTS-2.5</small>
           </button>
           <button
             type="button"
@@ -356,7 +356,7 @@
               </div>
               <label class="check-row source-mode-toggle">
                 <input v-model="form.skip_tts" type="checkbox" @change="handleSkipTtsChange" />
-                <span>已有配音和文案，不需要 IndexTTS2</span>
+                <span>已有配音和文案，不需要 IndexTTS-2.5</span>
               </label>
               <div v-if="form.skip_tts" class="source-audio-main">
                 <div class="script-upload-field">
@@ -371,7 +371,7 @@
                     <strong>{{ sourceAudioName || '选择配音音频' }}</strong>
                   </label>
                   <small v-if="sourceAudioError" class="script-upload-error">{{ sourceAudioError }}</small>
-                  <small v-else-if="sourceAudioName" class="muted">生成时会跳过 IndexTTS2，从模块 2 开始识别字幕。</small>
+                  <small v-else-if="sourceAudioName" class="muted">生成时会跳过 IndexTTS-2.5，从模块 2 开始识别字幕。</small>
                 </div>
               </div>
             </div>
@@ -401,7 +401,7 @@
                     <label class="tts-engine-select" title="选择配音执行方式">
                       <span>执行方式</span>
                       <select v-model="ttsEngine">
-                        <option value="indextts2">本地 GPU</option>
+                        <option value="indextts25">本地 GPU · IndexTTS-2.5</option>
                         <option value="cluster">集群 GPU</option>
                         <option value="qwen">Qwen-TTS</option>
                       </select>
@@ -410,8 +410,8 @@
                   <h3>语音参数</h3>
                 </div>
                 <div class="tts-parameter-meta">
-                  <span v-if="ttsEngine === 'indextts2'" class="status-chip" :class="health.tts_online ? 'success' : 'warning'">
-                    {{ health.tts_online ? 'IndexTTS2 就绪' : 'IndexTTS2 未就绪' }}
+                  <span v-if="ttsEngine === 'indextts25'" class="status-chip" :class="health.tts25_online ? 'success' : 'warning'">
+                    {{ health.tts25_online ? 'IndexTTS-2.5 就绪' : 'IndexTTS-2.5 未就绪' }}
                   </span>
                   <span v-else-if="ttsEngine === 'cluster'" class="status-chip" :class="cloudReady ? 'success' : 'warning'">
                     {{ cloudReady ? '集群已登录' : '集群未登录' }}
@@ -419,7 +419,7 @@
                   <span class="muted small">{{ ttsEngineProviderLabel }}</span>
                 </div>
               </div>
-              <div v-if="ttsEngine === 'indextts2'" class="form-grid tts-param-grid">
+              <div v-if="ttsEngine === 'indextts25'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
                   <span>上传本地参考音色</span>
                   <div class="tts-voice-picker-row">
@@ -461,7 +461,7 @@
                   <input v-model.number="form.tts_parallelism" type="number" min="1" max="3" step="1" />
                 </label>
                 <small class="muted tts-wide-field">
-                  4090 建议日常用 2；3 是上限尝试档，显存紧张或报错时调回 2。
+                  IndexTTS-2.5 建议先用并行 1；高显存显卡验证稳定后可尝试 2，显存紧张时请调回 1。
                 </small>
               </div>
               <div v-else-if="ttsEngine === 'cluster'" class="cluster-tts-config">
@@ -1553,12 +1553,12 @@
               </div>
               <div class="module1-engine-control">
                 <select v-model="ttsEngine">
-                  <option value="indextts2">本地 GPU</option>
+                  <option value="indextts25">本地 GPU · IndexTTS-2.5</option>
                   <option value="cluster">集群 GPU</option>
                   <option value="qwen">Qwen-TTS</option>
                 </select>
-                <span class="status-chip" :class="((ttsEngine === 'indextts2' && health.tts_online) || (ttsEngine === 'cluster' && cloudReady) || (ttsEngine === 'qwen' && apiKeyStatus.qwen_tts?.configured)) ? 'success' : 'warning'">
-                  {{ ttsEngine === 'indextts2' ? (health.tts_online ? '本地已就绪' : '本地未就绪') : (ttsEngine === 'cluster' ? (cloudReady ? '集群已就绪' : '集群未就绪') : (apiKeyStatus.qwen_tts?.configured ? 'Qwen 已就绪' : 'Qwen 未配置')) }}
+                <span class="status-chip" :class="((ttsEngine === 'indextts25' && health.tts25_online) || (ttsEngine === 'cluster' && cloudReady) || (ttsEngine === 'qwen' && apiKeyStatus.qwen_tts?.configured)) ? 'success' : 'warning'">
+                  {{ ttsEngine === 'indextts25' ? (health.tts25_online ? '2.5 已就绪' : '2.5 未就绪') : (ttsEngine === 'cluster' ? (cloudReady ? '集群已就绪' : '集群未就绪') : (apiKeyStatus.qwen_tts?.configured ? 'Qwen 已就绪' : 'Qwen 未配置')) }}
                 </span>
               </div>
             </div>
@@ -1588,10 +1588,10 @@
                   <div class="tts-parameter-head">
                     <div>
                       <div class="sidebar-label">参考声音</div>
-                      <h3>{{ ttsEngine === 'indextts2' ? '本地参考音色' : (ttsEngine === 'cluster' ? '集群参考音色' : 'Qwen 系统音色') }}</h3>
+                      <h3>{{ ttsEngine === 'indextts25' ? '本地参考音色' : (ttsEngine === 'cluster' ? '集群参考音色' : 'Qwen 系统音色') }}</h3>
                     </div>
                   </div>
-                  <div v-if="ttsEngine === 'indextts2'" class="script-upload-field">
+                  <div v-if="ttsEngine === 'indextts25'" class="script-upload-field">
                     <div class="tts-voice-picker-row">
                       <label class="script-file-picker">
                         <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" @change="uploadTtsVoice" />
@@ -2206,7 +2206,7 @@ const submittingModule1 = ref(false)
 const submittingSubtitle = ref(false)
 const cancellingGeneration = ref(false)
 const resumingGeneration = ref(false)
-const health = ref({ ok: false, tts_online: false })
+const health = ref({ ok: false, tts_online: false, tts25_online: false })
 const settings = ref({ scripts: [], tts: { voices: [], emotions: [], defaults: {} } })
 const session = ref({ user: null, auth_mode: 'account', mysql: {} })
 const authError = ref('')
@@ -2238,7 +2238,7 @@ const savingApiKeys = ref(false)
 const deletingApiKey = ref(false)
 const savingQwenTtsKey = ref(false)
 const qwenTtsKeyMessage = ref('')
-const ttsEngine = ref('indextts2')
+const ttsEngine = ref('indextts25')
 const cloudSession = ref({ configured: false, authenticated: false, user: null, base_url: '' })
 const cloudAccount = ref({ credits: {}, quota: {} })
 const cloudVoices = ref([])
@@ -2729,12 +2729,12 @@ const qwenSelectedVoice = computed(() => qwenVoiceGroups
   .find((voice) => voice.value === form.qwen_tts_voice))
 const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.value?.supportsInstructions !== false)
 const ttsEngineLabel = computed(() => ({
-  indextts2: 'IndexTTS2 · 本地 GPU',
-  cluster: 'IndexTTS2 · 集群 GPU',
+  indextts25: 'IndexTTS-2.5 · 本地 GPU',
+  cluster: '集群 GPU',
   qwen: 'Qwen-TTS · 云端 API',
 }[ttsEngine.value] || '配音引擎'))
 const ttsEngineProviderLabel = computed(() => ({
-  indextts2: settings.value.tts?.model || 'official IndexTTS2 2.0.0',
+  indextts25: settings.value.tts?.model || 'official IndexTTS-2.5 · local BF16',
   cluster: cloudSession.value.base_url || 'cloud-api / Ray 集群',
   qwen: 'DashScope / 百炼',
 }[ttsEngine.value] || ''))
@@ -2837,6 +2837,9 @@ const generationBlockReason = computed(() => {
     if (!form.skip_text_correction && !form.script.trim()) return block('SCRIPT_REQUIRED', '请填写与已有配音对应的文案，或选择“没有文案”。')
     return null
   }
+  if (ttsEngine.value === 'indextts25' && !health.value.tts25_online) {
+    return block('INDEXTTS25_NOT_READY', '本地 IndexTTS-2.5 环境尚未就绪。')
+  }
   if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) {
     return block('QWEN_API_KEY_REQUIRED', '请先保存 Qwen-TTS API Key。')
   }
@@ -2856,12 +2859,12 @@ const canSubmitGeneration = computed(() => !generationBlockReason.value)
 const canSubmitModule1 = computed(() => Boolean(
   session.value.user
   && (
-    (ttsEngine.value === 'indextts2' && health.value.tts_online)
+    (ttsEngine.value === 'indextts25' && health.value.tts25_online)
     || (ttsEngine.value === 'cluster' && cloudReady.value)
     || (ttsEngine.value === 'qwen' && apiKeyStatus.value.qwen_tts?.configured)
   )
   && form.project_name.trim()
-  && form.script.trim().length >= 5
+  && form.script.trim().length >= 1
   && !scriptTooLong.value
   && !module1JobRunning.value
 ))
@@ -2934,7 +2937,9 @@ const canRetryTts = computed(() => Boolean(
   && !activeJob.value?.request?.skip_tts
 ))
 const ttsStatusText = computed(() => {
-  if (health.value.tts_online) return '在线'
+  if (ttsEngine.value === 'indextts25' && health.value.tts25_online) return 'IndexTTS-2.5 在线'
+  if (ttsEngine.value === 'cluster' && cloudReady.value) return '集群在线'
+  if (ttsEngine.value === 'qwen' && apiKeyStatus.value.qwen_tts?.configured) return 'Qwen 已配置'
   if (startingTts.value) return '检测中'
   if (ttsStartMessage.value) return ttsStartMessage.value
   return '未连接'
@@ -3098,7 +3103,7 @@ async function refresh() {
   try {
     health.value = await api.health()
   } catch {
-    health.value = { ok: false, tts_online: false }
+    health.value = { ok: false, tts_online: false, tts25_online: false }
   }
   try {
     session.value = await api.session()
@@ -4073,9 +4078,10 @@ async function loadSelectedParameterPreset() {
       ? Number(parameters.bgm_fade_duration)
       : 1
     form.script = typeof parameters.script === 'string' ? parameters.script : ''
-    ttsEngine.value = ['indextts2', 'cluster', 'qwen'].includes(parameters.tts_engine)
-      ? parameters.tts_engine
-      : 'indextts2'
+    const savedTtsEngine = parameters.tts_engine === 'indextts2' ? 'indextts25' : parameters.tts_engine
+    ttsEngine.value = ['indextts25', 'cluster', 'qwen'].includes(savedTtsEngine)
+      ? savedTtsEngine
+      : 'indextts25'
     form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
     await restoreSavedTtsVoiceLabel()
     await restoreSavedProtagonistReferenceImageLabel()

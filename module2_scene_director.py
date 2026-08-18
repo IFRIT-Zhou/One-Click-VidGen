@@ -102,7 +102,15 @@ def transcribe_audio(audio_path: Path) -> tuple[list[Any], Any, str]:
             "或执行 pip install -r requirements.txt"
         ) from exc
 
-    model_path = Path(model_size).expanduser()
+    # Keep ASR assets independent from either local TTS engine. Older portable
+    # builds accidentally stored this cache below tools/IndexTTS2, so removing
+    # the obsolete TTS engine also removed subtitle recognition resources.
+    bundled_model = PROJECT_ROOT / "tools" / "whisper_models" / "faster-whisper-base"
+    model_path = (
+        bundled_model
+        if model_size.strip().lower() == "base" and bundled_model.is_dir()
+        else Path(model_size).expanduser()
+    )
     if model_path.exists():
         model_source = str(model_path.resolve())
     else:

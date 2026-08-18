@@ -46,7 +46,7 @@ _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
 # v13: screen/file contents are scoped again to each fixed image group. A long
 # Agent 1 unit can no longer stamp the same evidence insert across every child
 # poster after Python splits that unit by duration.
-VISUAL_PROMPT_AGENT_VERSION = 15
+VISUAL_PROMPT_AGENT_VERSION = 16
 
 REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
 
@@ -276,6 +276,7 @@ def build_visual_prompt_system(
 【分镜规则】
 - 先通读前后文，再为每组选择一个能清楚表达原文的具体瞬间、场景、物体或动作；每张图只有一个视觉焦点。
 - 原文有角色时，首次出现必须写出具体外貌、年龄、发型、服装与标志物；再次出现直接复写已确定的特征。没有角色时可使用环境、物件、示意或空镜，不强行创建主角。
+- 观点、情感和社会观察类口播不能长期停留在开场谈话场景。原文提到通勤、工作、家务、照料、医疗、住房或未来担忧时，优先使用来源明确的说明性 B-roll 直接呈现该项现实处境。
 {DEVICE_CREATIVE_GUIDANCE}
 
 【用户可控设定】
@@ -304,6 +305,7 @@ def build_visual_prompt_system(
 - 通读前后文，识别人物关系、地点、时间、关键道具和悬念线索，让相邻画面具有叙事连续性。
 - 每组选择一个最有戏剧张力的具体瞬间，不要把抽象观点、旁白文字或多个时间点堆在同一画面。
 - 忠于原文事实：原文没有鬼怪、凶案或暴力时，不得擅自添加，只用光影、构图和人物状态制造都市悬疑感。
+- 对都市情感、社会观察和观点口播，原文明确提到的通勤、工作、家务、照料、医疗、住房、过去经历或未来担忧可以使用说明性 B-roll 或假设性情境画面；这类画面用于解释旁白，不等于主时间线切换，也不属于凭空增加事件。
 {DEVICE_CREATIVE_GUIDANCE}
 
 【统一风格】
@@ -863,6 +865,44 @@ def _multi_moment_prompt_risk(prompt: str) -> bool:
     ))
 
 
+_COMMON_VISUAL_ANCHORS = (
+    "餐桌", "账单", "厨房", "客厅", "卧室", "办公室", "工位", "地铁", "公交",
+    "病房", "医院走廊", "候诊区", "街道", "人行道", "教室", "实验室", "会议室",
+)
+
+
+def _repeated_visual_anchor_runs(
+    mapping: list[dict[str, Any]],
+    story_context: dict[str, Any] | None = None,
+    *,
+    minimum_run: int = 3,
+) -> list[tuple[str, int, int]]:
+    """Find consecutive prompts that keep reusing one concrete visual anchor."""
+    anchors = set(_COMMON_VISUAL_ANCHORS)
+    for location in (story_context or {}).get("locations", []):
+        if not isinstance(location, dict):
+            continue
+        name = str(location.get("name") or "").strip()
+        if len(name) >= 2:
+            anchors.add(name)
+        for common in _COMMON_VISUAL_ANCHORS:
+            if common in name:
+                anchors.add(common)
+    result: list[tuple[str, int, int]] = []
+    for anchor in sorted(anchors, key=len, reverse=True):
+        run_start = None
+        for index, item in enumerate(mapping):
+            present = anchor in str(item.get("image_prompt") or "")
+            if present and run_start is None:
+                run_start = index
+            if (not present or index == len(mapping) - 1) and run_start is not None:
+                run_end = index if present and index == len(mapping) - 1 else index - 1
+                if run_end - run_start + 1 >= minimum_run:
+                    result.append((anchor, run_start, run_end))
+                run_start = None
+    return result
+
+
 def _single_scene_guard(prompt: str) -> str:
     if not _multi_moment_prompt_risk(prompt):
         return prompt
@@ -1231,6 +1271,12 @@ def _plan_mapping_batch(
         + "- 不要把动作的前后过程同时画出；避免‘随后、依次、先……再……、镜头拉开后’等多时刻描述。\n"
         + "- 禁止漫画多格、分屏、拼贴、上下左右并列画面，以及同一角色在一张图中重复出现。\n"
         + "- 只有原文明示要做两项对照，且单一场景无法表达时，才可使用最多双区的统一构图；不得超过两区。"
+        + "\n\n【视觉变化与说明性 B-roll 硬约束（适用于所有非纯科普模式）】\n"
+        + "- 必须读取 Agent 1 semantic_units 中的 visual_mode、setting_hint、novelty_anchor。literal_scene 保持主时间线；illustrative_broll 使用原文明确支持的经历、原因、日常负担或未来设想；symbolic 才使用象征画面。\n"
+        + "- 旁白从现场动作转入通勤、工作、家务、育儿、照料、医疗、住房等具体议题时，应把画面切到对应的生活场景，不要继续让人物坐在原地点听旁白。\n"
+        + "- 相邻画面必须至少改变一项实质信息：地点、主要行动、核心物件、出镜人物组合或表达方式。只换景别、机位、人物朝向、手势或表情不算变化。\n"
+        + "- 同一地点加同一核心道具最多连续使用两张；第三张必须改用原文支持的 B-roll、环境、行动、物件特写或象征表达，除非字幕仍在描述同一不可中断动作。\n"
+        + "- 不得为了多样性编造具体病名、事故、既成的子女或确定结果。假设性未来要写明为设想感画面；医疗压力只能使用原文支持的通用陪诊、等候、病房或医疗物件，不擅自添加手术和危重设备。\n"
         + "\n\n【Agent 1 提供的全文故事上下文】\n"
         + json.dumps(story_context or {}, ensure_ascii=False)
         + "\n必须把这份上下文视为跨批次共享的角色、地点、线索和连续性档案。"
@@ -1314,6 +1360,48 @@ def _plan_mapping_batch(
                     # The original mapping is already complete.  A cosmetic
                     # single-shot rewrite must never throw away valid planning.
                     print(f"Gemini {batch_label} 单镜头优化失败，保留原始完整规划: {exc}", flush=True)
+            repetition_runs = _repeated_visual_anchor_runs(mapping, story_context)
+            if repetition_runs:
+                readable_runs = "、".join(
+                    f"{anchor}连续{end - start + 1}张"
+                    for anchor, start, end in repetition_runs[:6]
+                )
+                print(
+                    f"Gemini {batch_label} 检测到实质画面重复（{readable_runs}），正在请求 B-roll 多样化改写。",
+                    flush=True,
+                )
+                try:
+                    revision = generate_gemini_text(
+                        system_prompt=runtime_prompt,
+                        user_prompt=json.dumps({
+                            "scenes": scenes,
+                            "required_groups": required_slide_groups,
+                            "previous_output": mapping,
+                            "repetition_runs": repetition_runs,
+                            "revision_instruction": (
+                                "保持 includes_slides、事实、人物身份和单镜头构图不变，重写重复画面的 image_prompt。"
+                                "严格读取对应 semantic_units 的 visual_mode、setting_hint、novelty_anchor；"
+                                "把原文明确提到的通勤、工作、家务、照料、医疗、住房压力或未来设想改成各自具体的说明性 B-roll。"
+                                "相邻画面至少改变地点、主要行动、核心物件、人物组合或表达方式之一；只换机位和表情不算变化。"
+                                "不得编造病名、事故、手术、危重设备、已经存在的子女或其他原文未确认事实。"
+                            ),
+                        }, ensure_ascii=False),
+                        temperature=0.25,
+                        response_mime_type="application/json",
+                        json_root="array",
+                    )
+                    raw_revision = parse_json_response(revision)
+                    if isinstance(raw_revision, dict):
+                        for wrapper_key in ("items", "mapping", "posters", "results", "scenes"):
+                            wrapped = raw_revision.get(wrapper_key)
+                            if isinstance(wrapped, list):
+                                raw_revision = wrapped
+                                break
+                    revised_mapping = _normalize_mapping(raw_revision, scenes, required_slide_groups)
+                    if revised_mapping:
+                        mapping = revised_mapping
+                except (GeminiError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:
+                    print(f"Gemini {batch_label} B-roll 多样化改写失败，保留原始完整规划: {exc}", flush=True)
             print(f"Gemini {batch_label} 已规划 {len(mapping)} 张海报。", flush=True)
             return mapping
         except (GeminiError, ValueError, TypeError, json.JSONDecodeError, RuntimeError) as exc:

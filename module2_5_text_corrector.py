@@ -93,57 +93,250 @@ def correct_scene_texts_to_original(scene_data, orig_text):
     return corrected
 
 
-def split_subtitle_text(text, max_chars=24):
-    normalized = re.sub(r'\s+', ' ', str(text or '')).strip()
+_STRONG_SUBTITLE_ENDINGS = frozenset('。！？!?')
+_SECONDARY_SUBTITLE_ENDINGS = frozenset('；;')
+_COMMA_SUBTITLE_ENDINGS = frozenset('，,')
+_COLON_SUBTITLE_ENDINGS = frozenset('：:')
+_SUBTITLE_CLOSERS = frozenset('”’」』】）》〉>')
+_SUBTITLE_OPENERS = frozenset('“‘「『【（《〈<')
+_NON_BREAKING_PUNCTUATION = frozenset('、')
+_CLAUSE_TRANSITIONS = (
+    '与此同时', '换句话说', '也就是说', '更重要的是',
+    '推到了', '变成了', '成为了', '意味着', '导致了', '造成了',
+    '因此', '所以', '但是', '然而', '不过', '于是', '然后', '同时',
+    '最终', '后来', '原来', '实际上', '反而', '仍然', '继续', '开始',
+)
+
+
+def _normalized_subtitle_text(text):
+    return re.sub(r'\s+', ' ', str(text or '')).strip()
+
+
+def _subtitle_boundaries(text):
+    """Return candidate cut positions without treating wrappers or 、 as breaks."""
+    boundaries = {0: 'start', len(text): 'end'}
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in _STRONG_SUBTITLE_ENDINGS:
+            kind = 'strong'
+        elif char in _SECONDARY_SUBTITLE_ENDINGS:
+            kind = 'secondary'
+        elif char in _COMMA_SUBTITLE_ENDINGS:
+            kind = 'comma'
+        elif char in _COLON_SUBTITLE_ENDINGS:
+            kind = 'colon'
+        else:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text) and text[end] in _SUBTITLE_CLOSERS:
+            end += 1
+        boundaries[end] = kind
+        index = end
+    return boundaries
+
+
+def _safe_fallback_positions(text, start, end):
+    """Offer last-resort cuts while keeping wrappers and Latin tokens intact."""
+    positions = []
+    for position in range(start + 1, end):
+        previous = text[position - 1]
+        following = text[position]
+        if (
+            previous in _SUBTITLE_OPENERS
+            or following in _SUBTITLE_CLOSERS
+            or previous in _NON_BREAKING_PUNCTUATION
+            or following in _NON_BREAKING_PUNCTUATION
+        ):
+            continue
+        if previous.isascii() and previous.isalnum() and following.isascii() and following.isalnum():
+            continue
+        positions.append(position)
+    return positions
+
+
+def _clause_transition_positions(text, start, end):
+    positions = set()
+    for marker in _CLAUSE_TRANSITIONS:
+        position = text.find(marker, start + 1, end)
+        while position >= 0:
+            if position > start and position < end:
+                positions.add(position)
+            position = text.find(marker, position + len(marker), end)
+    return positions
+
+
+def _partition_subtitle_range(text, start, end, boundaries, max_chars, overflow_chars):
+    """Choose a globally balanced partition for one complete sentence."""
+    if end - start <= max_chars:
+        return [text[start:end]]
+
+    hard_max = max_chars + overflow_chars
+    candidates = {start: 'start', end: boundaries.get(end, 'end')}
+    for position, kind in boundaries.items():
+        if start < position < end and kind in {'secondary', 'comma', 'colon'}:
+            candidates[position] = kind
+    for position in _clause_transition_positions(text, start, end):
+        candidates.setdefault(position, 'clause')
+
+    # A punctuation-free clause can still exceed the display guard.  These
+    # positions carry a large cost and are never preferred over punctuation.
+    if not any(position > start and position - start <= hard_max for position in candidates):
+        for position in _safe_fallback_positions(text, start, end):
+            candidates.setdefault(position, 'fallback')
+    else:
+        # Later portions may still need a fallback even when the first portion
+        # has punctuation, so expose safe positions only for genuinely long spans.
+        ordered_punctuation = sorted(candidates)
+        for left, right in zip(ordered_punctuation, ordered_punctuation[1:]):
+            if right - left > hard_max:
+                for position in _safe_fallback_positions(text, left, right):
+                    candidates.setdefault(position, 'fallback')
+
+    ordered = sorted(candidates)
+    target = min(max_chars, 18)
+    boundary_cost = {
+        'strong': 0.0,
+        'secondary': 0.15,
+        'comma': 0.55,
+        'colon': 1.25,
+        'clause': 2.0,
+        'end': 0.0,
+        'fallback': 8.0,
+    }
+    best = {start: (0.0, None)}
+    for right in ordered[1:]:
+        choice = None
+        for left in ordered:
+            if left >= right or left not in best:
+                continue
+            length = right - left
+            if length > hard_max:
+                continue
+            cost = best[left][0] + boundary_cost.get(candidates[right], 2.0) + 0.35
+            cost += ((length - target) / max(target, 1)) ** 2
+            if length < 6:
+                cost += (6 - length) * 1.8
+            if length > max_chars:
+                cost += (length - max_chars) * 1.5
+            if choice is None or cost < choice[0]:
+                choice = (cost, left)
+        if choice is not None:
+            best[right] = choice
+
+    if end not in best:
+        # This only applies to pathological text where every safe position is
+        # blocked.  Preserve coverage with the old hard guarantee as a last resort.
+        chunks = []
+        cursor = start
+        while cursor < end:
+            cut = min(cursor + hard_max, end)
+            chunks.append(text[cursor:cut])
+            cursor = cut
+        return chunks
+
+    cuts = [end]
+    cursor = end
+    while cursor != start:
+        cursor = best[cursor][1]
+        cuts.append(cursor)
+    cuts.reverse()
+    return [text[left:right] for left, right in zip(cuts, cuts[1:]) if right > left]
+
+
+def split_subtitle_text(text, max_chars=24, overflow_chars=4):
+    """Split clean prose at semantic punctuation, with a rare safe fallback."""
+    normalized = _normalized_subtitle_text(text)
     if not normalized:
         return []
-    pieces = re.findall(r'[^，。！？；：,.!?;:]+[，。！？；：,.!?;:]?', normalized)
+    boundaries = _subtitle_boundaries(normalized)
+    strong_positions = [
+        position
+        for position, kind in sorted(boundaries.items())
+        if position and kind in {'strong', 'end'}
+    ]
     chunks = []
-    current = ''
-    for piece in pieces or [normalized]:
-        while len(piece) > max_chars:
-            head, piece = piece[:max_chars], piece[max_chars:]
-            if current:
-                chunks.append(current)
-                current = ''
-            chunks.append(head)
-        if not piece:
-            continue
-        if current and len(current) + len(piece) > max_chars:
-            chunks.append(current)
-            current = piece
-        else:
-            current += piece
-    if current:
-        chunks.append(current)
+    start = 0
+    for end in strong_positions:
+        chunks.extend(
+            _partition_subtitle_range(
+                normalized,
+                start,
+                end,
+                boundaries,
+                max_chars=max_chars,
+                overflow_chars=overflow_chars,
+            )
+        )
+        start = end
     return chunks
 
 
 def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
+    if not scene_data:
+        return []
+    source_texts = [
+        corrected_texts[index] if index < len(corrected_texts) else item.get('text_content', '')
+        for index, item in enumerate(scene_data)
+    ]
+    full_text = _normalized_subtitle_text(''.join(str(value or '') for value in source_texts))
+    chunks = split_subtitle_text(full_text, max_chars=max_chars) or [full_text]
+
+    source_weights = [max(1, len(re.sub(r'\s+', '', str(value or '')))) for value in source_texts]
+    source_starts = []
+    cumulative = 0
+    for weight in source_weights:
+        source_starts.append(cumulative)
+        cumulative += weight
+    total_weight = max(1, cumulative)
+
+    def time_at(weight_offset):
+        weight_offset = max(0, min(total_weight, weight_offset))
+        for index, (item, source_start, weight) in enumerate(zip(scene_data, source_starts, source_weights)):
+            source_end = source_start + weight
+            if weight_offset <= source_end or index == len(scene_data) - 1:
+                start = float(item.get('start') or 0)
+                end = max(float(item.get('end') or start + 0.2), start + 0.2)
+                ratio = (weight_offset - source_start) / max(weight, 1)
+                return start + (end - start) * max(0.0, min(1.0, ratio))
+        return float(scene_data[-1].get('end') or 0)
+
     result = []
-    for index, item in enumerate(scene_data):
-        text = corrected_texts[index] if index < len(corrected_texts) else item.get('text_content', '')
-        chunks = split_subtitle_text(text, max_chars=max_chars) or [str(text or '').strip()]
-        start = float(item.get('start') or 0)
-        end = max(float(item.get('end') or start + 0.2), start + 0.2)
-        weights = [max(1, len(re.sub(r'\s+', '', chunk))) for chunk in chunks]
-        total_weight = sum(weights)
-        consumed = 0
-        for chunk_index, (chunk, weight) in enumerate(zip(chunks, weights)):
-            chunk_start = start + (end - start) * consumed / total_weight
-            consumed += weight
-            chunk_end = end if chunk_index == len(chunks) - 1 else start + (end - start) * consumed / total_weight
-            output_index = len(result) + 1
-            result.append(
-                {
-                    **item,
-                    'id': f'segment_{output_index:03d}',
-                    'slide_id': f'scene_{output_index:03d}',
-                    'start': round(chunk_start, 3),
-                    'end': round(chunk_end, 3),
-                    'text_content': chunk,
-                }
-            )
+    consumed = 0
+    chunk_weights = [max(1, len(re.sub(r'\s+', '', chunk))) for chunk in chunks]
+    for chunk, weight in zip(chunks, chunk_weights):
+        chunk_start = time_at(consumed)
+        consumed += weight
+        chunk_end = time_at(consumed)
+        output_index = len(result) + 1
+        source_index = max(
+            0,
+            min(
+                len(scene_data) - 1,
+                next(
+                    (
+                        index
+                        for index, (source_start, source_weight) in enumerate(zip(source_starts, source_weights))
+                        if consumed - weight < source_start + source_weight
+                    ),
+                    len(scene_data) - 1,
+                ),
+            ),
+        )
+        result.append(
+            {
+                **scene_data[source_index],
+                'id': f'segment_{output_index:03d}',
+                'slide_id': f'scene_{output_index:03d}',
+                'start': round(chunk_start, 3),
+                'end': round(max(chunk_end, chunk_start + 0.001), 3),
+                'text_content': chunk,
+            }
+        )
+    if result:
+        result[0]['start'] = round(float(scene_data[0].get('start') or 0), 3)
+        result[-1]['end'] = round(float(scene_data[-1].get('end') or result[-1]['end']), 3)
     return result
 
 

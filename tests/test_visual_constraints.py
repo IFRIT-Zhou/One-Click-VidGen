@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -7,6 +8,26 @@ import module4_video_render as visual
 
 
 class VisualConstraintsTest(unittest.TestCase):
+    def test_repeated_visual_anchor_detector_finds_consecutive_table_shots(self) -> None:
+        mapping = [
+            {"image_prompt": "出租屋餐桌旁，两人隔着账单沉默"},
+            {"image_prompt": "餐桌近景，账单压在冷掉的饭菜旁"},
+            {"image_prompt": "低机位拍摄餐桌和账单"},
+            {"image_prompt": "早高峰地铁车厢中的通勤者"},
+        ]
+        runs = visual._repeated_visual_anchor_runs(
+            mapping,
+            {"locations": [{"name": "出租屋餐桌"}]},
+        )
+
+        self.assertIn(("餐桌", 0, 2), runs)
+
+    def test_agent2_prompt_requires_source_backed_broll(self) -> None:
+        prompt = visual.build_visual_prompt_system(content_mode=visual.CONTENT_MODE_GENERAL)
+
+        self.assertIn("说明性 B-roll", prompt)
+        self.assertIn("通勤、工作、家务", prompt)
+
     def test_cloud_image_submit_includes_stable_client_job_id(self) -> None:
         captured_payloads = []
 
@@ -572,6 +593,36 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("Agent 1 提供的全文故事上下文", call["system_prompt"])
         self.assertIn("林晚", call["system_prompt"])
         self.assertIn("黑色短发", call["system_prompt"])
+
+    def test_agent_two_rewrites_three_consecutive_identical_location_shots(self) -> None:
+        scenes = [
+            {"slide_id": f"scene_{index:03d}", "start": index - 1, "end": index, "text_content": text}
+            for index, text in enumerate(("讨论通勤", "讨论家务", "讨论医疗"), 1)
+        ]
+        repeated = json.dumps([
+            {"includes_slides": [scene["slide_id"]], "image_prompt": f"餐桌旁讨论{index}"}
+            for index, scene in enumerate(scenes, 1)
+        ], ensure_ascii=False)
+        diversified = json.dumps([
+            {"includes_slides": ["scene_001"], "image_prompt": "早高峰地铁车厢"},
+            {"includes_slides": ["scene_002"], "image_prompt": "厨房中的家务场景"},
+            {"includes_slides": ["scene_003"], "image_prompt": "医院候诊区陪伴老人"},
+        ], ensure_ascii=False)
+        with patch.object(
+            visual,
+            "generate_gemini_text",
+            side_effect=[repeated, diversified],
+        ) as generate:
+            mapping = visual._plan_mapping_batch(
+                scenes,
+                "系统提示",
+                "测试批次",
+                {"locations": [{"name": "出租屋餐桌"}]},
+                required_groups=[[scene] for scene in scenes],
+            )
+
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(mapping[0]["image_prompt"], "早高峰地铁车厢")
 
     def test_agent_two_retries_an_incomplete_json_batch_before_failing(self) -> None:
         scenes = [{

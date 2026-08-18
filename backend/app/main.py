@@ -44,7 +44,11 @@ from .gemini_client import (
     language_provider_models,
     language_provider_status,
 )
-from .indextts2_local import EMOTIONS, load_indextts2_config, resolve_voice_reference
+from .indextts25_local import (
+    EMOTIONS,
+    load_indextts25_config,
+    resolve_voice_reference,
+)
 from .qwen_tts import DEFAULT_VOICE as DEFAULT_QWEN_VOICE, voice_supports_instructions
 from .editor import (
     edit_store,
@@ -159,7 +163,9 @@ class GenerateRequest(BaseModel):
     tts_volume: float = Field(default=1, ge=0.1, le=10)
     tts_pitch: int = Field(default=0, ge=-12, le=12)
     tts_parallelism: int = Field(default=2, ge=1, le=3)
-    tts_engine: Literal["indextts2", "cluster", "qwen"] = "indextts2"
+    # ``indextts2`` remains accepted only to migrate historical presets and
+    # archived requests. New local work always runs IndexTTS-2.5.
+    tts_engine: Literal["indextts2", "indextts25", "cluster", "qwen"] = "indextts25"
     tts_emotion: str | None = Field(default=None, max_length=30)
     tts_emotion_weight: float = Field(default=0.65, ge=0, le=1)
     tts_english_normalization: bool = False
@@ -365,17 +371,23 @@ def list_files(patterns: list[str]) -> list[dict[str, str]]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    indextts2 = load_indextts2_config()
+    indextts25 = load_indextts25_config()
     cloud = load_cloud_config()
     return {
         "ok": True,
-        "tts_online": indextts2.ready,
-        "tts_provider": "official IndexTTS2 2.0.0 (local GPU)",
-        "tts_voice_id": indextts2.default_voice,
+        # Stable aliases used by older launchers/frontends now describe 2.5.
+        "tts_online": indextts25.ready,
+        "tts_provider": "official IndexTTS-2.5 (local GPU)",
+        "tts_voice_id": indextts25.default_voice,
         "tts_autostart": False,
         "tts_api_base_url": None,
-        "tts_device": indextts2.device,
-        "tts_missing": indextts2.missing_resources(),
+        "tts_device": indextts25.device,
+        "tts_missing": indextts25.missing_resources(),
+        "tts25_online": indextts25.ready,
+        "tts25_provider": "official IndexTTS-2.5 (local GPU)",
+        "tts25_voice_id": indextts25.default_voice,
+        "tts25_device": indextts25.device,
+        "tts25_missing": indextts25.missing_resources(),
         "cloud": {
             "configured": cloud.configured,
             "base_url": cloud.base_url,
@@ -395,19 +407,19 @@ def health() -> dict[str, Any]:
 @app.post("/api/tts/start")
 def start_tts(request: Request) -> dict[str, Any]:
     require_user(request)
-    indextts2 = load_indextts2_config()
-    if indextts2.ready:
+    indextts25 = load_indextts25_config()
+    if indextts25.ready:
         return {
             "online": True,
             "launching": False,
             "started": False,
-            "message": f"官方 IndexTTS2 已就绪（{indextts2.device}）",
+            "message": f"官方 IndexTTS-2.5 已就绪（{indextts25.device}）",
         }
     return {
         "online": False,
         "launching": False,
         "started": False,
-        "message": "官方 IndexTTS2 未就绪：" + "、".join(indextts2.missing_resources()),
+        "message": "官方 IndexTTS-2.5 未就绪：" + "、".join(indextts25.missing_resources()),
     }
 
 
@@ -698,7 +710,7 @@ def logout(response: Response) -> dict[str, bool]:
 
 @app.get("/api/settings")
 def settings() -> dict[str, Any]:
-    indextts2 = load_indextts2_config()
+    indextts25 = load_indextts25_config()
     last_visual_prompt = ""
     for job in store.list_recent():
         candidate = str(job.get("request", {}).get("visual_prompt_system") or "").strip()
@@ -708,11 +720,11 @@ def settings() -> dict[str, Any]:
     return {
         "scripts": list_files(["*.txt"]),
         "tts": {
-            "model": "official IndexTTS2 2.0.0 · local FP16",
-            "voices": list(indextts2.available_voices()),
+            "model": "official IndexTTS-2.5 · local BF16",
+            "voices": list(indextts25.available_voices()),
             "emotions": list(EMOTIONS),
             "defaults": {
-                "voice_id": indextts2.default_voice,
+                "voice_id": indextts25.default_voice,
                 "speed": 1,
                 "volume": 1,
                 "pitch": 0,
@@ -1025,8 +1037,9 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         add("project", "任务参数", "error", "请填写项目名称")
     if len(script) > MAX_SCRIPT_CHARACTERS:
         add("script_limit", "文案长度", "error", f"文案超过单次上限 {MAX_SCRIPT_CHARACTERS:,} 字")
-    elif not data.get("skip_tts") and len(script) < 5:
-        add("script_limit", "文案长度", "error", "需要配音时，请至少输入 5 个字")
+    elif not data.get("skip_tts") and len(script) < (1 if data.get("module1_only") else 5):
+        minimum = 1 if data.get("module1_only") else 5
+        add("script_limit", "文案长度", "error", f"需要配音时，请至少输入 {minimum} 个字")
     else:
         add("script_limit", "文案长度", "passed", "文案长度处于安全范围")
 
@@ -1037,7 +1050,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             add("source_audio", "已有配音", "passed", f"已找到上传媒体：{source.name}")
         except (FileNotFoundError, ValueError) as exc:
             add("source_audio", "已有配音", "error", str(exc))
-    elif str(data.get("tts_engine") or "indextts2") == "cluster":
+    elif str(data.get("tts_engine") or "indextts25") == "cluster":
         client = cloud_client_for(int(user["id"]))
         cloud_state = client.session_snapshot()
         if not cloud_state.get("configured"):
@@ -1071,22 +1084,23 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         )
             except (CloudApiError, ValueError) as exc:
                 add("tts", "集群 GPU", "error", str(exc))
-    elif str(data.get("tts_engine") or "indextts2") == "qwen":
+    elif str(data.get("tts_engine") or "indextts25") == "qwen":
         if _api_key_status()["qwen_tts"]["configured"]:
             add("tts", "Qwen-TTS", "passed", "DashScope API Key 已配置；实际额度将在合成时由服务端确认")
         else:
             add("tts", "Qwen-TTS", "error", "尚未配置 DashScope API Key")
     else:
-        config = load_indextts2_config()
+        config = load_indextts25_config()
+        engine_label = "IndexTTS-2.5"
         if not config.ready:
             missing = "、".join(config.missing_resources()) or "运行资源不完整"
-            add("tts", "IndexTTS2", "error", f"本地 TTS 未就绪：{missing}")
+            add("tts", engine_label, "error", f"本地 TTS 未就绪：{missing}")
         else:
             try:
                 voice = resolve_voice_reference(config, data.get("tts_voice_id"), user_id=int(user["id"]))
-                add("tts", "IndexTTS2", "passed", f"本地模型和参考音色已就绪：{voice.name}")
+                add("tts", engine_label, "passed", f"本地模型和参考音色已就绪：{voice.name}")
             except (FileNotFoundError, ValueError) as exc:
-                add("tts", "IndexTTS2", "error", str(exc))
+                add("tts", engine_label, "error", str(exc))
         try:
             gpu = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name,memory.free,memory.total", "--format=csv,noheader,nounits"],
@@ -1098,7 +1112,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                 status = "warning" if int(data.get("tts_parallelism") or 1) > 1 and free_mb < 9000 else "passed"
                 add("gpu", "GPU 显存", status, f"{first[0]}，当前可用 {free_mb / 1024:.1f} GB；并行数 {data.get('tts_parallelism', 2)}")
             else:
-                add("gpu", "GPU 显存", "warning", "无法读取 NVIDIA 显存；IndexTTS2 仍可尝试启动")
+                add("gpu", "GPU 显存", "warning", f"无法读取 NVIDIA 显存；{engine_label} 仍可尝试启动")
         except (OSError, subprocess.SubprocessError, ValueError):
             add("gpu", "GPU 显存", "warning", "未找到 nvidia-smi，无法提前评估显存")
 
@@ -1576,6 +1590,8 @@ def save_agent_prompt_preset(payload: AgentPromptPresetRequest, request: Request
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
+    if data.get("tts_engine") == "indextts2":
+        data["tts_engine"] = "indextts25"
     script_length = len(str(data.get("script") or ""))
     if script_length > MAX_SCRIPT_CHARACTERS:
         raise HTTPException(
@@ -1653,12 +1669,22 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=400, detail="请先上传已有配音")
         if not script:
             data["skip_text_correction"] = True
-    elif len(script) < 5:
-        raise HTTPException(status_code=400, detail="请输入至少 5 个字的口播文案")
+    elif len(script) < (1 if data.get("module1_only") else 5):
+        minimum = 1 if data.get("module1_only") else 5
+        raise HTTPException(status_code=400, detail=f"请输入至少 {minimum} 个字的口播文案")
     elif data.get("tts_engine") == "qwen" and not os.getenv("DASHSCOPE_API_KEY", "").strip():
         raise HTTPException(status_code=400, detail="Qwen-TTS 尚未配置 API Key，请先在语音参数中保存 DASHSCOPE_API_KEY")
     elif data.get("tts_engine") == "qwen" and str(data.get("qwen_tts_instructions") or "").strip() and not voice_supports_instructions(str(data.get("qwen_tts_voice") or "")):
         raise HTTPException(status_code=400, detail="所选 Qwen 系统音色仅支持基础合成；请清空配音描述，或改选支持配音描述的音色")
+    elif data.get("tts_engine") == "indextts25":
+        config = load_indextts25_config()
+        if not config.ready:
+            missing = "、".join(config.missing_resources()) or "运行资源不完整"
+            raise HTTPException(status_code=503, detail=f"IndexTTS-2.5 本地环境未就绪：{missing}")
+        try:
+            resolve_voice_reference(config, data.get("tts_voice_id"), user_id=int(user["id"]))
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     elif data.get("tts_engine") == "cluster":
         if data.get("skip_text_correction"):
             raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")

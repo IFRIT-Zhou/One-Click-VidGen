@@ -1,9 +1,9 @@
 {
-  "release_id": "2026.08.16.2",
-  "release_order": 2026081602,
-  "display_version": "2026.08.16 云端计费与渲染修正版",
+  "release_id": "2026.08.18.1",
+  "release_order": 2026081801,
+  "display_version": "2026.08.18 IndexTTS-2.5 正式升级版",
   "branch": "main",
-  "portable_overlay_safe": true,
+  "portable_overlay_safe": false,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "更新云端 TTS 计费规则（每 200 字 0.2 积分），文生图按 RunningHub 实际成本上浮 5% 结算；恢复云端出图任务全量入队，并修复 FFmpeg 与浏览器在便携版及源码部署中的路径兼容问题。"
+  "notes": "本地配音引擎由 IndexTTS2 2.0 正式升级为 IndexTTS-2.5，新增配音断句 Agent 与 110 token 安全保护，并同步字幕识别、分镜 Agent 和便携环境检查改进。由于包含新模型权重与依赖，旧便携版不允许直接覆盖，请下载新的完整便携包。"
 }

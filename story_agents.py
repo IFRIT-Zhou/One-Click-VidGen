@@ -36,7 +36,7 @@ CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 10
+STORY_AGENT_VERSION = 11
 CHARACTER_CONTINUITY_VERSION = 4
 STORY_CONTEXT_VERSION = 4
 
@@ -505,10 +505,16 @@ SEMANTIC_UNIT_RULES = """
 
 【语义镜头单元（必须输出）】
 额外输出 semantic_units 数组。它是 Agent 1 为后续画面分组提供的连续叙事单元，而不是逐图提示词。
-每项仅包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
+每项仅包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_mode、setting_hint、novelty_anchor、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有单元必须严格按原文顺序首尾相接，完整覆盖每一个输入 slide_id，不能遗漏、重叠或倒序。
 把同一动作、同一环境建立镜头、同一段对话或同一件事的连续描述放在同一单元；
 不要因为一个长句中的分号、列举物件或修饰语就切开。只有事件、人物、地点、时间或叙事焦点明显变化时才新建单元。
+visual_mode 只能是 literal_scene、illustrative_broll、symbolic：正在发生的动作使用 literal_scene；
+旁白明确提到的原因、经历、日常负担、未来设想或社会处境，优先用 illustrative_broll 转成可见场景；
+无法安全具象化的抽象结论才使用 symbolic。illustrative_broll 是说明性画面，不等于宣称它正在主时间线发生。
+setting_hint 必须写当前画面最合适的一个具体地点；novelty_anchor 写相较前后画面新增的动作、物件或空间信息。
+连续单元不得仅靠更换景别、机位或表情制造变化。同一地点加同一道具最多连续使用两次；第三次必须改用原文支持的
+具体行动、环境、物件特写、说明性 B-roll 或象征画面，除非三段确实描述同一个不可中断的动作。
 visual_pacing 只能是 hold、normal、fast。单元应尽量精炼，最多 96 项。
 """
 
@@ -571,6 +577,9 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
                 "end_slide_id": str(scene.get("slide_id") or ""),
                 "purpose": "连续叙事单元",
                 "visual_focus": "依据原文保持同一事件完整呈现",
+                "visual_mode": "literal_scene",
+                "setting_hint": "依据原文当前地点",
+                "novelty_anchor": "当前单元新增的动作或信息",
                 "visual_pacing": "normal",
                 "boundary_after": "hard",
                 "device_shot_mode": device_mode,
@@ -587,6 +596,9 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
             "end_slide_id": str(scenes[-1].get("slide_id") or ""),
             "purpose": "连续叙事单元",
             "visual_focus": "依据原文保持同一事件完整呈现",
+            "visual_mode": "literal_scene",
+            "setting_hint": "依据原文当前地点",
+            "novelty_anchor": "当前单元新增的动作或信息",
             "visual_pacing": "normal",
             "boundary_after": "hard",
             "device_shot_mode": device_mode,
@@ -616,6 +628,9 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             return []
         pacing = str(unit.get("visual_pacing") or "normal").strip().lower()
         boundary_after = str(unit.get("boundary_after") or "hard").strip().lower()
+        visual_mode = str(unit.get("visual_mode") or "literal_scene").strip().lower()
+        if visual_mode not in {"literal_scene", "illustrative_broll", "symbolic"}:
+            visual_mode = "literal_scene"
         device_mode = str(unit.get("device_shot_mode") or "none").strip().lower()
         if device_mode not in {"none", "device_interaction", "screen_insert"}:
             device_mode = "none"
@@ -628,6 +643,9 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             "end_slide_id": end_id,
             "purpose": str(unit.get("purpose") or "连续叙事单元").strip()[:160],
             "visual_focus": str(unit.get("visual_focus") or "依据原文呈现").strip()[:240],
+            "visual_mode": visual_mode,
+            "setting_hint": str(unit.get("setting_hint") or "依据原文当前地点").strip()[:120],
+            "novelty_anchor": str(unit.get("novelty_anchor") or "当前单元新增的视觉信息").strip()[:160],
             "visual_pacing": pacing if pacing in {"hold", "normal", "fast"} else "normal",
             "boundary_after": boundary_after if boundary_after in {"hard", "soft"} else "hard",
             "character_ids": _string_list(unit.get("character_ids"), limit=10),
@@ -908,10 +926,18 @@ TIMELINE_AGENT_SYSTEM_PROMPT = """你是视频流水线的 Agent 1：时间轴�
 Agent 0 已经完成全文理解、人物与世界观资料整理；你不需要重新总结全文、创建人物档案或改写世界观。
 你的唯一任务是根据每条字幕的 slide_id、start、end、text，以及 Agent 0 资料，划分连续的具体画面事件。
 只输出严格 JSON 对象：{\"story_beats\":[...],\"semantic_units\":[...]}，不要 Markdown。
-    semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
+    semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_mode、setting_hint、novelty_anchor、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有 semantic_units 必须按顺序完整覆盖全部 slide_id，不能遗漏、重叠、倒序或跳过。
 一个单元等于一个具体画面事件，不是章节、观点大类或整段口播：同一动作、同一环境建立镜头、同一段连续论证可保持在一起；
 结论收束、话题转折、互动引导、人物/地点/时间改变、镜头关注对象改变时必须新起单元。
+不要把整段观点口播机械地留在开场谈话地点。原文明确提到通勤、工作、家务、照料、医疗、住房、消费、教育、
+过去经历或未来担忧时，应把对应单元规划为有来源依据的说明性 B-roll，让画面直接呈现该项现实压力。
+visual_mode=literal_scene 表示主时间线正在发生；illustrative_broll 表示原文支持的经历、原因、日常状态或假设性未来画面；
+symbolic 仅用于无法安全具象化的抽象结论。说明性 B-roll 不得被描述为主时间线已经发生的事实。
+setting_hint 写一个具体地点，novelty_anchor 写本单元独有的动作、物件或空间信息。相邻单元仅更换人物表情、机位、景别
+不算新画面；同一地点和同一核心道具不得连续出现超过两单元，除非原文确实持续描述同一不可中断动作。
+不得为了多样性编造原文没有的病名、事故、人物关系或确定结果；医疗支出可表现陪诊、病房外等候或通用医疗环境，
+但不能擅自增加手术、呼吸机、危重诊断。未来家务与育儿负担应明确作为设想画面，而非既成事实。
 必须参考 start/end 的实际时长：通常以约 8-16 秒为宜；超过约 18 秒时，除非确实是同一个连续事件，否则应在自然语义边界拆开。
 boundary_after 只能是 hard 或 soft：人物、地点、时间、事件、结论或话题明确切换时必须为 hard，后续程序绝不会跨过去合并画面；只有可有可无的补充、语气承接或画面主体不变的短过渡才可为 soft。
 例如“很难靠它翻身”与其后的“省流结束/点赞引导”是两个单元，且前者 boundary_after 必须是 hard。visual_pacing 只能是 hold、normal、fast。

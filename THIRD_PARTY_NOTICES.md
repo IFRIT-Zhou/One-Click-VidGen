@@ -19,7 +19,7 @@ One-Click VidGen 自研代码使用 `AGPL-3.0-only`。项目依赖的第三方�
 | Faster-Whisper | https://github.com/SYSTRAN/faster-whisper | 依上游许可证 |
 | CTranslate2 | https://github.com/OpenNMT/CTranslate2 | 依上游许可证 |
 | Transformers | https://github.com/huggingface/transformers | 依上游许可证 |
-| IndexTTS / IndexTTS2 | https://github.com/index-tts/index-tts | 代码与模型权重分别依上游条款 |
+| IndexTTS / IndexTTS-2.5 | https://github.com/index-tts/index-tts | 代码与模型权重分别依上游条款 |
 | FFmpeg | https://ffmpeg.org/legal.html | 具体为 LGPL/GPL 取决于构建配置 |
 
 其余 Python 和 Node.js 依赖分别遵守各自发布包内的许可证。再分发二进制整合包时，
@@ -27,7 +27,7 @@ One-Click VidGen 自研代码使用 `AGPL-3.0-only`。项目依赖的第三方�
 
 ## 模型权重、字体和媒体
 
-- IndexTTS2、Whisper 或其他模型权重不由本项目重新授权；模型权重是否允许下载、
+- IndexTTS-2.5、Whisper 或其他模型权重不由本项目重新授权；模型权重是否允许下载、
   再分发和商业使用，以对应模型发布页的条款为准。
 - 用户自行添加的字体、音色、图片、音乐和视频不属于 OCV 项目内容，用户应自行确认
   拥有必要权利。

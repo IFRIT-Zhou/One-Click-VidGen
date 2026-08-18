@@ -41,8 +41,8 @@ def is_excluded(relative: Path) -> bool:
     if parts[:2] == ("launcher", "ui-preview.png"):
         return True
     return parts[:3] in {
-        ("tools", "IndexTTS2", "outputs"),
-        ("tools", "IndexTTS2", "archive"),
+        ("tools", "IndexTTS25", "outputs"),
+        ("tools", "IndexTTS25", "archive"),
     }
 
 

@@ -4,6 +4,7 @@ from module2_5_text_corrector import (
     clean_alignment_text,
     correct_scene_texts_to_original,
     split_corrected_scenes,
+    split_subtitle_text,
 )
 
 
@@ -17,7 +18,7 @@ class SubtitleSplitTest(unittest.TestCase):
         result = split_corrected_scenes(scenes, [text], max_chars=24)
 
         self.assertGreater(len(result), 1)
-        self.assertTrue(all(len(item["text_content"]) <= 24 for item in result))
+        self.assertTrue(all(len(item["text_content"]) <= 28 for item in result))
         self.assertEqual(result[0]["start"], 10.0)
         self.assertEqual(result[-1]["end"], 26.36)
         for previous, current in zip(result, result[1:]):
@@ -36,6 +37,53 @@ class SubtitleSplitTest(unittest.TestCase):
         self.assertEqual(clean_alignment_text("".join(corrected)), clean_alignment_text(original))
         self.assertIn("钟楼的轮廓在雾中若隐若现", "".join(corrected))
         self.assertTrue(corrected[1].startswith("钟楼的轮廓在雾"))
+
+    def test_recombines_asr_boundary_that_split_a_name(self) -> None:
+        scenes = [
+            {"start": 0.0, "end": 1.0, "text_content": "晚上十点，周"},
+            {"start": 1.0, "end": 4.0, "text_content": "屿和许宁坐在出租屋的餐桌旁。"},
+        ]
+        corrected = ["晚上十点，周", "屿和许宁坐在出租屋的餐桌旁。"]
+        result = split_corrected_scenes(scenes, corrected, max_chars=24)
+
+        self.assertEqual([item["text_content"] for item in result], ["晚上十点，周屿和许宁坐在出租屋的餐桌旁。"])
+        self.assertEqual(result[0]["start"], 0.0)
+        self.assertEqual(result[-1]["end"], 4.0)
+
+    def test_comma_is_candidate_but_enumeration_comma_is_not(self) -> None:
+        text = "关系需要讨论家务、职业机会、父母照料和经济风险，也需要讨论一个人的未来为什么总要依靠另一个人的牺牲。"
+        chunks = split_subtitle_text(text, max_chars=24)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(any(chunk.endswith("，") for chunk in chunks[:-1]))
+        self.assertTrue(all(not chunk.endswith("、") for chunk in chunks[:-1]))
+        self.assertTrue(all(not chunk.startswith("、") for chunk in chunks[1:]))
+
+    def test_wrappers_do_not_create_dangling_quote_or_title_mark(self) -> None:
+        text = "成熟的爱情不是一句“只要相爱就够了”，而是愿意把《共同生活》里的期待变成清楚的协商。"
+        chunks = split_subtitle_text(text, max_chars=24)
+
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(all(not chunk.endswith(("“", "‘", "<", "《")) for chunk in chunks))
+        self.assertTrue(all(not chunk.startswith(("”", "’", ">", "》")) for chunk in chunks))
+
+    def test_long_enumeration_prefers_result_clause_over_splitting_a_word(self) -> None:
+        text = "更多时候，两个人明明还在乎彼此，却被房租、工作、父母、未来和日复一日的疲惫推到了桌子的两端。"
+        chunks = split_subtitle_text(text, max_chars=24)
+
+        self.assertEqual("".join(chunks), text)
+        self.assertIn("推到了桌子的两端。", chunks)
+        self.assertTrue(all(not chunk.endswith("工") for chunk in chunks))
+        self.assertTrue(all(not chunk.startswith("作、") for chunk in chunks))
+
+    def test_long_unpunctuated_text_uses_rare_fallback_without_losing_text(self) -> None:
+        text = "这是一段刻意没有任何标点而且长度明显超过正常字幕显示范围用于验证最终安全兜底仍然能够完整覆盖全部原始文字的测试内容"
+        chunks = split_subtitle_text(text, max_chars=24)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(all(len(chunk) <= 28 for chunk in chunks))
 
 
 if __name__ == "__main__":

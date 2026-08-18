@@ -182,7 +182,7 @@ class TtsEditor:
         manifest = {
             "schema_version": 1,
             "migrated_from_module1_srt": True,
-            "engine": request.get("tts_engine") or "indextts2",
+            "engine": "indextts25" if request.get("tts_engine") == "indextts2" else (request.get("tts_engine") or "indextts25"),
             "tts_voice_id": request.get("tts_voice_id") or "voice_05.wav",
             "tts_speed": request.get("tts_speed") or 1,
             "tts_volume": request.get("tts_volume") or 1,
@@ -228,7 +228,7 @@ class TtsEditor:
         return {
             "available": bool(items),
             "message": "可选择一条或多条重新配音；完成后请重新渲染视频。" if items else "逐句音频文件不完整",
-            "engine": manifest.get("engine") or "indextts2",
+            "engine": "indextts25" if manifest.get("engine") == "indextts2" else (manifest.get("engine") or "indextts25"),
             "segments": items,
             "task": self.status(job_id),
         }
@@ -318,7 +318,10 @@ class TtsEditor:
         script_path = work_dir / "selected.txt"
         script_path.write_text("\n".join(str(by_index[index].get("text") or "") for index in indices), encoding="utf-8")
 
-        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts2")
+        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts25")
+        if engine == "indextts2":
+            engine = "indextts25"
+            manifest["engine"] = engine
         store.log(job, f"开始单句重配：第 {', '.join(map(str, indices))} 句（{engine}）")
         if engine == "cluster":
             from .cloud_client import cloud_client_for

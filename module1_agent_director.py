@@ -16,12 +16,16 @@ import wave
 from collections.abc import Callable
 from pathlib import Path
 
-from backend.app.indextts2_local import (
+from backend.app.indextts25_local import (
     emotion_vector_text,
-    load_indextts2_config,
+    load_indextts25_config,
     resolve_voice_reference,
 )
 from backend.app.qwen_tts import QwenTtsError, detect_language_type, synthesize_to_file
+from backend.app.tts_segmentation import (
+    INDEXTTS25_SEGMENT_MAX_TOKENS,
+    segment_indextts25_text,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -50,21 +54,25 @@ PRODUCTION_NOTE_PATTERN = re.compile(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Module1 Agent Director - official IndexTTS2 batch synthesis"
+        description="Module1 Agent Director - official IndexTTS-2.5 batch synthesis"
     )
     parser.add_argument(
         "--text", required=True, help="口播文案 txt 文件路径（绝对或相对路径）"
     )
     parser.add_argument("--job-id", help="关联的生成任务 ID")
     parser.add_argument("--user-id", type=int, help="关联的用户 ID")
-    parser.add_argument("--tts-voice-id", help="官方 IndexTTS2 参考音频 ID")
+    parser.add_argument("--tts-voice-id", help="官方 IndexTTS-2.5 参考音频 ID")
     parser.add_argument("--tts-voice-path", help="重配音时使用的已归档参考音频绝对路径")
     parser.add_argument("--tts-speed", type=float, default=1.0, help="输出语速（0.5-2）")
     parser.add_argument("--tts-volume", type=float, default=1.0, help="输出音量（0.1-10）")
     parser.add_argument("--tts-pitch", type=int, default=0, help="输出音调（-12 到 12）")
-    parser.add_argument("--tts-parallelism", type=int, default=2, help="IndexTTS2 并行进程数，建议 1-3")
-    parser.add_argument("--tts-emotion", help="IndexTTS2 八维情绪之一")
-    parser.add_argument("--tts-engine", choices=("indextts2", "qwen"), default="indextts2")
+    parser.add_argument("--tts-parallelism", type=int, default=2, help="IndexTTS-2.5 并行进程数，建议 1-3")
+    parser.add_argument("--tts-emotion", help="IndexTTS-2.5 八维情绪之一")
+    parser.add_argument(
+        "--tts-engine",
+        choices=("indextts25", "qwen"),
+        default="indextts25",
+    )
     parser.add_argument("--qwen-instructions", default="", help="Qwen3-TTS-Instruct-Flash 配音描述")
     parser.add_argument("--qwen-voice", default="Elias", help="Qwen-TTS 系统音色")
     parser.add_argument(
@@ -77,7 +85,7 @@ def parse_args():
     parser.add_argument(
         "--tts-english-normalization",
         choices=("true", "false"),
-        help="兼容旧请求；IndexTTS2 原生处理中英文文本",
+        help="兼容旧请求；IndexTTS-2.5 原生处理中英文文本",
     )
     parser.add_argument("--chunks-json", help="跳过自动断句，按 JSON 数组中的文本逐句合成")
     parser.add_argument("--output-dir", help="覆盖合并音频与字幕的输出目录")
@@ -211,7 +219,7 @@ def _merge_short_chunks(
     return chunks
 
 
-def split_indextts2_text(
+def split_cluster_tts_text(
     raw: str,
     *,
     min_len: int = CHUNK_MIN_LEN,
@@ -219,7 +227,7 @@ def split_indextts2_text(
     soft_max_len: int = CHUNK_SOFT_MAX_LEN,
     hard_max_len: int = CHUNK_MAX_LEN,
 ) -> list[str]:
-    """Prosody-aware IndexTTS2 chunks with strong sentence boundaries."""
+    """Prosody-aware chunks retained for the remote cluster protocol."""
     cleaned = clean_text(raw)
     # Treat line breaks as paragraph boundaries, but preserve meaningful spaces
     # inside English/mixed-language narration.  Collapsing all whitespace here
@@ -261,21 +269,38 @@ def split_indextts2_text(
 
     expected = "".join(paragraphs)
     if "".join(all_chunks) != expected:
-        raise RuntimeError("IndexTTS2 语义断句完整性检查失败：断句结果未能完整覆盖文案")
+        raise RuntimeError("集群配音断句完整性检查失败：断句结果未能完整覆盖文案")
     if any(len(chunk) > hard_max_len for chunk in all_chunks):
-        raise RuntimeError("IndexTTS2 语义断句失败：仍存在超过绝对上限的片段")
+        raise RuntimeError("集群配音断句失败：仍存在超过绝对上限的片段")
     return all_chunks
 
 
-def step1_indextts2_semantic_slicing(text_path: Path) -> list[str]:
-    print("[Step 1] Prosody-aware semantic chunk slicing...", flush=True)
-    chunks = split_indextts2_text(text_path.read_text(encoding="utf-8"))
+def step1_indextts25_voice_agent_slicing(text_path: Path) -> list[str]:
+    """Use the 2.5-only voice segmentation Agent with a Python hard guard."""
+    print("[Step 1] IndexTTS-2.5 配音断句 Agent...", flush=True)
+    text = clean_text(text_path.read_text(encoding="utf-8")).strip()
+    if not text:
+        raise ValueError("IndexTTS-2.5 配音文案为空")
+    chunks, source, total_tokens = segment_indextts25_text(text)
+    source_label = {
+        "short_text": "110 token 内，跳过 Agent",
+        "voice_segmentation_agent": "配音断句 Agent",
+        "python_fallback": "本地 Python 安全兜底",
+    }.get(source, source)
     print(
-        f"  -> Produced {len(chunks)} chunks "
-        f"(target {CHUNK_MIN_LEN}-{CHUNK_SOFT_MAX_LEN}, hard max {CHUNK_MAX_LEN}, no batch cap)",
+        f"  -> 原文 {total_tokens} token，生成 {len(chunks)} 个配音段落；"
+        f"来源：{source_label}；绝对上限 {INDEXTTS25_SEGMENT_MAX_TOKENS} token",
         flush=True,
     )
+    for index, chunk in enumerate(chunks, 1):
+        preview = re.sub(r"\s+", " ", chunk).strip()
+        print(f"  -> 第 {index} 段：{preview[:42]}{'…' if len(preview) > 42 else ''}", flush=True)
     return chunks
+
+
+def step1_indextts25_raw_input(text_path: Path) -> list[str]:
+    """Backward-compatible alias retained for older callers and tests."""
+    return step1_indextts25_voice_agent_slicing(text_path)
 
 
 def step1_dynamic_chunk_slicing(
@@ -301,7 +326,7 @@ def step1_dynamic_chunk_slicing(
             if buffer.strip():
                 chunks.append(buffer)
             if max_len == CHUNK_MAX_LEN:
-                # Preserve the legacy IndexTTS2 behavior exactly.
+                # Preserve the established character-count fallback behavior.
                 buffer = segment
             else:
                 # A punctuation-free paragraph can still exceed the Qwen safe limit.
@@ -420,8 +445,8 @@ def _run_and_stream(
         ]
         if useful_tail:
             prefix = f"[{label}] " if label else ""
-            print(prefix + "IndexTTS2 错误摘要：" + " | ".join(useful_tail[-4:])[:800], flush=True)
-        raise RuntimeError(f"官方 IndexTTS2 批处理退出码: {return_code}")
+            print(prefix + "IndexTTS-2.5 错误摘要：" + " | ".join(useful_tail[-4:])[:800], flush=True)
+        raise RuntimeError(f"官方 IndexTTS-2.5 批处理退出码: {return_code}")
 
 
 def _watch_generated_wavs(
@@ -481,7 +506,7 @@ def _write_manifest(path: Path, chunks: list[str]) -> None:
     )
 
 
-def _build_indextts2_command(
+def _build_indextts25_command(
     config,
     *,
     manifest: Path,
@@ -489,17 +514,15 @@ def _build_indextts2_command(
     output_prefix: str,
     voice_path: Path,
     emotion_vector: str | None,
+    speed: float = 1.0,
 ) -> list[str]:
+    duration_factor = 1.0 / min(2.0, max(0.5, float(speed)))
     command = [
         str(config.python),
         "-I",
-        "-m",
-        "indextts.cli_v2",
-        "batch",
+        str(PROJECT_ROOT / "backend" / "app" / "indextts25_runner.py"),
         "--batch-file",
         str(manifest),
-        "--model-dir",
-        str(config.model_dir),
         "--output-dir",
         str(output_dir),
         "--output-prefix",
@@ -508,12 +531,13 @@ def _build_indextts2_command(
         str(voice_path),
         "--device",
         config.device,
-        "--fp16" if config.use_fp16 else "--no-fp16",
-        "--no-deepspeed",
-        "--no-cuda-kernel",
-        "--no-accel",
-        "--no-torch-compile",
-        "--force",
+        "--lang",
+        config.language,
+        "--duration-factor",
+        f"{duration_factor:.8f}",
+        "--bf16" if config.use_bf16 else "--no-bf16",
+        "--accel" if config.use_accel else "--no-accel",
+        "--torch-compile" if config.use_torch_compile else "--no-torch-compile",
     ]
     if emotion_vector:
         command.extend(
@@ -580,11 +604,11 @@ def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int
     os.replace(adjusted, path)
 
 
-def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str]]:
-    config = load_indextts2_config()
+def step2_indextts25_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str]]:
+    config = load_indextts25_config()
     missing = config.missing_resources()
     if missing:
-        raise RuntimeError("官方 IndexTTS2 未就绪: " + ", ".join(missing))
+        raise RuntimeError("官方 IndexTTS-2.5 未就绪: " + ", ".join(missing))
     if not chunks:
         raise RuntimeError("清洗和断句后没有可合成的文案")
 
@@ -607,6 +631,7 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
     parallelism = min(parallelism, len(chunks))
     print(
         f"[TTS] 开始配音：共 {len(chunks)} 句，并行数 {parallelism}，"
+        "引擎 IndexTTS-2.5，"
         f"音色 {voice_path.name}，设备 {config.device}",
         flush=True,
     )
@@ -686,7 +711,7 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
             print(
                 f"[TTS_HEARTBEAT] 正在生成：已完成 {completed}/{len(chunks)} 句，"
                 f"并行 {parallelism}，已运行 {minutes}分{seconds:02d}秒；"
-                "IndexTTS2 正在进行 GPU 推理，请耐心等待下一句完成。",
+                "IndexTTS-2.5 正在进行 GPU 推理，请耐心等待下一句完成。",
                 flush=True,
             )
 
@@ -695,15 +720,16 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
 
     try:
         if parallelism == 1:
-            manifest = TEMP_DIR / "indextts2_batch.jsonl"
+            manifest = TEMP_DIR / "indextts25_batch.jsonl"
             _write_manifest(manifest, chunks)
-            command = _build_indextts2_command(
+            command = _build_indextts25_command(
                 config,
                 manifest=manifest,
                 output_dir=TEMP_DIR,
                 output_prefix="chunk",
                 voice_path=voice_path,
                 emotion_vector=emotion_vector,
+                speed=args.tts_speed,
             )
             single_items = list(enumerate(chunks))
             wav_paths = [TEMP_DIR / f"chunk-{index:04d}.wav" for index in range(1, len(chunks) + 1)]
@@ -719,16 +745,17 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
                 worker_id = worker_index + 1
                 worker_dir = TEMP_DIR / f"worker_{worker_id}"
                 ensure_dir(worker_dir)
-                manifest = worker_dir / "indextts2_batch.jsonl"
+                manifest = worker_dir / "indextts25_batch.jsonl"
                 _write_manifest(manifest, [chunk for _, chunk in items])
                 output_prefix = f"chunk-w{worker_id}"
-                command = _build_indextts2_command(
+                command = _build_indextts25_command(
                     config,
                     manifest=manifest,
                     output_dir=worker_dir,
                     output_prefix=output_prefix,
                     voice_path=voice_path,
                     emotion_vector=emotion_vector,
+                    speed=args.tts_speed,
                 )
                 worker_outputs = [
                     (original_index, worker_dir / f"{output_prefix}-{local_index:04d}.wav")
@@ -756,14 +783,14 @@ def step2_indextts2_synthesize(chunks: list[str], args) -> tuple[list[Path], lis
         heartbeat_thread.join(timeout=1)
     missing_outputs = [path.name for path in wav_paths if not path.is_file()]
     if missing_outputs:
-        raise RuntimeError("IndexTTS2 未生成完整批次: " + ", ".join(missing_outputs[:10]))
+        raise RuntimeError("IndexTTS-2.5 未生成完整批次: " + ", ".join(missing_outputs[:10]))
 
     current_time = 0.0
     srt_entries: list[str] = []
     for index, (chunk, wav_path) in enumerate(zip(chunks, wav_paths), 1):
         _apply_audio_controls(
             wav_path,
-            speed=args.tts_speed,
+            speed=1.0,
             volume=args.tts_volume,
             pitch=args.tts_pitch,
         )
@@ -916,7 +943,7 @@ def export_tts_segments(
         current_time += duration
     manifest = {
         "schema_version": 1,
-        "engine": str(getattr(args, "tts_engine", "indextts2") or "indextts2"),
+        "engine": str(getattr(args, "tts_engine", "indextts25") or "indextts25"),
         "tts_voice_id": str(getattr(args, "tts_voice_id", "") or ""),
         "tts_speed": float(getattr(args, "tts_speed", 1) or 1),
         "tts_volume": float(getattr(args, "tts_volume", 1) or 1),
@@ -986,7 +1013,10 @@ def main() -> None:
         sys.exit(f"【路径错误】找不到文件：{text_path}")
 
     print("=" * 60, flush=True)
-    engine_label = "Qwen-TTS Cloud Pipeline" if args.tts_engine == "qwen" else "Official IndexTTS2 Pipeline"
+    engine_label = {
+        "qwen": "Qwen-TTS Cloud Pipeline",
+        "indextts25": "Official IndexTTS-2.5 Pipeline",
+    }.get(args.tts_engine, "Official IndexTTS-2.5 Pipeline")
     print(f"Module 1 -- {engine_label} Start", flush=True)
     print("=" * 60, flush=True)
     print(f"  文案路径: {text_path}", flush=True)
@@ -1011,12 +1041,14 @@ def main() -> None:
                 max_len=QWEN_CHUNK_MAX_LEN,
                 measure=lambda value: len(value.encode("utf-8")),
             )
+        elif args.tts_engine == "indextts25":
+            chunks = step1_indextts25_voice_agent_slicing(text_path)
         else:
-            chunks = step1_indextts2_semantic_slicing(text_path)
+            raise ValueError(f"不支持的配音引擎: {args.tts_engine}")
         if args.tts_engine == "qwen":
             wav_paths, srt_entries = step2_qwen_synthesize(chunks, args)
         else:
-            wav_paths, srt_entries = step2_indextts2_synthesize(chunks, args)
+            wav_paths, srt_entries = step2_indextts25_synthesize(chunks, args)
         step3_finalize(wav_paths, srt_entries, chunks, args)
     except Exception as exc:
         clear_temp_chunks()

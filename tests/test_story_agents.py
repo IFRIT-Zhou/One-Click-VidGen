@@ -279,6 +279,31 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertEqual(payload["subtitle_timeline"][0]["end"], 5.0)
         self.assertEqual(plan["semantic_units"][1]["start_slide_id"], "scene_003")
 
+    def test_agent1_preserves_structured_broll_direction(self) -> None:
+        scenes = sample_scenes()[:1]
+        raw_units = [{
+            "unit_id": "u1",
+            "start_slide_id": "scene_001",
+            "end_slide_id": "scene_001",
+            "purpose": "说明通勤压力",
+            "visual_focus": "女主在早高峰车厢中站立",
+            "visual_mode": "illustrative_broll",
+            "setting_hint": "早高峰地铁车厢",
+            "novelty_anchor": "拥挤车厢与通勤包",
+            "visual_pacing": "normal",
+            "boundary_after": "hard",
+            "character_ids": ["wife"],
+        }]
+        normalized = story_agents._normalize_semantic_units(raw_units, scenes)
+
+        self.assertEqual(normalized[0]["visual_mode"], "illustrative_broll")
+        self.assertEqual(normalized[0]["setting_hint"], "早高峰地铁车厢")
+        self.assertEqual(normalized[0]["novelty_anchor"], "拥挤车厢与通勤包")
+        self.assertIn(
+            "同一地点和同一核心道具不得连续出现超过两单元",
+            story_agents.TIMELINE_AGENT_SYSTEM_PROMPT,
+        )
+
     def test_agent1_device_modes_are_normalized_and_screen_insert_hides_people(self) -> None:
         scenes = sample_scenes()[:2]
         raw_units = [

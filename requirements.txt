@@ -6,10 +6,10 @@
 #   python -m pip install -r requirements.txt
 #
 # This file installs Python packages only.  It does NOT include the official
-# IndexTTS2 model checkpoints, FFmpeg, or Node.js.  Those are large external
+# IndexTTS-2.5 model checkpoints, FFmpeg, or Node.js. Those are large external
 # runtime assets and must be installed by the project bootstrap procedure.
 
-# PyTorch CUDA 12.8 wheels used by the official IndexTTS2 2.0 pipeline.
+# PyTorch CUDA 12.8 wheels used by the official IndexTTS-2.5 pipeline.
 --extra-index-url https://download.pytorch.org/whl/cu128
 torch==2.8.0+cu128; platform_system == "Windows"
 torchaudio==2.8.0+cu128; platform_system == "Windows"
@@ -27,13 +27,17 @@ requests==2.32.5
 faster-whisper==1.2.1
 ctranslate2==4.8.1
 
-# Official IndexTTS2 runtime (Module 1 local GPU mode)
-indextts==2.0.0
+# Official IndexTTS-2.5 runtime support (Module 1 local GPU mode).
+# The upstream source and its isolated overlay are prepared by
+# tools/deploy_indextts25.ps1; do not install the obsolete 2.0 PyPI package.
 accelerate==1.8.1
 transformers==4.52.1
 tokenizers==0.21.0
 sentencepiece==0.2.1
 modelscope==1.27.0
+tiktoken==0.13.0
+fugashi==1.5.2
+unidic-lite==1.0.8
 
 # Utilities required by the official TTS runtime and this application
 numpy==1.26.2

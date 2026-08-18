@@ -17,10 +17,10 @@ class CloudTtsCancelled(RuntimeError):
 
 
 def split_cloud_text(text: str) -> list[str]:
-    # Keep local and cluster IndexTTS2 prosody boundaries identical.
-    from module1_agent_director import split_indextts2_text
+    # Keep the deployed cluster's established prosody boundaries stable.
+    from module1_agent_director import split_cluster_tts_text
 
-    chunks = split_indextts2_text(text)
+    chunks = split_cluster_tts_text(text)
     if not chunks:
         raise ValueError("清洗和断句后没有可合成的文案")
     return chunks
