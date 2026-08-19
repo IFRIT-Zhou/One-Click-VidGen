@@ -246,9 +246,15 @@ def build_subtitle_burn_command(
         "-c:a", "copy", "-movflags", "+faststart",
     ]
     if use_nvenc:
-        command.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0"])
+        command.extend([
+            "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0",
+            "-pix_fmt", "yuv420p",
+        ])
     else:
-        command.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
+        command.extend([
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-pix_fmt", "yuv420p",
+        ])
     command.append(str(output))
     return command
 
@@ -467,9 +473,15 @@ def render_direct_raw_video(
                 "-movflags", "+faststart", "-progress", "pipe:1", "-nostats",
             ])
             if use_nvenc:
-                command.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0"])
+                command.extend([
+                    "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0",
+                    "-pix_fmt", "yuv420p",
+                ])
             else:
-                command.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
+                command.extend([
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                    "-pix_fmt", "yuv420p",
+                ])
             staged_output.unlink(missing_ok=True)
             command.append(staged_output.name)
             print(f"开始: 纯净版（FFmpeg 直出，{label}）", flush=True)

@@ -87,6 +87,24 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
         self.assertEqual("".join(chunks), text)
         self.assertTrue(all(len(chunk) <= 110 for chunk in chunks))
 
+    def test_25_oversized_agent_group_is_locally_clamped_without_losing_agent_plan(self):
+        text = "甲" * 45 + "。" + "乙" * 45 + "。" + "丙" * 45 + "。"
+
+        def oversized_agent(**_kwargs):
+            return '[{"includes_sentences":[1,2,3]}]'
+
+        chunks, source, _ = segment_indextts25_text(
+            text,
+            max_tokens=110,
+            token_count=len,
+            agent_enabled=True,
+            agent_call=oversized_agent,
+        )
+        self.assertEqual(source, "voice_segmentation_agent")
+        self.assertEqual(chunks, ["甲" * 45 + "。" + "乙" * 45 + "。", "丙" * 45 + "。"])
+        self.assertEqual("".join(chunks), text)
+        self.assertTrue(all(len(chunk) <= 110 for chunk in chunks))
+
     def test_25_python_guard_prefers_full_stop_over_comma(self):
         text = "甲" * 35 + "，" + "乙" * 35 + "。" + "丙" * 35 + "，" + "丁" * 35 + "。"
         chunks, source, _ = segment_indextts25_text(

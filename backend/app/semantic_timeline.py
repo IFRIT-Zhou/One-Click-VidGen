@@ -45,13 +45,20 @@ def normalize_scene(item: dict[str, Any], index: int) -> dict[str, Any]:
     start = float(_first_present(item, ("start", "start_time"), 0))
     end = float(_first_present(item, ("end", "end_time"), start + 1))
     text = str(_first_present(item, ("text_content", "text", "content"), "")).strip()
-    return {
+    normalized = {
         "slide_id": slide_id,
         "start": round(start, 3),
         "end": round(max(end, start + 0.2), 3),
         "text_content": text,
         "visual_summary": str(item.get("visual_summary") or _visual_brief(text)),
     }
+    source_paragraph_id = str(item.get("source_paragraph_id") or "").strip()
+    source_boundary_after = str(item.get("source_boundary_after") or "none").strip().lower()
+    if source_paragraph_id:
+        normalized["source_paragraph_id"] = source_paragraph_id
+    if source_boundary_after in {"line", "paragraph"}:
+        normalized["source_boundary_after"] = source_boundary_after
+    return normalized
 
 
 def generate_fine_grained_timeline(story_plan: dict[str, Any] | None = None) -> Path:

@@ -258,6 +258,8 @@ class StoryAgentsTest(unittest.TestCase):
 
     def test_agent1_uses_timestamps_and_only_returns_timeline_plan(self) -> None:
         scenes = sample_scenes()[:3]
+        scenes[0]["source_paragraph_id"] = "paragraph_001"
+        scenes[0]["source_boundary_after"] = "paragraph"
         context = story_agents._fallback_story_context("full text", story_agents.CONTENT_MODE_STORY)
         response = json.dumps({
             "story_beats": [{
@@ -277,7 +279,76 @@ class StoryAgentsTest(unittest.TestCase):
         payload = json.loads(generate.call_args.kwargs["user_prompt"])
         self.assertEqual(payload["subtitle_timeline"][0]["start"], 0.0)
         self.assertEqual(payload["subtitle_timeline"][0]["end"], 5.0)
+        self.assertEqual(payload["subtitle_timeline"][0]["source_paragraph_id"], "paragraph_001")
+        self.assertEqual(payload["subtitle_timeline"][0]["source_boundary_after"], "paragraph")
         self.assertEqual(plan["semantic_units"][1]["start_slide_id"], "scene_003")
+
+    def test_agent1b_does_not_run_for_ordinary_short_units(self) -> None:
+        scenes = sample_scenes()[:4]
+        units = [
+            {"unit_id": "u1", "start_slide_id": "scene_001", "end_slide_id": "scene_002"},
+            {"unit_id": "u2", "start_slide_id": "scene_003", "end_slide_id": "scene_004"},
+        ]
+        with patch.object(story_agents, "generate_gemini_text") as generate:
+            refined, diagnostics = story_agents.refine_risky_semantic_units(
+                units, scenes, {}, story_agents.CONTENT_MODE_STORY,
+            )
+        generate.assert_not_called()
+        self.assertEqual(refined, units)
+        self.assertEqual(diagnostics["status"], "not_needed")
+
+    def test_agent1b_refines_only_a_risky_broad_unit_with_exact_coverage(self) -> None:
+        scenes = sample_scenes() + [
+            {
+                "slide_id": "scene_009", "start": 40, "end": 45,
+                "text_content": "第 9 段故事", "source_boundary_after": "none",
+            },
+            {
+                "slide_id": "scene_010", "start": 45, "end": 50,
+                "text_content": "第 10 段故事", "source_boundary_after": "paragraph",
+            },
+        ]
+        scenes[3]["source_boundary_after"] = "paragraph"
+        broad = [{
+            "unit_id": "u1", "start_slide_id": "scene_001", "end_slide_id": "scene_010",
+            "purpose": "过于宽泛的连续论述", "visual_focus": "多个话题", "boundary_after": "hard",
+        }]
+        response = json.dumps({
+            "semantic_units": [
+                {"unit_id": "a", "start_slide_id": "scene_001", "end_slide_id": "scene_004", "purpose": "第一完整话题", "visual_focus": "第一主体", "boundary_after": "soft"},
+                {"unit_id": "b", "start_slide_id": "scene_005", "end_slide_id": "scene_007", "purpose": "第二完整话题", "visual_focus": "第二主体"},
+                {"unit_id": "c", "start_slide_id": "scene_008", "end_slide_id": "scene_010", "purpose": "第三完整话题", "visual_focus": "第三主体"},
+            ],
+            "decision_reason": "段落和论点发生变化",
+        }, ensure_ascii=False)
+        with patch.object(story_agents, "generate_gemini_text", return_value=response) as generate:
+            refined, diagnostics = story_agents.refine_risky_semantic_units(
+                broad, scenes, {}, story_agents.CONTENT_MODE_STORY,
+                require_ai_success=True,
+            )
+        generate.assert_called_once()
+        self.assertEqual(len(refined), 3)
+        self.assertEqual(refined[0]["start_slide_id"], "scene_001")
+        self.assertEqual(refined[0]["boundary_after"], "hard")
+        self.assertEqual(refined[-1]["end_slide_id"], "scene_010")
+        self.assertEqual(diagnostics["status"], "refined")
+        self.assertEqual(diagnostics["accepted_units"][0]["subunit_count"], 3)
+
+    def test_agent1b_strict_mode_rejects_incomplete_coverage(self) -> None:
+        scenes = sample_scenes()
+        broad = [{
+            "unit_id": "u1", "start_slide_id": "scene_001", "end_slide_id": "scene_008",
+            "purpose": "宽泛单元", "boundary_after": "hard",
+        }]
+        incomplete = json.dumps({"semantic_units": [
+            {"start_slide_id": "scene_001", "end_slide_id": "scene_004"},
+        ]})
+        with patch.object(story_agents, "generate_gemini_text", return_value=incomplete):
+            with self.assertRaisesRegex(story_agents.AgentPlanningFatalError, "Agent 1B"):
+                story_agents.refine_risky_semantic_units(
+                    broad, scenes, {}, story_agents.CONTENT_MODE_STORY,
+                    require_ai_success=True,
+                )
 
     def test_agent1_preserves_structured_broll_direction(self) -> None:
         scenes = sample_scenes()[:1]

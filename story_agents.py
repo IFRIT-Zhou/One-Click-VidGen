@@ -36,7 +36,7 @@ CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 11
+STORY_AGENT_VERSION = 12
 CHARACTER_CONTINUITY_VERSION = 4
 STORY_CONTEXT_VERSION = 4
 
@@ -205,6 +205,8 @@ def story_fingerprint(
         {
             "slide_id": str(scene.get("slide_id") or ""),
             "text_content": str(scene.get("text_content") or ""),
+            "source_paragraph_id": str(scene.get("source_paragraph_id") or ""),
+            "source_boundary_after": str(scene.get("source_boundary_after") or ""),
         }
         for scene in scenes
     ]
@@ -657,6 +659,212 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
     return normalized if normalized and expected_start == len(ordered_ids) else []
 
 
+AGENT1B_BOUNDARY_REFINER_PROMPT = """你是视频流水线的 Agent 1B：语义边界副导演。
+Agent 1 已经完成全文规划，但系统检测到少数 semantic_unit 过长、覆盖字幕过多，或跨越了作者原文的段落结构。
+你只细化当前父单元的内部边界，不能改变字幕文字、时间戳、slide_id 顺序、人物身份、事实或父单元覆盖范围。
+
+只输出严格 JSON 对象：{"semantic_units":[...],"decision_reason":"..."}，不要 Markdown，不要解释。
+semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_mode、setting_hint、novelty_anchor、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
+所有子单元必须首尾相接、完整覆盖父单元且不遗漏、不重叠。一个子单元应对应一个可独立理解的画面事件或完整论述步骤，而不是为了凑时长机械切句。
+通常以 6～14 秒为宜；结论收束、话题转折、因果转向、人物/地点/时间/视觉主体改变时应新起单元。作者段落边界 source_boundary_after=paragraph 是强提示，通常不应跨越；但两个极短且明显属于同一思想的相邻段落可以保留在同一单元。
+禁止让一个子单元以前半句话结束，或以下半句、承接词孤立开始。若父单元确实是不可分割的同一连续事件，可以原样返回一个单元，并在 decision_reason 说明原因。
+设备画面的 screen_insert、device_interaction、none 必须按输入字幕的实际内容重新限定，不能让屏幕内容跨到已经转入其他话题的子单元。"""
+
+
+def _semantic_unit_scene_range(
+    unit: dict[str, Any],
+    scenes: list[dict[str, Any]],
+) -> tuple[int, int] | None:
+    positions = {
+        str(scene.get("slide_id") or ""): index
+        for index, scene in enumerate(scenes)
+        if str(scene.get("slide_id") or "")
+    }
+    start = positions.get(str(unit.get("start_slide_id") or ""))
+    end = positions.get(str(unit.get("end_slide_id") or ""))
+    if start is None or end is None or end < start:
+        return None
+    return start, end
+
+
+def semantic_unit_refinement_risks(
+    unit: dict[str, Any],
+    scenes: list[dict[str, Any]],
+) -> list[str]:
+    """Return local structural reasons for a conditional Agent 1B pass."""
+    scene_range = _semantic_unit_scene_range(unit, scenes)
+    if scene_range is None:
+        return ["invalid_range"]
+    start, end = scene_range
+    selected = scenes[start:end + 1]
+    if len(selected) < 2:
+        return []
+    try:
+        max_seconds = max(12.0, float(os.getenv("AGENT1B_REFINEMENT_MAX_SECONDS", "24")))
+    except ValueError:
+        max_seconds = 24.0
+    try:
+        max_slides = max(4, int(os.getenv("AGENT1B_REFINEMENT_MAX_SLIDES", "8")))
+    except ValueError:
+        max_slides = 8
+    duration = max(
+        0.0,
+        float(selected[-1].get("end") or 0) - float(selected[0].get("start") or 0),
+    )
+    reasons = []
+    if duration > max_seconds:
+        reasons.append(f"duration>{max_seconds:g}s")
+    if len(selected) > max_slides:
+        reasons.append(f"slides>{max_slides}")
+    internal_paragraphs = sum(
+        1
+        for scene in selected[:-1]
+        if str(scene.get("source_boundary_after") or "").lower() == "paragraph"
+    )
+    # Paragraph structure alone must not add an extra model call to an ordinary
+    # short script. It becomes a risk only inside an already broad unit.
+    if internal_paragraphs and (duration > 16.0 or len(selected) > 5):
+        reasons.append(f"paragraph_boundaries={internal_paragraphs}")
+    return reasons
+
+
+def _candidate_refinement_is_safe(
+    candidate: list[dict[str, Any]],
+    parent_scenes: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    if not candidate:
+        return False, "empty"
+    expected_ids = [str(scene.get("slide_id") or "") for scene in parent_scenes]
+    covered_ids = []
+    positions = {slide_id: index for index, slide_id in enumerate(expected_ids)}
+    for unit in candidate:
+        start = positions.get(str(unit.get("start_slide_id") or ""), -1)
+        end = positions.get(str(unit.get("end_slide_id") or ""), -1)
+        if start < 0 or end < start:
+            return False, "invalid_range"
+        covered_ids.extend(expected_ids[start:end + 1])
+        duration = (
+            float(parent_scenes[end].get("end") or 0)
+            - float(parent_scenes[start].get("start") or 0)
+        )
+        if len(candidate) > 1 and duration < 2.0:
+            return False, "subunit_too_short"
+    if covered_ids != expected_ids:
+        return False, "coverage_mismatch"
+    return True, "ok"
+
+
+def refine_risky_semantic_units(
+    units: list[dict[str, Any]],
+    scenes: list[dict[str, Any]],
+    story_context: dict[str, Any],
+    content_mode: str,
+    *,
+    require_ai_success: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Refine only risky units; safe units retain Agent 1 output byte-for-byte."""
+    diagnostics: dict[str, Any] = {
+        "version": 1,
+        "triggered_units": [],
+        "accepted_units": [],
+        "unchanged_units": [],
+        "failed_units": [],
+    }
+    refined: list[dict[str, Any]] = []
+    for unit in units:
+        reasons = semantic_unit_refinement_risks(unit, scenes)
+        if not reasons:
+            refined.append(dict(unit))
+            continue
+        parent_range = _semantic_unit_scene_range(unit, scenes)
+        if parent_range is None:
+            refined.append(dict(unit))
+            diagnostics["failed_units"].append({"unit_id": unit.get("unit_id"), "reason": "invalid_range"})
+            continue
+        start, end = parent_range
+        parent_scenes = scenes[start:end + 1]
+        unit_id = str(unit.get("unit_id") or f"unit_{start + 1:03d}")
+        diagnostics["triggered_units"].append({"unit_id": unit_id, "reasons": reasons})
+        payload_scenes = [
+            {
+                "slide_id": str(scene.get("slide_id") or ""),
+                "start": round(float(scene.get("start") or 0), 3),
+                "end": round(float(scene.get("end") or 0), 3),
+                "text": str(scene.get("text_content") or ""),
+                "source_paragraph_id": str(scene.get("source_paragraph_id") or ""),
+                "source_boundary_after": str(scene.get("source_boundary_after") or "none"),
+            }
+            for scene in parent_scenes
+        ]
+        payload = {
+            "content_mode": normalize_content_mode(content_mode),
+            "agent0_context": story_context_for_prompt(story_context),
+            "parent_semantic_unit": unit,
+            "previous_context": (
+                {"slide_id": scenes[start - 1].get("slide_id"), "text": scenes[start - 1].get("text_content")}
+                if start > 0 else None
+            ),
+            "current_timeline": payload_scenes,
+            "next_context": (
+                {"slide_id": scenes[end + 1].get("slide_id"), "text": scenes[end + 1].get("text_content")}
+                if end + 1 < len(scenes) else None
+            ),
+            "risk_reasons": reasons,
+        }
+        try:
+            response = generate_gemini_text(
+                system_prompt=AGENT1B_BOUNDARY_REFINER_PROMPT + "\n\n" + DEVICE_SHOT_CONTRACT,
+                user_prompt=json.dumps(payload, ensure_ascii=False),
+                temperature=0.08,
+                response_mime_type="application/json",
+                max_output_tokens=6144,
+            )
+            parsed = parse_json_response(response)
+            raw_units = parsed.get("semantic_units") if isinstance(parsed, dict) else None
+            candidate = _normalize_semantic_units(raw_units, parent_scenes)
+            safe, reason = _candidate_refinement_is_safe(candidate, parent_scenes)
+            if not safe:
+                raise ValueError(f"边界验收失败: {reason}")
+            parent_positions = {
+                str(scene.get("slide_id") or ""): scene for scene in parent_scenes
+            }
+            for child in candidate[:-1]:
+                boundary_scene = parent_positions.get(str(child.get("end_slide_id") or ""), {})
+                if str(boundary_scene.get("source_boundary_after") or "").lower() == "paragraph":
+                    # A deputy-created split that agrees with an author paragraph
+                    # is semantic evidence, not an optional pacing suggestion.
+                    # Never let the minimum-dwell merger cross it again.
+                    child["boundary_after"] = "hard"
+            candidate[-1]["boundary_after"] = str(unit.get("boundary_after") or "hard")
+            if len(candidate) == 1:
+                refined.append(dict(unit))
+                diagnostics["unchanged_units"].append(unit_id)
+            else:
+                refined.extend(candidate)
+                diagnostics["accepted_units"].append({
+                    "unit_id": unit_id,
+                    "subunit_count": len(candidate),
+                })
+        except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            diagnostics["failed_units"].append({"unit_id": unit_id, "reason": str(exc)[:300]})
+            if require_ai_success:
+                raise _planning_failure("Agent 1B", exc) from exc
+            refined.append(dict(unit))
+
+    # Preserve Agent 1 output exactly when the deputy was unnecessary or merely
+    # confirmed that the broad unit is indivisible. Renumber only after an
+    # accepted split, where newly returned child IDs may collide across parents.
+    if diagnostics["accepted_units"]:
+        for index, unit in enumerate(refined, 1):
+            unit["unit_id"] = f"unit_{index:03d}"
+    diagnostics["status"] = (
+        "not_needed" if not diagnostics["triggered_units"]
+        else "refined" if diagnostics["accepted_units"]
+        else "confirmed_or_fallback"
+    )
+    return refined, diagnostics
+
+
 def _backup_json(path: Path) -> Path | None:
     if not path.is_file():
         return None
@@ -928,6 +1136,9 @@ Agent 0 已经完成全文理解、人物与世界观资料整理；你不需要
 只输出严格 JSON 对象：{\"story_beats\":[...],\"semantic_units\":[...]}，不要 Markdown。
     semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_mode、setting_hint、novelty_anchor、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有 semantic_units 必须按顺序完整覆盖全部 slide_id，不能遗漏、重叠、倒序或跳过。
+输入字幕可能额外包含 source_paragraph_id 与 source_boundary_after。source_boundary_after=paragraph 表示作者原文在此处明确换段，
+是话题、论证步骤或叙事阶段切换的强提示，通常应在此结束当前单元；单个换行只是软提示，不得机械地一行一画面。
+无论是否换段，都不得让一个单元以前半句话结束，也不得让下一个单元从后半句、孤立宾语或承接词开始。
 一个单元等于一个具体画面事件，不是章节、观点大类或整段口播：同一动作、同一环境建立镜头、同一段连续论证可保持在一起；
 结论收束、话题转折、互动引导、人物/地点/时间改变、镜头关注对象改变时必须新起单元。
 不要把整段观点口播机械地留在开场谈话地点。原文明确提到通勤、工作、家务、照料、医疗、住房、消费、教育、
@@ -990,6 +1201,8 @@ def _create_timeline_story_plan(
             "start": round(float(scene.get("start") or 0), 3),
             "end": round(float(scene.get("end") or 0), 3),
             "text": str(scene.get("text_content") or ""),
+            "source_paragraph_id": str(scene.get("source_paragraph_id") or ""),
+            "source_boundary_after": str(scene.get("source_boundary_after") or "none"),
         }
         for scene in scenes
     ]
@@ -1027,14 +1240,25 @@ def _create_timeline_story_plan(
         units = _normalize_semantic_units(raw.get("semantic_units"), scenes)
         if not units:
             raise ValueError("Agent 1 semantic_units are incomplete")
+        units, boundary_refinement = refine_risky_semantic_units(
+            units,
+            scenes,
+            story_context,
+            content_mode,
+            require_ai_success=require_ai_success,
+        )
         combined = dict(story_context)
         combined["semantic_units"] = units
+        # story_beats remain the higher-level rhythm map produced by Agent 1;
+        # semantic_units are the authoritative picture boundaries. Keeping the
+        # original beats also preserves pacing labels for every covered slide.
         combined["story_beats"] = raw.get("story_beats") or _beats_from_semantic_units(units)
         plan = _normalize_story_plan(combined, scenes, content_mode)
         if plan is None:
             raise ValueError("Agent 1 plan normalization failed")
         plan["generation_source"] = "gemini"
         plan["agent0_source_fingerprint"] = story_context.get("source_fingerprint")
+        plan["boundary_refinement"] = boundary_refinement
         return plan
     except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
         if require_ai_success:

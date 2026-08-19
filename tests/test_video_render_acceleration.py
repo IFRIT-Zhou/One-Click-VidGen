@@ -122,6 +122,7 @@ class VideoRenderAccelerationTest(unittest.TestCase):
         self.assertIn("subtitles=filename=", command[command.index("-vf") + 1])
         self.assertIn("FontSize=12", command[command.index("-vf") + 1])
         self.assertEqual(command[command.index("-c:v") + 1], "h264_nvenc")
+        self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
         self.assertIn("-c:a", command)
 
     def test_dual_version_subtitle_pass_has_x264_fallback_command(self) -> None:
@@ -132,6 +133,7 @@ class VideoRenderAccelerationTest(unittest.TestCase):
             use_nvenc=False,
         )
         self.assertEqual(command[command.index("-c:v") + 1], "libx264")
+        self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
 
     def test_direct_filter_preserves_timeline_starts_and_crossfade(self) -> None:
         timeline = [

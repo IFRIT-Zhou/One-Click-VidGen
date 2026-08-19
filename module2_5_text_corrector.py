@@ -112,7 +112,46 @@ def _normalized_subtitle_text(text):
     return re.sub(r'\s+', ' ', str(text or '')).strip()
 
 
-def _subtitle_boundaries(text):
+def source_text_structure(text):
+    """Flatten author text while retaining line and paragraph boundary offsets.
+
+    Subtitle timing operates on a continuous character stream, but author text
+    often uses a blank line as a real topic boundary and a single newline for a
+    rhetorical pair.  Returning offsets lets the splitter respect that intent
+    without treating every newline as a mandatory one-line subtitle.
+    """
+    normalized = str(text or '').replace('\r\n', '\n').replace('\r', '\n')
+    raw_paragraphs = re.split(r'\n[ \t]*\n+', normalized)
+    flattened_parts = []
+    line_boundaries = set()
+    paragraph_boundaries = set()
+    paragraph_spans = []
+    cursor = 0
+    for raw_paragraph in raw_paragraphs:
+        lines = [
+            _normalized_subtitle_text(line)
+            for line in raw_paragraph.split('\n')
+            if _normalized_subtitle_text(line)
+        ]
+        if not lines:
+            continue
+        paragraph_start = cursor
+        for line_index, line in enumerate(lines):
+            flattened_parts.append(line)
+            cursor += len(line)
+            if line_index + 1 < len(lines):
+                line_boundaries.add(cursor)
+        paragraph_boundaries.add(cursor)
+        paragraph_spans.append((paragraph_start, cursor, len(paragraph_spans) + 1))
+    return {
+        'text': ''.join(flattened_parts),
+        'line_boundaries': line_boundaries,
+        'paragraph_boundaries': paragraph_boundaries,
+        'paragraph_spans': paragraph_spans,
+    }
+
+
+def _subtitle_boundaries(text, boundary_hints=None):
     """Return candidate cut positions without treating wrappers or 、 as breaks."""
     boundaries = {0: 'start', len(text): 'end'}
     index = 0
@@ -134,6 +173,12 @@ def _subtitle_boundaries(text):
             end += 1
         boundaries[end] = kind
         index = end
+    for position, kind in (boundary_hints or {}).items():
+        if 0 < int(position) <= len(text):
+            # Paragraph structure is stronger than punctuation inferred from the
+            # flattened text; a line boundary remains only a low-cost candidate.
+            if kind == 'paragraph' or int(position) not in boundaries:
+                boundaries[int(position)] = str(kind)
     return boundaries
 
 
@@ -175,7 +220,7 @@ def _partition_subtitle_range(text, start, end, boundaries, max_chars, overflow_
     hard_max = max_chars + overflow_chars
     candidates = {start: 'start', end: boundaries.get(end, 'end')}
     for position, kind in boundaries.items():
-        if start < position < end and kind in {'secondary', 'comma', 'colon'}:
+        if start < position < end and kind in {'secondary', 'comma', 'colon', 'line'}:
             candidates[position] = kind
     for position in _clause_transition_positions(text, start, end):
         candidates.setdefault(position, 'clause')
@@ -199,6 +244,7 @@ def _partition_subtitle_range(text, start, end, boundaries, max_chars, overflow_
     boundary_cost = {
         'strong': 0.0,
         'secondary': 0.15,
+        'line': 0.35,
         'comma': 0.55,
         'colon': 1.25,
         'clause': 2.0,
@@ -245,16 +291,16 @@ def _partition_subtitle_range(text, start, end, boundaries, max_chars, overflow_
     return [text[left:right] for left, right in zip(cuts, cuts[1:]) if right > left]
 
 
-def split_subtitle_text(text, max_chars=24, overflow_chars=4):
+def split_subtitle_text(text, max_chars=24, overflow_chars=4, boundary_hints=None):
     """Split clean prose at semantic punctuation, with a rare safe fallback."""
     normalized = _normalized_subtitle_text(text)
     if not normalized:
         return []
-    boundaries = _subtitle_boundaries(normalized)
+    boundaries = _subtitle_boundaries(normalized, boundary_hints=boundary_hints)
     strong_positions = [
         position
         for position, kind in sorted(boundaries.items())
-        if position and kind in {'strong', 'end'}
+        if position and kind in {'strong', 'paragraph', 'end'}
     ]
     chunks = []
     start = 0
@@ -273,7 +319,7 @@ def split_subtitle_text(text, max_chars=24, overflow_chars=4):
     return chunks
 
 
-def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
+def split_corrected_scenes(scene_data, corrected_texts, max_chars=24, source_text=None):
     if not scene_data:
         return []
     source_texts = [
@@ -281,7 +327,24 @@ def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
         for index, item in enumerate(scene_data)
     ]
     full_text = _normalized_subtitle_text(''.join(str(value or '') for value in source_texts))
-    chunks = split_subtitle_text(full_text, max_chars=max_chars) or [full_text]
+    structure = None
+    if source_text:
+        candidate = source_text_structure(source_text)
+        if (
+            candidate['text']
+            and clean_alignment_text(candidate['text']) == clean_alignment_text(full_text)
+        ):
+            structure = candidate
+            full_text = candidate['text']
+    boundary_hints = {}
+    if structure:
+        boundary_hints.update({position: 'line' for position in structure['line_boundaries']})
+        boundary_hints.update({position: 'paragraph' for position in structure['paragraph_boundaries']})
+    chunks = split_subtitle_text(
+        full_text,
+        max_chars=max_chars,
+        boundary_hints=boundary_hints,
+    ) or [full_text]
 
     source_weights = [max(1, len(re.sub(r'\s+', '', str(value or '')))) for value in source_texts]
     source_starts = []
@@ -304,8 +367,12 @@ def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
 
     result = []
     consumed = 0
+    text_consumed = 0
     chunk_weights = [max(1, len(re.sub(r'\s+', '', chunk))) for chunk in chunks]
     for chunk, weight in zip(chunks, chunk_weights):
+        flat_chunk_start = text_consumed
+        flat_chunk_end = flat_chunk_start + len(chunk)
+        text_consumed = flat_chunk_end
         chunk_start = time_at(consumed)
         consumed += weight
         chunk_end = time_at(consumed)
@@ -324,6 +391,27 @@ def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
                 ),
             ),
         )
+        display_chunk = chunk
+        source_boundary_after = 'none'
+        source_paragraph_id = ''
+        if structure:
+            # Reinsert author single-line breaks inside a subtitle. Blank lines
+            # remain boundaries between subtitles and are not rendered literally.
+            local_breaks = sorted(
+                position - flat_chunk_start
+                for position in structure['line_boundaries']
+                if flat_chunk_start < position < flat_chunk_end
+            )
+            for offset in reversed(local_breaks):
+                display_chunk = display_chunk[:offset] + '\n' + display_chunk[offset:]
+            if flat_chunk_end in structure['paragraph_boundaries']:
+                source_boundary_after = 'paragraph'
+            elif flat_chunk_end in structure['line_boundaries']:
+                source_boundary_after = 'line'
+            for paragraph_start, paragraph_end, paragraph_index in structure['paragraph_spans']:
+                if flat_chunk_start < paragraph_end and flat_chunk_end > paragraph_start:
+                    source_paragraph_id = f'paragraph_{paragraph_index:03d}'
+                    break
         result.append(
             {
                 **scene_data[source_index],
@@ -331,7 +419,9 @@ def split_corrected_scenes(scene_data, corrected_texts, max_chars=24):
                 'slide_id': f'scene_{output_index:03d}',
                 'start': round(chunk_start, 3),
                 'end': round(max(chunk_end, chunk_start + 0.001), 3),
-                'text_content': chunk,
+                'text_content': display_chunk,
+                'source_paragraph_id': source_paragraph_id,
+                'source_boundary_after': source_boundary_after,
             }
         )
     if result:
@@ -379,7 +469,12 @@ def run_correction():
         sys.exit(1)
 
     # 步骤 4：校对后再次按屏幕可读长度断句，并同步重建 JSON 与 SRT。
-    scene_data = split_corrected_scenes(scene_data, corrected_texts, max_chars=24)
+    scene_data = split_corrected_scenes(
+        scene_data,
+        corrected_texts,
+        max_chars=24,
+        source_text=orig_text,
+    )
 
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump(scene_data, f, ensure_ascii=False, indent=2)

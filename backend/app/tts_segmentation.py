@@ -245,10 +245,28 @@ def _validate_agent_groups(
             raise ValueError("句子编号必须连续、有序且不能遗漏或重复")
         if normalized_ids[-1] > len(units):
             raise ValueError("句子编号超出范围")
-        chunk = "".join(units[index - 1] for index in normalized_ids)
-        if token_count(chunk) > max_tokens:
-            raise ValueError("Agent 分组超过 110 token 硬上限")
-        chunks.append(chunk)
+        selected_units = [units[index - 1] for index in normalized_ids]
+        chunk = "".join(selected_units)
+        if token_count(chunk) <= max_tokens:
+            chunks.append(chunk)
+        else:
+            # The model occasionally understands the semantic relationship but
+            # miscalculates the supplied token totals. Keep its outer boundary
+            # and clamp only this oversized group at existing complete-sentence
+            # units. Every input unit has already passed the hard ceiling.
+            repaired = fallback_group_units(
+                selected_units,
+                max_tokens=max_tokens,
+                token_count=token_count,
+            )
+            if not repaired or any(token_count(value) > max_tokens for value in repaired):
+                raise ValueError("Agent 超限分组无法安全细分")
+            print(
+                f"[TTS25_SEGMENT] Agent 有 1 组超过 {max_tokens} token，"
+                f"已在完整句边界内安全细分为 {len(repaired)} 组",
+                flush=True,
+            )
+            chunks.extend(repaired)
         expected = normalized_ids[-1] + 1
     if expected != len(units) + 1:
         raise ValueError("Agent 分组未完整覆盖全文")

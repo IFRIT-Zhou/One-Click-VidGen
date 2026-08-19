@@ -5,6 +5,7 @@ from module2_5_text_corrector import (
     correct_scene_texts_to_original,
     split_corrected_scenes,
     split_subtitle_text,
+    source_text_structure,
 )
 
 
@@ -84,6 +85,46 @@ class SubtitleSplitTest(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertEqual("".join(chunks), text)
         self.assertTrue(all(len(chunk) <= 28 for chunk in chunks))
+
+    def test_author_paragraphs_prevent_cross_topic_subtitle_gluing(self) -> None:
+        original = (
+            "已经满意的内容不需要重新生成。\n\n"
+            "能生成，只是开始\n"
+            "能修改，才是生产工具\n\n"
+            "在实际使用AI接口的过程中，网络波动很难避免。"
+        )
+        scenes = [
+            {"start": 0.0, "end": 3.0, "text_content": "已经满意的内容不需要重新生成"},
+            {"start": 3.0, "end": 5.0, "text_content": "能生成只是开始能修改"},
+            {"start": 5.0, "end": 8.0, "text_content": "才是生产工具在实际使用"},
+            {"start": 8.0, "end": 12.0, "text_content": "AI接口的过程中网络波动很难避免"},
+        ]
+        corrected = correct_scene_texts_to_original(scenes, original)
+        result = split_corrected_scenes(
+            scenes,
+            corrected,
+            max_chars=24,
+            source_text=original,
+        )
+
+        texts = [item["text_content"] for item in result]
+        self.assertIn("能生成，只是开始\n能修改，才是生产工具", texts)
+        self.assertFalse(any("生产工具在实际使用" in text for text in texts))
+        self.assertEqual(
+            clean_alignment_text("".join(texts)),
+            clean_alignment_text(original),
+        )
+        slogan = next(item for item in result if item["text_content"].startswith("能生成"))
+        self.assertEqual(slogan["source_boundary_after"], "paragraph")
+
+    def test_single_line_break_is_a_soft_candidate_not_a_forced_tiny_subtitle(self) -> None:
+        structure = source_text_structure("第一行很短\n第二行也很短")
+        chunks = split_subtitle_text(
+            structure["text"],
+            max_chars=24,
+            boundary_hints={position: "line" for position in structure["line_boundaries"]},
+        )
+        self.assertEqual(chunks, ["第一行很短第二行也很短"])
 
 
 if __name__ == "__main__":

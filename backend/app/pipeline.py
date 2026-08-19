@@ -2980,6 +2980,28 @@ def cloud_model_pool_environment(job: Job, store: JobStore, request: dict[str, A
                 os.environ[key] = value
 
 
+def log_boundary_refinement(job: Job, store: JobStore, story_plan: dict[str, Any]) -> None:
+    """Expose the conditional boundary pass without flooding the main log."""
+    diagnostics = story_plan.get("boundary_refinement")
+    if not isinstance(diagnostics, dict):
+        return
+    triggered = diagnostics.get("triggered_units") or []
+    if not triggered:
+        store.log(job, "Agent 1B：未发现宽泛或跨段落的高风险画面单元，无需额外细化")
+        return
+    accepted = diagnostics.get("accepted_units") or []
+    unchanged = diagnostics.get("unchanged_units") or []
+    before_count = len(triggered)
+    after_count = sum(int(item.get("subunit_count") or 0) for item in accepted if isinstance(item, dict))
+    if accepted:
+        store.log(
+            job,
+            f"Agent 1B：已复核 {before_count} 个高风险单元，其中 {len(accepted)} 个细化为 {after_count} 个语义完整画面单元",
+        )
+    if unchanged:
+        store.log(job, f"Agent 1B：另有 {len(unchanged)} 个单元确认属于不可机械拆分的连续内容")
+
+
 def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, resume: bool = False) -> None:
     threshold = int(request.get("split_text_threshold") or 3000)
     auto_split = bool(request.get("auto_split_long_text", True))
@@ -3014,7 +3036,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         )
         story_plan_path = WORKSPACE_DIR / "3_visual_template" / "story_plan.json"
         store.log(job, "Agent 1：开始按字幕时间轴规划画面边界")
-        load_or_create_story_plan(
+        story_plan = load_or_create_story_plan(
             scenes,
             resume=resume,
             path=story_plan_path,
@@ -3022,6 +3044,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             story_context=story_context,
             require_ai_success=True,
         )
+        log_boundary_refinement(job, store, story_plan)
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
         store.update(job, step="semantic", progress=48, message=STEPS[3][1])
         render_semantic_visual_video(job, store, request, resume=resume, story_plan_path=story_plan_path)
@@ -3051,6 +3074,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         story_context=story_context,
         require_ai_success=True,
     )
+    log_boundary_refinement(job, store, story_plan)
     store.log(job, f"Agent 1：全文故事上下文已保存: {global_story_plan}")
     if hierarchical_planning:
         store.log(job, f"Agent 自适应规划：超长文模式（>{hierarchical_min_chars} 字），启用全文总纲 + 分段细化")
