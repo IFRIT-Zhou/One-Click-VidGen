@@ -68,6 +68,7 @@ def parse_args():
     parser.add_argument("--tts-pitch", type=int, default=0, help="输出音调（-12 到 12）")
     parser.add_argument("--tts-parallelism", type=int, default=2, help="IndexTTS-2.5 并行进程数，建议 1-3")
     parser.add_argument("--tts-emotion", help="IndexTTS-2.5 八维情绪之一")
+    parser.add_argument("--tts-emotion-weight", type=float, default=0.65, help="IndexTTS-2.5 情绪强度（0-1）")
     parser.add_argument(
         "--tts-engine",
         choices=("indextts25", "qwen"),
@@ -514,6 +515,7 @@ def _build_indextts25_command(
     output_prefix: str,
     voice_path: Path,
     emotion_vector: str | None,
+    emotion_weight: float | None = None,
     speed: float = 1.0,
 ) -> list[str]:
     duration_factor = 1.0 / min(2.0, max(0.5, float(speed)))
@@ -545,7 +547,7 @@ def _build_indextts25_command(
                 "--emotion-vector",
                 emotion_vector,
                 "--emotion-weight",
-                str(config.emotion_weight),
+                str(min(1.0, max(0.0, config.emotion_weight if emotion_weight is None else float(emotion_weight)))),
             ]
         )
     return command
@@ -729,6 +731,7 @@ def step2_indextts25_synthesize(chunks: list[str], args) -> tuple[list[Path], li
                 output_prefix="chunk",
                 voice_path=voice_path,
                 emotion_vector=emotion_vector,
+                emotion_weight=getattr(args, "tts_emotion_weight", 0.65),
                 speed=args.tts_speed,
             )
             single_items = list(enumerate(chunks))
@@ -755,6 +758,7 @@ def step2_indextts25_synthesize(chunks: list[str], args) -> tuple[list[Path], li
                     output_prefix=output_prefix,
                     voice_path=voice_path,
                     emotion_vector=emotion_vector,
+                    emotion_weight=getattr(args, "tts_emotion_weight", 0.65),
                     speed=args.tts_speed,
                 )
                 worker_outputs = [
@@ -949,6 +953,9 @@ def export_tts_segments(
         "tts_volume": float(getattr(args, "tts_volume", 1) or 1),
         "tts_pitch": int(getattr(args, "tts_pitch", 0) or 0),
         "tts_emotion": str(getattr(args, "tts_emotion", "") or ""),
+        "tts_emotion_weight": min(1.0, max(0.0, float(
+            0.65 if getattr(args, "tts_emotion_weight", 0.65) is None else getattr(args, "tts_emotion_weight", 0.65)
+        ))),
         "qwen_voice": str(getattr(args, "qwen_voice", "") or ""),
         "qwen_instructions": str(getattr(args, "qwen_instructions", "") or ""),
         "total_duration": round(current_time, 6),

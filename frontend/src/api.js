@@ -196,8 +196,8 @@ export const api = {
   removeVisualTimingPicture: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing/remove`, { method: 'POST' }),
   ttsEditor: (id) => requestJSON(`/api/jobs/${id}/tts-editor`),
   ttsEditorStatus: (id) => requestJSON(`/api/jobs/${id}/tts-editor/status`),
-  regenerateTtsSegments: (id, indices) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices }),
+  regenerateTtsSegments: (id, indices, settings = {}) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices, ...settings }),
   }),
   renderVisualEditor: (id, payload) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typeof payload === 'string' ? { mode: payload } : payload),

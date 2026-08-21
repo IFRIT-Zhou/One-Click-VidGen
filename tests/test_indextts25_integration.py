@@ -34,7 +34,8 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
                 output_dir=root / "output",
                 output_prefix="chunk",
                 voice_path=root / "voice.wav",
-                emotion_vector=None,
+                emotion_vector="0.8,0,0,0,0,0,0,0",
+                emotion_weight=0.9,
                 speed=2.0,
             )
         self.assertTrue(any(value.endswith("indextts25_runner.py") for value in command))
@@ -42,6 +43,11 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
         self.assertIn("--no-accel", command)
         factor_index = command.index("--duration-factor") + 1
         self.assertAlmostEqual(float(command[factor_index]), 0.5)
+        emotion_weight_index = command.index("--emotion-weight") + 1
+        self.assertAlmostEqual(float(command[emotion_weight_index]), 0.9)
+
+    def test_request_schema_accepts_zero_emotion_weight(self):
+        self.assertEqual(GenerateRequest(tts_emotion_weight=0).tts_emotion_weight, 0)
 
     def test_25_short_text_skips_agent_and_stays_one_task(self):
         with tempfile.TemporaryDirectory() as temporary:

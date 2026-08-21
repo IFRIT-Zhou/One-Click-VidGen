@@ -1,3 +1,4 @@
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,12 +8,70 @@ from backend.app.pipeline import (
     Job,
     concat_videos,
     restore_long_split_checkpoint,
+    restore_tts_checkpoint,
     reusable_part_outputs,
+    save_tts_checkpoint,
     validate_visual_coverage,
 )
 
 
 class LongTextResumeTest(unittest.TestCase):
+    @staticmethod
+    def _write_wav(path: Path, frames: bytes = b"\x00\x00" * 800) -> None:
+        import wave
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+            audio.writeframes(frames)
+
+    def test_completed_tts_is_checkpointed_and_restored_after_workspace_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            jobs = workspace / "jobs"
+            job = Job(id="tts-resume")
+            audio_dir = workspace / "2_audio_srt"
+            self._write_wav(audio_dir / "final_output.wav")
+            (audio_dir / "final_output.srt").write_text("1\n00:00:00,000 --> 00:00:00,100\n测试\n", encoding="utf-8")
+
+            with patch("backend.app.pipeline.WORKSPACE_DIR", workspace), patch("backend.app.pipeline.JOBS_DIR", jobs):
+                checkpoint = save_tts_checkpoint(job)
+                shutil.rmtree(audio_dir)
+                restored = restore_tts_checkpoint(job)
+
+            self.assertEqual(restored, checkpoint)
+            self.assertTrue((audio_dir / "final_output.wav").is_file())
+            self.assertIn("测试", (audio_dir / "final_output.srt").read_text(encoding="utf-8"))
+
+    def test_legacy_complete_segment_archive_restores_without_tts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            jobs = workspace / "jobs"
+            job = Job(id="legacy-tts-resume")
+            segments = jobs / job.id / "artifacts" / "tts_segments"
+            self._write_wav(segments / "segment_0001.wav")
+            self._write_wav(segments / "segment_0002.wav")
+            (segments / "manifest.json").write_text(
+                '{"segments":['
+                '{"filename":"segment_0001.wav","text":"第一句"},'
+                '{"filename":"segment_0002.wav","text":"第二句"}'
+                ']}',
+                encoding="utf-8",
+            )
+
+            with patch("backend.app.pipeline.WORKSPACE_DIR", workspace), patch("backend.app.pipeline.JOBS_DIR", jobs):
+                restored = restore_tts_checkpoint(job)
+
+            self.assertEqual(restored, segments)
+            self.assertTrue((workspace / "2_audio_srt" / "final_output.wav").is_file())
+            subtitle = (workspace / "2_audio_srt" / "final_output.srt").read_text(encoding="utf-8")
+            self.assertIn("第一句", subtitle)
+            self.assertIn("第二句", subtitle)
+
     def test_resume_restores_full_sources_over_leftover_segment(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

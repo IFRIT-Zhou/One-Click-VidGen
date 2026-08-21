@@ -188,6 +188,7 @@ class TtsEditor:
             "tts_volume": request.get("tts_volume") or 1,
             "tts_pitch": request.get("tts_pitch") or 0,
             "tts_emotion": request.get("tts_emotion") or "",
+            "tts_emotion_weight": request.get("tts_emotion_weight", 0.65),
             "qwen_voice": request.get("qwen_tts_voice") or "Elias",
             "qwen_instructions": request.get("qwen_tts_instructions") or "",
             "total_duration": round(sum(float(item["duration"]) for item in items), 6),
@@ -229,6 +230,19 @@ class TtsEditor:
             "available": bool(items),
             "message": "可选择一条或多条重新配音；完成后请重新渲染视频。" if items else "逐句音频文件不完整",
             "engine": "indextts25" if manifest.get("engine") == "indextts2" else (manifest.get("engine") or "indextts25"),
+            "settings": {
+                "tts_voice_id": manifest.get("tts_voice_id") or "voice_05.wav",
+                "tts_speed": manifest.get("tts_speed", 1),
+                "tts_volume": manifest.get("tts_volume", 1),
+                "tts_pitch": manifest.get("tts_pitch", 0),
+                "tts_parallelism": manifest.get("tts_parallelism", 1),
+                "tts_emotion": manifest.get("tts_emotion") or "",
+                "tts_emotion_weight": manifest.get("tts_emotion_weight", 0.65),
+                "cluster_voice_type": manifest.get("cluster_voice_type") or "preset",
+                "cluster_voice_id": manifest.get("cluster_voice_id") or "",
+                "qwen_voice": manifest.get("qwen_voice") or "Elias",
+                "qwen_instructions": manifest.get("qwen_instructions") or "",
+            },
             "segments": items,
             "task": self.status(job_id),
         }
@@ -246,7 +260,14 @@ class TtsEditor:
             raise FileNotFoundError("找不到该句配音文件")
         return path
 
-    def regenerate(self, *, job: Any, user_id: int, indices: list[int]) -> None:
+    def regenerate(
+        self,
+        *,
+        job: Any,
+        user_id: int,
+        indices: list[int],
+        settings_override: dict[str, Any] | None = None,
+    ) -> None:
         selected = sorted(set(int(value) for value in indices if int(value) > 0))
         if not selected:
             raise ValueError("请至少选择一句需要重配的内容")
@@ -265,7 +286,7 @@ class TtsEditor:
 
         def work() -> None:
             try:
-                self._regenerate_sync(job, user_id, selected)
+                self._regenerate_sync(job, user_id, selected, dict(settings_override or {}))
                 self._set_task(
                     job.id, status="completed", progress=100,
                     message=f"已重配 {len(selected)} 句，并重建配音与时间轴；请点击重新渲染。",
@@ -277,11 +298,25 @@ class TtsEditor:
 
         threading.Thread(target=work, daemon=True, name=f"tts-edit-{job.id}").start()
 
-    def _regenerate_sync(self, job: Any, user_id: int, indices: list[int]) -> None:
+    def _regenerate_sync(
+        self,
+        job: Any,
+        user_id: int,
+        indices: list[int],
+        settings_override: dict[str, Any],
+    ) -> None:
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
         manifest_path = segment_dir / SEGMENT_MANIFEST
         manifest = self._load_manifest(project_dir)
+        allowed_settings = {
+            "tts_voice_id", "tts_speed", "tts_volume", "tts_pitch", "tts_parallelism",
+            "tts_emotion", "tts_emotion_weight", "cluster_voice_type", "cluster_voice_id",
+            "qwen_voice", "qwen_instructions",
+        }
+        for key, value in settings_override.items():
+            if key in allowed_settings:
+                manifest[key] = value
         segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
         by_index = {int(item["index"]): item for item in segments}
         old_ranges = [
@@ -298,6 +333,9 @@ class TtsEditor:
             project_dir / "other" / SUBTITLE_FILENAME,
             project_dir / "other" / TIMELINE_FILENAME,
         ):
+            if source.is_file():
+                shutil.copy2(source, history / source.name)
+        for source in (project_dir / "input").glob("TTS参考音色.*"):
             if source.is_file():
                 shutil.copy2(source, history / source.name)
         for index in indices:
@@ -336,6 +374,7 @@ class TtsEditor:
             cloud_request["tts_volume"] = manifest.get("tts_volume") or 1
             cloud_request["tts_pitch"] = manifest.get("tts_pitch") or 0
             cloud_request["tts_emotion"] = manifest.get("tts_emotion") or ""
+            cloud_request["tts_emotion_weight"] = manifest.get("tts_emotion_weight", 0.65)
             synthesize_cloud_tts(
                 client=cloud_client_for(user_id),
                 local_job_id=f"{job.id}-edit-{timestamp}",
@@ -363,7 +402,7 @@ class TtsEditor:
                 "--tts-speed", str(manifest.get("tts_speed") or 1),
                 "--tts-volume", str(manifest.get("tts_volume") or 1),
                 "--tts-pitch", str(manifest.get("tts_pitch") or 0),
-                "--tts-parallelism", str(job.request.get("tts_parallelism") or 1),
+                "--tts-parallelism", str(manifest.get("tts_parallelism") or 1),
             ]
             if user_id:
                 command.extend(["--user-id", str(user_id)])
@@ -373,14 +412,22 @@ class TtsEditor:
                 if instructions:
                     command.extend(["--qwen-instructions", instructions])
             else:
+                voice_override = str(settings_override.get("tts_voice_id") or "").strip()
                 archived_voice = next((project_dir / "input").glob("TTS参考音色.*"), None)
-                if archived_voice and archived_voice.is_file():
+                if voice_override:
+                    command.extend(["--tts-voice-id", voice_override])
+                elif archived_voice and archived_voice.is_file():
                     command.extend(["--tts-voice-path", str(archived_voice)])
                 else:
                     command.extend(["--tts-voice-id", str(manifest.get("tts_voice_id") or "voice_05.wav")])
                 emotion = str(manifest.get("tts_emotion") or "").strip()
                 if emotion:
-                    command.extend(["--tts-emotion", emotion])
+                    command.extend([
+                        "--tts-emotion",
+                        emotion,
+                        "--tts-emotion-weight",
+                        str(manifest.get("tts_emotion_weight", 0.65)),
+                    ])
 
             process = subprocess.Popen(
                 command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
@@ -403,6 +450,17 @@ class TtsEditor:
         for original_index, new_item in zip(indices, generated):
             source = generated_dir / str(new_item["filename"])
             shutil.copy2(source, segment_dir / str(by_index[original_index]["filename"]))
+
+        voice_override = str(settings_override.get("tts_voice_id") or "").strip()
+        if engine == "indextts25" and voice_override:
+            from .indextts25_local import load_indextts25_config, resolve_voice_reference
+
+            voice_source = resolve_voice_reference(load_indextts25_config(), voice_override, user_id=user_id)
+            input_dir = project_dir / "input"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            for old_voice in input_dir.glob("TTS参考音色.*"):
+                old_voice.unlink(missing_ok=True)
+            shutil.copy2(voice_source, input_dir / f"TTS参考音色{voice_source.suffix.lower()}")
 
         current = 0.0
         new_ranges: list[tuple[float, float]] = []

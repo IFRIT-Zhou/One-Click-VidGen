@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import module1_agent_director as module1
 from backend.app.tts_editor import TtsEditor, _concat_wavs, _rewrite_srt_times
+from backend.app.main import TtsSegmentRegenerateRequest
 
 
 def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> None:
@@ -20,6 +21,44 @@ def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> N
 
 
 class TtsSegmentEditorTest(unittest.TestCase):
+    def test_refine_request_accepts_voice_and_emotion_overrides(self) -> None:
+        payload = TtsSegmentRegenerateRequest(
+            indices=[1, 2],
+            tts_voice_id="upload:voice.wav",
+            tts_emotion="sad",
+            tts_emotion_weight=0,
+        )
+        self.assertEqual(payload.tts_voice_id, "upload:voice.wav")
+        self.assertEqual(payload.tts_emotion_weight, 0)
+
+    def test_editor_inspect_returns_saved_refine_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / "other" / "tts_segments"
+            segment_dir.mkdir(parents=True)
+            write_silent_wav(segment_dir / "segment_0001.wav", 0.5)
+            (segment_dir / "manifest.json").write_text(json.dumps({
+                "engine": "indextts25",
+                "tts_voice_id": "voice_05.wav",
+                "tts_speed": 1.15,
+                "tts_emotion": "calm",
+                "tts_emotion_weight": 0.8,
+                "segments": [{
+                    "index": 1, "text": "测试。", "filename": "segment_0001.wav",
+                    "start": 0, "end": 0.5, "duration": 0.5,
+                }],
+            }, ensure_ascii=False), encoding="utf-8")
+            editor = TtsEditor()
+            with (
+                patch.object(editor, "_project_dir", return_value=project),
+                patch.object(editor, "_migrate_legacy_archive", return_value=True),
+            ):
+                payload = editor.inspect("job", 1)
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["settings"]["tts_speed"], 1.15)
+        self.assertEqual(payload["settings"]["tts_emotion"], "calm")
+        self.assertEqual(payload["settings"]["tts_emotion_weight"], 0.8)
+
     def test_legacy_module1_srt_recovers_exact_sentence_wavs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -164,7 +164,15 @@ try {
         if ($ExpectedReleaseId -and [string]$channel.release_id -ne $ExpectedReleaseId) {
             throw "Update package release mismatch: expected $ExpectedReleaseId, got $($channel.release_id)"
         }
-        if ($channel.portable_overlay_safe -ne $true) {
+        $localChannelPath = Join-Path $root 'launcher\update-channel.json'
+        $localOrder = 0
+        if (Test-Path -LiteralPath $localChannelPath) {
+            $localChannel = Get-Content -LiteralPath $localChannelPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $localOrder = [long]$localChannel.release_order
+        }
+        $minimumOrder = [long]$channel.portable_overlay_min_order
+        $baselineCompatible = $minimumOrder -gt 0 -and $localOrder -ge $minimumOrder
+        if ($channel.portable_overlay_safe -ne $true -and -not $baselineCompatible) {
             throw 'This release requires a complete portable package and cannot be overlaid safely.'
         }
 

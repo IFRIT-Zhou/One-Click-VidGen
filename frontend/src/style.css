@@ -309,6 +309,16 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   padding: 10px;
 }
 .api-key-pool-heading { display: grid; gap: 2px; min-width: 0; }
+.api-key-account-details { display: grid; min-width: 0; }
+.api-key-account-details summary {
+  padding: 4px 2px;
+  color: #8edfff;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  cursor: pointer;
+  user-select: none;
+}
+.api-key-account-details[open] summary { margin-bottom: 5px; }
 .api-key-account-list { display: grid; gap: 5px; min-width: 0; }
 .api-key-account-row {
   display: grid;
@@ -350,6 +360,47 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 .api-key-corner-add { justify-self: end; width: 30px; padding: 0; font-size: 1rem; font-weight: 750; }
 .api-key-delete-btn:hover { background: rgba(185, 28, 28, 0.36); border-color: rgba(254, 202, 202, 0.62); }
 .api-key-corner-add:hover { background: rgba(43, 148, 204, 0.35); border-color: rgba(103, 218, 255, 0.7); }
+.image-concurrency-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid rgba(91, 209, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(8, 31, 51, 0.48);
+}
+.image-concurrency-panel.disabled { opacity: 0.62; }
+.image-concurrency-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(102px, 0.75fr);
+  align-items: center;
+  gap: 8px;
+}
+.image-concurrency-summary > div { display: grid; gap: 2px; min-width: 0; }
+.image-concurrency-summary strong { color: #d9f7ff; font-size: 0.84rem; }
+.image-concurrency-summary small,
+.image-concurrency-details > small { color: #9db8ca; font-size: 0.72rem; line-height: 1.45; }
+.image-concurrency-summary select,
+.image-concurrency-details input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid rgba(91, 209, 255, 0.22);
+  border-radius: 8px;
+  color: #dcecff;
+  background: rgba(4, 18, 38, 0.82);
+}
+.image-concurrency-details { display: grid; gap: 8px; }
+.image-concurrency-details summary { color: #80dfff; font-size: 0.76rem; cursor: pointer; }
+.image-concurrency-details label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 8px;
+  color: #b8cad8;
+  font-size: 0.76rem;
+}
+.image-concurrency-save { width: 100%; min-height: 34px; padding: 6px 8px; font-size: 0.76rem; }
 .account-form {
   display: grid;
   gap: 10px;
@@ -386,7 +437,29 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   cursor: default;
 }
 .product-title span { color: var(--accent); font-weight: 500; padding: 0 .18em; }
-.cloud-account-entry { margin-left: auto; display: flex; align-items: center; }
+.cloud-account-entry { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.cloud-website-entry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid rgba(96, 165, 250, .3);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .62);
+  color: #bfdbfe;
+  font-size: .85rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color .18s ease, background .18s ease, color .18s ease, transform .18s ease;
+}
+.cloud-website-entry:hover {
+  border-color: rgba(94, 234, 212, .58);
+  background: rgba(15, 118, 110, .16);
+  color: #99f6e4;
+  transform: translateY(-1px);
+}
 .cloud-login-entry { min-width: 96px; min-height: 44px; }
 .cloud-account-summary {
   display: flex;
@@ -1355,6 +1428,22 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   border-radius: var(--radius-sm);
   background: rgba(124, 219, 255, 0.045);
 }
+.tts-parameter-panel.refinement-locked {
+  position: relative;
+  opacity: .48;
+  filter: saturate(.55);
+}
+.refinement-lock-note {
+  margin: -4px 0 12px;
+  padding: 8px 11px;
+  border: 1px solid rgba(96, 165, 250, .32);
+  border-radius: 10px;
+  background: rgba(30, 64, 175, .14);
+  color: #bfdbfe;
+  font-size: .78rem;
+  font-weight: 700;
+  text-align: center;
+}
 .tts-parameter-head {
   display: flex;
   align-items: flex-start;
@@ -1381,6 +1470,34 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
 .tts-wide-field {
   grid-column: span 2;
 }
+.tts-emotion-strength input[type="range"] {
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: #5eead4;
+  cursor: pointer;
+}
+.tts-emotion-strength input[type="range"]:disabled {
+  cursor: not-allowed;
+  opacity: .38;
+}
+.tts-emotion-strength small { font-size: .72rem; line-height: 1.35; }
+.tts-refine-parameter-panel {
+  margin: 14px 0 18px;
+  padding: 16px;
+  border: 1px solid rgba(94, 234, 212, .22);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(15, 118, 110, .08), rgba(15, 23, 42, .42));
+}
+.tts-refine-parameter-panel.locked { opacity: .62; pointer-events: none; }
+.tts-refine-parameter-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.tts-refine-parameter-head h4 { margin: 4px 0; font-size: 1rem; }
+.tts-refine-voice-row { display: grid; gap: 7px; margin-bottom: 14px; }
+.tts-refine-wide-field { margin-bottom: 14px; }
+.tts-refine-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 0; }
+.tts-refine-qwen-grid { margin-bottom: 14px; }
+.tts-refine-qwen-grid textarea { min-height: 96px; }
 .tts-parameter-meta {
   display: flex;
   align-items: center;
@@ -2254,14 +2371,17 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   .visual-timing-editor { grid-template-columns: 160px minmax(0, 1fr); }
   .tts-segment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tts-segment-card { grid-template-columns: minmax(0, 1fr) 112px; }
+  .tts-refine-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
   .tts-segment-grid { grid-template-columns: 1fr; }
+  .tts-refine-grid, .tts-refine-qwen-grid { grid-template-columns: 1fr; }
   .cluster-main-select-row { grid-template-columns: 1fr; }
   .cloud-voice-preview-btn { min-height: 44px; }
   .topbar { padding: 16px 16px 8px; gap: 10px; }
   .product-title { font-size: 1.08rem; }
+  .cloud-website-entry { min-height: 36px; padding: 0 10px; font-size: .76rem; }
   .cloud-account-summary { min-width: 0; padding-right: 10px; }
   .cloud-account-copy strong { max-width: 92px; }
   .cloud-auth-stats { grid-template-columns: 1fr; }

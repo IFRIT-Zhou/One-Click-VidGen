@@ -70,9 +70,10 @@ def build_job_payload(
     }
     emotion = str(request.get("tts_emotion") or "").strip()
     if emotion:
+        raw_emotion_weight = request.get("tts_emotion_weight", 0.65)
         payload["emotion"] = {
             "name": emotion,
-            "weight": float(request.get("tts_emotion_weight", 0.65) or 0.65),
+            "weight": float(0.65 if raw_emotion_weight is None else raw_emotion_weight),
         }
     return payload
 
@@ -342,6 +343,7 @@ def synthesize_cloud_tts(
         "tts_volume": float(request.get("tts_volume", 1) or 1),
         "tts_pitch": int(request.get("tts_pitch", 0) or 0),
         "tts_emotion": str(request.get("tts_emotion") or ""),
+        "tts_emotion_weight": float(request.get("tts_emotion_weight", 0.65)),
         "reserved_credits": remote.get("reserved_credits"),
         "consumed_credits": remote.get("consumed_credits"),
         "released_credits": remote.get("released_credits"),

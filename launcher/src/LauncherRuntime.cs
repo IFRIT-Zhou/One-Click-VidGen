@@ -501,6 +501,7 @@ namespace OcvLauncher
             string remoteDisplay = ReadJsonString(remoteJson, "display_version");
             string archiveUrl = ReadJsonString(remoteJson, "archive_url");
             bool portableOverlaySafe = ReadJsonBool(remoteJson, "portable_overlay_safe");
+            long portableOverlayMinOrder = ReadJsonLong(remoteJson, "portable_overlay_min_order");
             if (string.IsNullOrWhiteSpace(remoteRelease) || remoteOrder <= 0) return BlockedUpdate("portable", "远端更新通道返回了无效信息。", string.Empty);
 
             if (remoteOrder == localOrder)
@@ -518,7 +519,8 @@ namespace OcvLauncher
             {
                 return BlockedUpdate("portable", "本地便携版比公开更新通道更新，不执行自动降级。", localDisplay);
             }
-            if (!portableOverlaySafe)
+            bool portableBaselineCompatible = portableOverlayMinOrder > 0 && localOrder >= portableOverlayMinOrder;
+            if (!portableOverlaySafe && !portableBaselineCompatible)
             {
                 return BlockedUpdate("portable", "该版本包含运行环境、依赖或模型变更，不能安全覆盖。请下载新的完整便携包。", remoteDisplay);
             }

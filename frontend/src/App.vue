@@ -94,12 +94,15 @@
               <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · ${currentLanguageModelLabel}`) }}</strong>
               <small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small>
             </div>
-            <div v-if="!form.use_cloud_image_pool && !apiKeyRuntimeErrors.language" class="api-key-account-list">
-              <div v-for="(hint, index) in currentLanguageProvider.key_hints || []" :key="hint + index" class="api-key-account-row">
-                <code>{{ hint }}</code>
-                <button type="button" class="api-key-delete-btn" :disabled="deletingApiKey" :title="`删除此 ${currentLanguageProviderLabel} API Key`" @click="deleteConfiguredApiKey('language', index)">×</button>
+            <details v-if="!form.use_cloud_image_pool && !apiKeyRuntimeErrors.language && (currentLanguageProvider.key_hints || []).length" class="api-key-account-details">
+              <summary>查看已配置账号（{{ (currentLanguageProvider.key_hints || []).length }}）</summary>
+              <div class="api-key-account-list">
+                <div v-for="(hint, index) in currentLanguageProvider.key_hints || []" :key="hint + index" class="api-key-account-row">
+                  <code>{{ hint }}</code>
+                  <button type="button" class="api-key-delete-btn" :disabled="deletingApiKey" :title="`删除此 ${currentLanguageProviderLabel} API Key`" @click="deleteConfiguredApiKey('language', index)">×</button>
+                </div>
               </div>
-            </div>
+            </details>
             <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加三方语言节点 API Key" aria-label="添加三方语言节点 API Key" @click="addApiKeyAccount('language')">＋</button>
           </div>
         </div>
@@ -113,13 +116,44 @@
               <strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : `已配置 ${apiKeyStatus.image?.count || 0} 个出图账号` }}</strong>
               <small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small>
             </div>
-            <div v-if="!apiKeyRuntimeErrors.image" class="api-key-account-list">
-              <div v-for="(hint, index) in apiKeyStatus.image?.key_hints || []" :key="hint + index" class="api-key-account-row">
-                <code>{{ hint }}</code>
-                <button type="button" class="api-key-delete-btn" :disabled="form.use_cloud_image_pool || deletingApiKey" title="删除此图像 API Key" @click="deleteConfiguredApiKey('image', index)">×</button>
+            <details v-if="!apiKeyRuntimeErrors.image && (apiKeyStatus.image?.key_hints || []).length" class="api-key-account-details">
+              <summary>查看已配置账号（{{ (apiKeyStatus.image?.key_hints || []).length }}）</summary>
+              <div class="api-key-account-list">
+                <div v-for="(hint, index) in apiKeyStatus.image?.key_hints || []" :key="hint + index" class="api-key-account-row">
+                  <code>{{ hint }}</code>
+                  <button type="button" class="api-key-delete-btn" :disabled="form.use_cloud_image_pool || deletingApiKey" title="删除此图像 API Key" @click="deleteConfiguredApiKey('image', index)">×</button>
+                </div>
               </div>
-            </div>
+            </details>
             <button class="api-key-corner-add" type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" aria-label="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
+          </div>
+          <div class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
+            <div class="image-concurrency-summary">
+              <div>
+                <strong>出图并发</strong>
+                <small v-if="form.use_cloud_image_pool">由云端号池服务器动态调度</small>
+                <small v-else>{{ imageConcurrencyPreview }}</small>
+              </div>
+              <select v-model="apiKeyForm.image_concurrency_mode" :disabled="form.use_cloud_image_pool" @change="saveImageConcurrencySettings">
+                <option value="auto">自动（推荐）</option>
+                <option value="manual">手动限制</option>
+              </select>
+            </div>
+            <details v-if="!form.use_cloud_image_pool" class="image-concurrency-details">
+              <summary>高级设置</summary>
+              <label>
+                <span>单 Key 并发</span>
+                <input v-model.number="apiKeyForm.image_per_key_concurrency" type="number" min="1" max="16" />
+              </label>
+              <label v-if="apiKeyForm.image_concurrency_mode === 'manual'">
+                <span>总并发上限</span>
+                <input v-model.number="apiKeyForm.image_total_concurrency" type="number" min="1" max="64" />
+              </label>
+              <button type="button" class="ghost-btn image-concurrency-save" :disabled="savingImageConcurrency" @click="saveImageConcurrencySettings">
+                {{ savingImageConcurrency ? '保存中…' : '保存并发设置' }}
+              </button>
+              <small>三方接口通常保持单 Key 并发 1；官方或高并发接口可按服务商额度提高。</small>
+            </details>
           </div>
         </div>
         <div class="cloud-pool-toggle-row">
@@ -168,6 +202,15 @@
           一键生成视频 <span>/</span> One-Click VidGen
         </button>
         <div class="cloud-account-entry">
+          <a
+            class="cloud-website-entry"
+            href="https://oneclickvidgen.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="打开 One-Click VidGen 官网进行充值与账户管理"
+          >
+            官网充值
+          </a>
           <button
             v-if="cloudSession.authenticated"
             class="cloud-account-summary"
@@ -393,7 +436,15 @@
 
             <div class="create-settings-column">
             <div class="create-audio-column">
-            <div v-if="!form.skip_tts" class="tts-parameter-panel">
+            <div
+              v-if="!form.skip_tts"
+              class="tts-parameter-panel"
+              :class="{ 'refinement-locked': ttsRefinementActive }"
+              :inert="ttsRefinementActive"
+              :aria-disabled="ttsRefinementActive ? 'true' : 'false'"
+              :title="ttsRefinementActive ? '配音精修已展开，请使用下方精修参数' : ''"
+            >
+              <div v-if="ttsRefinementActive" class="refinement-lock-note">配音精修已展开 · 请使用下方精修参数</div>
               <div class="tts-parameter-head">
                 <div>
                   <div class="tts-engine-row">
@@ -443,6 +494,11 @@
                       {{ emotionLabel(emotion) }}
                     </option>
                   </select>
+                </label>
+                <label class="tts-emotion-strength">
+                  <span>情绪强度（0–1）· {{ Number(form.tts_emotion_weight).toFixed(2) }}</span>
+                  <input v-model.number="form.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!form.tts_emotion" />
+                  <small class="muted">选择具体情绪后生效；默认 0.65。</small>
                 </label>
                 <label>
                   <span>语速（0.5–2）</span>
@@ -535,6 +591,7 @@
                   </div>
                   <div class="form-grid cluster-parameter-grid">
                     <label><span>情绪</span><select v-model="form.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="emotion" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
+                    <label class="tts-emotion-strength"><span>情绪强度（0–1）· {{ Number(form.tts_emotion_weight).toFixed(2) }}</span><input v-model.number="form.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!form.tts_emotion" /><small class="muted">选择具体情绪后生效。</small></label>
                     <label><span>语速（0.5–2）</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
                     <label><span>音量（0.1–10）</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
                     <label><span>音调（-12–12）</span><input v-model.number="form.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
@@ -1256,6 +1313,45 @@
                 <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
                 <template v-else>
                   <div v-if="ttsEditor.task?.message" class="visual-task-message" :class="ttsEditor.task?.status">{{ ttsEditor.task.message }}</div>
+                  <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
+                    <div class="tts-refine-parameter-head">
+                      <div>
+                        <span class="sidebar-label">{{ ttsRefineEngineLabel }}</span>
+                        <h4>本次重配参数</h4>
+                        <small class="muted">只作用于本次选中的句子；成功后保存为该项目后续精修参数。</small>
+                      </div>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="hydrateTtsRefineSettings(ttsEditor)">恢复项目参数</button>
+                    </div>
+
+                    <div v-if="ttsEditor.engine === 'indextts25'" class="tts-refine-voice-row">
+                      <label class="script-file-picker">
+                        <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="ttsRefineVoiceUploading || ttsEditor.task?.status === 'running'" @change="uploadTtsRefineVoice" />
+                        <span>{{ ttsRefineVoiceUploading ? '上传中' : '更换音源' }}</span>
+                        <strong>{{ ttsRefineVoiceName || '沿用该项目当前参考音色' }}</strong>
+                      </label>
+                      <small v-if="ttsRefineVoiceError" class="script-upload-error">{{ ttsRefineVoiceError }}</small>
+                    </div>
+                    <label v-else-if="ttsEditor.engine === 'cluster'" class="tts-refine-wide-field">
+                      <span>云端音色</span>
+                      <select v-model="ttsRefineForm.cluster_voice_key">
+                        <optgroup label="云端默认音色"><option v-for="voice in cloudPresetVoiceOptions" :key="`refine-preset:${voice.id}`" :value="`preset:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup>
+                        <optgroup v-if="cloudUploadedVoiceOptions.length" label="我上传的音色"><option v-for="voice in cloudUploadedVoiceOptions" :key="`refine-uploaded:${voice.id}`" :value="`uploaded:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup>
+                      </select>
+                    </label>
+                    <div v-else-if="ttsEditor.engine === 'qwen'" class="form-grid tts-refine-qwen-grid">
+                      <label><span>Qwen 系统音色</span><select v-model="ttsRefineForm.qwen_voice"><optgroup v-for="group in qwenVoiceGroups" :key="`refine-${group.label}`" :label="group.label"><option v-for="voice in group.voices" :key="`refine-${voice.value}`" :value="voice.value">{{ voice.label }}</option></optgroup></select></label>
+                      <label><span>配音描述</span><textarea v-model="ttsRefineForm.qwen_instructions" rows="3" maxlength="1600"></textarea></label>
+                    </div>
+
+                    <div class="form-grid tts-refine-grid">
+                      <label v-if="ttsEditor.engine !== 'qwen'"><span>情绪</span><select v-model="ttsRefineForm.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="`refine-${emotion}`" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
+                      <label v-if="ttsEditor.engine !== 'qwen'" class="tts-emotion-strength"><span>情绪强度 · {{ Number(ttsRefineForm.tts_emotion_weight).toFixed(2) }}</span><input v-model.number="ttsRefineForm.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!ttsRefineForm.tts_emotion" /></label>
+                      <label><span>语速</span><input v-model.number="ttsRefineForm.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
+                      <label><span>音量</span><input v-model.number="ttsRefineForm.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
+                      <label><span>音调</span><input v-model.number="ttsRefineForm.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
+                      <label v-if="ttsEditor.engine === 'indextts25'"><span>并行数</span><input v-model.number="ttsRefineForm.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                    </div>
+                  </div>
                   <div class="tts-segment-grid">
                     <article
                       v-for="item in ttsEditor.segments"
@@ -1661,6 +1757,11 @@
                         <option value="">模型默认</option>
                         <option v-for="emotion in settings.tts?.emotions || []" :key="emotion" :value="emotion">{{ emotionLabel(emotion) }}</option>
                       </select>
+                    </label>
+                    <label class="tts-emotion-strength">
+                      <span>情绪强度（0–1）· {{ Number(form.tts_emotion_weight).toFixed(2) }}</span>
+                      <input v-model.number="form.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!form.tts_emotion" />
+                      <small class="muted">选择具体情绪后生效。</small>
                     </label>
                     <label><span>语速</span><input v-model.number="form.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
                     <label><span>音量</span><input v-model.number="form.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
@@ -2178,6 +2279,27 @@ const visualTimingAdjusting = ref(false)
 const ttsEditor = ref({ available: false, message: '', segments: [], task: { status: 'idle', message: '' } })
 const ttsEditorLoading = ref(false)
 const selectedTtsSegmentIndices = ref([])
+const ttsRefineForm = reactive({
+  tts_voice_id: '',
+  tts_speed: 1,
+  tts_volume: 1,
+  tts_pitch: 0,
+  tts_parallelism: 1,
+  tts_emotion: '',
+  tts_emotion_weight: 0.65,
+  cluster_voice_key: '',
+  qwen_voice: 'Elias',
+  qwen_instructions: '',
+})
+const ttsRefineVoiceName = ref('')
+const ttsRefineVoiceUploading = ref(false)
+const ttsRefineVoiceError = ref('')
+const ttsRefineEngineLabel = computed(() => ({
+  indextts25: '本地 GPU · IndexTTS-2.5',
+  cluster: '集群 GPU',
+  qwen: 'Qwen-TTS',
+}[ttsEditor.value.engine] || '配音引擎'))
+const ttsRefinementActive = computed(() => visualEditorOpen.value && Boolean(ttsEditor.value.available))
 const ttsSegmentPlayingIndex = ref(0)
 const ttsSegmentIsPlaying = ref(false)
 const ttsSegmentCurrentTime = ref(0)
@@ -2409,7 +2531,21 @@ const apiKeyForm = reactive({
   language_api_key: '',
   image_api_key: '',
   image_api_keys: [],
+  image_concurrency_mode: 'auto',
+  image_per_key_concurrency: 1,
+  image_total_concurrency: 3,
   qwen_tts_api_key: '',
+})
+const savingImageConcurrency = ref(false)
+const imageConcurrencyPreview = computed(() => {
+  const keyCount = Number(apiKeyStatus.value.image?.count || 0)
+  const perKey = Math.max(1, Number(apiKeyForm.image_per_key_concurrency || 1))
+  const capacity = keyCount * perKey
+  const effective = apiKeyForm.image_concurrency_mode === 'manual'
+    ? Math.min(capacity, Math.max(1, Number(apiKeyForm.image_total_concurrency || 1)))
+    : capacity
+  if (!keyCount) return '保存 Key 后自动计算'
+  return `${keyCount} 个 Key × 每 Key ${perKey} 路，当前预计 ${effective} 路并发`
 })
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
   { value: 'gemini', label: 'Google Gemini', configured: false },
@@ -2469,6 +2605,7 @@ const form = reactive({
   tts_pitch: 0,
   tts_parallelism: 2,
   tts_emotion: '',
+  tts_emotion_weight: 0.65,
   tts_english_normalization: false,
   tts_pronunciation: '',
   cluster_voice_type: 'preset',
@@ -3823,6 +3960,10 @@ async function loadApiKeySettings() {
       || currentLanguageProvider.value?.selected_model
       || currentLanguageModels.value[0]?.value
       || ''
+    const concurrency = apiKeyStatus.value.image?.concurrency || {}
+    apiKeyForm.image_concurrency_mode = concurrency.mode === 'manual' ? 'manual' : 'auto'
+    apiKeyForm.image_per_key_concurrency = Number(concurrency.per_key || 1)
+    apiKeyForm.image_total_concurrency = Number(concurrency.total_limit || 3)
     apiKeyStatusLoaded = true
   } catch (error) {
     apiKeyMessage.value = error.message || '无法读取 API Key 配置状态'
@@ -3917,6 +4058,7 @@ async function loadSettings() {
   form.tts_pitch = defaults.pitch ?? 0
   form.tts_parallelism = defaults.parallelism ?? 2
   form.tts_emotion = defaults.emotion || ''
+  form.tts_emotion_weight = defaults.emotion_weight ?? 0.65
   form.tts_english_normalization = defaults.english_normalization ?? false
   form.tts_pronunciation = defaults.pronunciation || ''
   const availableModes = settings.value.visual_prompt?.modes || FALLBACK_CONTENT_MODES
@@ -4664,12 +4806,78 @@ async function loadTtsEditor() {
   ttsEditorLoading.value = true
   try {
     ttsEditor.value = await api.ttsEditor(visualEditorProjectId.value)
+    hydrateTtsRefineSettings(ttsEditor.value)
     const valid = new Set((ttsEditor.value.segments || []).map((item) => item.index))
     selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter((value) => valid.has(value))
   } catch (error) {
     ttsEditor.value = { available: false, message: error.message || '无法读取逐句配音', segments: [], task: { status: 'failed', message: '' } }
   } finally {
     ttsEditorLoading.value = false
+  }
+}
+
+async function saveImageConcurrencySettings() {
+  if (form.use_cloud_image_pool || savingImageConcurrency.value) return
+  savingImageConcurrency.value = true
+  apiKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings({
+      image_concurrency_mode: apiKeyForm.image_concurrency_mode === 'manual' ? 'manual' : 'auto',
+      image_per_key_concurrency: Math.max(1, Math.min(16, Number(apiKeyForm.image_per_key_concurrency || 1))),
+      image_total_concurrency: Math.max(1, Math.min(64, Number(apiKeyForm.image_total_concurrency || 1))),
+    })
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    const concurrency = apiKeyStatus.value.image?.concurrency || {}
+    apiKeyForm.image_concurrency_mode = concurrency.mode === 'manual' ? 'manual' : 'auto'
+    apiKeyForm.image_per_key_concurrency = Number(concurrency.per_key || 1)
+    apiKeyForm.image_total_concurrency = Number(concurrency.total_limit || 3)
+    apiKeyMessage.value = `出图并发已保存：${imageConcurrencyPreview.value}`
+  } catch (error) {
+    apiKeyMessage.value = error.message || '保存出图并发设置失败。'
+  } finally {
+    savingImageConcurrency.value = false
+  }
+}
+
+function hydrateTtsRefineSettings(payload) {
+  const values = payload?.settings || {}
+  ttsRefineForm.tts_voice_id = ''
+  ttsRefineForm.tts_speed = Number(values.tts_speed ?? 1)
+  ttsRefineForm.tts_volume = Number(values.tts_volume ?? 1)
+  ttsRefineForm.tts_pitch = Number(values.tts_pitch ?? 0)
+  ttsRefineForm.tts_parallelism = Number(values.tts_parallelism ?? 1)
+  ttsRefineForm.tts_emotion = String(values.tts_emotion || '')
+  ttsRefineForm.tts_emotion_weight = Number(values.tts_emotion_weight ?? 0.65)
+  const clusterType = String(values.cluster_voice_type || 'preset')
+  const clusterId = String(values.cluster_voice_id || '')
+  ttsRefineForm.cluster_voice_key = clusterId ? `${clusterType === 'custom' ? 'uploaded' : clusterType}:${clusterId}` : ''
+  ttsRefineForm.qwen_voice = String(values.qwen_voice || 'Elias')
+  ttsRefineForm.qwen_instructions = String(values.qwen_instructions || '')
+  ttsRefineVoiceName.value = ''
+  ttsRefineVoiceError.value = ''
+}
+
+async function uploadTtsRefineVoice(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['wav', 'mp3', 'flac'].includes(suffix)) {
+    ttsRefineVoiceError.value = '参考音色只支持 WAV、MP3 或 FLAC。'
+    return
+  }
+  ttsRefineVoiceUploading.value = true
+  ttsRefineVoiceError.value = ''
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    ttsRefineForm.tts_voice_id = `upload:${payload.asset.id}`
+    ttsRefineVoiceName.value = payload.asset.name || file.name
+  } catch (error) {
+    ttsRefineVoiceError.value = error.message || '精修参考音色上传失败'
+  } finally {
+    ttsRefineVoiceUploading.value = false
   }
 }
 
@@ -4773,7 +4981,23 @@ async function regenerateSelectedTtsSegments() {
   const count = selectedTtsSegmentIndices.value.length
   if (!window.confirm(`重新生成选中的 ${count} 句配音？\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
   try {
-    await api.regenerateTtsSegments(visualEditorProjectId.value, selectedTtsSegmentIndices.value)
+    const refineSettings = {
+      tts_speed: ttsRefineForm.tts_speed,
+      tts_volume: ttsRefineForm.tts_volume,
+      tts_pitch: ttsRefineForm.tts_pitch,
+      tts_parallelism: ttsRefineForm.tts_parallelism,
+      tts_emotion: ttsRefineForm.tts_emotion,
+      tts_emotion_weight: ttsRefineForm.tts_emotion_weight,
+      qwen_voice: ttsRefineForm.qwen_voice,
+      qwen_instructions: ttsRefineForm.qwen_instructions,
+    }
+    if (ttsRefineForm.tts_voice_id) refineSettings.tts_voice_id = ttsRefineForm.tts_voice_id
+    if (ttsRefineForm.cluster_voice_key) {
+      const [voiceType, ...voiceIdParts] = ttsRefineForm.cluster_voice_key.split(':')
+      refineSettings.cluster_voice_type = voiceType
+      refineSettings.cluster_voice_id = voiceIdParts.join(':')
+    }
+    await api.regenerateTtsSegments(visualEditorProjectId.value, selectedTtsSegmentIndices.value, refineSettings)
     ttsEditor.value.task = { status: 'running', progress: 0, message: `正在重配 ${count} 句，请留意上方任务日志。` }
     startTtsEditorPolling()
   } catch (error) {

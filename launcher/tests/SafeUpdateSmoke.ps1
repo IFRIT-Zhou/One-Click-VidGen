@@ -13,12 +13,18 @@ try {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     New-Item -ItemType Directory -Path $fakeRoot, $sourceRoot, $packageDir -Force | Out-Null
 
-    New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'runtime'), (Join-Path $fakeRoot 'output'), (Join-Path $fakeRoot 'workspace') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'runtime'), (Join-Path $fakeRoot 'output'), (Join-Path $fakeRoot 'workspace'), (Join-Path $fakeRoot 'launcher') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $fakeRoot 'app.txt') -Value 'old-source' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot '.env') -Value 'SECRET=keep-me' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'runtime\model.bin') -Value 'model-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'output\video.mp4') -Value 'output-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'workspace\job.json') -Value 'workspace-keep' -Encoding UTF8
+    @{
+        release_id = 'smoke-baseline-1'
+        release_order = 1
+        display_version = 'Smoke Baseline'
+        portable_overlay_safe = $false
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fakeRoot 'launcher\update-channel.json') -Encoding UTF8
 
     New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'launcher'), (Join-Path $sourceRoot 'runtime'), (Join-Path $sourceRoot 'output') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $sourceRoot 'start_windows.bat') -Value '@echo off' -Encoding ASCII
@@ -28,9 +34,10 @@ try {
     Set-Content -LiteralPath (Join-Path $sourceRoot 'output\video.mp4') -Value 'output-overwrite-attempt' -Encoding UTF8
     @{
         release_id = 'smoke-release-1'
-        release_order = 1
+        release_order = 2
         display_version = 'Smoke Test'
-        portable_overlay_safe = $true
+        portable_overlay_safe = $false
+        portable_overlay_min_order = 1
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sourceRoot 'launcher\update-channel.json') -Encoding UTF8
 
     Compress-Archive -LiteralPath $sourceRoot -DestinationPath $package -CompressionLevel Fastest
@@ -55,6 +62,31 @@ try {
         if (-not $assertion.Passed) { throw "Assertion failed: $($assertion.Name)" }
         Write-Host "PASS $($assertion.Name)"
     }
+
+    $legacyRoot = Join-Path $fixture 'legacy-project'
+    $legacyPackageDir = Join-Path $legacyRoot 'runtime\temp\ocv-updates'
+    $legacyPackage = Join-Path $legacyPackageDir 'update.zip'
+    New-Item -ItemType Directory -Path (Join-Path $legacyRoot 'launcher'), $legacyPackageDir -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $legacyRoot 'app.txt') -Value 'legacy-source' -Encoding UTF8
+    @{
+        release_id = 'legacy-baseline'
+        release_order = 0
+        display_version = 'Legacy Baseline'
+        portable_overlay_safe = $false
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyRoot 'launcher\update-channel.json') -Encoding UTF8
+    Compress-Archive -LiteralPath $sourceRoot -DestinationPath $legacyPackage -CompressionLevel Fastest
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+        -Mode portable `
+        -ProjectRoot $legacyRoot `
+        -LauncherPid 999999 `
+        -ExpectedReleaseId 'smoke-release-1' `
+        -PackagePath $legacyPackage `
+        -NoRestart
+    if ($LASTEXITCODE -eq 0) { throw 'Legacy portable baseline unexpectedly crossed the compatibility boundary.' }
+    if ((Get-Content -LiteralPath (Join-Path $legacyRoot 'app.txt') -Raw).Trim() -ne 'legacy-source') {
+        throw 'Assertion failed: incompatible legacy portable package was modified.'
+    }
+    Write-Host 'PASS incompatible legacy portable baseline was rejected'
 
     $failureRoot = Join-Path $fixture 'failure-project'
     $failureSourceParent = Join-Path $fixture 'failure-source'

@@ -1,7 +1,16 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from backend.app.pipeline import Job, JobStore, parse_noisy_progress_log
+from backend.app.pipeline import (
+    Job,
+    JobStore,
+    _standalone_subtitle_command,
+    _standalone_subtitle_progress_handler,
+    parse_noisy_progress_log,
+    render_standalone_subtitle_video,
+)
 
 
 class PipelineLoggingTest(unittest.TestCase):
@@ -162,6 +171,69 @@ class PipelineLoggingTest(unittest.TestCase):
             snapshot = store.cancel(job)
         graceful_stop.assert_not_called()
         self.assertEqual(snapshot["message"], "正在取消集群云端任务")
+
+    def test_standalone_subtitle_command_prefers_nvenc_and_reports_progress(self) -> None:
+        command = _standalone_subtitle_command(
+            Path("input.mp4"),
+            Path("output.mp4"),
+            "subtitles=filename='test.srt'",
+            source_is_video=True,
+            use_nvenc=True,
+        )
+        self.assertIn("h264_nvenc", command)
+        self.assertIn("-progress", command)
+        self.assertIn("pipe:1", command)
+        self.assertEqual(command[-1], "output.mp4")
+
+        job = Job(id="subtitle-progress", status="running", step="subtitle_render", progress=12)
+        store = JobStore()
+        handler = _standalone_subtitle_progress_handler(job, store, 100.0)
+        with (
+            patch("backend.app.pipeline.append_generation_job_log"),
+            patch("backend.app.pipeline.upsert_generation_job"),
+        ):
+            self.assertTrue(handler("out_time_us=50000000\n"))
+        self.assertEqual(job.progress, 52)
+        self.assertIn("50/100 秒", job.message)
+
+    def test_standalone_subtitle_render_falls_back_to_cpu(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "input.mp4"
+            subtitle = root / "input.srt"
+            output = root / "output.mp4"
+            source.write_bytes(b"source")
+            subtitle.write_text("1\n00:00:00,000 --> 00:00:01,000\n测试\n", encoding="utf-8")
+            job = Job(id="subtitle-fallback", status="running")
+            store = JobStore()
+            commands: list[list[str]] = []
+
+            def fake_run(_job, _store, command, _label, **_kwargs):
+                commands.append(command)
+                if len(commands) == 1:
+                    raise RuntimeError("NVENC unavailable")
+                output.write_bytes(b"0" * 2048)
+
+            with (
+                patch("backend.app.pipeline.append_generation_job_log"),
+                patch("backend.app.pipeline.upsert_generation_job"),
+                patch("backend.app.pipeline.probe_media_duration", return_value=10.0),
+                patch("backend.app.pipeline.run_command", side_effect=fake_run),
+            ):
+                render_standalone_subtitle_video(
+                    job,
+                    store,
+                    source,
+                    subtitle,
+                    output,
+                    style_key="navy_bg_white",
+                    font_name="Microsoft YaHei",
+                )
+
+        self.assertEqual(len(commands), 2)
+        self.assertIn("h264_nvenc", commands[0])
+        self.assertIn("libx264", commands[1])
+        self.assertTrue(any("自动切换 CPU x264" in line for line in job.logs))
 
 
 if __name__ == "__main__":

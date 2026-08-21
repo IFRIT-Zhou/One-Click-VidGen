@@ -200,6 +200,31 @@ class VisualConstraintsTest(unittest.TestCase):
                 12,
             )
             self.assertEqual(visual._poster_worker_count([{}], 12), 1)
+        pool = visual.RunningHubAccountPool(
+            [{"api_key": "cloud-token", "cloud_pool": "1", "account_label": "云端号池"}],
+            per_key_concurrency=12,
+        )
+        leases = [pool.acquire() for _ in range(12)]
+        for lease in leases:
+            pool.release(lease)
+
+    def test_auto_image_concurrency_uses_all_configured_key_capacity(self) -> None:
+        configs = [{"api_key": f"key-{index}"} for index in range(7)]
+        with patch.dict(os.environ, {
+            "RUNNINGHUB_CONCURRENCY_MODE": "auto",
+            "RUNNINGHUB_PER_KEY_CONCURRENCY": "1",
+            "RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "3",
+        }, clear=False):
+            self.assertEqual(visual._poster_worker_count(configs, 20), 7)
+
+    def test_manual_image_concurrency_respects_account_and_total_limits(self) -> None:
+        configs = [{"api_key": "key-1"}, {"api_key": "key-2"}]
+        with patch.dict(os.environ, {
+            "RUNNINGHUB_CONCURRENCY_MODE": "manual",
+            "RUNNINGHUB_PER_KEY_CONCURRENCY": "2",
+            "RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "3",
+        }, clear=False):
+            self.assertEqual(visual._poster_worker_count(configs, 20), 3)
 
     def test_moderation_failure_is_rewritten_for_single_image_retry(self) -> None:
         self.assertTrue(visual._looks_like_moderation_failure("content safety blocked"))
@@ -216,6 +241,10 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertNotIn("满地鲜血", rewritten)
         self.assertIn("安全重绘", rewritten)
         self.assertIn("遮挡", rewritten)
+
+    def test_rate_limit_is_treated_as_account_concurrency_backoff(self) -> None:
+        with self.assertRaises(visual.RunningHubQueueFull):
+            visual._handle_runninghub_submit_error({"code": 429, "message": "too many requests"}, 429)
 
     def test_science_mode_restores_red_scarf_girl_and_science_agent(self) -> None:
         self.assertNotIn("黑色短发", visual.SCIENCE_VISUAL_STYLE)
@@ -881,6 +910,20 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIs(first_call_pool, second_call_pool)
         self.assertEqual(first_call_pool.acquire()["account_label"], "账号 1")
         self.assertEqual(second_call_pool.acquire()["account_label"], "账号 2")
+
+    def test_account_pool_assigns_distinct_single_capacity_keys(self) -> None:
+        configs = [
+            {"api_key": "capacity-key-1", "account_label": "账号 1"},
+            {"api_key": "capacity-key-2", "account_label": "账号 2"},
+        ]
+        pool = visual.RunningHubAccountPool(configs, per_key_concurrency=1)
+        first = pool.acquire()
+        second = pool.acquire()
+        try:
+            self.assertNotEqual(first["api_key"], second["api_key"])
+        finally:
+            pool.release(first)
+            pool.release(second)
 
     def test_power_exhausted_account_is_skipped_by_new_pool(self) -> None:
         configs = [

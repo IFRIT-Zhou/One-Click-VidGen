@@ -400,14 +400,23 @@ class RunningHubAllAccountsAccessDenied(RuntimeError):
 
 
 class RunningHubAllAccountsBusy(RuntimeError):
-    """Every configured RunningHub account currently returned queue-full error 421."""
+    """Every configured image account currently returned a queue or rate limit."""
 
 
 class RunningHubAccountPool:
-    """Round-robin accounts, retire depleted accounts, and temporarily skip 421 accounts."""
+    """Capacity-aware account scheduler with round-robin and automatic backoff."""
 
-    def __init__(self, configs: list[dict[str, str]]) -> None:
+    def __init__(self, configs: list[dict[str, str]], per_key_concurrency: int | None = None) -> None:
         self._configs = configs
+        server_managed_capacity = 64 if any(config.get("cloud_pool") == "1" for config in configs) else None
+        self._configured_capacity = max(
+            1,
+            int(
+                per_key_concurrency
+                or server_managed_capacity
+                or _positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)
+            ),
+        )
         # A quota failure is deterministic for the current backend session.
         # Seed every new batch/redraw pool with it so a newly-created task does
         # not waste another 90 retries on an account already known to be empty.
@@ -418,19 +427,67 @@ class RunningHubAccountPool:
             }
         self._access_denied: set[str] = set()
         self._queue_full: set[str] = set()
+        self._inflight = {str(config.get("api_key") or ""): 0 for config in configs}
+        self._effective_capacity = {
+            str(config.get("api_key") or ""): self._configured_capacity for config in configs
+        }
+        self._active_leases: dict[int, str] = {}
+        self._next_lease_id = 1
         self._next_index = 0
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+
+    def _lease_locked(self, config: dict[str, str]) -> dict[str, str]:
+        key = config["api_key"]
+        lease_id = self._next_lease_id
+        self._next_lease_id += 1
+        self._inflight[key] = self._inflight.get(key, 0) + 1
+        self._active_leases[lease_id] = key
+        return {**config, "_lease_id": str(lease_id)}
+
+    def _release_locked(self, config: dict[str, str]) -> None:
+        try:
+            lease_id = int(config.get("_lease_id") or 0)
+        except (TypeError, ValueError):
+            lease_id = 0
+        key = self._active_leases.pop(lease_id, "")
+        if not key:
+            return
+        self._inflight[key] = max(0, self._inflight.get(key, 0) - 1)
+        self._condition.notify_all()
+
+    def release(self, config: dict[str, str]) -> None:
+        """Release one idempotent local lease after the remote task finishes or aborts."""
+        with self._condition:
+            self._release_locked(config)
 
     def acquire(self) -> dict[str, str]:
-        with self._lock:
-            available = [
-                config
-                for config in self._configs
-                if config["api_key"] not in self._power_exhausted
-                and config["api_key"] not in self._access_denied
-                and config["api_key"] not in self._queue_full
-            ]
-            if not available:
+        with self._condition:
+            while True:
+                usable = [
+                    config
+                    for config in self._configs
+                    if config["api_key"] not in self._power_exhausted
+                    and config["api_key"] not in self._access_denied
+                ]
+                available = [
+                    config
+                    for config in usable
+                    if config["api_key"] not in self._queue_full
+                    and self._inflight.get(config["api_key"], 0)
+                    < self._effective_capacity.get(config["api_key"], self._configured_capacity)
+                ]
+                if available:
+                    config = available[self._next_index % len(available)]
+                    self._next_index = (self._next_index + 1) % len(available)
+                    return self._lease_locked(config)
+                locally_busy = [
+                    config for config in usable
+                    if config["api_key"] not in self._queue_full
+                ]
+                if locally_busy:
+                    self._condition.wait(timeout=1.0)
+                    continue
                 usable = [
                     config
                     for config in self._configs
@@ -439,7 +496,7 @@ class RunningHubAccountPool:
                 ]
                 if usable:
                     raise RunningHubAllAccountsBusy(
-                        "所有可用 RunningHub 账号当前均处于队列满状态（421）"
+                        "所有可用图像账号当前均处于队列或并发受限状态（421/429）"
                     )
                 if self._access_denied:
                     raise RunningHubAllAccountsAccessDenied(
@@ -448,59 +505,75 @@ class RunningHubAccountPool:
                 raise RunningHubAllAccountsPowerInsufficient(
                     "所有已配置的 RunningHub 账号余额或算力均不足"
                 )
-            config = available[self._next_index % len(available)]
-            self._next_index = (self._next_index + 1) % len(available)
-            return config
 
     def mark_power_exhausted(self, config: dict[str, str]) -> None:
-        with self._lock:
+        with self._condition:
             self._power_exhausted.add(config["api_key"])
             self._queue_full.discard(config["api_key"])
+            self._release_locked(config)
         with _ACCOUNT_STATE_LOCK:
             _POWER_EXHAUSTED_ACCOUNT_KEYS.add(config["api_key"])
 
     def mark_access_denied(self, config: dict[str, str]) -> None:
-        with self._lock:
+        with self._condition:
             self._access_denied.add(config["api_key"])
             self._queue_full.discard(config["api_key"])
+            self._release_locked(config)
 
     def mark_queue_full(self, config: dict[str, str]) -> None:
-        with self._lock:
+        with self._condition:
             if (
                 config["api_key"] not in self._power_exhausted
                 and config["api_key"] not in self._access_denied
             ):
                 self._queue_full.add(config["api_key"])
+                remaining = max(0, self._inflight.get(config["api_key"], 0) - 1)
+                self._effective_capacity[config["api_key"]] = max(1, min(
+                    self._effective_capacity.get(config["api_key"], self._configured_capacity),
+                    max(1, remaining),
+                ))
+            self._release_locked(config)
 
     def mark_available(self, config: dict[str, str]) -> None:
-        with self._lock:
+        with self._condition:
             self._queue_full.discard(config["api_key"])
+            current = self._effective_capacity.get(config["api_key"], 1)
+            self._effective_capacity[config["api_key"]] = min(self._configured_capacity, current + 1)
+            self._release_locked(config)
 
     def acquire_waiting_account(self) -> dict[str, str]:
         """Choose any non-414 account as the account whose queue will be observed."""
-        with self._lock:
-            available = [
-                config
-                for config in self._configs
-                if config["api_key"] not in self._power_exhausted
-                and config["api_key"] not in self._access_denied
-            ]
-            if not available:
-                if self._access_denied:
-                    raise RunningHubAllAccountsAccessDenied(
-                        "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
+        with self._condition:
+            while True:
+                usable = [
+                    config
+                    for config in self._configs
+                    if config["api_key"] not in self._power_exhausted
+                    and config["api_key"] not in self._access_denied
+                ]
+                if not usable:
+                    if self._access_denied:
+                        raise RunningHubAllAccountsAccessDenied(
+                            "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
+                        )
+                    raise RunningHubAllAccountsPowerInsufficient(
+                        "所有已配置的 RunningHub 账号余额或算力均不足"
                     )
-                raise RunningHubAllAccountsPowerInsufficient(
-                    "所有已配置的 RunningHub 账号余额或算力均不足"
-                )
-            config = available[self._next_index % len(available)]
-            self._next_index = (self._next_index + 1) % len(available)
-            return config
+                available = [
+                    config for config in usable
+                    if self._inflight.get(config["api_key"], 0)
+                    < self._effective_capacity.get(config["api_key"], self._configured_capacity)
+                ]
+                if available:
+                    config = available[self._next_index % len(available)]
+                    self._next_index = (self._next_index + 1) % len(available)
+                    return self._lease_locked(config)
+                self._condition.wait(timeout=1.0)
 
 
 _ACCOUNT_STATE_LOCK = threading.Lock()
 _POWER_EXHAUSTED_ACCOUNT_KEYS: set[str] = set()
-_SHARED_ACCOUNT_POOLS: dict[tuple[str, tuple[tuple[str, str, str, str], ...]], RunningHubAccountPool] = {}
+_SHARED_ACCOUNT_POOLS: dict[tuple[str, tuple[tuple[str, ...], ...]], RunningHubAccountPool] = {}
 _SHARED_ACCOUNT_POOLS_LOCK = threading.Lock()
 
 
@@ -519,6 +592,7 @@ def shared_runninghub_account_pool(
             str(config.get("endpoint") or ""),
             str(config.get("ratio") or ""),
             str(config.get("resolution") or ""),
+            str(_positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)),
         )
         for config in configs
     )
@@ -2179,7 +2253,13 @@ def _worker_count(name: str, default: int, task_count: int) -> int:
 def _poster_worker_count(provider_configs: list[dict[str, str]], task_count: int) -> int:
     if any(config.get("cloud_pool") == "1" for config in provider_configs):
         return max(1, task_count)
-    return _worker_count("RUNNINGHUB_ACTIVE_TASK_CONCURRENCY", 1, task_count)
+    per_key = _positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)
+    account_capacity = max(1, len(provider_configs) * per_key)
+    mode = os.getenv("RUNNINGHUB_CONCURRENCY_MODE", "auto").strip().lower()
+    if mode == "manual":
+        requested = _positive_env_int("RUNNINGHUB_ACTIVE_TASK_CONCURRENCY", account_capacity)
+        account_capacity = min(account_capacity, requested)
+    return max(1, min(task_count, account_capacity))
 
 
 def _positive_env_int(name: str, default: int) -> int:
@@ -2408,8 +2488,8 @@ def _runninghub_headers(config: dict[str, str]) -> dict[str, str]:
 def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | None = None) -> None:
     code = _runninghub_error_code(payload, status_code)
     message = _runninghub_error_message(payload)
-    if code == 421:
-        raise RunningHubQueueFull("RunningHub 队列已满（421）")
+    if code in {421, 429}:
+        raise RunningHubQueueFull(f"图像接口队列或并发额度已满（{code}）")
     if _looks_like_power_insufficient(code, message):
         raise RunningHubPowerInsufficient(
             f"当前 RunningHub 账号余额或算力不足（{code or '云端返回'}）。"
@@ -2432,7 +2512,7 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
         raise RunningHubResultRetryableError(
             f"RunningHub 模型执行超时（1504）{f': {message}' if message else ''}"
         )
-    if code in {408, 409, 429, 500, 502, 503, 504, 1005, 1010, 1011, 1012}:
+    if code in {408, 409, 500, 502, 503, 504, 1005, 1010, 1011, 1012}:
         detail = f"，原因: {message}" if message else ""
         raise RunningHubTransientError(f"RunningHub 临时不可用，错误码: {code}{detail}")
     detail = f"，原因: {message}" if message else ""
@@ -2684,7 +2764,7 @@ def _render_poster_with_retry(
                 queued = True
             else:
                 print(
-                    f"{poster_id} 的 {config['account_label']} 返回 421，"
+                    f"{poster_id} 的 {config['account_label']} 返回队列/并发限制，"
                     f"切换到空闲的 {next_config['account_label']}。",
                     flush=True,
                 )
@@ -2719,6 +2799,7 @@ def _render_poster_with_retry(
             continue
         except RunningHubTransientError as exc:
             if attempt == max_attempts:
+                account_pool.release(config)
                 raise RuntimeError(f"{poster_id} 重试 {max_attempts} 次后仍未提交: {exc}") from exc
             delay = _retry_delay_seconds(attempt)
             print(
@@ -2729,6 +2810,7 @@ def _render_poster_with_retry(
             time.sleep(delay)
         except RunningHubModerationError as exc:
             if moderation_retries >= max_moderation_retries:
+                account_pool.release(config)
                 raise RuntimeError(
                     f"{poster_id} 已安全改写并重试 {max_moderation_retries} 次，仍被审核拦截: {exc}"
                 ) from exc
@@ -2745,6 +2827,7 @@ def _render_poster_with_retry(
             time.sleep(delay)
         except RunningHubResultRetryableError as exc:
             if result_retries >= max_result_retries:
+                account_pool.release(config)
                 raise RuntimeError(
                     f"{poster_id} 云端返图异常，额外重试 {max_result_retries} 次后仍失败: {exc}"
                 ) from exc
@@ -2758,6 +2841,10 @@ def _render_poster_with_retry(
                 flush=True,
             )
             time.sleep(delay)
+        except Exception:
+            account_pool.release(config)
+            raise
+    account_pool.release(config)
     raise AssertionError("unreachable")
 
 
@@ -2770,14 +2857,26 @@ def render_posters_concurrently(
 
     uses_cloud_pool = any(config.get("cloud_pool") == "1" for config in provider_configs)
     active_workers = _poster_worker_count(provider_configs, len(mapping))
-    account_pool = RunningHubAccountPool(provider_configs)
+    account_pool = RunningHubAccountPool(
+        provider_configs,
+        per_key_concurrency=active_workers if uses_cloud_pool else None,
+    )
     mapping = [
         {**macro, "progress_label": f"{macro['macro_scene_id']} ({index}/{len(mapping)})"}
         for index, macro in enumerate(mapping, 1)
     ]
+    if uses_cloud_pool:
+        concurrency_label = f"云端全量入队 {active_workers}，并发由服务器调度"
+    else:
+        mode = os.getenv("RUNNINGHUB_CONCURRENCY_MODE", "auto").strip().lower()
+        per_key = _positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)
+        concurrency_label = (
+            f"本地{'自动' if mode != 'manual' else '手动'}并发 {active_workers}，"
+            f"单 Key 上限 {per_key}"
+        )
     print(
-        f"提交 {len(mapping)} 张海报任务（{'云端全量入队' if uses_cloud_pool else '本地工作并发'} {active_workers}，"
-        f"{len(provider_configs)} 个账号可轮换，421 优先切账号后再入队）...",
+        f"提交 {len(mapping)} 张海报任务（{concurrency_label}，"
+        f"{len(provider_configs)} 个账号可轮换，421/429 优先切账号后再入队）...",
         flush=True,
     )
     print(f"[POSTER_PROGRESS] 0/{len(mapping)}", flush=True)

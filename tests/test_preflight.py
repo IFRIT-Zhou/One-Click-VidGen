@@ -5,6 +5,19 @@ from backend.app import main
 
 
 class PreflightProbeTest(unittest.TestCase):
+    def test_api_key_status_reports_automatic_image_capacity(self) -> None:
+        values = {
+            "RUNNINGHUB_API_KEY": "image-key-1",
+            "RUNNINGHUB_API_KEYS": "image-key-2,image-key-3",
+            "RUNNINGHUB_CONCURRENCY_MODE": "auto",
+            "RUNNINGHUB_PER_KEY_CONCURRENCY": "2",
+            "RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "3",
+        }
+        with patch.object(main, "_project_config_values", return_value=values):
+            status = main._api_key_status()
+        self.assertEqual(status["image"]["count"], 3)
+        self.assertEqual(status["image"]["concurrency"]["effective"], 6)
+
     def test_cluster_health_error_blocks_only_unhealthy_service(self) -> None:
         self.assertIsNone(main._cluster_health_error({"ok": True}))
         message = main._cluster_health_error({"ok": False, "ray_error": "timed out"})

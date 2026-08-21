@@ -20,7 +20,7 @@ import wave
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .db import (
     append_generation_job_log,
@@ -927,6 +927,101 @@ def _subtitle_filter_path(path: Path) -> str:
     return path.resolve().as_posix().replace(":", r"\:").replace("'", r"\'")
 
 
+def _standalone_subtitle_command(
+    source: Path,
+    output: Path,
+    subtitle_filter: str,
+    *,
+    source_is_video: bool,
+    use_nvenc: bool,
+) -> list[str]:
+    """Build the standalone subtitle burn command with machine-readable progress."""
+    if source_is_video:
+        command = [
+            ffmpeg_binary(), "-y", "-i", str(source), "-vf", subtitle_filter,
+        ]
+        audio_args = ["-c:a", "copy"]
+    else:
+        command = [
+            ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "color=c=0x101827:s=1920x1080:r=30",
+            "-i", str(source), "-vf", subtitle_filter, "-map", "0:v:0", "-map", "1:a:0",
+        ]
+        audio_args = ["-c:a", "aac", "-shortest"]
+
+    if use_nvenc:
+        video_args = ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "19", "-b:v", "0"]
+    else:
+        video_args = ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]
+    return [
+        *command,
+        *video_args,
+        "-pix_fmt", "yuv420p",
+        *audio_args,
+        "-movflags", "+faststart",
+        "-progress", "pipe:1",
+        "-nostats",
+        str(output),
+    ]
+
+
+def _standalone_subtitle_progress_handler(
+    job: Job,
+    store: JobStore,
+    duration_seconds: float,
+) -> Callable[[str], bool]:
+    """Translate FFmpeg ``-progress`` records into the Module 2 task progress."""
+    duration = max(0.01, float(duration_seconds))
+    last_progress = 11
+    progress_keys = {
+        "frame", "fps", "stream_0_0_q", "bitrate", "total_size", "out_time_us",
+        "out_time_ms", "out_time", "dup_frames", "drop_frames", "speed", "progress",
+    }
+
+    def handle(raw_line: str) -> bool:
+        nonlocal last_progress
+        line = ANSI_ESCAPE_RE.sub("", str(raw_line or "")).strip()
+        if "=" not in line:
+            return False
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in progress_keys:
+            return False
+
+        elapsed: float | None = None
+        if key in {"out_time_us", "out_time_ms"}:
+            try:
+                # FFmpeg reports both fields in microseconds despite the historic
+                # ``out_time_ms`` name.
+                elapsed = max(0.0, float(value.strip()) / 1_000_000.0)
+            except ValueError:
+                pass
+        elif key == "out_time":
+            match = re.fullmatch(r"(\d+):(\d+):(\d+(?:\.\d+)?)", value.strip())
+            if match:
+                elapsed = int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+        elif key == "progress" and value.strip().lower() == "end":
+            elapsed = duration
+
+        if elapsed is not None:
+            ratio = min(1.0, elapsed / duration)
+            progress = min(92, 12 + int(round(ratio * 80)))
+            if progress > last_progress:
+                last_progress = progress
+                store.update(
+                    job,
+                    status="running",
+                    step="subtitle_render",
+                    progress=progress,
+                    message=(
+                        f"正在添加字幕：{min(elapsed, duration):.0f}/{duration:.0f} 秒"
+                        f"（{ratio * 100:.0f}%）"
+                    ),
+                )
+        return True
+
+    return handle
+
+
 def render_standalone_subtitle_video(
     job: Job,
     store: JobStore,
@@ -951,23 +1046,39 @@ def render_standalone_subtitle_video(
         f"{SUBTITLE_VIDEO_STYLES[style_key]['ass']}"
     )
     subtitle_filter = f"subtitles=filename='{_subtitle_filter_path(srt_path)}':charenc=UTF-8:force_style='{force_style}'"
-    video_suffixes = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-    if source.suffix.lower() in video_suffixes:
-        command = [
-            ffmpeg_binary(), "-y", "-i", str(source), "-vf", subtitle_filter,
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "copy", str(output),
-        ]
-        source_label = "原视频"
-    else:
-        command = [
-            ffmpeg_binary(), "-y", "-f", "lavfi", "-i", "color=c=0x101827:s=1920x1080:r=30",
-            "-i", str(source), "-vf", subtitle_filter, "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-shortest", str(output),
-        ]
-        source_label = "音频（自动生成深色背景视频）"
+    source_is_video = source.suffix.lower() in VIDEO_EXTENSIONS
+    source_label = "原视频" if source_is_video else "音频（自动生成深色背景视频）"
+    duration_seconds = probe_media_duration(source)
+    progress_handler = _standalone_subtitle_progress_handler(job, store, duration_seconds)
     store.log(job, f"字幕添加：使用{source_label}，样式「{SUBTITLE_VIDEO_STYLES[style_key]['label']}」，字体「{font}」")
     store.update(job, status="running", step="subtitle_render", progress=12, message="正在添加字幕")
-    run_command(job, store, command, "字幕添加渲染")
+    for use_nvenc in (True, False):
+        if output.exists():
+            output.unlink()
+        command = _standalone_subtitle_command(
+            source,
+            output,
+            subtitle_filter,
+            source_is_video=source_is_video,
+            use_nvenc=use_nvenc,
+        )
+        encoder_label = "NVIDIA NVENC" if use_nvenc else "CPU x264"
+        store.log(job, f"字幕添加渲染器：{encoder_label}")
+        try:
+            run_command(
+                job,
+                store,
+                command,
+                f"字幕添加渲染（{encoder_label}）",
+                output_handler=progress_handler,
+            )
+            break
+        except GenerationCancelled:
+            raise
+        except RuntimeError:
+            if not use_nvenc:
+                raise
+            store.log(job, "NVIDIA NVENC 不可用，已自动切换 CPU x264 继续渲染")
     if not output.is_file() or output.stat().st_size < 1024:
         raise RuntimeError("字幕视频渲染未产生有效文件")
 
@@ -1209,6 +1320,7 @@ def run_command(
     command: list[str],
     label: str,
     extra_env: dict[str, str] | None = None,
+    output_handler: Callable[[str], bool] | None = None,
 ) -> None:
     store.raise_if_cancelled(job)
     store.log(job, f"开始: {label}")
@@ -1275,7 +1387,9 @@ def run_command(
             if line is None:
                 stream_closed = True
                 continue
-            store.log(job, line)
+            suppress_log = bool(output_handler(line)) if output_handler else False
+            if not suppress_log:
+                store.log(job, line)
         return_code = process.wait()
     finally:
         store.detach_process(job, process)
@@ -2387,6 +2501,119 @@ def restore_long_split_checkpoint(job: Job) -> Path | None:
     return None
 
 
+def tts_checkpoint_dir(job: Job) -> Path:
+    """Job-scoped module-1 checkpoint, isolated from the shared workspace."""
+    return JOBS_DIR / job.id / "artifacts" / "tts_checkpoint"
+
+
+def save_tts_checkpoint(job: Job) -> Path:
+    """Persist completed TTS immediately so downstream failures never repeat it."""
+    audio_dir = WORKSPACE_DIR / "2_audio_srt"
+    sources = {
+        "final_output.wav": audio_dir / "final_output.wav",
+        "final_output.srt": audio_dir / "final_output.srt",
+    }
+    if not all(path.is_file() and path.stat().st_size > 0 for path in sources.values()):
+        raise RuntimeError("模块 1 已返回完成，但配音或原始字幕文件缺失，无法建立断点检查点")
+    checkpoint = tts_checkpoint_dir(job)
+    checkpoint.mkdir(parents=True, exist_ok=True)
+    for name, source in sources.items():
+        _copy_file_atomic(source, checkpoint / name)
+    _write_json_atomic(
+        checkpoint / "checkpoint.json",
+        {
+            "schema_version": 1,
+            "job_id": job.id,
+            "completed_at": time.time(),
+        },
+    )
+    return checkpoint
+
+
+def restore_tts_checkpoint(job: Job) -> Path | None:
+    """Restore this job's completed module-1 output before deciding to rerun TTS.
+
+    The flat artifact paths support jobs completed by older OCV builds. New jobs
+    use the dedicated directory written immediately after module 1 finishes.
+    """
+    artifact_dir = JOBS_DIR / job.id / "artifacts"
+    candidates = [
+        tts_checkpoint_dir(job),
+        artifact_dir,
+    ]
+    for source_dir in candidates:
+        source_audio = source_dir / "final_output.wav"
+        source_srt = source_dir / "final_output.srt"
+        if not all(path.is_file() and path.stat().st_size > 0 for path in (source_audio, source_srt)):
+            continue
+        target_dir = WORKSPACE_DIR / "2_audio_srt"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        _copy_file_atomic(source_audio, target_dir / "final_output.wav")
+        _copy_file_atomic(source_srt, target_dir / "final_output.srt")
+        return source_dir
+
+    # OCV builds before the module-1 checkpoint fix still archived every
+    # completed sentence. A complete manifest is enough to rebuild the exact
+    # original WAV/SRT without calling the segmentation Agent or TTS again.
+    segment_dir = artifact_dir / "tts_segments"
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    segments = manifest.get("segments") if isinstance(manifest, dict) else None
+    if not isinstance(segments, list) or not segments:
+        return None
+    wav_paths: list[Path] = []
+    for item in segments:
+        if not isinstance(item, dict) or not str(item.get("text") or "").strip():
+            return None
+        filename = str(item.get("filename") or "")
+        path = segment_dir / filename
+        if not filename or not path.is_file() or path.stat().st_size <= 0:
+            return None
+        wav_paths.append(path)
+
+    target_dir = WORKSPACE_DIR / "2_audio_srt"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    output_wav = target_dir / "final_output.wav"
+    pending_wav = output_wav.with_name(f".{output_wav.name}.{uuid.uuid4().hex}.pending")
+    try:
+        with wave.open(str(wav_paths[0]), "rb") as first:
+            params = first.getparams()
+            expected_format = (params.nchannels, params.sampwidth, params.framerate)
+        with wave.open(str(pending_wav), "wb") as output:
+            output.setparams(params)
+            for path in wav_paths:
+                with wave.open(str(path), "rb") as audio:
+                    actual_format = (audio.getnchannels(), audio.getsampwidth(), audio.getframerate())
+                    if actual_format != expected_format:
+                        return None
+                    output.writeframes(audio.readframes(audio.getnframes()))
+        os.replace(pending_wav, output_wav)
+    except (OSError, wave.Error):
+        return None
+    finally:
+        pending_wav.unlink(missing_ok=True)
+
+    blocks: list[str] = []
+    current_time = 0.0
+    for index, (item, path) in enumerate(zip(segments, wav_paths), start=1):
+        with wave.open(str(path), "rb") as audio:
+            duration = audio.getnframes() / audio.getframerate()
+        end_time = current_time + duration
+        blocks.append(
+            f"{index}\n{format_srt_time(current_time)} --> {format_srt_time(end_time)}\n"
+            f"{str(item['text']).strip()}\n"
+        )
+        current_time = end_time
+    (target_dir / "final_output.srt").write_text("\n".join(blocks).rstrip() + "\n", encoding="utf-8")
+    save_tts_checkpoint(job)
+    return segment_dir
+
+
 def reusable_part_outputs(
     job: Job,
     part_index: int,
@@ -3377,8 +3604,8 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         return
     if not resume:
         reset_generation_workspace()
-    store.log(job, "已清理本轮生成的共享 workspace 旧产物")
-    if resume:
+        store.log(job, "已清理本轮生成的共享 workspace 旧产物")
+    else:
         store.log(job, "断点续跑：保留 workspace 中已生成的音频、字幕、分镜和海报")
     script = str(request.get("script") or "")
     script_path = job_dir / "script.txt"
@@ -3395,6 +3622,10 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         restored_checkpoint = restore_long_split_checkpoint(job)
         if restored_checkpoint is not None:
             store.log(job, f"断点续跑：已恢复长文全文检查点，避免将失败时的小段误判为完整任务: {restored_checkpoint}")
+        else:
+            restored_tts = restore_tts_checkpoint(job)
+            if restored_tts is not None:
+                store.log(job, f"断点续跑：已从本任务专属检查点恢复配音与原始字幕: {restored_tts}")
     skip_existing_tts = (
         resume
         and audio_path.is_file()
@@ -3493,7 +3724,12 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
             )
             emotion = str(request.get("tts_emotion") or "").strip()
             if emotion:
-                tts_command.extend(["--tts-emotion", emotion])
+                tts_command.extend([
+                    "--tts-emotion",
+                    emotion,
+                    "--tts-emotion-weight",
+                    str(request.get("tts_emotion_weight", 0.65)),
+                ])
             pronunciation = str(request.get("tts_pronunciation") or "").strip()
             if pronunciation:
                 tts_command.extend(["--tts-pronunciation", pronunciation])
@@ -3513,6 +3749,9 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
                 tts_command,
                 STEPS[0][1],
             )
+
+        checkpoint = save_tts_checkpoint(job)
+        store.log(job, f"模块 1 检查点已保存；后续失败断点续跑不会重复配音: {checkpoint}")
 
     store.raise_if_cancelled(job)
     if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") not in {"audio", "visual"}:

@@ -268,6 +268,17 @@ class VisualTimingHistoryRequest(BaseModel):
 
 class TtsSegmentRegenerateRequest(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=20)
+    tts_voice_id: str | None = Field(default=None, max_length=180)
+    tts_speed: float | None = Field(default=None, ge=0.5, le=2)
+    tts_volume: float | None = Field(default=None, ge=0.1, le=10)
+    tts_pitch: int | None = Field(default=None, ge=-12, le=12)
+    tts_parallelism: int | None = Field(default=None, ge=1, le=3)
+    tts_emotion: str | None = Field(default=None, max_length=30)
+    tts_emotion_weight: float | None = Field(default=None, ge=0, le=1)
+    cluster_voice_type: Literal["preset", "uploaded", "custom"] | None = None
+    cluster_voice_id: str | None = Field(default=None, max_length=180)
+    qwen_voice: str | None = Field(default=None, max_length=80)
+    qwen_instructions: str | None = Field(default=None, max_length=1600)
 
 
 class RegisterRequest(BaseModel):
@@ -305,6 +316,9 @@ class ApiKeySettingsRequest(BaseModel):
     language_api_key: str | None = Field(default=None, max_length=2048)
     image_api_key: str | None = Field(default=None, max_length=2048)
     image_api_keys: list[str] = Field(default_factory=list, max_length=10)
+    image_concurrency_mode: Literal["auto", "manual"] | None = None
+    image_per_key_concurrency: int | None = Field(default=None, ge=1, le=16)
+    image_total_concurrency: int | None = Field(default=None, ge=1, le=64)
     qwen_tts_api_key: str | None = Field(default=None, max_length=2048)
 
 
@@ -730,6 +744,7 @@ def settings() -> dict[str, Any]:
                 "pitch": 0,
                 "parallelism": 2,
                 "emotion": None,
+                "emotion_weight": indextts25.emotion_weight,
                 "english_normalization": False,
                 "pronunciation": "",
             },
@@ -863,6 +878,23 @@ def _api_key_status() -> dict[str, Any]:
     selected_key = str(values.get(selected["key_env"], "")).strip()
     selected_configured = language_provider_configured(provider, values)
     qwen_tts_key = str(values.get("DASHSCOPE_API_KEY", "")).strip()
+    image_concurrency_mode = str(values.get("RUNNINGHUB_CONCURRENCY_MODE") or "auto").strip().lower()
+    if image_concurrency_mode not in {"auto", "manual"}:
+        image_concurrency_mode = "auto"
+    try:
+        image_per_key_concurrency = max(1, min(16, int(values.get("RUNNINGHUB_PER_KEY_CONCURRENCY") or 1)))
+    except (TypeError, ValueError):
+        image_per_key_concurrency = 1
+    try:
+        image_total_concurrency = max(1, min(64, int(values.get("RUNNINGHUB_ACTIVE_TASK_CONCURRENCY") or 3)))
+    except (TypeError, ValueError):
+        image_total_concurrency = 3
+    image_capacity = max(1, len(image_keys) * image_per_key_concurrency) if image_keys else 0
+    image_effective_concurrency = (
+        image_capacity
+        if image_concurrency_mode == "auto"
+        else min(image_capacity, image_total_concurrency)
+    )
     return {
         "language": {
             "configured": selected_configured,
@@ -877,6 +909,13 @@ def _api_key_status() -> dict[str, Any]:
             "configured": bool(image_keys),
             "count": len(image_keys),
             "key_hints": _masked_api_keys(image_keys),
+            "concurrency": {
+                "mode": image_concurrency_mode,
+                "per_key": image_per_key_concurrency,
+                "total_limit": image_total_concurrency,
+                "effective": image_effective_concurrency,
+                "server_managed": False,
+            },
         },
         "qwen_tts": {
             "configured": bool(qwen_tts_key),
@@ -1243,7 +1282,12 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     image_additions = _unique_api_keys(payload.image_api_keys)
     qwen_tts = str(payload.qwen_tts_api_key or "").strip()
     all_supplied = [language, image, qwen_tts, *image_additions]
-    if not any(all_supplied) and not language_provider and not language_model:
+    concurrency_supplied = any(value is not None for value in (
+        payload.image_concurrency_mode,
+        payload.image_per_key_concurrency,
+        payload.image_total_concurrency,
+    ))
+    if not any(all_supplied) and not language_provider and not language_model and not concurrency_supplied:
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
     if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
@@ -1286,6 +1330,12 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         for name in existing:
             if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name):
                 updates[name] = ""
+    if payload.image_concurrency_mode is not None:
+        updates["RUNNINGHUB_CONCURRENCY_MODE"] = payload.image_concurrency_mode
+    if payload.image_per_key_concurrency is not None:
+        updates["RUNNINGHUB_PER_KEY_CONCURRENCY"] = str(payload.image_per_key_concurrency)
+    if payload.image_total_concurrency is not None:
+        updates["RUNNINGHUB_ACTIVE_TASK_CONCURRENCY"] = str(payload.image_total_concurrency)
     if qwen_tts:
         updates["DASHSCOPE_API_KEY"] = qwen_tts
     try:
@@ -1294,7 +1344,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         raise HTTPException(status_code=500, detail=f"保存 API Key 失败: {exc}") from exc
     return {
         "keys": _api_key_status(),
-        "message": "语言节点 API Key 与模型选择已保存到本机 .env。",
+        "message": "模型 API Key 与出图并发设置已保存到本机 .env。",
     }
 
 
@@ -2270,7 +2320,13 @@ def regenerate_tts_segments(
     if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
         raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再重配音")
     try:
-        tts_editor.regenerate(job=job, user_id=user_id, indices=payload.indices)
+        settings_override = payload.model_dump(exclude={"indices"}, exclude_none=True)
+        tts_editor.regenerate(
+            job=job,
+            user_id=user_id,
+            indices=payload.indices,
+            settings_override=settings_override,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError, json.JSONDecodeError) as exc:

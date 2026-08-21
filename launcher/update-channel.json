@@ -1,9 +1,10 @@
 {
-  "release_id": "2026.08.18.1",
-  "release_order": 2026081801,
-  "display_version": "2026.08.18 IndexTTS-2.5 正式升级版",
+  "release_id": "2026.08.20.1",
+  "release_order": 2026082001,
+  "display_version": "2026.08.20 断点与安全更新修复版",
   "branch": "main",
   "portable_overlay_safe": false,
+  "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "本地配音引擎由 IndexTTS2 2.0 正式升级为 IndexTTS-2.5，新增配音断句 Agent 与 110 token 安全保护，并同步字幕识别、分镜 Agent 和便携环境检查改进。由于包含新模型权重与依赖，旧便携版不允许直接覆盖，请下载新的完整便携包。"
+  "notes": "修复 IndexTTS-2.5 便携版被持续误判为不可安全更新，并为模块 1 增加任务专属持久检查点，避免后续步骤失败后断点续跑重复断句和配音。旧 IndexTTS2 2.0 便携包仍会被安全拦截。"
 }
