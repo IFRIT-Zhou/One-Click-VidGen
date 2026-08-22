@@ -1,10 +1,10 @@
 {
-  "release_id": "2026.08.20.1",
-  "release_order": 2026082001,
-  "display_version": "2026.08.20 断点与安全更新修复版",
+  "release_id": "2026.08.22.1",
+  "release_order": 2026082201,
+  "display_version": "2026.08.22 后期编辑与界面适配版",
   "branch": "main",
   "portable_overlay_safe": false,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "修复 IndexTTS-2.5 便携版被持续误判为不可安全更新，并为模块 1 增加任务专属持久检查点，避免后续步骤失败后断点续跑重复断句和配音。旧 IndexTTS2 2.0 便携包仍会被安全拦截。"
+  "notes": "新增配音精修、字幕文本与相邻边界编辑、单版本重渲染保护；修复高 DPI 小屏幕顶部导航挤压；补充作者归属、AGPL 第 7 条附加条款、品牌与未授权培训声明。仅更新源码与文档，不改动运行时、模型和用户数据。IndexTTS-2.5 便携版可安全覆盖，旧 IndexTTS2 2.0 便携包仍会被拦截。"
 }

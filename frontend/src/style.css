@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 Zhou Ruoyu and He Yun */
+/* AGPL-3.0 Section 7 terms: ../../ADDITIONAL_TERMS.md */
 
 :root {
   --bg: #07111f;
@@ -575,6 +576,12 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 }
 .legal-footer a { color: var(--accent); }
 .legal-footer a:hover { text-decoration: underline; }
+.official-disclaimer {
+  flex: 0 0 100%;
+  color: #f2c879;
+  font-weight: 700;
+  text-align: center;
+}
 .stack { display: grid; gap: 18px; }
 .page-tabs {
   position: sticky;
@@ -2399,6 +2406,65 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
 }
 .compact-empty {
   padding: 16px;
+}
+
+/*
+ * High-DPI notebook screens often expose only 1450-1700 CSS pixels even
+ * when their physical resolution is 2560x1600. Move the large action group
+ * below the page tabs before labels become narrow enough to wrap per glyph.
+ */
+@media (max-width: 1850px) {
+  .page-tabs { flex-wrap: wrap; }
+  .page-tabs > button,
+  .page-tabs > .page-tab-step-toggle {
+    flex: 1 1 180px;
+    min-width: 150px;
+  }
+  .page-tabs > button span,
+  .page-tabs > button small,
+  .page-tab-step-copy strong,
+  .page-tab-step-copy small {
+    min-width: 0;
+    white-space: nowrap;
+    word-break: keep-all;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .page-tabs-actions {
+    order: 5;
+    flex: 1 0 100%;
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .generation-top-actions { margin-right: auto; }
+}
+
+@media (max-width: 1500px) {
+  .generation-top-actions {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    margin-right: 0;
+    padding-right: 0;
+    padding-bottom: 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .parameter-preset-select {
+    flex: 1 1 180px;
+    width: auto;
+    max-width: 280px;
+  }
+  .toolbar-save-button,
+  .toolbar-load-button,
+  .toolbar-delete-button { white-space: nowrap; }
 }
 
 @media (max-width: 980px) {

@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Zhou Ruoyu and He Yun -->
+<!-- AGPL-3.0 Section 7 terms: ../../ADDITIONAL_TERMS.md -->
 
 <template>
   <div class="app-shell">
@@ -2108,10 +2109,14 @@
         </section>
       </section>
       <footer class="legal-footer" aria-label="开源许可证与官方源码">
+        <strong class="official-disclaimer">
+          官方声明：OCV 目前未授权任何培训机构、付费课程或软件售卖方；第三方收费服务不代表 OCV 官方授权，其交付与售后由第三方自行承担。
+        </strong>
         <span>OCV v1.1.0 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
+        <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/ADDITIONAL_TERMS.md" target="_blank" rel="noopener noreferrer">附加条款</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/TRADEMARKS.md" target="_blank" rel="noopener noreferrer">品牌规则</a>
       </footer>
     </main>

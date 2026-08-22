@@ -8,6 +8,7 @@ failed job to resume without starting a new, context-free model call.
 
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Zhou Ruoyu and He Yun
+# AGPL-3.0 Section 7 terms: ADDITIONAL_TERMS.md
 
 from __future__ import annotations
 
