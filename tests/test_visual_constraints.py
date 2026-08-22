@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -65,6 +66,61 @@ class VisualConstraintsTest(unittest.TestCase):
             captured_payloads[0]["clientJobId"],
             r"^ocv-job-test-123-poster_001-[0-9a-f]{16}$",
         )
+
+    def test_cloud_reference_upload_replays_bytes_after_token_refresh(self) -> None:
+        class Response:
+            def __init__(self, status_code: int, payload: dict):
+                self.status_code = status_code
+                self.ok = status_code < 400
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+            def close(self):
+                return None
+
+            def raise_for_status(self):
+                if not self.ok:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+        class Session:
+            def __init__(self):
+                self.calls = []
+
+            def request(self, method, url, **kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls) == 1:
+                    return Response(401, {})
+                return Response(200, {"code": 0, "data": {"download_url": "https://cdn.test/ref.png"}})
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        config = {
+            "api_key": "expired-token",
+            "refresh_token": "refresh-token",
+            "cloud_base_url": "https://cloud.test/api/v1",
+            "upload_url": "https://cloud.test/api/v1/image-pool/media/upload",
+            "cloud_pool": "1",
+        }
+        session = Session()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference.png"
+            content = b"fake-image-bytes"
+            path.write_bytes(content)
+            with (
+                patch.object(visual, "_new_session", return_value=session),
+                patch.object(visual.requests, "post", return_value=Response(200, {"access_token": "fresh-token", "refresh_token": "fresh-refresh"})),
+            ):
+                self.assertEqual(visual._reference_image_url(config, str(path)), "https://cdn.test/ref.png")
+
+        uploaded = session.calls[1]["files"]["file"][1]
+        self.assertEqual(uploaded, content)
+        self.assertEqual(config["api_key"], "fresh-token")
 
     def test_direct_runninghub_submit_does_not_include_client_job_id(self) -> None:
         captured_payload = {}

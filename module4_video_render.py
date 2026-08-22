@@ -3094,17 +3094,21 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
             return cached
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         try:
-            with path.open("rb") as handle:
-                with _new_session() as session:
-                    response = _request_with_cloud_refresh(
-                        session,
-                        "POST",
-                        config.get("upload_url") or _runninghub_url("/openapi/v2/media/upload/binary"),
-                        config=config,
-                        headers={"Authorization": f"Bearer {config['api_key']}"},
-                        files={"file": (path.name, handle, mime_type)},
-                        timeout=120,
-                    )
+            # Keep the multipart body replayable.  Cloud-pool requests can
+            # refresh an expired access token and retry the request; passing
+            # an already-consumed file handle would upload an empty file on
+            # that second attempt and surface as a misleading upload failure.
+            file_bytes = path.read_bytes()
+            with _new_session() as session:
+                response = _request_with_cloud_refresh(
+                    session,
+                    "POST",
+                    config.get("upload_url") or _runninghub_url("/openapi/v2/media/upload/binary"),
+                    config=config,
+                    headers={"Authorization": f"Bearer {config['api_key']}"},
+                    files={"file": (path.name, file_bytes, mime_type)},
+                    timeout=120,
+                )
             payload = response.json()
         except (OSError, requests.RequestException, ValueError) as exc:
             raise RunningHubTransientError(f"主角参考图上传失败: {type(exc).__name__}") from exc
