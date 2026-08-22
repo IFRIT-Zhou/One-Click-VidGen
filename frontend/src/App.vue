@@ -216,10 +216,19 @@
             href="https://oneclickvidgen.com/"
             target="_blank"
             rel="noopener noreferrer"
-            title="打开 One-Click VidGen 官网进行充值与账户管理"
+            title="打开 One-Click VidGen 官网"
           >
-            官网充值
+            官网
           </a>
+          <button
+            class="cloud-recharge-entry cloud-top-recharge-entry"
+            type="button"
+            :disabled="cloudBusy"
+            title="使用支付宝为云端账户充值"
+            @click="openCloudRecharge"
+          >
+            充值
+          </button>
           <button
             v-if="cloudSession.authenticated"
             class="cloud-account-summary"
@@ -3770,6 +3779,7 @@ async function loadCloudRechargeProducts() {
 async function openCloudRecharge() {
   if (!cloudSession.value.authenticated) {
     cloudError.value = '请先登录集群云端账户再充值。'
+    openCloudLogin()
     return
   }
   cloudRechargeOpen.value = true

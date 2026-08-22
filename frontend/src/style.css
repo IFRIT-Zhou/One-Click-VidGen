@@ -468,6 +468,11 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   color: #99f6e4;
   transform: translateY(-1px);
 }
+.cloud-top-recharge-entry {
+  min-height: 40px;
+  padding: 0 15px;
+  white-space: nowrap;
+}
 .cloud-login-entry { min-width: 96px; min-height: 44px; }
 .cloud-account-summary {
   display: flex;
@@ -2586,6 +2591,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   .topbar { padding: 16px 16px 8px; gap: 10px; }
   .product-title { font-size: 1.08rem; }
   .cloud-website-entry { min-height: 36px; padding: 0 10px; font-size: .76rem; }
+  .cloud-top-recharge-entry { min-height: 36px; padding: 0 10px; font-size: .76rem; }
   .cloud-account-summary { min-width: 0; padding-right: 10px; }
   .cloud-account-copy strong { max-width: 92px; }
   .cloud-auth-stats { grid-template-columns: 1fr; }
