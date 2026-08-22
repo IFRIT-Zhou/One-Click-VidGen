@@ -108,17 +108,46 @@ class CloudAuthSession:
 
 
 class CloudSessionStore:
-    """Process-local, per-workspace-user cloud sessions.
-
-    Keeping the refresh token out of the project database avoids leaving cloud
-    credentials in portable archives.  A backend restart intentionally requires
-    the user to log in to the cluster again.
-    """
+    """Persist refresh tokens outside project data and archives."""
 
     def __init__(self) -> None:
         self._sessions: dict[int, CloudAuthSession] = {}
         self._locks: dict[int, threading.RLock] = {}
         self._lock = threading.RLock()
+        configured_path = os.getenv("CLOUD_SESSION_STORE_PATH", "").strip()
+        self._path = Path(configured_path or (Path.cwd() / ".cloud_sessions.json"))
+        self._load()
+
+    def _load(self) -> None:
+        import json
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            for user_id, value in raw.items():
+                if not isinstance(value, dict) or not value.get("refresh_token"):
+                    continue
+                self._sessions[int(user_id)] = CloudAuthSession(
+                    access_token=str(value.get("access_token") or ""),
+                    refresh_token=str(value["refresh_token"]),
+                    expires_at=float(value.get("expires_at") or 0),
+                    user=dict(value.get("user") or {}),
+                )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return
+
+    def _save(self) -> None:
+        import json
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._path.with_suffix(self._path.suffix + ".tmp")
+        temporary.write_text(json.dumps({
+            str(user_id): {
+                "access_token": session.access_token,
+                "refresh_token": session.refresh_token,
+                "expires_at": session.expires_at,
+                "user": session.user,
+            } for user_id, session in self._sessions.items()
+        }, ensure_ascii=False), encoding="utf-8")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, self._path)
 
     def lock_for(self, user_id: int) -> threading.RLock:
         with self._lock:
@@ -131,10 +160,12 @@ class CloudSessionStore:
     def set(self, user_id: int, session: CloudAuthSession) -> None:
         with self._lock:
             self._sessions[int(user_id)] = session
+            self._save()
 
     def clear(self, user_id: int) -> None:
         with self._lock:
             self._sessions.pop(int(user_id), None)
+            self._save()
 
 
 cloud_sessions = CloudSessionStore()
@@ -299,9 +330,9 @@ class CloudClient:
         if not access_token or not refresh_token:
             raise CloudApiError("云端登录响应缺少 Token", code="CLOUD_INVALID_RESPONSE")
         try:
-            expires_in = max(30, int(payload.get("expires_in") or 900))
+            expires_in = max(30, int(payload.get("expires_in") or 3600))
         except (TypeError, ValueError):
-            expires_in = 900
+            expires_in = 3600
         return CloudAuthSession(
             access_token=access_token,
             refresh_token=refresh_token,

@@ -10,6 +10,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+.cloud_sessions.json
+.cloud_sessions.json.tmp
 
 node_modules/
 frontend/node_modules/

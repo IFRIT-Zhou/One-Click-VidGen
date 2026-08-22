@@ -1240,20 +1240,38 @@ def _create_timeline_story_plan(
             raise ValueError("Agent 1 response is not an object")
         units = _normalize_semantic_units(raw.get("semantic_units"), scenes)
         if not units:
-            raise ValueError("Agent 1 semantic_units are incomplete")
-        units, boundary_refinement = refine_risky_semantic_units(
-            units,
-            scenes,
-            story_context,
-            content_mode,
-            require_ai_success=require_ai_success,
-        )
+            # A model can produce useful story beats while missing one exact
+            # timeline boundary. The deterministic partition is authoritative
+            # for coverage; do not discard the whole video run.
+            units = fallback["semantic_units"]
+            boundary_refinement = {
+                "fallback_reason": "Agent 1 semantic_units incomplete"
+            }
+        else:
+            units, boundary_refinement = refine_risky_semantic_units(
+                units,
+                scenes,
+                story_context,
+                content_mode,
+                require_ai_success=require_ai_success,
+            )
         combined = dict(story_context)
         combined["semantic_units"] = units
         # story_beats remain the higher-level rhythm map produced by Agent 1;
         # semantic_units are the authoritative picture boundaries. Keeping the
         # original beats also preserves pacing labels for every covered slide.
-        combined["story_beats"] = raw.get("story_beats") or _beats_from_semantic_units(units)
+        # Keep model beats when they cover valid slides; malformed or empty
+        # beats must not invalidate an otherwise usable timeline fallback.
+        raw_beats = raw.get("story_beats")
+        valid_slide_ids = {str(scene.get("slide_id") or "") for scene in scenes}
+        has_valid_beats = isinstance(raw_beats, list) and any(
+            isinstance(beat, dict)
+            and any(str(slide_id) in valid_slide_ids for slide_id in beat.get("slide_ids", []))
+            for beat in raw_beats
+        )
+        combined["story_beats"] = (
+            raw_beats if has_valid_beats else _beats_from_semantic_units(units)
+        )
         plan = _normalize_story_plan(combined, scenes, content_mode)
         if plan is None:
             raise ValueError("Agent 1 plan normalization failed")
