@@ -13,12 +13,13 @@ try {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     New-Item -ItemType Directory -Path $fakeRoot, $sourceRoot, $packageDir -Force | Out-Null
 
-    New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'runtime'), (Join-Path $fakeRoot 'output'), (Join-Path $fakeRoot 'workspace'), (Join-Path $fakeRoot 'launcher') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'runtime'), (Join-Path $fakeRoot 'output'), (Join-Path $fakeRoot 'workspace'), (Join-Path $fakeRoot 'launcher'), (Join-Path $fakeRoot 'plugins\community_demo') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $fakeRoot 'app.txt') -Value 'old-source' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot '.env') -Value 'SECRET=keep-me' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'runtime\model.bin') -Value 'model-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'output\video.mp4') -Value 'output-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'workspace\job.json') -Value 'workspace-keep' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $fakeRoot 'plugins\community_demo\plugin.json') -Value 'user-plugin-keep' -Encoding UTF8
     @{
         release_id = 'smoke-baseline-1'
         release_order = 1
@@ -26,12 +27,14 @@ try {
         portable_overlay_safe = $false
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fakeRoot 'launcher\update-channel.json') -Encoding UTF8
 
-    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'launcher'), (Join-Path $sourceRoot 'runtime'), (Join-Path $sourceRoot 'output') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'launcher'), (Join-Path $sourceRoot 'runtime'), (Join-Path $sourceRoot 'output'), (Join-Path $sourceRoot 'plugins\community_demo') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $sourceRoot 'start_windows.bat') -Value '@echo off' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $sourceRoot 'app.txt') -Value 'new-source' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot '.env') -Value 'SECRET=overwrite-attempt' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'runtime\model.bin') -Value 'model-overwrite-attempt' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'output\video.mp4') -Value 'output-overwrite-attempt' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\README.md') -Value 'managed-plugin-readme' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\community_demo\plugin.json') -Value 'plugin-overwrite-attempt' -Encoding UTF8
     @{
         release_id = 'smoke-release-1'
         release_order = 2
@@ -56,6 +59,8 @@ try {
         @{ Name = 'runtime protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'runtime\model.bin') -Raw).Trim() -eq 'model-keep') },
         @{ Name = 'output protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'output\video.mp4') -Raw).Trim() -eq 'output-keep') },
         @{ Name = 'workspace protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'workspace\job.json') -Raw).Trim() -eq 'workspace-keep') },
+        @{ Name = 'third-party plugin protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\community_demo\plugin.json') -Raw).Trim() -eq 'user-plugin-keep') },
+        @{ Name = 'managed plugin readme installed'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\README.md') -Raw).Trim() -eq 'managed-plugin-readme') },
         @{ Name = 'backup created'; Passed = [bool](Get-ChildItem -LiteralPath (Join-Path $fakeRoot 'Archives\launcher_updates') -Recurse -File -Filter 'app.txt' -ErrorAction SilentlyContinue) }
     )
     foreach ($assertion in $assertions) {

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "id": "example_plugin",
+  "name": "OCV 示例插件",
+  "version": "0.1.0",
+  "author": "OCV Community",
+  "description": "用于展示 OCV 插件目录、清单格式和启用状态，不包含可执行代码。",
+  "ocv_version": ">=2026.08.22.1",
+  "type": "placeholder",
+  "entry": "",
+  "permissions": []
+}

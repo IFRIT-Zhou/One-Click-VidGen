@@ -85,6 +85,14 @@ function Test-ProtectedRelativePath {
         'saved_agent_prompts', 'node_modules'
     )
     if ($protectedRoots -contains $first) { return $true }
+    if ($first -ieq 'plugins') {
+        $managedPluginFiles = @(
+            'plugins\.gitignore', 'plugins\README.md',
+            'plugins\example_plugin\plugin.json', 'plugins\example_plugin\README.md',
+            'plugins\example_plugin\disabled'
+        )
+        return -not ($managedPluginFiles -contains $normalized)
+    }
     # Unknown root folders with non-ASCII names are treated as user data.
     if ($first -match '[^\x00-\x7F]') { return $true }
     if ($normalized -ieq '.env') { return $true }
@@ -208,7 +216,7 @@ try {
             release_id = [string]$channel.release_id
             display_version = [string]$channel.display_version
             completed_at = (Get-Date).ToString('o')
-            protected_data = @('.env', 'runtime', 'output', 'workspace', 'runtime_logs', 'user presets')
+            protected_data = @('.env', 'runtime', 'output', 'workspace', 'runtime_logs', 'user presets', 'third-party plugins')
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $historyDir 'update.json') -Encoding UTF8
         Write-UpdateLog "Portable protected overlay completed: $($channel.release_id)"
         Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue

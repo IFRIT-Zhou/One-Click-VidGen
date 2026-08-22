@@ -188,6 +188,14 @@
         </button>
       </div>
       <button
+        class="sidebar-secondary-entry sidebar-plugin-entry"
+        type="button"
+        :class="{ active: activePage === 'plugins' }"
+        @click="openPluginsPage"
+      >
+        扩展与插件
+      </button>
+      <button
         class="sidebar-secondary-entry"
         type="button"
         :class="{ active: activePage === 'development' }"
@@ -1582,6 +1590,67 @@
 
         </section>
 
+        <section v-else-if="activePage === 'plugins'" class="plugins-page stack">
+          <article class="panel plugins-hero">
+            <div>
+              <div class="eyebrow">OCV EXTENSIONS</div>
+              <h2>扩展与插件</h2>
+              <p class="muted large">为 ComfyUI、本地模型和社区工作流预留的安全扩展入口。</p>
+            </div>
+            <span class="status-chip warning">框架预览</span>
+          </article>
+
+          <article class="panel plugin-manager-panel">
+            <div class="panel-head plugin-manager-head">
+              <div>
+                <div class="eyebrow">插件管理</div>
+                <h2>已安装插件</h2>
+                <p class="muted">{{ pluginNotice || '当前版本只读取插件清单，不执行第三方代码。' }}</p>
+              </div>
+              <div class="plugin-manager-actions">
+                <button class="ghost-btn" type="button" :disabled="pluginsLoading" @click="loadPlugins">
+                  {{ pluginsLoading ? '扫描中…' : '重新扫描' }}
+                </button>
+                <button class="ghost-btn" type="button" @click="openPluginsFolder">打开插件目录</button>
+                <button class="ghost-btn" type="button" disabled title="后续版本开放本地插件包安装">安装本地插件包（待开放）</button>
+              </div>
+            </div>
+
+            <div v-if="pluginMessage" class="api-key-message">{{ pluginMessage }}</div>
+            <div v-if="!pluginsLoading && !plugins.length" class="plugin-empty-state">
+              <strong>尚未发现插件清单</strong>
+              <span>把插件文件夹放入根目录的 plugins 文件夹，然后点击“重新扫描”。</span>
+            </div>
+            <div v-else class="plugin-grid">
+              <article v-for="plugin in plugins" :key="plugin.folder" class="plugin-card" :class="{ invalid: !plugin.valid, disabled: !plugin.enabled }">
+                <div class="plugin-card-head">
+                  <div>
+                    <strong>{{ plugin.name }}</strong>
+                    <span>v{{ plugin.version }} · {{ plugin.author }}</span>
+                  </div>
+                  <label class="inline-switch plugin-toggle" :title="plugin.valid ? '记录插件启用状态；当前框架不会执行插件代码' : '清单无效，无法启用'">
+                    <input :checked="plugin.enabled" type="checkbox" :disabled="!plugin.valid || pluginToggling === plugin.folder" @change="togglePlugin(plugin)" />
+                    <span class="switch-track"><span></span></span>
+                  </label>
+                </div>
+                <p>{{ plugin.description || '插件作者尚未填写说明。' }}</p>
+                <div class="plugin-meta">
+                  <span>类型：{{ plugin.type }}</span>
+                  <span v-if="plugin.ocv_version">OCV：{{ plugin.ocv_version }}</span>
+                  <span>{{ plugin.enabled ? '已启用（仅记录）' : '已停用' }}</span>
+                </div>
+                <div v-if="plugin.permissions?.length" class="plugin-permissions">声明权限：{{ plugin.permissions.join('、') }}</div>
+                <div v-if="plugin.issue" class="board-error">清单错误：{{ plugin.issue }}</div>
+              </article>
+            </div>
+
+            <div class="plugin-security-note">
+              <strong>安全说明</strong>
+              <span>当前版本不会加载插件入口文件。第三方插件不代表 OCV 官方审核或担保；后续开放执行能力时，插件将默认禁用并明确展示权限。</span>
+            </div>
+          </article>
+        </section>
+
         <section v-else-if="activePage === 'development'" class="development-page stack">
           <article class="panel development-hero">
             <div>
@@ -2349,6 +2418,11 @@ function randomProjectName() {
 
 const sidebarOpen = ref(false)
 const activePage = ref('workspace')
+const plugins = ref([])
+const pluginsLoading = ref(false)
+const pluginToggling = ref('')
+const pluginNotice = ref('')
+const pluginMessage = ref('')
 const scriptUploadName = ref('')
 const scriptUploadError = ref('')
 const sourceAudioName = ref('')
@@ -4206,6 +4280,54 @@ async function loadSettings() {
     || ''
   applyVisualPacing()
   rememberVisualPrompt()
+}
+
+async function openPluginsPage() {
+  activePage.value = 'plugins'
+  await loadPlugins()
+}
+
+async function loadPlugins() {
+  if (!session.value.user || pluginsLoading.value) return
+  pluginsLoading.value = true
+  pluginMessage.value = ''
+  try {
+    const payload = await api.plugins()
+    plugins.value = payload.plugins || []
+    pluginNotice.value = payload.notice || ''
+  } catch (error) {
+    pluginMessage.value = error.message || '无法扫描插件目录'
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+async function togglePlugin(plugin) {
+  if (!plugin?.valid || pluginToggling.value) return
+  pluginToggling.value = plugin.folder
+  pluginMessage.value = ''
+  try {
+    const payload = await api.togglePlugin(plugin.folder)
+    plugin.enabled = Boolean(payload.enabled)
+    pluginMessage.value = plugin.enabled
+      ? `${plugin.name} 已标记为启用；当前预览框架仍不会执行插件代码。`
+      : `${plugin.name} 已停用。`
+  } catch (error) {
+    pluginMessage.value = error.message || '无法修改插件状态'
+    await loadPlugins()
+  } finally {
+    pluginToggling.value = ''
+  }
+}
+
+async function openPluginsFolder() {
+  pluginMessage.value = ''
+  try {
+    const payload = await api.openPluginsFolder()
+    pluginMessage.value = `已打开插件目录：${payload.path || ''}`
+  } catch (error) {
+    pluginMessage.value = error.message || '无法打开插件目录'
+  }
 }
 
 async function refreshParameterPresets() {

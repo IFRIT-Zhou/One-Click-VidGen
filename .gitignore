@@ -4,6 +4,8 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+.codex_doc_review/
+.tmp_diagnostic_*/
 
 .env
 .env.*

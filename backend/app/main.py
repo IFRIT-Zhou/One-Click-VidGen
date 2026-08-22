@@ -367,6 +367,7 @@ app.add_middleware(
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
 PARAMETER_PRESETS_DIR = PROJECT_ROOT / "saved_parameters"
 AGENT_PROMPT_PRESETS_DIR = PROJECT_ROOT / "saved_agent_prompts"
+PLUGINS_DIR = PROJECT_ROOT / "plugins"
 if WORKSPACE_DIR.exists():
     app.mount("/workspace", StaticFiles(directory=str(WORKSPACE_DIR)), name="workspace")
 
@@ -397,6 +398,73 @@ def list_files(patterns: list[str]) -> list[dict[str, str]]:
                     }
                 )
     return sorted(items, key=lambda item: item["name"])
+
+
+def _plugin_manifest_items() -> list[dict[str, Any]]:
+    """Read plugin metadata without importing or executing third-party code."""
+    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    plugin_root = PLUGINS_DIR.resolve()
+    items: list[dict[str, Any]] = []
+    for folder in sorted(PLUGINS_DIR.iterdir(), key=lambda path: path.name.lower()):
+        if not folder.is_dir() or folder.name.startswith("."):
+            continue
+        try:
+            resolved_folder = folder.resolve()
+            resolved_folder.relative_to(plugin_root)
+        except (OSError, ValueError):
+            continue
+        manifest_path = resolved_folder / "plugin.json"
+        if not manifest_path.is_file():
+            continue
+        record: dict[str, Any] = {
+            "folder": folder.name,
+            "manifest_version": 0,
+            "id": folder.name,
+            "name": folder.name,
+            "version": "0.0.0",
+            "author": "未知作者",
+            "description": "",
+            "type": "placeholder",
+            "ocv_version": "",
+            "permissions": [],
+            "enabled": not (resolved_folder / "disabled").exists(),
+            "valid": False,
+            "issue": "",
+            "framework_only": True,
+        }
+        try:
+            if manifest_path.stat().st_size > 256 * 1024:
+                raise ValueError("plugin.json 超过 256 KB")
+            payload = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+            if not isinstance(payload, dict):
+                raise ValueError("plugin.json 顶层必须是对象")
+            manifest_version = payload.get("manifest_version")
+            if manifest_version != 1:
+                raise ValueError("当前仅支持 manifest_version = 1")
+            plugin_id = str(payload.get("id") or folder.name).strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", plugin_id):
+                raise ValueError("插件 id 只能包含字母、数字、点、下划线和连字符")
+            permissions = payload.get("permissions") or []
+            if not isinstance(permissions, list):
+                raise ValueError("permissions 必须是数组")
+            record.update(
+                {
+                    "manifest_version": manifest_version,
+                    "id": plugin_id,
+                    "name": str(payload.get("name") or plugin_id).strip()[:120],
+                    "version": str(payload.get("version") or "0.0.0").strip()[:40],
+                    "author": str(payload.get("author") or "未知作者").strip()[:120],
+                    "description": str(payload.get("description") or "").strip()[:500],
+                    "type": str(payload.get("type") or "placeholder").strip()[:80],
+                    "ocv_version": str(payload.get("ocv_version") or "").strip()[:80],
+                    "permissions": [str(item).strip()[:120] for item in permissions[:32]],
+                    "valid": True,
+                }
+            )
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            record["issue"] = str(exc)
+        items.append(record)
+    return items
 
 
 @app.get("/api/health")
@@ -432,6 +500,55 @@ def health() -> dict[str, Any]:
         # can restart that stale process instead of silently reusing it.
         "server_started_at": SERVER_STARTED_AT,
     }
+
+
+@app.get("/api/plugins")
+def list_plugins(request: Request) -> dict[str, Any]:
+    require_user(request)
+    plugins = _plugin_manifest_items()
+    return {
+        "plugins": plugins,
+        "directory": str(PLUGINS_DIR.resolve()),
+        "framework_only": True,
+        "execution_enabled": False,
+        "notice": "当前版本只读取插件清单，不会导入或执行第三方插件代码。",
+    }
+
+
+@app.post("/api/plugins/{folder_name}/toggle")
+def toggle_plugin(folder_name: str, request: Request) -> dict[str, Any]:
+    require_user(request)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", folder_name):
+        raise HTTPException(status_code=400, detail="invalid plugin folder")
+    plugin_root = PLUGINS_DIR.resolve()
+    folder = (PLUGINS_DIR / folder_name).resolve()
+    try:
+        folder.relative_to(plugin_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid plugin folder") from exc
+    if not folder.is_dir() or not (folder / "plugin.json").is_file():
+        raise HTTPException(status_code=404, detail="plugin not found")
+    marker = folder / "disabled"
+    if marker.exists():
+        marker.unlink()
+        enabled = True
+    else:
+        marker.write_text("OCV plugin disabled by user.\n", encoding="utf-8")
+        enabled = False
+    return {"ok": True, "folder": folder_name, "enabled": enabled, "framework_only": True}
+
+
+@app.post("/api/plugins/open-folder")
+def open_plugins_folder(request: Request) -> dict[str, Any]:
+    require_user(request)
+    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        raise HTTPException(status_code=501, detail="open-folder is currently supported on Windows only")
+    try:
+        _open_windows_explorer(PLUGINS_DIR)
+    except (OSError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=500, detail=f"could not open plugins folder: {exc}") from exc
+    return {"ok": True, "path": str(PLUGINS_DIR.resolve())}
 
 
 @app.post("/api/tts/start")

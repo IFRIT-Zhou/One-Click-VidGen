@@ -1,0 +1,7 @@
+*
+!.gitignore
+!README.md
+!example_plugin/
+!example_plugin/plugin.json
+!example_plugin/README.md
+!example_plugin/disabled
