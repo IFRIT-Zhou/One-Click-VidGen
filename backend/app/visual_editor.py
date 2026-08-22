@@ -34,6 +34,7 @@ HTML_FILENAME = "最终画面.html"
 SUBTITLE_FILENAME = "最终字幕.srt"
 TIMING_BACKUP_FILENAME = "画面映射.初始时序.json"
 REFERENCE_MANIFEST_FILENAME = "参考图清单.json"
+SUBTITLE_HISTORY_DIRNAME = "字幕历史"
 
 
 class VisualEditor:
@@ -334,6 +335,103 @@ class VisualEditor:
         if not isinstance(payload, list):
             return []
         return [item for item in payload if isinstance(item, dict) and str(item.get("slide_id") or "")]
+
+    @staticmethod
+    def _srt_timestamp(value: float) -> str:
+        milliseconds = max(0, int(round(float(value) * 1000)))
+        hours, remainder = divmod(milliseconds, 3_600_000)
+        minutes, remainder = divmod(remainder, 60_000)
+        seconds, millis = divmod(remainder, 1000)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+    @staticmethod
+    def _validated_subtitle_timeline(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not timeline:
+            raise ValueError("该项目缺少可编辑的字幕时间线")
+        validated: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        previous_start = -1.0
+        for raw in timeline:
+            item = dict(raw)
+            slide_id = str(item.get("slide_id") or "").strip()
+            text = str(item.get("text_content") or "").strip()
+            if not slide_id or slide_id in seen:
+                raise ValueError("字幕时间线包含空编号或重复编号")
+            if not text:
+                raise ValueError(f"{slide_id} 的字幕正文不能为空")
+            try:
+                start = float(item.get("start"))
+                end = float(item.get("end"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{slide_id} 的字幕时间戳无效") from exc
+            if start < previous_start - 1e-6 or end <= start:
+                raise ValueError(f"{slide_id} 的字幕时间戳顺序无效")
+            item["text_content"] = text
+            item["start"] = start
+            item["end"] = end
+            validated.append(item)
+            seen.add(slide_id)
+            previous_start = start
+        return validated
+
+    @staticmethod
+    def _write_subtitle_files(project_dir: Path, timeline: list[dict[str, Any]]) -> None:
+        validated = VisualEditor._validated_subtitle_timeline(timeline)
+        timeline_path = VisualEditor._timeline_path(project_dir)
+        subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
+        timeline_path.parent.mkdir(parents=True, exist_ok=True)
+        timeline_temp = timeline_path.with_name(timeline_path.name + ".tmp")
+        subtitle_temp = subtitle_path.with_name(subtitle_path.name + ".tmp")
+        timeline_temp.write_text(
+            json.dumps(validated, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        blocks = [
+            "\n".join((
+                str(index),
+                f"{VisualEditor._srt_timestamp(item['start'])} --> {VisualEditor._srt_timestamp(item['end'])}",
+                str(item["text_content"]),
+            ))
+            for index, item in enumerate(validated, 1)
+        ]
+        subtitle_temp.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+        os.replace(timeline_temp, timeline_path)
+        os.replace(subtitle_temp, subtitle_path)
+
+    @staticmethod
+    def _archive_subtitle_state(project_dir: Path, label: str) -> Path:
+        history_root = project_dir / "other" / SUBTITLE_HISTORY_DIRNAME
+        stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{time.time_ns() % 1_000_000:06d}"
+        destination = history_root / stamp
+        destination.mkdir(parents=True, exist_ok=False)
+        for name in (TIMELINE_FILENAME, SUBTITLE_FILENAME):
+            source = project_dir / "other" / name
+            if source.is_file():
+                shutil.copy2(source, destination / name)
+        (destination / "metadata.json").write_text(
+            json.dumps({"label": label, "created_at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return destination
+
+    @staticmethod
+    def _subtitle_history_entries(project_dir: Path) -> list[dict[str, str]]:
+        history_root = project_dir / "other" / SUBTITLE_HISTORY_DIRNAME
+        entries: list[dict[str, str]] = []
+        if not history_root.is_dir():
+            return entries
+        for directory in history_root.iterdir():
+            if not directory.is_dir() or not (directory / TIMELINE_FILENAME).is_file():
+                continue
+            label = directory.name
+            metadata_path = directory / "metadata.json"
+            if metadata_path.is_file():
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    label = f"{metadata.get('created_at') or directory.name} · {metadata.get('label') or '字幕备份'}"
+                except (OSError, json.JSONDecodeError):
+                    pass
+            entries.append({"id": directory.name, "label": label})
+        return sorted(entries, key=lambda item: item["id"], reverse=True)
 
     @staticmethod
     def _validate_timing_partition(mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> list[str]:
@@ -703,10 +801,194 @@ class VisualEditor:
             "timing_available": timing_available,
             "timing_message": timing_message,
             "timing_history": self._timing_history_entries(project_dir),
+            "subtitle_history": self._subtitle_history_entries(project_dir),
             "bgm": bgm_settings,
             "project_dir": str(project_dir),
             "version": int(time.time() * 1000),
         }
+
+    def save_subtitle_texts(
+        self, *, job_id: str, user_id: int, updates: dict[str, str]
+    ) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        normalized: dict[str, str] = {}
+        for raw_id, raw_text in dict(updates or {}).items():
+            slide_id = str(raw_id or "").strip()
+            text = str(raw_text or "").strip()
+            if not slide_id:
+                raise ValueError("字幕编号不能为空")
+            if not text:
+                raise ValueError(f"{slide_id} 的字幕正文不能为空")
+            if len(text) > 1200:
+                raise ValueError(f"{slide_id} 的字幕正文过长")
+            normalized[slide_id] = text
+        if not normalized:
+            raise ValueError("没有需要保存的字幕修改")
+
+        with self._mapping_lock:
+            timeline = self._load_timeline(project_dir)
+            by_id = {str(item.get("slide_id") or ""): item for item in timeline}
+            missing = [slide_id for slide_id in normalized if slide_id not in by_id]
+            if missing:
+                raise ValueError(f"找不到字幕：{', '.join(missing[:3])}")
+            changed = {
+                slide_id: text
+                for slide_id, text in normalized.items()
+                if str(by_id[slide_id].get("text_content") or "").strip() != text
+            }
+            if not changed:
+                return self.inspect(job_id, user_id)
+            self._archive_subtitle_state(project_dir, "保存字幕修改前")
+            for slide_id, text in changed.items():
+                by_id[slide_id]["text_content"] = text
+            self._write_subtitle_files(project_dir, timeline)
+            try:
+                self._write_timing_html(project_dir, self._load_mapping(project_dir), timeline)
+            except (OSError, ValueError, FileNotFoundError):
+                # The SRT/timeline pair is authoritative. Legacy HTML is rebuilt
+                # during the next render whenever its picture mapping is usable.
+                pass
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle",
+            message=f"已保存 {len(changed)} 条字幕修改；重新渲染后进入成片。",
+        )
+        return self.inspect(job_id, user_id)
+
+    def restore_subtitle_history(
+        self, *, job_id: str, user_id: int, history_id: str
+    ) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        safe_id = Path(str(history_id or "")).name
+        if not safe_id or safe_id != str(history_id):
+            raise ValueError("字幕历史编号无效")
+        history_root = (project_dir / "other" / SUBTITLE_HISTORY_DIRNAME).resolve()
+        source_dir = (history_root / safe_id).resolve()
+        if history_root not in source_dir.parents:
+            raise ValueError("字幕历史路径无效")
+        source_timeline = source_dir / TIMELINE_FILENAME
+        if not source_timeline.is_file():
+            raise FileNotFoundError("所选字幕历史不存在")
+        payload = json.loads(source_timeline.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError("字幕历史内容无效")
+        archived = self._validated_subtitle_timeline(
+            [dict(item) for item in payload if isinstance(item, dict)]
+        )
+        with self._mapping_lock:
+            current = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+            archived_text = {
+                str(item["slide_id"]): str(item["text_content"])
+                for item in archived
+            }
+            missing = [
+                str(item["slide_id"])
+                for item in current
+                if str(item["slide_id"]) not in archived_text
+            ]
+            if missing:
+                raise ValueError("所选字幕历史与当前项目句子编号不一致，无法安全恢复")
+            # Subtitle history restores display text only. Current timestamps may
+            # have changed after a later TTS refinement and must remain authoritative.
+            for item in current:
+                item["text_content"] = archived_text[str(item["slide_id"])]
+            self._archive_subtitle_state(project_dir, "恢复字幕历史前")
+            self._write_subtitle_files(project_dir, current)
+            try:
+                self._write_timing_html(project_dir, self._load_mapping(project_dir), current)
+            except (OSError, ValueError, FileNotFoundError):
+                pass
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle",
+            message="已恢复所选字幕历史；重新渲染后进入成片。",
+        )
+        return self.inspect(job_id, user_id)
+
+    @staticmethod
+    def _subtitle_audio_path(project_dir: Path) -> Path:
+        path = project_dir / "input" / "配音.wav"
+        if not path.is_file():
+            raise FileNotFoundError("项目配音文件不存在，无法校准字幕边界")
+        return path
+
+    def subtitle_audio_path(self, job_id: str, user_id: int) -> Path:
+        return self._subtitle_audio_path(self.output_dir(job_id, user_id))
+
+    def preview_subtitle_boundary(
+        self, *, job_id: str, user_id: int, left_slide_id: str
+    ) -> dict[str, Any]:
+        """Return the current adjacent boundary for manual listening and adjustment."""
+        project_dir = self.output_dir(job_id, user_id)
+        timeline = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+        index = next(
+            (position for position, item in enumerate(timeline) if str(item["slide_id"]) == left_slide_id),
+            -1,
+        )
+        if index < 0 or index >= len(timeline) - 1:
+            raise ValueError("请选择一条后面仍有字幕的句子")
+        left = timeline[index]
+        right = timeline[index + 1]
+        pair_start = float(left["start"])
+        pair_end = float(right["end"])
+        if pair_end - pair_start < 0.4:
+            raise ValueError("相邻两句时长过短，无法安全校准")
+        current_boundary = (float(left["end"]) + float(right["start"])) / 2
+        audio_path = self._subtitle_audio_path(project_dir)
+        minimum = pair_start + 0.15
+        maximum = pair_end - 0.15
+        return {
+            "left_slide_id": str(left["slide_id"]),
+            "right_slide_id": str(right["slide_id"]),
+            "left_text": str(left["text_content"]),
+            "right_text": str(right["text_content"]),
+            "pair_start": round(pair_start, 4),
+            "pair_end": round(pair_end, 4),
+            "clip_start": round(pair_start, 4),
+            "clip_end": round(pair_end, 4),
+            "current_boundary": round(current_boundary, 4),
+            "suggested_boundary": round(current_boundary, 4),
+            "minimum_boundary": round(minimum, 4),
+            "maximum_boundary": round(maximum, 4),
+            "audio_url": f"/api/jobs/{job_id}/visual-editor/audio?v={audio_path.stat().st_mtime_ns}",
+        }
+
+    def apply_subtitle_boundary(
+        self, *, job_id: str, user_id: int, left_slide_id: str, boundary: float
+    ) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            timeline = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+            index = next(
+                (position for position, item in enumerate(timeline) if str(item["slide_id"]) == left_slide_id),
+                -1,
+            )
+            if index < 0 or index >= len(timeline) - 1:
+                raise ValueError("字幕边界对应的相邻句子不存在")
+            left = timeline[index]
+            right = timeline[index + 1]
+            minimum = float(left["start"]) + 0.15
+            maximum = float(right["end"]) - 0.15
+            value = float(boundary)
+            if not minimum <= value <= maximum:
+                raise ValueError("建议边界超出相邻两句的安全范围")
+            self._archive_subtitle_state(project_dir, "校准字幕边界前")
+            left["end"] = round(value, 6)
+            right["start"] = round(value, 6)
+            self._write_subtitle_files(project_dir, timeline)
+            try:
+                self._write_timing_html(project_dir, self._load_mapping(project_dir), timeline)
+            except (OSError, ValueError, FileNotFoundError):
+                pass
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle_boundary",
+            message=f"已校准 {left_slide_id} 与 {right['slide_id']} 的字幕边界；重新渲染后进入成片。",
+        )
+        return self.inspect(job_id, user_id)
 
     @staticmethod
     def _inspect_bgm_settings(job_id: str, project_dir: Path) -> dict[str, Any]:
@@ -1201,6 +1483,45 @@ class VisualEditor:
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         return len(archived_tracks)
 
+    @staticmethod
+    def _retire_unselected_video_variants(
+        *, project_dir: Path, job: Any, selected: set[str]
+    ) -> list[Path]:
+        """Keep the current output area honest without deleting an older render."""
+        variants = {
+            "subtitles": (
+                project_dir / "video" / "最终视频_字幕版.mp4",
+                JOBS_DIR / job.id / "artifacts" / "final_with_subtitles.mp4",
+                "video_with_subtitles",
+            ),
+            "raw": (
+                project_dir / "video" / "最终视频_纯净版.mp4",
+                JOBS_DIR / job.id / "artifacts" / "final_raw_presentation.mp4",
+                "video_raw",
+            ),
+        }
+        retired: list[Path] = []
+        history_dir: Path | None = None
+        for variant, (project_video, artifact_video, artifact_key) in variants.items():
+            if variant in selected:
+                continue
+            if project_video.is_file():
+                if history_dir is None:
+                    history_dir = (
+                        project_dir
+                        / "other"
+                        / "历史成片"
+                        / f"{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns()}"
+                    )
+                    history_dir.mkdir(parents=True, exist_ok=True)
+                archived = history_dir / project_video.name
+                shutil.move(str(project_video), str(archived))
+                retired.append(archived)
+            artifact_video.unlink(missing_ok=True)
+            if isinstance(getattr(job, "artifacts", None), dict):
+                job.artifacts.pop(artifact_key, None)
+        return retired
+
     def render_video(
         self,
         *,
@@ -1322,10 +1643,15 @@ class VisualEditor:
                     video_dir = project_dir / "video"
                     video_dir.mkdir(parents=True, exist_ok=True)
                     selected = {"subtitles", "raw"} if mode == "both" else {mode}
-                    for variant, (source, target) in {
+                    outputs = {
                         "subtitles": (render_paths["final"] / "final_with_subtitles.mp4", video_dir / "最终视频_字幕版.mp4"),
                         "raw": (render_paths["final"] / "final_raw_presentation.mp4", video_dir / "最终视频_纯净版.mp4"),
-                    }.items():
+                    }
+                    for variant in selected:
+                        source, _target = outputs[variant]
+                        if not source.is_file() or source.stat().st_size <= 0:
+                            raise FileNotFoundError(f"模块 5 未生成所选的 {variant} 成片")
+                    for variant, (source, target) in outputs.items():
                         if variant not in selected:
                             continue
                         shutil.copy2(source, target)
@@ -1336,6 +1662,13 @@ class VisualEditor:
                         job.artifacts["video_with_subtitles"] = f"/api/jobs/{job.id}/artifacts/final_with_subtitles.mp4"
                     if mode in {"raw", "both"}:
                         job.artifacts["video_raw"] = f"/api/jobs/{job.id}/artifacts/final_raw_presentation.mp4"
+                    retired = self._retire_unselected_video_variants(
+                        project_dir=project_dir,
+                        job=job,
+                        selected=selected,
+                    )
+                    if retired:
+                        self._log(job, f"已将未选中的旧版本移入历史成片目录，共 {len(retired)} 个；本次没有重新渲染这些版本。")
                     store.update(job, artifacts=dict(job.artifacts), progress=100, message="画面修改已重新渲染")
                     self._set_task(job.id, status="completed", action="render", message="视频已重新渲染")
                     self._log(job, "重新渲染完成，最终视频已更新。")

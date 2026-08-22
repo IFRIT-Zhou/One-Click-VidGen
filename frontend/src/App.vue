@@ -1235,24 +1235,39 @@
                 <span>第 {{ visualEditorPage }} / {{ visualEditorPageCount }} 页</span>
                 <button class="ghost-btn compact-btn" type="button" :disabled="visualEditorPage >= visualEditorPageCount" @click="visualEditorPage += 1">下一页</button>
               </div>
-              <section class="visual-timing-panel">
+              <section class="visual-timing-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
                 <div class="visual-timing-head">
                   <div>
                     <div class="eyebrow">画面时序</div>
-                    <h3>按字幕调整画面位置</h3>
-                    <p class="muted small">每次在相邻字幕句之间移动一格。画面始终连续，不会产生空白、重叠或影响配音。</p>
+                    <h3>按字幕调整画面位置与文字</h3>
+                    <p class="muted small">移动字幕句可调整画面边界；点击单句右侧的编辑键可修正最终字幕文字，不会改变配音内容。</p>
                   </div>
                   <div class="visual-timing-head-actions">
-                    <select v-model="selectedVisualTimingHistory" class="timing-history-select" :disabled="visualTimingAdjusting || !visualEditor.timing_history?.length" @change="restoreSelectedVisualTimingHistory">
+                    <select v-model="selectedVisualTimingHistory" class="timing-history-select" :disabled="visualTimingAdjusting || ttsEditor.task?.status === 'running' || !visualEditor.timing_history?.length" @change="restoreSelectedVisualTimingHistory">
                       <option value="">历史时序</option>
                       <option v-for="entry in visualEditor.timing_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
                     </select>
-                    <button class="ghost-btn compact-btn timing-save-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="commitEditedTiming">✅ 保存当前时序</button>
-                    <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting" @click="resetEditedTiming">恢复初始时序</button>
+                    <button class="ghost-btn compact-btn timing-save-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="commitEditedTiming">✅ 保存当前时序</button>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="resetEditedTiming">恢复初始时序</button>
                   </div>
                 </div>
+                <div v-if="ttsEditor.task?.status === 'running'" class="visual-subtitle-lock-note">配音精修正在改变句子时长，画面时序与字幕编辑已暂时锁定，完成后会自动刷新。</div>
                 <div v-if="!visualEditor.timing_available" class="timing-unavailable">{{ visualEditor.timing_message || '该历史项目缺少可用的字幕时间线。' }}</div>
                 <template v-else>
+                  <div class="visual-subtitle-toolbar">
+                    <div>
+                      <strong>字幕文字精修</strong>
+                      <small>直接修改最终显示文字；保存时自动同步字幕文件与画面时间线。</small>
+                    </div>
+                    <div class="visual-subtitle-toolbar-actions">
+                      <select v-model="selectedVisualSubtitleHistory" class="timing-history-select" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running' || !visualEditor.subtitle_history?.length" @change="restoreSelectedVisualSubtitleHistory">
+                        <option value="">字幕历史</option>
+                        <option v-for="entry in visualEditor.subtitle_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
+                      </select>
+                      <span v-if="visualSubtitleDirtyCount" class="visual-subtitle-dirty-count">{{ visualSubtitleDirtyCount }} 处未保存</span>
+                      <button class="primary-btn compact-btn" type="button" :disabled="!visualSubtitleDirtyCount || visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="saveVisualSubtitles">{{ visualSubtitleSaving ? '保存中…' : '保存字幕修改' }}</button>
+                    </div>
+                  </div>
                   <div class="visual-timing-track" role="list" aria-label="画面时序列表">
                     <button
                       v-for="item in visualEditor.items"
@@ -1277,18 +1292,65 @@
                         <span>{{ formatTimingRange(selectedVisualTimingItem.timing) }} · {{ selectedVisualTimingItem.timing?.duration?.toFixed(1) || '0.0' }} 秒</span>
                       </div>
                       <div class="timing-sentences">
-                        <div v-for="sentence in selectedVisualTimingItem.timing?.sentences || []" :key="sentence.slide_id" class="timing-sentence">
-                          <span>{{ sentence.slide_id }}</span><p>{{ sentence.text }}</p>
+                        <div
+                          v-for="sentence in selectedVisualTimingItem.timing?.sentences || []"
+                          :key="sentence.slide_id"
+                          class="timing-sentence"
+                          :class="{ editing: visualSubtitleEditingId === sentence.slide_id, modified: isVisualSubtitleModified(sentence) }"
+                        >
+                          <span class="timing-sentence-meta"><strong>{{ sentence.slide_id }}</strong><small>{{ formatSubtitleTiming(sentence) }}</small></span>
+                          <div class="timing-sentence-content">
+                            <textarea
+                              v-if="visualSubtitleEditingId === sentence.slide_id"
+                              v-model="visualSubtitleDrafts[sentence.slide_id]"
+                              rows="2"
+                              maxlength="1200"
+                              :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'"
+                              @keydown.ctrl.enter.prevent="finishVisualSubtitleEdit(sentence)"
+                            ></textarea>
+                            <p v-else>{{ visualSubtitleDrafts[sentence.slide_id] ?? sentence.text }}</p>
+                            <small v-if="visualSubtitlePaceWarning(sentence)" class="visual-subtitle-pace-warning">{{ visualSubtitlePaceWarning(sentence) }}</small>
+                          </div>
+                          <div class="timing-sentence-actions">
+                            <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="toggleVisualSubtitleEdit(sentence)">{{ visualSubtitleEditingId === sentence.slide_id ? '完成' : '✏️' }}</button>
+                            <button v-if="isVisualSubtitleModified(sentence)" class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="撤销本句未保存修改" @click="resetVisualSubtitleDraft(sentence)">↶</button>
+                            <button v-if="hasNextVisualSubtitle(sentence)" class="ghost-btn compact-btn subtitle-align-trigger" type="button" :disabled="visualBoundaryAlign.status === 'loading' || visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="试听并手动调整本句与下一句的时间边界" @click="previewVisualSubtitleBoundary(sentence)">调整后界</button>
+                          </div>
                         </div>
                       </div>
                       <div class="timing-actions">
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_prev || visualTimingAdjusting" @click="adjustEditedTiming('extend_prev')">← 前面多一句</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_prev || visualTimingAdjusting" @click="adjustEditedTiming('shrink_prev')">前面少一句 →</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_next || visualTimingAdjusting" @click="adjustEditedTiming('shrink_next')">← 后面少一句</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_next || visualTimingAdjusting" @click="adjustEditedTiming('extend_next')">后面多一句 →</button>
-                        <button class="ghost-btn compact-btn timing-remove-btn" type="button" :disabled="visualEditor.items.length <= 1 || visualTimingAdjusting" @click="removeEditedTimingPicture">移除这张画面</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_prev || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('extend_prev')">← 前面多一句</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_prev || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('shrink_prev')">前面少一句 →</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_next || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('shrink_next')">← 后面少一句</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_next || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('extend_next')">后面多一句 →</button>
+                        <button class="ghost-btn compact-btn timing-remove-btn" type="button" :disabled="visualEditor.items.length <= 1 || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="removeEditedTimingPicture">移除这张画面</button>
                       </div>
                     </div>
+                  </div>
+                  <div v-if="visualBoundaryAlign.open" class="subtitle-boundary-panel">
+                    <div class="subtitle-boundary-head">
+                      <div>
+                        <strong>相邻字幕时间边界</strong>
+                        <small>{{ visualBoundaryAlign.left_slide_id }} → {{ visualBoundaryAlign.right_slide_id }}</small>
+                      </div>
+                      <button class="icon-action" type="button" title="关闭" @click="closeVisualBoundaryAlign">×</button>
+                    </div>
+                    <div v-if="visualBoundaryAlign.status === 'loading'" class="subtitle-boundary-loading">正在读取相邻两句的音频边界…</div>
+                    <div v-else-if="visualBoundaryAlign.status === 'failed'" class="subtitle-boundary-loading error">{{ visualBoundaryAlign.message || '读取字幕边界失败' }}</div>
+                    <template v-else-if="visualBoundaryAlign.status === 'ready'">
+                      <div class="subtitle-boundary-copy"><span>{{ visualBoundaryAlign.left_text }}</span><i>｜</i><span>{{ visualBoundaryAlign.right_text }}</span></div>
+                      <label class="subtitle-boundary-slider">
+                        <span>共同边界：{{ formatBoundaryOffset(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_start) }}</span>
+                        <input v-model.number="visualBoundaryAlign.boundary" type="range" :min="visualBoundaryAlign.minimum_boundary" :max="visualBoundaryAlign.maximum_boundary" step="0.01" />
+                      </label>
+                      <small class="muted small">先修改上方两句的文字归属，再试听并把滑块拖到对应发音结束的位置。</small>
+                      <div class="subtitle-boundary-actions">
+                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.pair_start, visualBoundaryAlign.boundary)">▶ 试听前句</button>
+                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_end)">▶ 试听后句</button>
+                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.clip_start, visualBoundaryAlign.clip_end)">▶ 连续试听</button>
+                        <button class="primary-btn compact-btn" type="button" :disabled="visualBoundaryApplying" @click="applyVisualSubtitleBoundary">{{ visualBoundaryApplying ? '应用中…' : '确认应用边界' }}</button>
+                      </div>
+                    </template>
                   </div>
                 </template>
               </section>
@@ -1357,7 +1419,10 @@
                       v-for="item in ttsEditor.segments"
                       :key="`tts-segment-${item.index}-${item.audio_url}`"
                       class="tts-segment-card"
-                      :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }"
+                      :class="{
+                        selected: selectedTtsSegmentIndices.includes(item.index),
+                        'pronunciation-open': isTtsPronunciationOpen(item.index),
+                      }"
                     >
                       <p class="tts-segment-text">{{ item.text }}</p>
                       <div class="tts-segment-controls">
@@ -1365,6 +1430,7 @@
                           <strong>第 {{ item.index }} 句</strong>
                           <span>{{ Number(item.duration || 0).toFixed(2) }} 秒</span>
                         </div>
+                        <span v-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
                         <label class="tts-segment-select">
                           <span>选中</span>
                           <input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" />
@@ -1387,6 +1453,36 @@
                           aria-label="本句播放进度"
                           @input="seekTtsSegmentAudio(item, $event)"
                         />
+                      </div>
+                      <div class="tts-pronunciation-tools">
+                        <button
+                          class="tts-pronunciation-toggle"
+                          type="button"
+                          :disabled="ttsEditor.task?.status === 'running'"
+                          @click="toggleTtsPronunciationEditor(item)"
+                        >{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
+                        <template v-if="isTtsPronunciationOpen(item.index)">
+                          <div class="tts-pronunciation-editor">
+                            <label>
+                              <span>朗读文本 <small>只发送给配音引擎，不会写进字幕</small></span>
+                              <textarea
+                                :value="ttsReadingDrafts[item.index]"
+                                rows="2"
+                                maxlength="1200"
+                                :disabled="ttsEditor.task?.status === 'running'"
+                                placeholder="例如：点击chong2绘按钮"
+                                @input="updateTtsReadingDraft(item, $event)"
+                              ></textarea>
+                            </label>
+                            <button
+                              class="ghost-btn compact-btn"
+                              type="button"
+                              :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)"
+                              @click="resetTtsReadingDraft(item)"
+                            >恢复原文</button>
+                          </div>
+                          <small class="tts-subtitle-preview">成片字幕保持：{{ item.text }}</small>
+                        </template>
                       </div>
                     </article>
                   </div>
@@ -2276,9 +2372,21 @@ const visualEditorPage = ref(1)
 const visualTimingSelectedId = ref('')
 const selectedVisualTimingHistory = ref('')
 const visualTimingAdjusting = ref(false)
+const selectedVisualSubtitleHistory = ref('')
+const visualSubtitleEditingId = ref('')
+const visualSubtitleDrafts = reactive({})
+const visualSubtitleOriginals = reactive({})
+const visualSubtitleSaving = ref(false)
+let visualSubtitleProjectKey = ''
+const visualBoundaryAlign = ref({ open: false, status: 'idle', message: '', boundary: 0 })
+const visualBoundaryApplying = ref(false)
+let visualBoundaryAudio = null
+let visualBoundaryAudioEnd = 0
 const ttsEditor = ref({ available: false, message: '', segments: [], task: { status: 'idle', message: '' } })
 const ttsEditorLoading = ref(false)
 const selectedTtsSegmentIndices = ref([])
+const ttsReadingDrafts = reactive({})
+const ttsPronunciationOpenIndices = ref([])
 const ttsRefineForm = reactive({
   tts_voice_id: '',
   tts_speed: 1,
@@ -2750,6 +2858,10 @@ const selectedVisualTimingItem = computed(() => (
   || visualEditor.value.items.find((item) => item.timing)
   || null
 ))
+const visualSubtitleDirtyIds = computed(() => Object.keys(visualSubtitleDrafts).filter((slideId) => (
+  String(visualSubtitleDrafts[slideId] ?? '').trim() !== String(visualSubtitleOriginals[slideId] ?? '').trim()
+)))
+const visualSubtitleDirtyCount = computed(() => visualSubtitleDirtyIds.value.length)
 const visualReferenceSummary = computed(() => {
   const parts = []
   if (visualSelfReferenceMacroId.value) parts.push(`图1 ${visualSelfReferenceMacroId.value}`)
@@ -4794,11 +4906,54 @@ async function loadVisualEditor({ preservePage = false, hydrateBgm = false } = {
     if (!visualEditor.value.timing_history?.some((item) => item.id === selectedVisualTimingHistory.value)) {
       selectedVisualTimingHistory.value = ''
     }
+    if (!visualEditor.value.subtitle_history?.some((item) => item.id === selectedVisualSubtitleHistory.value)) {
+      selectedVisualSubtitleHistory.value = ''
+    }
+    hydrateVisualSubtitleDrafts()
   } catch (error) {
     visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
   } finally {
     visualEditorLoading.value = false
   }
+}
+
+function visualSubtitleSentences() {
+  const result = []
+  const seen = new Set()
+  for (const item of visualEditor.value.items || []) {
+    for (const sentence of item.timing?.sentences || []) {
+      const slideId = String(sentence.slide_id || '').trim()
+      if (!slideId || seen.has(slideId)) continue
+      seen.add(slideId)
+      result.push(sentence)
+    }
+  }
+  return result.sort((left, right) => Number(left.start || 0) - Number(right.start || 0))
+}
+
+function hydrateVisualSubtitleDrafts({ preserveDirty = true } = {}) {
+  const projectChanged = visualSubtitleProjectKey !== visualEditorProjectId.value
+  const dirtyBefore = new Set(projectChanged || !preserveDirty ? [] : visualSubtitleDirtyIds.value)
+  const sentences = visualSubtitleSentences()
+  const validIds = new Set(sentences.map((item) => String(item.slide_id)))
+  for (const key of Object.keys(visualSubtitleDrafts)) {
+    if (!validIds.has(key) || projectChanged) delete visualSubtitleDrafts[key]
+  }
+  for (const key of Object.keys(visualSubtitleOriginals)) {
+    if (!validIds.has(key) || projectChanged) delete visualSubtitleOriginals[key]
+  }
+  for (const sentence of sentences) {
+    const slideId = String(sentence.slide_id)
+    const serverText = String(sentence.text || '')
+    visualSubtitleOriginals[slideId] = serverText
+    if (!dirtyBefore.has(slideId)) visualSubtitleDrafts[slideId] = serverText
+  }
+  if (projectChanged) {
+    visualSubtitleEditingId.value = ''
+    selectedVisualSubtitleHistory.value = ''
+    closeVisualBoundaryAlign()
+  }
+  visualSubtitleProjectKey = visualEditorProjectId.value
 }
 
 async function loadTtsEditor() {
@@ -4809,6 +4964,11 @@ async function loadTtsEditor() {
     hydrateTtsRefineSettings(ttsEditor.value)
     const valid = new Set((ttsEditor.value.segments || []).map((item) => item.index))
     selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter((value) => valid.has(value))
+    ttsPronunciationOpenIndices.value = ttsPronunciationOpenIndices.value.filter((value) => valid.has(value))
+    for (const key of Object.keys(ttsReadingDrafts)) delete ttsReadingDrafts[key]
+    for (const item of ttsEditor.value.segments || []) {
+      ttsReadingDrafts[item.index] = String(item.tts_text || item.text || '')
+    }
   } catch (error) {
     ttsEditor.value = { available: false, message: error.message || '无法读取逐句配音', segments: [], task: { status: 'failed', message: '' } }
   } finally {
@@ -4947,6 +5107,39 @@ function seekTtsSegmentAudio(item, event) {
   ttsSegmentCurrentTime.value = value
 }
 
+function isTtsPronunciationOpen(index) {
+  return ttsPronunciationOpenIndices.value.includes(index)
+}
+
+function toggleTtsPronunciationEditor(item) {
+  if (!(item.index in ttsReadingDrafts)) {
+    ttsReadingDrafts[item.index] = String(item.tts_text || item.text || '')
+  }
+  if (isTtsPronunciationOpen(item.index)) {
+    ttsPronunciationOpenIndices.value = ttsPronunciationOpenIndices.value.filter((value) => value !== item.index)
+  } else {
+    ttsPronunciationOpenIndices.value = [...ttsPronunciationOpenIndices.value, item.index]
+  }
+}
+
+function updateTtsReadingDraft(item, event) {
+  ttsReadingDrafts[item.index] = String(event?.target?.value ?? '')
+  if (!selectedTtsSegmentIndices.value.includes(item.index)) {
+    selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
+  }
+}
+
+function resetTtsReadingDraft(item) {
+  ttsReadingDrafts[item.index] = String(item.text || '')
+  if (!selectedTtsSegmentIndices.value.includes(item.index)) {
+    selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
+  }
+}
+
+function isTtsReadingModified(item) {
+  return String(ttsReadingDrafts[item.index] ?? item.tts_text ?? item.text ?? '').trim() !== String(item.text || '').trim()
+}
+
 function stopTtsEditorPolling() {
   if (ttsEditorTaskTimer) window.clearInterval(ttsEditorTaskTimer)
   ttsEditorTaskTimer = null
@@ -4979,7 +5172,24 @@ function startTtsEditorPolling() {
 async function regenerateSelectedTtsSegments() {
   if (!visualEditorProjectId.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
   const count = selectedTtsSegmentIndices.value.length
-  if (!window.confirm(`重新生成选中的 ${count} 句配音？\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
+  const textOverrides = {}
+  for (const index of selectedTtsSegmentIndices.value) {
+    const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
+    const readingText = String(ttsReadingDrafts[index] ?? item?.tts_text ?? item?.text ?? '').trim()
+    if (!readingText) {
+      ttsEditor.value.task = { status: 'failed', message: `第 ${index} 句朗读文本不能为空。` }
+      return
+    }
+    textOverrides[index] = readingText
+  }
+  const pronunciationCount = selectedTtsSegmentIndices.value.filter((index) => {
+    const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
+    return item && String(textOverrides[index]).trim() !== String(item.text || '').trim()
+  }).length
+  const pronunciationNotice = pronunciationCount
+    ? `\n其中 ${pronunciationCount} 句包含发音修正；拼音提示只参与配音，成片字幕仍显示原文字。`
+    : ''
+  if (!window.confirm(`重新生成选中的 ${count} 句配音？${pronunciationNotice}\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
   try {
     const refineSettings = {
       tts_speed: ttsRefineForm.tts_speed,
@@ -4997,7 +5207,12 @@ async function regenerateSelectedTtsSegments() {
       refineSettings.cluster_voice_type = voiceType
       refineSettings.cluster_voice_id = voiceIdParts.join(':')
     }
-    await api.regenerateTtsSegments(visualEditorProjectId.value, selectedTtsSegmentIndices.value, refineSettings)
+    await api.regenerateTtsSegments(
+      visualEditorProjectId.value,
+      selectedTtsSegmentIndices.value,
+      refineSettings,
+      textOverrides,
+    )
     ttsEditor.value.task = { status: 'running', progress: 0, message: `正在重配 ${count} 句，请留意上方任务日志。` }
     startTtsEditorPolling()
   } catch (error) {
@@ -5016,6 +5231,197 @@ function formatTimingRange(timing) {
   return `${asClock(timing.start)} – ${asClock(timing.end)}`
 }
 
+function formatSubtitleTiming(sentence) {
+  return formatTimingRange({ start: sentence?.start, end: sentence?.end })
+}
+
+function isVisualSubtitleModified(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  return String(visualSubtitleDrafts[slideId] ?? '').trim() !== String(visualSubtitleOriginals[slideId] ?? '').trim()
+}
+
+function visualSubtitlePaceWarning(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  const text = String(visualSubtitleDrafts[slideId] ?? sentence?.text ?? '').replace(/\s+/g, '')
+  const duration = Number(sentence?.end || 0) - Number(sentence?.start || 0)
+  if (duration <= 0 || text.length / duration <= 9) return ''
+  return `${text.length} 字 / ${duration.toFixed(1)} 秒，字幕可能显示过快`
+}
+
+function toggleVisualSubtitleEdit(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  if (!slideId || ttsEditor.value.task?.status === 'running') return
+  if (!(slideId in visualSubtitleDrafts)) visualSubtitleDrafts[slideId] = String(sentence?.text || '')
+  visualSubtitleEditingId.value = visualSubtitleEditingId.value === slideId ? '' : slideId
+}
+
+function finishVisualSubtitleEdit(sentence) {
+  if (visualSubtitleEditingId.value === String(sentence?.slide_id || '')) visualSubtitleEditingId.value = ''
+}
+
+function resetVisualSubtitleDraft(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  if (!slideId) return
+  visualSubtitleDrafts[slideId] = String(visualSubtitleOriginals[slideId] ?? sentence?.text ?? '')
+  if (visualSubtitleEditingId.value === slideId) visualSubtitleEditingId.value = ''
+}
+
+async function saveVisualSubtitles() {
+  if (!visualEditorProjectId.value || !visualSubtitleDirtyCount.value || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  const updates = {}
+  for (const slideId of visualSubtitleDirtyIds.value) {
+    const text = String(visualSubtitleDrafts[slideId] ?? '').trim()
+    if (!text) {
+      visualEditor.value.task = { status: 'failed', action: 'subtitle', message: `${slideId} 的字幕不能为空。` }
+      return
+    }
+    updates[slideId] = text
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.saveVisualSubtitles(visualEditorProjectId.value, updates)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualSubtitleEditingId.value = ''
+    visualEditor.value.task = { status: 'completed', action: 'subtitle', message: `已保存 ${Object.keys(updates).length} 条字幕修改；重新渲染后进入成片。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle', message: error.message || '保存字幕修改失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+async function restoreSelectedVisualSubtitleHistory() {
+  if (!visualEditorProjectId.value || !selectedVisualSubtitleHistory.value || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  const selected = visualEditor.value.subtitle_history?.find((item) => item.id === selectedVisualSubtitleHistory.value)
+  if (!window.confirm(`恢复字幕历史“${selected?.label || selectedVisualSubtitleHistory.value}”？\n\n当前字幕会先自动备份，配音和画面时序不会改变。`)) {
+    selectedVisualSubtitleHistory.value = ''
+    return
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.restoreVisualSubtitleHistory(visualEditorProjectId.value, selectedVisualSubtitleHistory.value)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualSubtitleEditingId.value = ''
+    selectedVisualSubtitleHistory.value = ''
+    visualEditor.value.task = { status: 'completed', action: 'subtitle', message: '已恢复所选字幕历史；重新渲染后进入成片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle', message: error.message || '恢复字幕历史失败' }
+    selectedVisualSubtitleHistory.value = ''
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+function hasNextVisualSubtitle(sentence) {
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  return index >= 0 && index < sentences.length - 1
+}
+
+function closeVisualBoundaryAlign() {
+  if (visualBoundaryAudio) {
+    visualBoundaryAudio.pause()
+    visualBoundaryAudio.removeAttribute('src')
+    visualBoundaryAudio.load()
+    visualBoundaryAudio = null
+  }
+  visualBoundaryAudioEnd = 0
+  visualBoundaryAlign.value = { open: false, status: 'idle', message: '', boundary: 0 }
+}
+
+async function previewVisualSubtitleBoundary(sentence) {
+  if (!visualEditorProjectId.value || visualBoundaryAlign.value.status === 'loading') return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_boundary', message: '请先保存当前字幕文字修改，再校准相邻两句的时间边界。' }
+    return
+  }
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  const next = sentences[index + 1]
+  if (index < 0 || !next) return
+  closeVisualBoundaryAlign()
+  visualBoundaryAlign.value = {
+    open: true,
+    status: 'loading',
+    message: '',
+    boundary: 0,
+    left_slide_id: String(sentence.slide_id),
+    right_slide_id: String(next.slide_id),
+  }
+  try {
+    const payload = await api.previewVisualSubtitleBoundary(visualEditorProjectId.value, sentence.slide_id)
+    visualBoundaryAlign.value = {
+      ...payload,
+      open: true,
+      status: 'ready',
+      boundary: Number(payload.suggested_boundary ?? payload.current_boundary ?? 0),
+    }
+  } catch (error) {
+    visualBoundaryAlign.value = {
+      ...visualBoundaryAlign.value,
+      open: true,
+      status: 'failed',
+      message: error.message || '读取字幕边界失败',
+    }
+  }
+}
+
+function formatBoundaryOffset(boundary, pairStart) {
+  const offset = Math.max(0, Number(boundary || 0) - Number(pairStart || 0))
+  return `前句开始后 ${offset.toFixed(2)} 秒`
+}
+
+async function playVisualBoundaryRange(start, end) {
+  const payload = visualBoundaryAlign.value
+  if (!payload.audio_url || Number(end) <= Number(start)) return
+  if (visualBoundaryAudio) visualBoundaryAudio.pause()
+  const audio = visualBoundaryAudio || new Audio()
+  visualBoundaryAudio = audio
+  visualBoundaryAudioEnd = Number(end)
+  const onTimeUpdate = () => {
+    if (audio.currentTime >= visualBoundaryAudioEnd - 0.015) audio.pause()
+  }
+  if (!audio.dataset.boundaryListener) {
+    audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.dataset.boundaryListener = '1'
+  }
+  if (audio.dataset.source !== payload.audio_url) {
+    audio.src = payload.audio_url
+    audio.dataset.source = payload.audio_url
+    audio.load()
+  }
+  const begin = Math.max(0, Number(start) || 0)
+  const startPlayback = async () => {
+    audio.currentTime = begin
+    try { await audio.play() } catch { /* Browser keeps the panel usable if playback is blocked. */ }
+  }
+  if (audio.readyState >= 1) await startPlayback()
+  else audio.addEventListener('loadedmetadata', startPlayback, { once: true })
+}
+
+async function applyVisualSubtitleBoundary() {
+  const payload = visualBoundaryAlign.value
+  if (!visualEditorProjectId.value || payload.status !== 'ready' || visualBoundaryApplying.value) return
+  visualBoundaryApplying.value = true
+  try {
+    const result = await api.applyVisualSubtitleBoundary(
+      visualEditorProjectId.value,
+      payload.left_slide_id,
+      Number(payload.boundary),
+    )
+    visualEditor.value = result
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    closeVisualBoundaryAlign()
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_boundary', message: '字幕共同边界已更新；重新渲染后进入成片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_boundary', message: error.message || '应用字幕边界失败' }
+  } finally {
+    visualBoundaryApplying.value = false
+  }
+}
+
 async function adjustEditedTiming(action) {
   const item = selectedVisualTimingItem.value
   if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
@@ -5024,6 +5430,7 @@ async function adjustEditedTiming(action) {
   try {
     const payload = await api.adjustVisualTiming(visualEditorProjectId.value, item.id, action)
     visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
     visualTimingSelectedId.value = item.id
     visualEditor.value.task = { status: 'completed', action: 'timing', message: '画面时序已调整；确认后点击下方“重新渲染”生成新视频。' }
   } catch (error) {
@@ -5040,6 +5447,7 @@ async function resetEditedTiming() {
   try {
     const payload = await api.resetVisualTiming(visualEditorProjectId.value)
     visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
     visualEditor.value.task = { status: 'completed', action: 'timing', message: '已恢复初始画面时序；确认后可重新渲染视频。' }
   } catch (error) {
     visualEditor.value.task = { status: 'failed', action: 'timing', message: error.message || '恢复初始时序失败' }
@@ -5055,6 +5463,7 @@ async function commitEditedTiming() {
   try {
     const payload = await api.commitVisualTiming(visualEditorProjectId.value)
     visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
     visualEditor.value.task = { status: 'completed', action: 'commit_timing_baseline', message: '当前画面时序已保存为新的初始时序。' }
   } catch (error) {
     visualEditor.value.task = { status: 'failed', action: 'commit_timing_baseline', message: error.message || '保存当前时序失败' }
@@ -5074,6 +5483,7 @@ async function restoreSelectedVisualTimingHistory() {
   try {
     const payload = await api.restoreVisualTimingHistory(visualEditorProjectId.value, selectedVisualTimingHistory.value)
     visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
     visualEditor.value.task = { status: 'completed', action: 'restore_timing_history', message: '已切换到所选历史时序；满意后可保存为新的初始时序。' }
   } catch (error) {
     visualEditor.value.task = { status: 'failed', action: 'restore_timing_history', message: error.message || '读取历史时序失败' }
@@ -5093,6 +5503,7 @@ async function removeEditedTimingPicture() {
   try {
     const payload = await api.removeVisualTimingPicture(visualEditorProjectId.value, item.id)
     visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
     visualTimingSelectedId.value = visualEditor.value.items[Math.max(0, originalIndex - 1)]?.id
       || visualEditor.value.items[0]?.id || ''
     visualEditor.value.task = { status: 'completed', action: 'timing_remove', message: `${item.id} 已从时序移除；确认后点击下方“重新渲染”生成新视频。` }
@@ -5162,6 +5573,7 @@ async function toggleVisualEditor() {
     stopVisualEditorTaskPolling()
     stopTtsEditorPolling()
     visualPreviewItem.value = null
+    closeVisualBoundaryAlign()
   }
 }
 
@@ -6004,6 +6416,7 @@ watch(() => cloudRechargeOpen.value || Boolean(cloudRechargeSuccess.value), (ope
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)
   stopVisualEditorTaskPolling()
+  closeVisualBoundaryAlign()
   stopTtsVoicePreview()
   stopCloudVoicePreview()
   stopCloudRechargePolling()

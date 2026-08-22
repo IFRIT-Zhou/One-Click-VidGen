@@ -266,8 +266,26 @@ class VisualTimingHistoryRequest(BaseModel):
     history_id: str = Field(min_length=1, max_length=260)
 
 
+class VisualSubtitleUpdateRequest(BaseModel):
+    updates: dict[str, str] = Field(min_length=1, max_length=200)
+
+
+class VisualSubtitleHistoryRequest(BaseModel):
+    history_id: str = Field(min_length=1, max_length=120)
+
+
+class VisualSubtitleBoundaryPreviewRequest(BaseModel):
+    left_slide_id: str = Field(min_length=1, max_length=180)
+
+
+class VisualSubtitleBoundaryApplyRequest(BaseModel):
+    left_slide_id: str = Field(min_length=1, max_length=180)
+    boundary: float = Field(ge=0, le=86400)
+
+
 class TtsSegmentRegenerateRequest(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=20)
+    tts_text_overrides: dict[int, str] = Field(default_factory=dict)
     tts_voice_id: str | None = Field(default=None, max_length=180)
     tts_speed: float | None = Field(default=None, ge=0.5, le=2)
     tts_volume: float | None = Field(default=None, ge=0.1, le=10)
@@ -2278,6 +2296,110 @@ def remove_visual_editor_timing_picture(job_id: str, macro_id: str, request: Req
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles")
+def save_visual_editor_subtitles(
+    job_id: str,
+    payload: VisualSubtitleUpdateRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再修改字幕")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请等待单句重配完成后再修改字幕")
+    try:
+        return visual_editor.save_subtitle_texts(
+            job_id=job_id,
+            user_id=user_id,
+            updates=payload.updates,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/history")
+def restore_visual_editor_subtitle_history(
+    job_id: str,
+    payload: VisualSubtitleHistoryRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再恢复字幕历史")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请稍后再恢复字幕历史")
+    try:
+        return visual_editor.restore_subtitle_history(
+            job_id=job_id,
+            user_id=user_id,
+            history_id=payload.history_id,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/jobs/{job_id}/visual-editor/audio")
+def get_visual_editor_audio(job_id: str, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        path = visual_editor.subtitle_audio_path(job_id, user_id)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        str(path),
+        media_type="audio/wav",
+        filename=path.name,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/boundary-preview")
+def preview_visual_editor_subtitle_boundary(
+    job_id: str,
+    payload: VisualSubtitleBoundaryPreviewRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再校准字幕")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请稍后再校准字幕")
+    try:
+        return visual_editor.preview_subtitle_boundary(
+            job_id=job_id,
+            user_id=user_id,
+            left_slide_id=payload.left_slide_id,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/boundary")
+def apply_visual_editor_subtitle_boundary(
+    job_id: str,
+    payload: VisualSubtitleBoundaryApplyRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再修改字幕边界")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请稍后再修改字幕边界")
+    try:
+        return visual_editor.apply_subtitle_boundary(
+            job_id=job_id,
+            user_id=user_id,
+            left_slide_id=payload.left_slide_id,
+            boundary=payload.boundary,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/jobs/{job_id}/tts-editor")
 def get_tts_editor(job_id: str, request: Request) -> dict[str, Any]:
     _job, user_id = _owned_completed_job(job_id, request)
@@ -2320,12 +2442,15 @@ def regenerate_tts_segments(
     if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
         raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再重配音")
     try:
-        settings_override = payload.model_dump(exclude={"indices"}, exclude_none=True)
+        settings_override = payload.model_dump(
+            exclude={"indices", "tts_text_overrides"}, exclude_none=True
+        )
         tts_editor.regenerate(
             job=job,
             user_id=user_id,
             indices=payload.indices,
             settings_override=settings_override,
+            text_overrides=payload.tts_text_overrides,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

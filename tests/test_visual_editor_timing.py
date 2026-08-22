@@ -60,6 +60,41 @@ class VisualEditorTimingTest(unittest.TestCase):
             self.assertTrue(paths["audio"].is_dir())
             self.assertTrue(paths["final"].is_dir())
 
+    def test_single_variant_render_retires_stale_other_variant_without_deleting_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "output" / "demo"
+            video_dir = project / "video"
+            video_dir.mkdir(parents=True)
+            subtitles = video_dir / "最终视频_字幕版.mp4"
+            raw = video_dir / "最终视频_纯净版.mp4"
+            subtitles.write_bytes(b"new subtitles")
+            raw.write_bytes(b"old raw")
+            artifact_dir = root / "jobs" / "job" / "artifacts"
+            artifact_dir.mkdir(parents=True)
+            raw_artifact = artifact_dir / "final_raw_presentation.mp4"
+            raw_artifact.write_bytes(b"old raw")
+            job = SimpleNamespace(
+                id="job",
+                artifacts={
+                    "video_with_subtitles": "/subtitles",
+                    "video_raw": "/raw",
+                },
+            )
+            with patch("backend.app.visual_editor.JOBS_DIR", root / "jobs"):
+                retired = VisualEditor._retire_unselected_video_variants(
+                    project_dir=project,
+                    job=job,
+                    selected={"subtitles"},
+                )
+            self.assertTrue(subtitles.is_file())
+            self.assertFalse(raw.exists())
+            self.assertFalse(raw_artifact.exists())
+            self.assertEqual(len(retired), 1)
+            self.assertEqual(retired[0].read_bytes(), b"old raw")
+            self.assertNotIn("video_raw", job.artifacts)
+            self.assertIn("video_with_subtitles", job.artifacts)
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.project = Path(self.tmp.name)
@@ -75,7 +110,7 @@ class VisualEditorTimingTest(unittest.TestCase):
             for index in range(1, 6)
         ]
         VisualEditor._save_mapping(self.project, self.mapping)
-        VisualEditor._timeline_path(self.project).write_text(json.dumps(self.timeline), encoding="utf-8")
+        VisualEditor._write_subtitle_files(self.project, self.timeline)
         for macro_id in ("poster_001", "poster_002", "poster_003"):
             (self.project / "image" / f"{macro_id}.jpg").write_bytes(b"image")
         self.editor = VisualEditor()
@@ -181,6 +216,71 @@ class VisualEditorTimingTest(unittest.TestCase):
         restored = VisualEditor._load_mapping(self.project)
         self.assertEqual([item["macro_scene_id"] for item in restored], ["poster_001", "poster_002", "poster_003"])
         self.assertEqual(restored[1]["includes_slides"], ["scene_003", "scene_004"])
+
+    def test_subtitle_edit_updates_timeline_srt_preview_and_can_restore_history(self) -> None:
+        payload = self.editor.save_subtitle_texts(
+            job_id="job",
+            user_id=1,
+            updates={"scene_002": "corrected subtitle"},
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(timeline[1]["text_content"], "corrected subtitle")
+        subtitle = (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+        self.assertIn("00:00:02,000 --> 00:00:04,000", subtitle)
+        self.assertIn("corrected subtitle", subtitle)
+        self.assertNotIn("sentence 2\n", subtitle)
+        first_item = next(item for item in payload["items"] if item["id"] == "poster_001")
+        self.assertIn("corrected subtitle", first_item["text"])
+        self.assertEqual(len(payload["subtitle_history"]), 1)
+
+        shifted = VisualEditor._load_timeline(self.project)
+        shifted[1]["start"] = 2.4
+        shifted[1]["end"] = 4.6
+        VisualEditor._write_subtitle_files(self.project, shifted)
+        restored = self.editor.restore_subtitle_history(
+            job_id="job",
+            user_id=1,
+            history_id=payload["subtitle_history"][0]["id"],
+        )
+        restored_timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(restored_timeline[1]["text_content"], "sentence 2")
+        self.assertEqual(restored_timeline[1]["start"], 2.4)
+        self.assertEqual(restored_timeline[1]["end"], 4.6)
+        self.assertIn("sentence 2", (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(restored["subtitle_history"]), 2)
+
+    def test_subtitle_edit_rejects_empty_text(self) -> None:
+        with self.assertRaisesRegex(ValueError, "不能为空"):
+            self.editor.save_subtitle_texts(
+                job_id="job", user_id=1, updates={"scene_003": "   "}
+            )
+
+    def test_preview_subtitle_boundary_returns_current_manual_slider_position(self) -> None:
+        audio_dir = self.project / "input"
+        audio_dir.mkdir()
+        audio_path = audio_dir / "配音.wav"
+        audio_path.write_bytes(b"audio")
+        payload = self.editor.preview_subtitle_boundary(
+            job_id="job", user_id=1, left_slide_id="scene_002"
+        )
+        self.assertEqual(payload["right_slide_id"], "scene_003")
+        self.assertEqual(payload["suggested_boundary"], 4.0)
+        self.assertEqual(payload["minimum_boundary"], 2.15)
+        self.assertEqual(payload["maximum_boundary"], 5.85)
+        self.assertIn("/visual-editor/audio", payload["audio_url"])
+
+    def test_apply_subtitle_boundary_changes_only_adjacent_shared_boundary(self) -> None:
+        payload = self.editor.apply_subtitle_boundary(
+            job_id="job", user_id=1, left_slide_id="scene_002", boundary=4.35
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(timeline[0]["end"], 2.0)
+        self.assertEqual(timeline[1]["start"], 2.0)
+        self.assertEqual(timeline[1]["end"], 4.35)
+        self.assertEqual(timeline[2]["start"], 4.35)
+        self.assertEqual(timeline[2]["end"], 6.0)
+        self.assertIn("00:00:04,350 --> 00:00:06,000", (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"))
+        self.assertEqual(payload["task"]["action"], "subtitle_boundary")
 
     def test_archived_main_references_keep_original_numbering(self) -> None:
         reference_dir = self.project / "other" / "reference_images"

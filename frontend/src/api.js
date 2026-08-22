@@ -194,10 +194,22 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
   }),
   removeVisualTimingPicture: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing/remove`, { method: 'POST' }),
+  saveVisualSubtitles: (id, updates) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }),
+  }),
+  restoreVisualSubtitleHistory: (id, historyId) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/history`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
+  }),
+  previewVisualSubtitleBoundary: (id, leftSlideId) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/boundary-preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_slide_id: leftSlideId }),
+  }),
+  applyVisualSubtitleBoundary: (id, leftSlideId, boundary) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/boundary`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_slide_id: leftSlideId, boundary }),
+  }),
   ttsEditor: (id) => requestJSON(`/api/jobs/${id}/tts-editor`),
   ttsEditorStatus: (id) => requestJSON(`/api/jobs/${id}/tts-editor/status`),
-  regenerateTtsSegments: (id, indices, settings = {}) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices, ...settings }),
+  regenerateTtsSegments: (id, indices, settings = {}, textOverrides = {}) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices, tts_text_overrides: textOverrides, ...settings }),
   }),
   renderVisualEditor: (id, payload) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typeof payload === 'string' ? { mode: payload } : payload),

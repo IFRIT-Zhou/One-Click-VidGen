@@ -221,9 +221,14 @@ class TtsEditor:
             audio = segment_dir / filename
             if index <= 0 or not filename or not audio.is_file():
                 continue
+            subtitle_text = str(raw.get("text") or "").strip()
+            tts_text = str(raw.get("tts_text") or subtitle_text).strip()
             items.append({
                 **raw,
                 "index": index,
+                "text": subtitle_text,
+                "tts_text": tts_text,
+                "pronunciation_modified": bool(tts_text and tts_text != subtitle_text),
                 "audio_url": f"/api/jobs/{job_id}/tts-editor/audio/{index}?v={audio.stat().st_mtime_ns}",
             })
         return {
@@ -267,6 +272,7 @@ class TtsEditor:
         user_id: int,
         indices: list[int],
         settings_override: dict[str, Any] | None = None,
+        text_overrides: dict[int, str] | None = None,
     ) -> None:
         selected = sorted(set(int(value) for value in indices if int(value) > 0))
         if not selected:
@@ -282,11 +288,28 @@ class TtsEditor:
         valid = {int(item.get("index") or 0) for item in manifest["segments"] if isinstance(item, dict)}
         if any(value not in valid for value in selected):
             raise ValueError("选择中包含不存在的配音句号")
+        normalized_text_overrides: dict[int, str] = {}
+        for raw_index, raw_text in dict(text_overrides or {}).items():
+            index = int(raw_index)
+            if index not in selected:
+                raise ValueError("朗读文本只能修改本次选中的句子")
+            text = str(raw_text or "").strip()
+            if not text:
+                raise ValueError(f"第 {index} 句朗读文本不能为空")
+            if len(text) > 1200:
+                raise ValueError(f"第 {index} 句朗读文本过长，请缩短后重试")
+            normalized_text_overrides[index] = text
         self._set_task(job.id, status="running", progress=0, message=f"准备重配 {len(selected)} 句")
 
         def work() -> None:
             try:
-                self._regenerate_sync(job, user_id, selected, dict(settings_override or {}))
+                self._regenerate_sync(
+                    job,
+                    user_id,
+                    selected,
+                    dict(settings_override or {}),
+                    normalized_text_overrides,
+                )
                 self._set_task(
                     job.id, status="completed", progress=100,
                     message=f"已重配 {len(selected)} 句，并重建配音与时间轴；请点击重新渲染。",
@@ -304,6 +327,7 @@ class TtsEditor:
         user_id: int,
         indices: list[int],
         settings_override: dict[str, Any],
+        text_overrides: dict[int, str],
     ) -> None:
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
@@ -319,6 +343,35 @@ class TtsEditor:
                 manifest[key] = value
         segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
         by_index = {int(item["index"]): item for item in segments}
+        reading_texts = {
+            index: str(
+                text_overrides.get(index)
+                or by_index[index].get("tts_text")
+                or by_index[index].get("text")
+                or ""
+            ).strip()
+            for index in indices
+        }
+        if any(not text for text in reading_texts.values()):
+            raise ValueError("所选句子中存在空的朗读文本")
+        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts25")
+        if engine == "indextts2":
+            engine = "indextts25"
+            manifest["engine"] = engine
+        if engine == "indextts25":
+            from .tts_segmentation import (
+                INDEXTTS25_SEGMENT_MAX_TOKENS,
+                build_indextts25_token_counter,
+            )
+
+            token_count = build_indextts25_token_counter()
+            for index, text in reading_texts.items():
+                total = token_count(text)
+                if total > INDEXTTS25_SEGMENT_MAX_TOKENS:
+                    raise ValueError(
+                        f"第 {index} 句发音修正后为 {total} token，超过 "
+                        f"IndexTTS-2.5 单句 {INDEXTTS25_SEGMENT_MAX_TOKENS} token 安全上限"
+                    )
         old_ranges = [
             (float(item.get("start") or 0), float(item.get("end") or 0))
             for item in segments
@@ -350,16 +403,12 @@ class TtsEditor:
         work_dir.mkdir(parents=True, exist_ok=True)
         chunks_path = work_dir / "chunks.json"
         chunks_path.write_text(
-            json.dumps([str(by_index[index].get("text") or "") for index in indices], ensure_ascii=False),
+            json.dumps([reading_texts[index] for index in indices], ensure_ascii=False),
             encoding="utf-8",
         )
         script_path = work_dir / "selected.txt"
-        script_path.write_text("\n".join(str(by_index[index].get("text") or "") for index in indices), encoding="utf-8")
+        script_path.write_text("\n".join(reading_texts[index] for index in indices), encoding="utf-8")
 
-        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts25")
-        if engine == "indextts2":
-            engine = "indextts25"
-            manifest["engine"] = engine
         store.log(job, f"开始单句重配：第 {', '.join(map(str, indices))} 句（{engine}）")
         if engine == "cluster":
             from .cloud_client import cloud_client_for
@@ -391,7 +440,7 @@ class TtsEditor:
                 ),
                 on_log=lambda line: store.log(job, f"[单句重配] {line}"),
                 on_remote_job=lambda _job_id, _payload: None,
-                chunks_override=[str(by_index[index].get("text") or "") for index in indices],
+                chunks_override=[reading_texts[index] for index in indices],
             )
         else:
             command = [
@@ -450,6 +499,9 @@ class TtsEditor:
         for original_index, new_item in zip(indices, generated):
             source = generated_dir / str(new_item["filename"])
             shutil.copy2(source, segment_dir / str(by_index[original_index]["filename"]))
+            # Keep the display subtitle in ``text``.  Only the synthesis layer
+            # remembers pinyin or other pronunciation hints entered by users.
+            by_index[original_index]["tts_text"] = reading_texts[original_index]
 
         voice_override = str(settings_override.get("tts_voice_id") or "").strip()
         if engine == "indextts25" and voice_override:

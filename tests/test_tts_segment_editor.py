@@ -24,12 +24,19 @@ class TtsSegmentEditorTest(unittest.TestCase):
     def test_refine_request_accepts_voice_and_emotion_overrides(self) -> None:
         payload = TtsSegmentRegenerateRequest(
             indices=[1, 2],
+            tts_text_overrides={1: "点击chong2绘按钮。"},
             tts_voice_id="upload:voice.wav",
             tts_emotion="sad",
             tts_emotion_weight=0,
         )
         self.assertEqual(payload.tts_voice_id, "upload:voice.wav")
         self.assertEqual(payload.tts_emotion_weight, 0)
+        self.assertEqual(payload.tts_text_overrides[1], "点击chong2绘按钮。")
+        from_frontend = TtsSegmentRegenerateRequest.model_validate({
+            "indices": [1],
+            "tts_text_overrides": {"1": "点击chong2绘按钮。"},
+        })
+        self.assertEqual(from_frontend.tts_text_overrides[1], "点击chong2绘按钮。")
 
     def test_editor_inspect_returns_saved_refine_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -44,7 +51,7 @@ class TtsSegmentEditorTest(unittest.TestCase):
                 "tts_emotion": "calm",
                 "tts_emotion_weight": 0.8,
                 "segments": [{
-                    "index": 1, "text": "测试。", "filename": "segment_0001.wav",
+                    "index": 1, "text": "点击重绘。", "tts_text": "点击chong2绘。", "filename": "segment_0001.wav",
                     "start": 0, "end": 0.5, "duration": 0.5,
                 }],
             }, ensure_ascii=False), encoding="utf-8")
@@ -58,6 +65,39 @@ class TtsSegmentEditorTest(unittest.TestCase):
         self.assertEqual(payload["settings"]["tts_speed"], 1.15)
         self.assertEqual(payload["settings"]["tts_emotion"], "calm")
         self.assertEqual(payload["settings"]["tts_emotion_weight"], 0.8)
+        self.assertEqual(payload["segments"][0]["text"], "点击重绘。")
+        self.assertEqual(payload["segments"][0]["tts_text"], "点击chong2绘。")
+        self.assertTrue(payload["segments"][0]["pronunciation_modified"])
+
+    def test_indextts25_pronunciation_override_keeps_single_sentence_token_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / "other" / "tts_segments"
+            segment_dir.mkdir(parents=True)
+            (segment_dir / "manifest.json").write_text(json.dumps({
+                "engine": "indextts25",
+                "segments": [{
+                    "index": 1, "text": "点击重绘。", "filename": "segment_0001.wav",
+                    "start": 0, "end": 0.5, "duration": 0.5,
+                }],
+            }, ensure_ascii=False), encoding="utf-8")
+            editor = TtsEditor()
+            job = SimpleNamespace(id="job", request={"tts_engine": "indextts25"})
+            with (
+                patch.object(editor, "_project_dir", return_value=project),
+                patch(
+                    "backend.app.tts_segmentation.build_indextts25_token_counter",
+                    return_value=lambda _text: 111,
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "超过 IndexTTS-2.5 单句 110 token"):
+                    editor._regenerate_sync(
+                        job,
+                        1,
+                        [1],
+                        {},
+                        {1: "点击chong2绘。"},
+                    )
 
     def test_legacy_module1_srt_recovers_exact_sentence_wavs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
