@@ -855,18 +855,18 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
 .preflight-actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 4px; }
 .cloud-recharge-entry {
   min-height: 34px;
-  padding: 7px 13px;
-  border: 1px solid rgba(94, 234, 212, .42);
-  border-radius: 9px;
-  background: linear-gradient(135deg, rgba(20, 184, 166, .24), rgba(14, 116, 144, .2));
-  color: #ccfbf1;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .04);
+  color: var(--soft);
   font-size: .78rem;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 8px 22px rgba(20, 184, 166, .1);
-  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+  box-shadow: none;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease, color .18s ease;
 }
-.cloud-recharge-entry:hover:not(:disabled) { transform: translateY(-1px); border-color: rgba(94, 234, 212, .78); background: rgba(20, 184, 166, .3); }
+.cloud-recharge-entry:hover:not(:disabled) { transform: translateY(-1px); border-color: rgba(124, 219, 255, .42); background: rgba(124, 219, 255, .08); color: var(--text); }
 .cloud-recharge-entry:disabled { cursor: not-allowed; opacity: .5; }
 .cloud-recharge-overlay {
   position: fixed;
