@@ -11,6 +11,8 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $testExe = Join-Path $launcherDir 'bin\OCV_Launcher.RuntimeSmoke.exe'
 
+New-Item -ItemType Directory -Path (Split-Path -Parent $testExe) -Force | Out-Null
+
 $arguments = @(
     '/nologo',
     '/target:exe',

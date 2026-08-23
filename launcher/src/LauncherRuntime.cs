@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -65,6 +66,22 @@ namespace OcvLauncher
     internal sealed class LauncherRuntime
     {
         private static readonly int[] ManagedPorts = { 8010, 5173, 8030 };
+        private static readonly string[] ReleaseIntegrityFiles =
+        {
+            "OCV_Launcher.exe",
+            "start_windows.bat",
+            "frontend/src/App.vue",
+            "frontend/src/api.js",
+            "frontend/src/style.css",
+            "backend/app/main.py",
+            "story_agents.py",
+            "module1_agent_director.py",
+            "module2_5_text_corrector.py",
+            "module2_scene_director.py",
+            "module4_video_render.py",
+            "module5_video_render.py",
+            "launcher/safe_update_helper.ps1"
+        };
         private readonly string root;
 
         public LauncherRuntime()
@@ -129,7 +146,9 @@ namespace OcvLauncher
                 string version = ReadPackageVersion();
                 string commit = ReadGitCommit();
                 if (!string.IsNullOrEmpty(commit)) return "v" + version + " · " + commit;
-                return "v" + version + " · 便携版";
+                string release = ReadLocalReleaseId();
+                if (!string.IsNullOrEmpty(release)) return "OCV " + release + " · L" + version + " · 便携";
+                return "OCV 未标记版本 · L" + version + " · 便携";
             }
         }
 
@@ -500,12 +519,30 @@ namespace OcvLauncher
             long remoteOrder = ReadJsonLong(remoteJson, "release_order");
             string remoteDisplay = ReadJsonString(remoteJson, "display_version");
             string archiveUrl = ReadJsonString(remoteJson, "archive_url");
+            string expectedFingerprint = ReadJsonString(remoteJson, "content_fingerprint");
             bool portableOverlaySafe = ReadJsonBool(remoteJson, "portable_overlay_safe");
             long portableOverlayMinOrder = ReadJsonLong(remoteJson, "portable_overlay_min_order");
             if (string.IsNullOrWhiteSpace(remoteRelease) || remoteOrder <= 0) return BlockedUpdate("portable", "远端更新通道返回了无效信息。", string.Empty);
 
             if (remoteOrder == localOrder)
             {
+                if (!string.IsNullOrWhiteSpace(expectedFingerprint))
+                {
+                    string localFingerprint = ComputeReleaseContentFingerprint();
+                    if (!string.Equals(localFingerprint, expectedFingerprint, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new UpdateCheckResult
+                        {
+                            Mode = "portable",
+                            CurrentVersion = localDisplay,
+                            LatestVersion = remoteDisplay,
+                            Message = "版本号一致，但关键程序文件不完整或不匹配。可执行安全修复更新。",
+                            ExpectedReleaseId = remoteRelease,
+                            DownloadUrl = archiveUrl,
+                            CanUpdate = true
+                        };
+                    }
+                }
                 return new UpdateCheckResult
                 {
                     Mode = "portable",
@@ -534,6 +571,54 @@ namespace OcvLauncher
                 DownloadUrl = archiveUrl,
                 CanUpdate = true
             };
+        }
+
+        private string ReadLocalReleaseId()
+        {
+            try
+            {
+                if (!File.Exists(UpdateChannelFile)) return string.Empty;
+                return ReadJsonString(File.ReadAllText(UpdateChannelFile, Encoding.UTF8), "release_id");
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private string ComputeReleaseContentFingerprint()
+        {
+            var summary = new StringBuilder();
+            foreach (string relativePath in ReleaseIntegrityFiles)
+            {
+                string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+                string fileHash = File.Exists(fullPath) ? ComputeFileSha256(fullPath) : "MISSING";
+                summary.Append(relativePath.Replace('\\', '/'));
+                summary.Append('|');
+                summary.Append(fileHash);
+                summary.Append('\n');
+            }
+            using (SHA256 sha = SHA256.Create())
+            {
+                byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(summary.ToString()));
+                return BytesToHex(digest);
+            }
+        }
+
+        private static string ComputeFileSha256(string path)
+        {
+            using (SHA256 sha = SHA256.Create())
+            using (FileStream stream = File.OpenRead(path))
+            {
+                return BytesToHex(sha.ComputeHash(stream));
+            }
+        }
+
+        private static string BytesToHex(byte[] bytes)
+        {
+            var result = new StringBuilder(bytes.Length * 2);
+            foreach (byte value in bytes) result.Append(value.ToString("x2", CultureInfo.InvariantCulture));
+            return result.ToString();
         }
 
         private string RunGitValue(string arguments, int timeoutMs)

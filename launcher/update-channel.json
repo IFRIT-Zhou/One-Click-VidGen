@@ -1,10 +1,11 @@
 {
-  "release_id": "2026.08.22.2",
-  "release_order": 2026082202,
-  "display_version": "2026.08.22 插件框架与启动器修复版",
+  "release_id": "2026.08.23.1",
+  "release_order": 2026082301,
+  "display_version": "2026.08.23 上线前便携基线版",
   "branch": "main",
   "portable_overlay_safe": false,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "新增安全的插件管理框架与 plugins 目录规范，当前只读取清单、不执行第三方代码；Launcher 安全更新会保护社区插件；修复旧 Launcher 无法识别 IndexTTS-2.5 便携版兼容基线的问题。仅更新源码、Launcher 与文档，不改动运行时、模型和用户数据。旧 IndexTTS2 2.0 便携包仍会被拦截。"
+  "notes": "统一正式便携版与源码版的发布基线；Launcher 明确显示 OCV 发布号，并通过关键文件指纹识别不完整覆盖和假最新版；保留插件框架、响应式界面及后期编辑修复。更新仍保护运行时、模型、API Key、任务、音色、预设和社区插件。",
+  "content_fingerprint": "72cfd42a5d919b2c2fbd8b54fa61a7cbcbb6d57b0326bcee34d25f4d9dd04765"
 }

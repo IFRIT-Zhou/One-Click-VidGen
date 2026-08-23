@@ -32,6 +32,8 @@ tools/*
 !tools/portable_preflight.py
 !tools/local_service_watchdog.py
 !tools/create_portable_archive.py
+!tools/release_integrity.py
+!tools/portable_release_audit.py
 !tools/deploy_indextts25.ps1
 Sound Material/
 测试文案/
@@ -56,6 +58,7 @@ launcher/ui-preview.png
 
 # Local distributable package; source remains in the repository, archives do not.
 /indexTTS2_standalone_package.zip
+/One-click vidgen/
 
 # Root-level scripts and media used as local generation inputs.
 /*.txt
