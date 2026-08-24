@@ -2387,10 +2387,15 @@ def validate_visual_coverage(
 ) -> dict[str, Any]:
     timeline = _json_list(timeline_path)
     mapping = _json_list(mapping_path)
-    expected_ids = [str(item.get("slide_id") or "").strip() for item in timeline]
-    expected_ids = [value for value in expected_ids if value]
-    if not expected_ids:
+    if not timeline:
         raise RuntimeError(f"画面覆盖校验失败：时间轴为空（{timeline_path.name}）")
+    expected_ids = [str(item.get("slide_id") or "").strip() for item in timeline]
+    missing_slide_id_rows = [index for index, value in enumerate(expected_ids, 1) if not value]
+    if missing_slide_id_rows:
+        raise RuntimeError(
+            "画面覆盖校验失败：时间轴仍是模块 2 原始骨架或校对不完整，"
+            f"缺少 slide_id 的条目：{missing_slide_id_rows[:8]}"
+        )
     covered_ids = [
         str(slide_id).strip()
         for item in mapping
@@ -2636,6 +2641,34 @@ def _json_list(path: Path) -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return []
     return [dict(item) for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+
+
+def corrected_scene_timeline_ready(path: Path) -> bool:
+    """Return whether module 2.5 produced a downstream-safe scene timeline.
+
+    Module 2 writes an ASR skeleton containing ``id`` but no ``slide_id``.
+    During step-mode resume that newly-created file used to be mistaken for an
+    already-corrected module-2.5 artifact, so correction was skipped and the
+    final coverage check failed only after both videos had rendered.
+    """
+    timeline = _json_list(path)
+    if not timeline:
+        return False
+    slide_ids: list[str] = []
+    for item in timeline:
+        slide_id = str(item.get("slide_id") or "").strip()
+        text = str(item.get("text_content") or "").strip()
+        if not slide_id or not text:
+            return False
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+        except (TypeError, ValueError):
+            return False
+        if start < 0 or end <= start:
+            return False
+        slide_ids.append(slide_id)
+    return len(slide_ids) == len(set(slide_ids))
 
 
 def _available_output_path(project_name: str) -> Path:
@@ -3821,12 +3854,18 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
 
     store.raise_if_cancelled(job)
     store.update(job, step="correct", progress=45, message=STEPS[2][1])
-    if resume and scene_timeline_path.is_file() and scene_timeline_path.stat().st_size > 0:
-        store.log(job, "断点续跑：分镜已存在，跳过模块 2.5")
+    if resume and corrected_scene_timeline_ready(scene_timeline_path):
+        store.log(job, "断点续跑：检测到结构完整的校对后时间轴，跳过模块 2.5")
     elif request.get("skip_text_correction"):
         write_original_text_from_asr(job)
         store.log(job, "已跳过模块 2.5：使用 ASR 字幕作为后续文案")
     else:
+        if resume and scene_timeline_path.is_file():
+            store.log(
+                job,
+                "断点续跑：当前 scene_timeline.json 仅为模块 2 原始骨架或结构不完整，"
+                "将继续执行模块 2.5，避免最终覆盖校验失败",
+            )
         run_command(job, store, [sys.executable, "module2_5_text_corrector.py"], STEPS[2][1])
 
     store.raise_if_cancelled(job)

@@ -8,12 +8,39 @@ from backend.app.pipeline import (
     JobStore,
     _standalone_subtitle_command,
     _standalone_subtitle_progress_handler,
+    corrected_scene_timeline_ready,
     parse_noisy_progress_log,
     render_standalone_subtitle_video,
 )
 
 
 class PipelineLoggingTest(unittest.TestCase):
+    def test_step_mode_resume_does_not_treat_raw_asr_timeline_as_corrected(self) -> None:
+        with TemporaryDirectory() as temporary:
+            timeline = Path(temporary) / "scene_timeline.json"
+            timeline.write_text(
+                '[{"id":"segment_001","start":0.0,"end":1.2,"text_content":"测试"}]',
+                encoding="utf-8",
+            )
+            self.assertFalse(corrected_scene_timeline_ready(timeline))
+
+            timeline.write_text(
+                '[{"id":"segment_001","slide_id":"scene_001",'
+                '"start":0.0,"end":1.2,"text_content":"测试"}]',
+                encoding="utf-8",
+            )
+            self.assertTrue(corrected_scene_timeline_ready(timeline))
+
+    def test_corrected_timeline_rejects_duplicate_slide_ids(self) -> None:
+        with TemporaryDirectory() as temporary:
+            timeline = Path(temporary) / "scene_timeline.json"
+            timeline.write_text(
+                '[{"slide_id":"scene_001","start":0.0,"end":1.0,"text_content":"一"},'
+                '{"slide_id":"scene_001","start":1.0,"end":2.0,"text_content":"二"}]',
+                encoding="utf-8",
+            )
+            self.assertFalse(corrected_scene_timeline_ready(timeline))
+
     def test_cancelled_job_can_be_explicitly_resumed(self) -> None:
         job = Job(
             id="resume-cancelled",
