@@ -501,10 +501,10 @@ class RunningHubAccountPool:
                     )
                 if self._access_denied:
                     raise RunningHubAllAccountsAccessDenied(
-                        "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
+                        "所有已配置的第三方图像账号均被当前接口或模型拒绝访问"
                     )
                 raise RunningHubAllAccountsPowerInsufficient(
-                    "所有已配置的 RunningHub 账号余额或算力均不足"
+                    "所有已配置的第三方图像账号余额或算力均不足"
                 )
 
     def mark_power_exhausted(self, config: dict[str, str]) -> None:
@@ -555,10 +555,10 @@ class RunningHubAccountPool:
                 if not usable:
                     if self._access_denied:
                         raise RunningHubAllAccountsAccessDenied(
-                            "所有已配置的 RunningHub 账号均被当前站点或模型拒绝访问"
+                            "所有已配置的第三方图像账号均被当前接口或模型拒绝访问"
                         )
                     raise RunningHubAllAccountsPowerInsufficient(
-                        "所有已配置的 RunningHub 账号余额或算力均不足"
+                        "所有已配置的第三方图像账号余额或算力均不足"
                     )
                 available = [
                     config for config in usable
@@ -674,9 +674,9 @@ def _provider_configs() -> list[dict[str, str]]:
 
     missing = []
     if not api_keys:
-        missing.append("RUNNINGHUB_API_KEY（可追加 _2、_3 或 RUNNINGHUB_API_KEYS）")
+        missing.append("第三方图像 API Key")
     if not base_config["endpoint"]:
-        missing.append("RUNNINGHUB_ENDPOINT")
+        missing.append("第三方图像接口地址")
     if missing:
         raise RuntimeError(f"模块 4 缺少配置: {', '.join(missing)}。请在 .env 中设置后重试。")
     return [
@@ -2310,14 +2310,14 @@ def _account_active_task_count(config: dict[str, str]) -> int:
         )
     except requests.RequestException as exc:
         raise RunningHubTransientError(
-            f"RunningHub 队列状态查询网络异常: {type(exc).__name__}"
+            f"第三方图像接口队列状态查询网络异常: {type(exc).__name__}"
         ) from exc
     if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
-        raise RunningHubTransientError("RunningHub 队列状态查询失败")
+        raise RunningHubTransientError("第三方图像接口队列状态查询失败")
     try:
         return max(0, int(payload["data"].get("currentTaskCounts", 0)))
     except (TypeError, ValueError) as exc:
-        raise RunningHubTransientError("RunningHub 返回了无效的活跃任务数") from exc
+        raise RunningHubTransientError("第三方图像接口返回了无效的活跃任务数") from exc
 
 
 def _wait_for_queue_slot(poster_id: str, config: dict[str, str]) -> None:
@@ -2329,7 +2329,7 @@ def _wait_for_queue_slot(poster_id: str, config: dict[str, str]) -> None:
     blocked_task_count = _account_active_task_count(config)
     next_probe_at = time.monotonic() + probe_seconds
     print(
-        f"{poster_id} 收到 421，已进入本地队列（当前 RunningHub 活跃任务 {blocked_task_count}）。",
+        f"{poster_id} 收到 421，已进入本地队列（当前第三方接口活跃任务 {blocked_task_count}）。",
         flush=True,
     )
     while time.monotonic() < deadline:
@@ -2337,7 +2337,7 @@ def _wait_for_queue_slot(poster_id: str, config: dict[str, str]) -> None:
         active_tasks = _account_active_task_count(config)
         if active_tasks < blocked_task_count:
             print(
-                f"{poster_id} 检测到 RunningHub 活跃任务下降（{blocked_task_count} -> {active_tasks}），准备重新提交。",
+                f"{poster_id} 检测到第三方接口活跃任务下降（{blocked_task_count} -> {active_tasks}），准备重新提交。",
                 flush=True,
             )
             return
@@ -2345,10 +2345,10 @@ def _wait_for_queue_slot(poster_id: str, config: dict[str, str]) -> None:
             print(f"{poster_id} 队列状态未变化，执行一次受控重新探测。", flush=True)
             return
         print(
-            f"{poster_id} 仍在队列等待（RunningHub 活跃任务 {active_tasks}）。",
+            f"{poster_id} 仍在队列等待（第三方接口活跃任务 {active_tasks}）。",
             flush=True,
         )
-    raise RuntimeError(f"{poster_id} 等待 RunningHub 队列空位超时（{max_wait}s）")
+    raise RuntimeError(f"{poster_id} 等待第三方接口队列空位超时（{max_wait}s）")
 
 
 def _runninghub_error_code(payload: dict[str, Any], status_code: int | None = None) -> int | None:
@@ -2493,31 +2493,31 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
         raise RunningHubQueueFull(f"图像接口队列或并发额度已满（{code}）")
     if _looks_like_power_insufficient(code, message):
         raise RunningHubPowerInsufficient(
-            f"当前 RunningHub 账号余额或算力不足（{code or '云端返回'}）。"
+            f"当前第三方图像账号余额或算力不足（{code or '云端返回'}）。"
             "请充值或补充算力后再试。"
         )
     if code in {1014, 40310}:
         detail = f" 原因: {message}" if message else ""
         if code == 40310:
             raise RunningHubAccessDenied(
-                "当前 API Key 与 RunningHub 站点不匹配（40310），"
-                "低价模型需要全球站 Enterprise-Shared API Key。" + detail
+                "当前 API Key 与第三方接口类型不匹配（40310），"
+                "当前模型需要具有相应权限的 API Key。" + detail
             )
         raise RunningHubAccessDenied(
-            "RunningHub 标准模型 API 只允许企业级-共享 API Key 调用。"
+            "第三方标准模型接口只允许具有相应权限的 API Key 调用。"
             "当前配置的 API Key 被拒绝（1014）。" + detail
         )
     if code == 1501 or _looks_like_moderation_failure(message):
-        raise RunningHubModerationError(f"RunningHub 审核拦截: {message or code}")
+        raise RunningHubModerationError(f"第三方图像接口审核拦截: {message or code}")
     if code == 1504:
         raise RunningHubResultRetryableError(
-            f"RunningHub 模型执行超时（1504）{f': {message}' if message else ''}"
+            f"第三方图像模型执行超时（1504）{f': {message}' if message else ''}"
         )
     if code in {408, 409, 500, 502, 503, 504, 1005, 1010, 1011, 1012}:
         detail = f"，原因: {message}" if message else ""
-        raise RunningHubTransientError(f"RunningHub 临时不可用，错误码: {code}{detail}")
+        raise RunningHubTransientError(f"第三方图像接口临时不可用，错误码: {code}{detail}")
     detail = f"，原因: {message}" if message else ""
-    raise RunningHubTransientError(f"RunningHub 提交失败，错误码: {code}{detail}")
+    raise RunningHubTransientError(f"第三方图像接口提交失败，错误码: {code}{detail}")
 
 
 def _download_image(
@@ -2599,9 +2599,9 @@ def _submit_poster_request(
         submitted = response.json()
     except ValueError as exc:
         response.raise_for_status()
-        raise RunningHubTransientError("RunningHub 生成图接口返回了无效 JSON") from exc
+        raise RunningHubTransientError("第三方生成图接口返回了无效 JSON") from exc
     if not isinstance(submitted, dict):
-        raise RunningHubTransientError("RunningHub 生成图接口返回了无效 JSON")
+        raise RunningHubTransientError("第三方生成图接口返回了无效 JSON")
     if not response.ok:
         _handle_runninghub_submit_error(submitted, response.status_code)
     submitted_data = submitted.get("data") if isinstance(submitted.get("data"), dict) else {}
@@ -2613,7 +2613,7 @@ def _submit_poster_request(
     )
     if not task_id:
         _handle_runninghub_submit_error(submitted, response.status_code)
-        raise RuntimeError("RunningHub 生成图接口未返回任务 ID")
+        raise RuntimeError("第三方生成图接口未返回任务 ID")
     return task_id
 
 
@@ -2898,19 +2898,19 @@ def render_posters_concurrently(
                 for pending in futures:
                     pending.cancel()
                 raise RuntimeError(
-                    "所有已配置的 RunningHub 账号余额或算力均不足，"
+                    "所有已配置的第三方图像账号余额或算力均不足，"
                     "已停止后续海报提交。请充值后重新生成。"
                 ) from exc
             except RunningHubAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
-                raise RuntimeError(f"RunningHub 当前站点或模型拒绝访问：{exc}") from exc
+                raise RuntimeError(f"第三方图像接口或模型拒绝访问：{exc}") from exc
             except RunningHubAllAccountsAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
                 raise RuntimeError(
-                    "所有已配置的 RunningHub 账号都被当前站点或模型拒绝访问。"
-                    "已停止后续海报提交，请确认 key 属于全球站 Enterprise-Shared 类型。"
+                    "所有已配置的第三方图像账号都被当前接口或模型拒绝访问。"
+                    "已停止后续海报提交，请确认 API Key 具有当前模型的调用权限。"
                 ) from exc
             except Exception as exc:
                 failures[index] = str(exc)
@@ -3149,7 +3149,7 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
             )
         _REFERENCE_IMAGE_URLS[cache_key] = url
         if url.startswith("http://") or url.startswith("https://"):
-            print(f"参考图已上传至 RunningHub: {path.name}", flush=True)
+            print(f"参考图已上传至第三方图像服务: {path.name}", flush=True)
         return url
 
 

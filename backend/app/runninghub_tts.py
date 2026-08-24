@@ -307,14 +307,14 @@ def _submit_task(
         session,
         config,
         config.endpoint,
-        label="RunningHub TTS 任务提交",
+        label="第三方 TTS 任务提交",
         json_payload=payload,
     )
     task_id = _find_first(submitted, {"taskId", "taskID"})
     if not task_id:
         detail = _error_message(submitted)
         raise RunningHubTTSError(
-            f"RunningHub TTS 未返回任务 ID{f': {detail}' if detail else ''}"
+            f"第三方 TTS 未返回任务 ID{f': {detail}' if detail else ''}"
         )
     return str(task_id)
 
@@ -330,7 +330,7 @@ def _wait_for_result(
             session,
             config,
             config.query_endpoint,
-            label="RunningHub TTS 任务查询",
+            label="第三方 TTS 任务查询",
             json_payload={"taskId": task_id},
         )
         status = str(
@@ -339,20 +339,20 @@ def _wait_for_result(
         audio_url, output_type = _audio_result(result)
         if status in SUCCESS_STATES or audio_url:
             if not audio_url:
-                raise RunningHubTTSError("RunningHub TTS 成功但未返回音频地址")
+                raise RunningHubTTSError("第三方 TTS 成功但未返回音频地址")
             return audio_url, output_type
         error_code = str(
             _find_first(result, {"errorCode", "error_code"}) or ""
         ).strip()
         if error_code and error_code != "0":
             detail = _error_message(result) or f"错误码 {error_code}"
-            raise RunningHubTTSError(f"RunningHub TTS 云端任务失败: {detail}")
+            raise RunningHubTTSError(f"第三方 TTS 云端任务失败: {detail}")
         if status not in PENDING_STATES:
             detail = _error_message(result) or status or "unknown error"
-            raise RunningHubTTSError(f"RunningHub TTS 云端任务失败: {detail}")
+            raise RunningHubTTSError(f"第三方 TTS 云端任务失败: {detail}")
         time.sleep(config.poll_seconds)
     raise RunningHubTTSError(
-        f"RunningHub TTS 任务等待超时（{config.max_wait_seconds:g}s）"
+        f"第三方 TTS 任务等待超时（{config.max_wait_seconds:g}s）"
     )
 
 
@@ -473,7 +473,7 @@ def _download_and_normalize(
                 _download_with_curl(audio_url, source_path)
             except RunningHubTTSError as exc:
                 print(
-                    "[RunningHub TTS] curl 下载失败，尝试 Requests："
+                    "[第三方 TTS] curl 下载失败，尝试 Requests："
                     f"{exc}",
                     flush=True,
                 )
@@ -485,13 +485,13 @@ def _download_and_normalize(
                 if download_backend == "requests":
                     raise
                 print(
-                    "[RunningHub TTS] Requests TLS 下载失败，切换系统 curl："
+                    "[第三方 TTS] Requests TLS 下载失败，切换系统 curl："
                     f"{_safe_network_error(exc)}",
                     flush=True,
                 )
                 _download_with_curl(audio_url, source_path)
         if not source_path.is_file() or source_path.stat().st_size == 0:
-            raise RunningHubTTSError("RunningHub TTS 下载到了空音频")
+            raise RunningHubTTSError("第三方 TTS 下载到了空音频")
         process = subprocess.run(
             [
                 _ffmpeg_binary(),
@@ -520,12 +520,12 @@ def _download_and_normalize(
         )
         if process.returncode != 0:
             raise RunningHubTTSError(
-                f"RunningHub TTS 音频转 WAV 失败: {process.stderr.strip()}"
+                f"第三方 TTS 音频转 WAV 失败: {process.stderr.strip()}"
             )
         os.replace(partial_wav, wav_path)
     except requests.RequestException as exc:
         raise RunningHubTTSError(
-            "RunningHub TTS 音频下载失败: "
+            "第三方 TTS 音频下载失败: "
             f"{type(exc).__name__}: {_safe_network_error(exc)}"
         ) from exc
     finally:
@@ -541,7 +541,7 @@ def synthesize_runninghub_to_wav(
     """Submit one text chunk, wait for it, and normalize the result to PCM WAV."""
     current_config = config or load_runninghub_tts_config()
     if current_config is None:
-        raise RunningHubTTSError("RunningHub TTS 未启用或未配置 API Key")
+        raise RunningHubTTSError("第三方 TTS 未启用或未配置 API Key")
     started_at = time.perf_counter()
     with requests.Session() as session:
         submit_started_at = time.perf_counter()

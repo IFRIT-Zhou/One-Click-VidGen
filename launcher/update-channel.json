@@ -1,11 +1,11 @@
 {
-  "release_id": "2026.08.25.1",
-  "release_order": 2026082501,
-  "display_version": "2026.08.25 分步续跑修复版",
+  "release_id": "2026.08.25.2",
+  "release_order": 2026082502,
+  "display_version": "2026.08.25 第三方事项调整版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "修复分步模式在配音确认后继续生成时，模块 2 新建的原始字幕骨架被误判为模块 2.5 已完成，最终渲染成功却在归档校验阶段报错的问题；现在仅在校对后时间轴结构完整时跳过模块 2.5，并提供准确的完整性错误提示。安全更新继续保护运行时、模型、API Key、任务、音色、预设和社区插件。",
-  "content_fingerprint": "c19f8dbaaaac9cf58e73c9e3a3de955b6c543346607194367a56823eea2de633"
+  "notes": "修改第三方相关事项。",
+  "content_fingerprint": "75e5e475bb3abeae2833525eb6fdd6458a023e1984a527785bdd5dc5b84e9951"
 }

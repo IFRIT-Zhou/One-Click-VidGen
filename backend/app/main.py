@@ -1067,7 +1067,7 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
         return "完整视频生成需要语言模型 API Key，请先在接口配置中保存后再启动"
     visual_backend = str(data.get("visual_backend") or "poster").lower()
     if visual_backend in {"poster", "online-poster", "runninghub"} and not status["image"]["configured"]:
-        return "在线海报生成需要 RUNNINGHUB_API_KEY，请先在接口配置中保存后再启动"
+        return "在线海报生成需要第三方图像 API Key，请先在接口配置中保存后再启动"
     return None
 
 

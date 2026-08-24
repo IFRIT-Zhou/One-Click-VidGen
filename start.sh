@@ -162,21 +162,21 @@ print(f"[就绪] MySQL {status['host']}:{status['port']}/{status['database']}")
 print(f"[就绪] Faster-Whisper {resolve_asr_python()}")
 PY
 
-echo "[检查] RunningHub TTS..."
+echo "[检查] 第三方 TTS..."
 if "$PYTHON_BIN" - <<'PY'
 from backend.app.runninghub_tts import load_runninghub_tts_config
 
 config = load_runninghub_tts_config()
 if config:
-    print(f"[就绪] RunningHub minimax/speech-2.8-hd (voice_id={config.voice_id})")
+    print(f"[就绪] 第三方 TTS 服务 (voice_id={config.voice_id})")
 else:
-    print("[警告] RunningHub TTS 未启用或未配置 API Key")
+    print("[警告] 第三方 TTS 未启用或未配置 API Key")
 raise SystemExit(0 if config else 1)
 PY
 then
   :
 else
-  echo "[警告] RunningHub TTS 当前不可用，应用仍会启动，但生成任务会失败。"
+  echo "[警告] 第三方 TTS 当前不可用，应用仍会启动，但生成任务会失败。"
 fi
 
 REUSE_BACKEND=0

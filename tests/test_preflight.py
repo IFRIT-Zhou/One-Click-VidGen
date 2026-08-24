@@ -125,7 +125,8 @@ class PreflightProbeTest(unittest.TestCase):
         }
         with patch.object(main, "_api_key_status", return_value=status):
             error = main._required_job_config_error({"visual_backend": "poster"})
-        self.assertIn("RUNNINGHUB_API_KEY", error)
+        self.assertIn("第三方图像 API Key", error)
+        self.assertNotIn("RunningHub", error)
 
     def test_module1_job_does_not_require_visual_keys(self) -> None:
         with patch.object(main, "_api_key_status") as api_key_status:
