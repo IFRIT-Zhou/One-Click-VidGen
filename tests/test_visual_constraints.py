@@ -122,6 +122,42 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertEqual(uploaded, content)
         self.assertEqual(config["api_key"], "fresh-token")
 
+    def test_cloud_reference_upload_resolves_relative_media_url(self) -> None:
+        class Response:
+            status_code = 200
+            ok = True
+
+            def json(self):
+                return {"code": 0, "data": {"download_url": "/api/v1/image-pool/media/asset-1"}}
+
+            def close(self):
+                return None
+
+        class Session:
+            def request(self, method, url, **kwargs):
+                return Response()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        config = {
+            "api_key": "cloud-token",
+            "cloud_base_url": "https://cloud.test/api/v1",
+            "upload_url": "https://cloud.test/api/v1/image-pool/media/upload",
+            "cloud_pool": "1",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference.png"
+            path.write_bytes(b"fake-image-bytes")
+            with patch.object(visual, "_new_session", return_value=Session()):
+                self.assertEqual(
+                    visual._reference_image_url(config, str(path)),
+                    "https://cloud.test/api/v1/image-pool/media/asset-1",
+                )
+
     def test_direct_runninghub_submit_does_not_include_client_job_id(self) -> None:
         captured_payload = {}
 

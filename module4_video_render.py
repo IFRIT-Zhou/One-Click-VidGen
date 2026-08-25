@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import time
+from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -2440,10 +2441,22 @@ def _find_first_key(value: Any, key_names: set[str]) -> Any:
     return None
 
 
-def _find_image_url(value: Any) -> str | None:
+def _find_image_url(value: Any, *, base_url: str | None = None) -> str | None:
+    """Find an image URL in a provider response.
+
+    The cloud pool may return an absolute URL (as RunningHub does) or a
+    relative URL under its own API prefix.  Keep the old absolute-only
+    behaviour for direct-provider calls, but resolve relative cloud URLs at
+    the call site so they are not mistaken for a successful upload with no
+    usable image.
+    """
     if isinstance(value, str):
         if value.startswith("http://") or value.startswith("https://"):
             return value
+        if base_url and value.startswith("/"):
+            # urljoin preserves the cloud host and avoids duplicating an
+            # existing prefix such as ``/api/v1``.
+            return urljoin(f"{base_url.rstrip('/')}/", value)
         return None
     if isinstance(value, dict):
         for key in (
@@ -2452,16 +2465,16 @@ def _find_image_url(value: Any) -> str | None:
             "downloadUrl", "downloadURL", "download_url",
             "url",
         ):
-            found = _find_image_url(value.get(key))
+            found = _find_image_url(value.get(key), base_url=base_url)
             if found:
                 return found
         for item in value.values():
-            found = _find_image_url(item)
+            found = _find_image_url(item, base_url=base_url)
             if found:
                 return found
     elif isinstance(value, list):
         for item in value:
-            found = _find_image_url(item)
+            found = _find_image_url(item, base_url=base_url)
             if found:
                 return found
     return None
@@ -2682,7 +2695,10 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
             time.sleep(5)
             continue
         status = str(_find_first_key(result, {"status", "state", "taskStatus"}) or "").upper()
-        file_url = _find_image_url(result)
+        file_url = _find_image_url(
+            result,
+            base_url=config.get("cloud_base_url") if config.get("cloud_pool") == "1" else None,
+        )
         if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "COMPLETE", "FINISHED"} or file_url:
             if not file_url:
                 raise RuntimeError(f"{poster_id} 未返回图像下载地址")
@@ -3117,7 +3133,13 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
         # RunningHub and the OCV cloud pool use slightly different response
         # envelopes and camel/snake-case field names. Search the complete
         # payload so a successful upload is not mistaken for a network error.
-        url = str(_find_image_url(payload) or "").strip()
+        url = str(
+            _find_image_url(
+                payload,
+                base_url=config.get("cloud_base_url") if config.get("cloud_pool") == "1" else None,
+            )
+            or ""
+        ).strip()
         if not url:
             # Standard-model resource fields such as ``imageUrls`` accept a
             # Base64 Data URI as well as a public URL. Some RunningHub account

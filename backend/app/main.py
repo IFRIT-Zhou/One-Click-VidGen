@@ -1072,9 +1072,30 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
 
 
 def _cluster_health_error(payload: dict[str, Any]) -> str | None:
-    if payload.get("ok") is True:
+    # The deployed health response has a top-level ``ok`` plus a nested Ray
+    # and dispatcher status.  Older deployments only returned ``ok``; keep
+    # those compatible, but never treat a partially unhealthy nested response
+    # as ready.
+    ray = payload.get("ray") if isinstance(payload.get("ray"), dict) else {}
+    dispatcher = ray.get("dispatcher") if isinstance(ray.get("dispatcher"), dict) else {}
+    unhealthy_details: list[str] = []
+    if payload.get("ok") is not True:
+        unhealthy_details.append(str(payload.get("ray_error") or "Ray 服务未就绪").strip())
+    if ray and ray.get("ok") is False:
+        unhealthy_details.append(
+            str(ray.get("error") or ray.get("message") or "Ray 服务未就绪").strip()
+        )
+    if dispatcher:
+        for key, label in (
+            ("ready", "Dispatcher 未就绪"),
+            ("consumer_alive", "队列消费者未运行"),
+            ("redis_ready", "Redis 未就绪"),
+        ):
+            if dispatcher.get(key) is False:
+                unhealthy_details.append(label)
+    if not unhealthy_details:
         return None
-    detail = str(payload.get("ray_error") or "Ray 服务未就绪").strip()
+    detail = next((item for item in unhealthy_details if item), "Ray 服务未就绪")
     return f"集群 GPU 服务当前不可用：{detail}。请稍后重试，任务尚未提交且不会预扣积分"
 
 
@@ -1246,7 +1267,15 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                     if estimated > available:
                         add("tts", "集群 GPU", "error", f"预计消耗 {estimated:g} 积分，可用积分仅 {available:g}")
                     elif maximum > 0 and running >= maximum:
-                        add("tts", "集群 GPU", "error", f"云端并发已满：{running}/{maximum}")
+                        # Account concurrency is an execution-slot limit, not
+                        # a submission limit.  The cloud API owns queueing and
+                        # will start this job when a slot is available.
+                        add(
+                            "tts",
+                            "集群 GPU",
+                            "passed",
+                            f"云端已登录；当前执行槽 {running}/{maximum}，任务将进入云端队列等待",
+                        )
                     else:
                         add(
                             "tts",

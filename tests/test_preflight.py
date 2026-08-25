@@ -24,6 +24,19 @@ class PreflightProbeTest(unittest.TestCase):
         self.assertIn("timed out", message)
         self.assertIn("不会预扣积分", message)
 
+    def test_cluster_health_error_rejects_unhealthy_nested_dispatcher(self) -> None:
+        message = main._cluster_health_error({
+            "ok": True,
+            "ray": {
+                "ok": True,
+                "dispatcher": {"ready": False, "consumer_alive": True, "redis_ready": True},
+            },
+        })
+        self.assertIn("Dispatcher 未就绪", message)
+
+    def test_cluster_health_error_accepts_legacy_top_level_health(self) -> None:
+        self.assertIsNone(main._cluster_health_error({"ok": True, "ray": {"ok": True}}))
+
     def test_project_config_values_prefers_runtime_environment(self) -> None:
         with (
             patch.object(main, "_parse_env_lines", return_value={"GEMINI_API_KEY": "file-key"}),

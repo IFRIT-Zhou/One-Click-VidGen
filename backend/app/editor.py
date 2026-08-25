@@ -27,6 +27,22 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
 SUBTITLE_EXTENSIONS = {".srt", ".ass", ".vtt"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+DEFAULT_EDITOR_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
+
+
+def editor_upload_limit(kind: str) -> int:
+    """Return a server-side upload limit, overridable for large local media."""
+    configured = str(os.getenv("EDITOR_UPLOAD_MAX_BYTES") or "").strip()
+    try:
+        maximum = int(configured) if configured else DEFAULT_EDITOR_UPLOAD_MAX_BYTES
+    except ValueError:
+        maximum = DEFAULT_EDITOR_UPLOAD_MAX_BYTES
+    maximum = max(1 * 1024 * 1024, maximum)
+    if kind == "image":
+        return min(30 * 1024 * 1024, maximum)
+    if kind in {"subtitle", "file"}:
+        return min(10 * 1024 * 1024, maximum)
+    return maximum
 
 
 def ffmpeg_binary() -> str:
@@ -115,12 +131,22 @@ async def save_upload(user_id: int, file: UploadFile) -> dict[str, str]:
         raise ValueError("只支持图片、视频、音频和字幕文件")
     filename = sanitize_filename(original)
     target = user_upload_dir(user_id) / filename
-    with target.open("wb") as out:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            out.write(chunk)
+    kind = media_kind(target)
+    maximum = editor_upload_limit(kind)
+    written = 0
+    try:
+        with target.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > maximum:
+                    raise ValueError(f"{kind}文件不能超过 {maximum / (1024 * 1024):g} MB")
+                out.write(chunk)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
     register_editor_asset(user_id, target, "editor_upload", original_name=original)
     return asset_snapshot(user_id, target, display_name=original)
 
