@@ -22,6 +22,7 @@ REQUIRED_FILES = (
     "tools/IndexTTS25/checkpoints/s2mel.pth",
     "tools/IndexTTS25/examples/voice_05.wav",
     "launcher/update-channel.json",
+    "launcher/update-sources.json",
     "launcher/safe_update_helper.ps1",
     "frontend/package.json",
     "frontend/node_modules/vite/bin/vite.js",

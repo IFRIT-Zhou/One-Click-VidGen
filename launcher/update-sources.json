@@ -1,0 +1,24 @@
+{
+  "channel_urls": [
+    "https://download.oneclickvidgen.com/launcher/update-channel.json",
+    "https://raw.githubusercontent.com/IFRIT-Zhou/One-Click-VidGen/main/launcher/update-channel.json"
+  ],
+  "allowed_download_hosts": [
+    "*.oneclickvidgen.com",
+    "github.com",
+    "codeload.github.com",
+    "*.githubusercontent.com",
+    "gitee.com",
+    "*.gitee.com",
+    "modelscope.cn",
+    "*.modelscope.cn",
+    "modelscope.ai",
+    "*.modelscope.ai",
+    "*.aliyuncs.com"
+  ],
+  "primary_channel_timeout_ms": 2500,
+  "fallback_channel_timeout_ms": 20000,
+  "primary_download_timeout_ms": 5000,
+  "fallback_download_timeout_ms": 30000,
+  "download_read_write_timeout_ms": 120000
+}

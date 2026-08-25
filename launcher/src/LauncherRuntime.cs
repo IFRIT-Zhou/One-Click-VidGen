@@ -40,9 +40,23 @@ namespace OcvLauncher
         public string ExpectedCommit;
         public string ExpectedReleaseId;
         public string DownloadUrl;
+        public List<string> DownloadUrls = new List<string>();
+        public string ExpectedArchiveSha256;
+        public string ChannelSource;
         public bool CanUpdate;
         public bool IsCurrent;
         public bool IsBlocked;
+    }
+
+    internal sealed class UpdateSourceSettings
+    {
+        public List<string> ChannelUrls = new List<string>();
+        public List<string> AllowedDownloadHosts = new List<string>();
+        public int PrimaryChannelTimeoutMs = 2500;
+        public int FallbackChannelTimeoutMs = 20000;
+        public int PrimaryDownloadTimeoutMs = 5000;
+        public int FallbackDownloadTimeoutMs = 30000;
+        public int DownloadReadWriteTimeoutMs = 120000;
     }
 
     internal sealed class UpdateLaunchPlan
@@ -55,10 +69,21 @@ namespace OcvLauncher
 
     internal sealed class TimeoutWebClient : WebClient
     {
+        private readonly int timeoutMs;
+        private readonly int readWriteTimeoutMs;
+
+        public TimeoutWebClient(int timeoutMs, int readWriteTimeoutMs)
+        {
+            this.timeoutMs = Math.Max(1000, timeoutMs);
+            this.readWriteTimeoutMs = Math.Max(this.timeoutMs, readWriteTimeoutMs);
+        }
+
         protected override WebRequest GetWebRequest(Uri address)
         {
             WebRequest request = base.GetWebRequest(address);
-            request.Timeout = 30000;
+            request.Timeout = timeoutMs;
+            HttpWebRequest httpRequest = request as HttpWebRequest;
+            if (httpRequest != null) httpRequest.ReadWriteTimeout = readWriteTimeoutMs;
             return request;
         }
     }
@@ -80,7 +105,8 @@ namespace OcvLauncher
             "module2_scene_director.py",
             "module4_video_render.py",
             "module5_video_render.py",
-            "launcher/safe_update_helper.ps1"
+            "launcher/safe_update_helper.ps1",
+            "launcher/update-sources.json"
         };
         private readonly string root;
 
@@ -117,6 +143,11 @@ namespace OcvLauncher
         private string UpdateChannelFile
         {
             get { return Path.Combine(root, "launcher", "update-channel.json"); }
+        }
+
+        private string UpdateSourcesFile
+        {
+            get { return Path.Combine(root, "launcher", "update-sources.json"); }
         }
 
         private string UpdateHelperFile
@@ -284,30 +315,50 @@ namespace OcvLauncher
                 };
             }
 
-            Uri downloadUri;
-            if (!Uri.TryCreate(update.DownloadUrl, UriKind.Absolute, out downloadUri)
-                || !string.Equals(downloadUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(downloadUri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException("便携版更新地址不安全，必须使用 GitHub HTTPS 地址。");
-            }
-
             string updateDirectory = Path.Combine(root, "runtime", "temp", "ocv-updates");
             Directory.CreateDirectory(updateDirectory);
             string packagePath = Path.Combine(updateDirectory, "ocv_update_" + SanitizeFileName(update.ExpectedReleaseId) + ".zip");
-            if (File.Exists(packagePath)) File.Delete(packagePath);
-            log("正在从 GitHub 下载便携版源码更新包……");
+            var downloadUrls = new List<string>();
+            if (update.DownloadUrls != null) AddDistinct(downloadUrls, update.DownloadUrls);
+            if (!string.IsNullOrWhiteSpace(update.DownloadUrl)) AddDistinct(downloadUrls, new[] { update.DownloadUrl });
+            if (downloadUrls.Count == 0) throw new InvalidOperationException("远端更新通道没有提供可用的更新包地址。");
+
+            UpdateSourceSettings sourceSettings = LoadUpdateSourceSettings();
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-            using (var client = CreateWebClient())
+            var failures = new List<string>();
+            bool downloaded = false;
+            for (int index = 0; index < downloadUrls.Count; index++)
             {
-                await client.DownloadFileTaskAsync(downloadUri, packagePath);
+                string candidate = downloadUrls[index];
+                Uri downloadUri;
+                if (!TryCreateTrustedDownloadUri(candidate, sourceSettings, out downloadUri))
+                {
+                    failures.Add("下载源 " + (index + 1).ToString(CultureInfo.InvariantCulture) + " 不是允许的 HTTPS 地址");
+                    continue;
+                }
+                try
+                {
+                    if (File.Exists(packagePath)) File.Delete(packagePath);
+                    log("正在尝试更新包下载源 " + (index + 1).ToString(CultureInfo.InvariantCulture) + "/" + downloadUrls.Count.ToString(CultureInfo.InvariantCulture) + "：" + downloadUri.Host);
+                    int timeoutMs = index == 0 ? sourceSettings.PrimaryDownloadTimeoutMs : sourceSettings.FallbackDownloadTimeoutMs;
+                    using (var client = CreateWebClient(timeoutMs, sourceSettings.DownloadReadWriteTimeoutMs))
+                    {
+                        await client.DownloadFileTaskAsync(downloadUri, packagePath);
+                    }
+                    ValidateDownloadedPackage(packagePath, update.ExpectedArchiveSha256);
+                    downloaded = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    try { if (File.Exists(packagePath)) File.Delete(packagePath); } catch { }
+                    failures.Add(downloadUri.Host + "：" + CompactNetworkError(ex));
+                    if (index + 1 < downloadUrls.Count) log("当前下载源不可用，立即切换备用源……");
+                }
             }
+            if (!downloaded) throw new InvalidOperationException("所有更新包下载源均不可用：" + string.Join("；", failures.ToArray()));
+
             var package = new FileInfo(packagePath);
-            if (!package.Exists || package.Length < 102400) throw new InvalidOperationException("下载的更新包无效或不完整。");
-            using (var stream = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                if (stream.ReadByte() != 'P' || stream.ReadByte() != 'K') throw new InvalidOperationException("下载内容不是有效 ZIP 文件。");
-            }
             log("更新包下载完成：" + Math.Round(package.Length / 1024d / 1024d, 1).ToString(CultureInfo.InvariantCulture) + " MB");
             return new UpdateLaunchPlan
             {
@@ -510,15 +561,16 @@ namespace OcvLauncher
             string localDisplay = ReadJsonString(localJson, "display_version");
             if (string.IsNullOrWhiteSpace(localRelease) || localOrder <= 0) return BlockedUpdate("portable", "本地更新通道信息无效。", string.Empty);
 
-            log("正在检查 GitHub 便携版更新通道……");
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
-            string remoteUrl = "https://raw.githubusercontent.com/IFRIT-Zhou/One-Click-VidGen/main/launcher/update-channel.json";
-            string remoteJson;
-            using (var client = CreateWebClient()) remoteJson = client.DownloadString(remoteUrl);
+            string remoteUrl;
+            string remoteJson = DownloadFirstValidUpdateChannel(LoadUpdateSourceSettings(), log, out remoteUrl);
             string remoteRelease = ReadJsonString(remoteJson, "release_id");
             long remoteOrder = ReadJsonLong(remoteJson, "release_order");
             string remoteDisplay = ReadJsonString(remoteJson, "display_version");
             string archiveUrl = ReadJsonString(remoteJson, "archive_url");
+            List<string> archiveUrls = ReadJsonStringArray(remoteJson, "archive_urls");
+            AddDistinct(archiveUrls, new[] { ReadJsonString(remoteJson, "archive_url_cn"), archiveUrl });
+            string archiveSha256 = ReadJsonString(remoteJson, "archive_sha256");
             string expectedFingerprint = ReadJsonString(remoteJson, "content_fingerprint");
             bool portableOverlaySafe = ReadJsonBool(remoteJson, "portable_overlay_safe");
             long portableOverlayMinOrder = ReadJsonLong(remoteJson, "portable_overlay_min_order");
@@ -539,6 +591,9 @@ namespace OcvLauncher
                             Message = "版本号一致，但关键程序文件不完整或不匹配。可执行安全修复更新。",
                             ExpectedReleaseId = remoteRelease,
                             DownloadUrl = archiveUrl,
+                            DownloadUrls = archiveUrls,
+                            ExpectedArchiveSha256 = archiveSha256,
+                            ChannelSource = remoteUrl,
                             CanUpdate = true
                         };
                     }
@@ -569,8 +624,168 @@ namespace OcvLauncher
                 Message = "发现新的便携版源码更新。运行环境、模型与用户数据将被保留。",
                 ExpectedReleaseId = remoteRelease,
                 DownloadUrl = archiveUrl,
+                DownloadUrls = archiveUrls,
+                ExpectedArchiveSha256 = archiveSha256,
+                ChannelSource = remoteUrl,
                 CanUpdate = true
             };
+        }
+
+        private UpdateSourceSettings LoadUpdateSourceSettings()
+        {
+            var settings = new UpdateSourceSettings();
+            settings.ChannelUrls.Add("https://download.oneclickvidgen.com/launcher/update-channel.json");
+            settings.ChannelUrls.Add("https://raw.githubusercontent.com/IFRIT-Zhou/One-Click-VidGen/main/launcher/update-channel.json");
+            settings.AllowedDownloadHosts.Add("*.oneclickvidgen.com");
+            settings.AllowedDownloadHosts.Add("github.com");
+            settings.AllowedDownloadHosts.Add("codeload.github.com");
+            settings.AllowedDownloadHosts.Add("*.githubusercontent.com");
+            settings.AllowedDownloadHosts.Add("gitee.com");
+            settings.AllowedDownloadHosts.Add("*.gitee.com");
+            settings.AllowedDownloadHosts.Add("modelscope.cn");
+            settings.AllowedDownloadHosts.Add("*.modelscope.cn");
+            settings.AllowedDownloadHosts.Add("modelscope.ai");
+            settings.AllowedDownloadHosts.Add("*.modelscope.ai");
+            settings.AllowedDownloadHosts.Add("*.aliyuncs.com");
+
+            if (!File.Exists(UpdateSourcesFile)) return settings;
+            try
+            {
+                string json = File.ReadAllText(UpdateSourcesFile, Encoding.UTF8);
+                List<string> channelUrls = ReadJsonStringArray(json, "channel_urls");
+                List<string> allowedHosts = ReadJsonStringArray(json, "allowed_download_hosts");
+                if (channelUrls.Count > 0)
+                {
+                    settings.ChannelUrls.Clear();
+                    AddDistinct(settings.ChannelUrls, channelUrls);
+                }
+                if (allowedHosts.Count > 0)
+                {
+                    settings.AllowedDownloadHosts.Clear();
+                    AddDistinct(settings.AllowedDownloadHosts, allowedHosts);
+                }
+                settings.PrimaryChannelTimeoutMs = ReadJsonInt(json, "primary_channel_timeout_ms", settings.PrimaryChannelTimeoutMs, 1000, 30000);
+                settings.FallbackChannelTimeoutMs = ReadJsonInt(json, "fallback_channel_timeout_ms", settings.FallbackChannelTimeoutMs, 2000, 60000);
+                settings.PrimaryDownloadTimeoutMs = ReadJsonInt(json, "primary_download_timeout_ms", settings.PrimaryDownloadTimeoutMs, 2000, 60000);
+                settings.FallbackDownloadTimeoutMs = ReadJsonInt(json, "fallback_download_timeout_ms", settings.FallbackDownloadTimeoutMs, 5000, 120000);
+                settings.DownloadReadWriteTimeoutMs = ReadJsonInt(json, "download_read_write_timeout_ms", settings.DownloadReadWriteTimeoutMs, 30000, 600000);
+            }
+            catch
+            {
+                // A malformed optional source file must not disable the compiled GitHub fallback.
+            }
+            return settings;
+        }
+
+        private string DownloadFirstValidUpdateChannel(UpdateSourceSettings settings, Action<string> log, out string selectedUrl)
+        {
+            selectedUrl = string.Empty;
+            var failures = new List<string>();
+            for (int index = 0; index < settings.ChannelUrls.Count; index++)
+            {
+                string candidate = settings.ChannelUrls[index];
+                Uri uri;
+                if (!TryCreateTrustedDownloadUri(candidate, settings, out uri))
+                {
+                    failures.Add("更新源 " + (index + 1).ToString(CultureInfo.InvariantCulture) + " 不是允许的 HTTPS 地址");
+                    continue;
+                }
+                try
+                {
+                    log("正在检查更新源 " + (index + 1).ToString(CultureInfo.InvariantCulture) + "/" + settings.ChannelUrls.Count.ToString(CultureInfo.InvariantCulture) + "：" + uri.Host);
+                    int timeoutMs = index == 0 ? settings.PrimaryChannelTimeoutMs : settings.FallbackChannelTimeoutMs;
+                    string json;
+                    using (var client = CreateWebClient(timeoutMs, timeoutMs)) json = client.DownloadString(uri);
+                    if (ReadJsonLong(json, "release_order") <= 0 || string.IsNullOrWhiteSpace(ReadJsonString(json, "release_id")))
+                    {
+                        throw new InvalidDataException("更新清单格式无效");
+                    }
+                    selectedUrl = uri.AbsoluteUri;
+                    if (index > 0) log("已切换到备用更新源：" + uri.Host);
+                    return json;
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(uri.Host + "：" + CompactNetworkError(ex));
+                    if (index + 1 < settings.ChannelUrls.Count) log("当前更新源不可用，立即切换备用源……");
+                }
+            }
+            throw new InvalidOperationException("所有更新通道均不可用：" + string.Join("；", failures.ToArray()));
+        }
+
+        private static bool TryCreateTrustedDownloadUri(string value, UpdateSourceSettings settings, out Uri uri)
+        {
+            uri = null;
+            Uri candidate;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out candidate)) return false;
+            if (!string.Equals(candidate.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) return false;
+            foreach (string allowedHost in settings.AllowedDownloadHosts)
+            {
+                if (HostMatches(candidate.Host, allowedHost))
+                {
+                    uri = candidate;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool HostMatches(string host, string pattern)
+        {
+            string normalizedHost = (host ?? string.Empty).Trim().TrimEnd('.');
+            string normalizedPattern = (pattern ?? string.Empty).Trim().TrimEnd('.');
+            if (normalizedPattern.StartsWith("*.", StringComparison.Ordinal))
+            {
+                string suffix = normalizedPattern.Substring(1);
+                return normalizedHost.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                    && normalizedHost.Length > suffix.Length;
+            }
+            return string.Equals(normalizedHost, normalizedPattern, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ValidateDownloadedPackage(string packagePath, string expectedSha256)
+        {
+            var package = new FileInfo(packagePath);
+            if (!package.Exists || package.Length < 102400) throw new InvalidDataException("下载的更新包无效或不完整");
+            using (var stream = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                if (stream.ReadByte() != 'P' || stream.ReadByte() != 'K') throw new InvalidDataException("下载内容不是有效 ZIP 文件");
+            }
+            if (!string.IsNullOrWhiteSpace(expectedSha256))
+            {
+                string normalized = expectedSha256.Trim().ToLowerInvariant();
+                if (!Regex.IsMatch(normalized, "^[0-9a-f]{64}$")) throw new InvalidDataException("更新清单中的 archive_sha256 格式无效");
+                string actual = ComputeFileSha256(packagePath);
+                if (!string.Equals(actual, normalized, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("更新包 SHA-256 校验失败");
+            }
+        }
+
+        private static string CompactNetworkError(Exception ex)
+        {
+            if (ex == null) return "未知错误";
+            WebException webException = ex as WebException;
+            if (webException != null) return webException.Status + " · " + webException.Message;
+            return ex.Message;
+        }
+
+        private static void AddDistinct(List<string> target, IEnumerable<string> values)
+        {
+            if (values == null) return;
+            foreach (string rawValue in values)
+            {
+                string value = (rawValue ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                bool exists = false;
+                foreach (string current in target)
+                {
+                    if (string.Equals(current, value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) target.Add(value);
+            }
         }
 
         private string ReadLocalReleaseId()
@@ -639,9 +854,9 @@ namespace OcvLauncher
             };
         }
 
-        private static TimeoutWebClient CreateWebClient()
+        private static TimeoutWebClient CreateWebClient(int timeoutMs, int readWriteTimeoutMs)
         {
-            var client = new TimeoutWebClient();
+            var client = new TimeoutWebClient(timeoutMs, readWriteTimeoutMs);
             client.Encoding = Encoding.UTF8;
             client.Headers[HttpRequestHeader.UserAgent] = "One-Click-VidGen-Launcher/2";
             client.Headers[HttpRequestHeader.Accept] = "application/json, text/plain, */*";
@@ -654,11 +869,34 @@ namespace OcvLauncher
             return match.Success ? Regex.Unescape(match.Groups[1].Value) : string.Empty;
         }
 
+        internal static List<string> ReadJsonStringArray(string json, string key)
+        {
+            var values = new List<string>();
+            Match arrayMatch = Regex.Match(
+                json ?? string.Empty,
+                "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*\\[(.*?)\\]",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!arrayMatch.Success) return values;
+            foreach (Match valueMatch in Regex.Matches(arrayMatch.Groups[1].Value, "\\\"((?:\\\\.|[^\\\"])*)\\\""))
+            {
+                string value = Regex.Unescape(valueMatch.Groups[1].Value).Trim();
+                if (!string.IsNullOrWhiteSpace(value)) values.Add(value);
+            }
+            return values;
+        }
+
         private static long ReadJsonLong(string json, string key)
         {
             Match match = Regex.Match(json ?? string.Empty, "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(\\d+)", RegexOptions.IgnoreCase);
             long value;
             return match.Success && long.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ? value : 0;
+        }
+
+        private static int ReadJsonInt(string json, string key, int fallback, int minimum, int maximum)
+        {
+            long value = ReadJsonLong(json, key);
+            if (value <= 0) return fallback;
+            return (int)Math.Max(minimum, Math.Min(maximum, value));
         }
 
         private static bool ReadJsonBool(string json, string key)

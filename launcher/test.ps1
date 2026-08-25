@@ -1,7 +1,8 @@
 param(
     [switch]$Lifecycle,
     [switch]$SafeUpdate,
-    [switch]$UpdateCheck
+    [switch]$UpdateCheck,
+    [switch]$PortableUpdateCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +30,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Runtime smoke-test compilation failed: $LASTEXITCODE" }
     Push-Location $projectRoot
     try {
-        if ($Lifecycle) { & $testExe --lifecycle }
+        if ($PortableUpdateCheck) {
+            $portableFixture = Join-Path $projectRoot 'runtime\temp\launcher_portable_channel_smoke'
+            if (Test-Path -LiteralPath $portableFixture) { Remove-Item -LiteralPath $portableFixture -Recurse -Force }
+            New-Item -ItemType Directory -Path (Join-Path $portableFixture 'launcher') -Force | Out-Null
+            Copy-Item -LiteralPath $testExe -Destination (Join-Path $portableFixture 'OCV_Launcher.RuntimeSmoke.exe') -Force
+            Copy-Item -LiteralPath (Join-Path $launcherDir 'update-channel.json') -Destination (Join-Path $portableFixture 'launcher\update-channel.json') -Force
+            Copy-Item -LiteralPath (Join-Path $launcherDir 'update-sources.json') -Destination (Join-Path $portableFixture 'launcher\update-sources.json') -Force
+            Set-Content -LiteralPath (Join-Path $portableFixture 'start_windows.bat') -Value '@echo off' -Encoding ASCII
+            try { & (Join-Path $portableFixture 'OCV_Launcher.RuntimeSmoke.exe') --portable-update-check }
+            finally { Remove-Item -LiteralPath $portableFixture -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+        elseif ($Lifecycle) { & $testExe --lifecycle }
         elseif ($UpdateCheck) { & $testExe --update-check }
         else { & $testExe }
     } finally { Pop-Location }

@@ -27,6 +27,7 @@ INTEGRITY_FILES = (
     "module4_video_render.py",
     "module5_video_render.py",
     "launcher/safe_update_helper.ps1",
+    "launcher/update-sources.json",
 )
 
 

@@ -10,9 +10,32 @@ namespace OcvLauncher
         {
             try
             {
+                List<string> parsedSources = LauncherRuntime.ReadJsonStringArray(
+                    "{\"channel_urls\":[\"https://download.example/update.json\",\"https://github.example/update.json\"]}",
+                    "channel_urls");
+                if (parsedSources.Count != 2 || !parsedSources[0].Contains("download.example"))
+                {
+                    Console.Error.WriteLine("Update-source JSON parser failed.");
+                    return 6;
+                }
+                Console.WriteLine("UPDATE_SOURCE_PARSER=PASS");
+
                 var runtime = new LauncherRuntime();
                 Console.WriteLine("ROOT=" + runtime.Root);
                 Console.WriteLine("VERSION=" + runtime.VersionText);
+
+                if (args.Length > 0 && string.Equals(args[0], "--portable-update-check", StringComparison.OrdinalIgnoreCase))
+                {
+                    UpdateCheckResult portableUpdate = runtime.CheckForUpdatesAsync(Console.WriteLine).GetAwaiter().GetResult();
+                    Console.WriteLine("UPDATE_MODE=" + portableUpdate.Mode);
+                    Console.WriteLine("UPDATE_CAN_APPLY=" + portableUpdate.CanUpdate);
+                    Console.WriteLine("UPDATE_CURRENT=" + portableUpdate.IsCurrent);
+                    Console.WriteLine("UPDATE_BLOCKED=" + portableUpdate.IsBlocked);
+                    Console.WriteLine("UPDATE_MESSAGE=" + portableUpdate.Message);
+                    if (!string.Equals(portableUpdate.Mode, "portable", StringComparison.OrdinalIgnoreCase)) return 7;
+                    if (string.IsNullOrWhiteSpace(portableUpdate.Message)) return 8;
+                    return 0;
+                }
 
                 RuntimeStatus status = runtime.GetStatusAsync().GetAwaiter().GetResult();
                 Console.WriteLine("BACKEND=" + status.BackendOnline);

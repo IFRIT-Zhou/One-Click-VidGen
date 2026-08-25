@@ -1,11 +1,16 @@
 {
-  "release_id": "2026.08.25.4",
-  "release_order": 2026082504,
-  "display_version": "2026.08.25 分步制作优化版",
+  "release_id": "2026.08.26.1",
+  "release_order": 2026082601,
+  "display_version": "2026.08.26 国内更新源框架版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "优化分步制作、阶段精修、任务取消与编辑界面，修复超长单句重配问题。",
-  "content_fingerprint": "339ffd6b8a9217242e5f3881a1ccfd32eed8d8a09357e79e5610764431437630"
+  "archive_urls": [
+    "https://download.oneclickvidgen.com/releases/2026.08.26.1/One-Click-VidGen-main.zip",
+    "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
+  ],
+  "archive_sha256": "",
+  "notes": "增加国内更新源接口与自动回退机制；国内源未部署时自动使用 GitHub，不影响现有更新。",
+  "content_fingerprint": "a1aef91a2eab49183cd90c2a992b18abe4acbb9842b8e45a9bddeeb1595685ff"
 }
