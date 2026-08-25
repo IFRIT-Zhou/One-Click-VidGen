@@ -3109,6 +3109,9 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
         if cached:
             return cached
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        upload_error: Exception | None = None
+        response: requests.Response | None = None
+        payload: Any = {}
         try:
             # Keep the multipart body replayable.  Cloud-pool requests can
             # refresh an expired access token and retry the request; passing
@@ -3126,20 +3129,29 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
                     timeout=120,
                 )
             payload = response.json()
-        except (OSError, requests.RequestException, ValueError) as exc:
-            raise RunningHubTransientError(f"主角参考图上传失败: {type(exc).__name__}") from exc
-        if not response.ok or not isinstance(payload, dict):
-            raise RunningHubTransientError("主角参考图上传失败")
-        # RunningHub and the OCV cloud pool use slightly different response
-        # envelopes and camel/snake-case field names. Search the complete
-        # payload so a successful upload is not mistaken for a network error.
-        url = str(
-            _find_image_url(
-                payload,
-                base_url=config.get("cloud_base_url") if config.get("cloud_pool") == "1" else None,
-            )
-            or ""
-        ).strip()
+        except (OSError, requests.RequestException, ValueError, RuntimeError) as exc:
+            # The cloud proxy currently returns HTTP 500 for some valid image
+            # uploads. Keep the generation request usable: image-pool/generate
+            # accepts a data URI, so this is a safe transport fallback rather
+            # than a paid retry or silently dropping the reference.
+            upload_error = exc
+            response = None
+            payload = {}
+        if response is not None and response.ok and isinstance(payload, dict):
+            # RunningHub and the OCV cloud pool use slightly different response
+            # envelopes and camel/snake-case field names. Search the complete
+            # payload so a successful upload is not mistaken for a network error.
+            url = str(
+                _find_image_url(
+                    payload,
+                    base_url=config.get("cloud_base_url") if config.get("cloud_pool") == "1" else None,
+                )
+                or ""
+            ).strip()
+        else:
+            url = ""
+        if response is not None:
+            response.close()
         if not url:
             # Standard-model resource fields such as ``imageUrls`` accept a
             # Base64 Data URI as well as a public URL. Some RunningHub account
@@ -3165,10 +3177,12 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
                     )
                 mime_type = suffix_mime
             url = f"data:{mime_type};base64,{encoded}"
-            print(
-                f"参考图上传响应未提供图片链接，已改用 Base64 直传: {path.name}",
-                flush=True,
+            message = (
+                f"参考图上传接口暂不可用（{type(upload_error).__name__}），已改用 Base64 直传"
+                if upload_error
+                else "参考图上传响应未提供图片链接，已改用 Base64 直传"
             )
+            print(f"{message}: {path.name}", flush=True)
         _REFERENCE_IMAGE_URLS[cache_key] = url
         if url.startswith("http://") or url.startswith("https://"):
             print(f"参考图已上传至第三方图像服务: {path.name}", flush=True)

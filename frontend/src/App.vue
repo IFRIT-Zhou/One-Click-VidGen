@@ -5970,17 +5970,35 @@ async function uploadReferenceImages(event) {
   }
   protagonistReferenceUploading.value = true
   try {
-    const uploaded = await Promise.all(selectedFiles.map((file) => api.uploadEditorAsset(file)))
-    if (uploaded.some((payload) => payload.asset?.kind !== 'image')) throw new Error('上传文件不是可用的图片。')
+    // Upload each file independently. Promise.all used to discard every
+    // successful result when one file failed, leaving orphaned server assets
+    // and making the next retry look like a mysterious duplicate/max-3 error.
+    const results = await Promise.allSettled(selectedFiles.map((file) => api.uploadEditorAsset(file)))
+    const uploaded = []
+    const failures = []
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value?.asset?.kind === 'image' && result.value.asset.id) {
+        uploaded.push({ payload: result.value, file: selectedFiles[index] })
+        return
+      }
+      const reason = result.status === 'rejected'
+        ? String(result.reason?.message || '上传请求失败')
+        : '上传文件不是可用的图片。'
+      failures.push(`${selectedFiles[index].name}：${reason}`)
+    })
+    if (!uploaded.length) throw new Error(failures[0] || '参考图上传失败。')
     form.reference_image_ids = [
       ...form.reference_image_ids,
-      ...uploaded.map((payload) => payload.asset.id),
+      ...uploaded.map(({ payload }) => payload.asset.id),
     ].slice(0, 3)
     form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
     referenceImageNames.value = [
       ...referenceImageNames.value,
-      ...uploaded.map((payload, index) => payload.asset.name || selectedFiles[index].name),
+      ...uploaded.map(({ payload, file }) => payload.asset.name || file.name),
     ].slice(0, 3)
+    protagonistReferenceImageError.value = failures.length
+      ? `部分参考图上传失败：${failures.join('；')}`
+      : ''
   } catch (error) {
     protagonistReferenceImageError.value = error.message || '角色参考图上传失败。'
   } finally {

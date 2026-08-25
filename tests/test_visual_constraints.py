@@ -158,6 +158,82 @@ class VisualConstraintsTest(unittest.TestCase):
                     "https://cloud.test/api/v1/image-pool/media/asset-1",
                 )
 
+    def test_cloud_reference_upload_falls_back_to_data_uri_on_proxy_500(self) -> None:
+        class Response:
+            status_code = 500
+            ok = False
+
+            def json(self):
+                return {"code": "INTERNAL_ERROR", "message": "upstream failed"}
+
+            def close(self):
+                return None
+
+        class Session:
+            def request(self, method, url, **kwargs):
+                return Response()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        config = {
+            "api_key": "cloud-token",
+            "cloud_base_url": "https://cloud.test/api/v1",
+            "upload_url": "https://cloud.test/api/v1/image-pool/media/upload",
+            "cloud_pool": "1",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference.png"
+            content = b"fake-image-bytes"
+            path.write_bytes(content)
+            with patch.object(visual, "_new_session", return_value=Session()):
+                result = visual._reference_image_url(config, str(path))
+        self.assertTrue(result.startswith("data:image/png;base64,"))
+        self.assertIn("ZmFrZS1pbWFnZS1ieXRlcw==", result)
+
+    def test_poster_submit_uses_reference_data_uri_after_upload_failure(self) -> None:
+        captured = {}
+
+        class Response:
+            ok = True
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"taskId": "image-task-1"}
+
+        def request(_session, _method, url, **kwargs):
+            captured["url"] = url
+            captured["payload"] = kwargs["json"]
+            return Response()
+
+        macro = {
+            "macro_scene_id": "poster_001",
+            "image_prompt": "林晚站在厨房，角色形象参考图1",
+            "character_ids": ["lin_wan"],
+            "reference_image_ids": ["图1"],
+        }
+        config = {
+            "api_key": "cloud-token",
+            "endpoint": "https://cloud.test/image-pool/generate",
+            "ratio": "2:1",
+            "resolution": "1k",
+            "cloud_pool": "1",
+        }
+        with (
+            patch.dict(os.environ, {"USER_REFERENCE_IMAGE_PATHS_JSON": "[\"/tmp/lin.png\"]"}, clear=False),
+            patch.object(visual, "_reference_image_url", return_value="data:image/png;base64,AAA"),
+            patch.object(visual, "_request_with_cloud_refresh", side_effect=request),
+        ):
+            task_id = visual._submit_poster_request(macro, config, object())
+
+        self.assertEqual(task_id, "image-task-1")
+        self.assertEqual(captured["payload"]["imageUrls"], ["data:image/png;base64,AAA"])
+        self.assertEqual(captured["url"], config["endpoint"])
+
     def test_direct_runninghub_submit_does_not_include_client_job_id(self) -> None:
         captured_payload = {}
 
