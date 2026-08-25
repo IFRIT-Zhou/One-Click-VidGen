@@ -80,13 +80,30 @@ class CloudClientTest(unittest.TestCase):
         self.assertEqual(self.store.get(7).refresh_token, "new-refresh")
 
     def test_cluster_health_does_not_require_login(self) -> None:
-        response = json_response({"ok": False, "control_api": True, "ray_error": "timed out"})
+        responses = [
+            json_response({"ok": False, "control_api": True, "ray_error": "timed out"}),
+            json_response({"ok": False, "control_api": True, "ray_error": "timed out"}),
+            json_response({"ok": True, "control_api": True, "ray": {"ok": True}}),
+        ]
+        with patch("backend.app.cloud_client.time.sleep") as sleep, patch(
+            "backend.app.cloud_client.requests.request", side_effect=responses
+        ) as request:
+            payload = self.client.cluster_health()
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(sleep.call_args_list[0].args, (1.0,))
+        self.assertEqual(sleep.call_args_list[1].args, (2.0,))
+        self.assertNotIn("Authorization", request.call_args_list[0].kwargs["headers"])
+        self.assertEqual(request.call_args_list[0].args[1], "https://cluster.example/api/v1/health")
+
+    def test_cluster_health_returns_persistent_non_transient_failure_without_retry(self) -> None:
+        response = json_response({"ok": False, "control_api": True, "ray_error": "GPU service stopped"})
         with patch("backend.app.cloud_client.requests.request", return_value=response) as request:
             payload = self.client.cluster_health()
 
         self.assertFalse(payload["ok"])
-        self.assertNotIn("Authorization", request.call_args.kwargs["headers"])
-        self.assertEqual(request.call_args.args[1], "https://cluster.example/api/v1/health")
+        self.assertEqual(request.call_count, 1)
 
     def test_download_rejects_cross_origin_url_without_leaking_token(self) -> None:
         self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))

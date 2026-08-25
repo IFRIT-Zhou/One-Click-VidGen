@@ -378,8 +378,28 @@ class CloudClient:
         }
 
     def cluster_health(self) -> dict[str, Any]:
-        """Check the public control API and its downstream Ray Serve state."""
-        return self._json_request("GET", "/health", authenticated=False)
+        """Check Ray readiness, retrying transient downstream probe failures.
+
+        The cloud gateway returns HTTP 200 with ``ok=false`` when its internal
+        Ray probe briefly exceeds its timeout. Treat only that transient health
+        result as retryable; persistent or non-timeout failures are returned to
+        the caller so a genuinely unavailable cluster still blocks submission.
+        """
+        attempts = max(1, min(3, self.config.retry_count + 1))
+        payload: dict[str, Any] = {}
+        for attempt in range(attempts):
+            payload = self._json_request("GET", "/health", authenticated=False)
+            if payload.get("ok") is not False:
+                return payload
+            detail = str(payload.get("ray_error") or "").strip().lower()
+            transient = any(
+                marker in detail
+                for marker in ("timed out", "timeout", "temporarily unavailable", "connection reset")
+            )
+            if not transient or attempt + 1 >= attempts:
+                return payload
+            time.sleep(self.config.retry_delay * (attempt + 1))
+        return payload
 
     def image_pool_runtime(self) -> dict[str, str]:
         """Provide short-lived credentials only to the local image worker.
