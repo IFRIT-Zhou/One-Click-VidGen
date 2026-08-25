@@ -1,11 +1,11 @@
 {
-  "release_id": "2026.08.25.2",
-  "release_order": 2026082502,
-  "display_version": "2026.08.25 第三方事项调整版",
+  "release_id": "2026.08.25.3",
+  "release_order": 2026082503,
+  "display_version": "2026.08.25 云端号池更新版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "修改第三方相关事项。",
-  "content_fingerprint": "75e5e475bb3abeae2833525eb6fdd6458a023e1984a527785bdd5dc5b84e9951"
+  "notes": "更新云端号池相关事项。",
+  "content_fingerprint": "006bf3d684e1bb11485d58dcb32ef0f933f9dc6569a12ba546c401a6f4cd7995"
 }
