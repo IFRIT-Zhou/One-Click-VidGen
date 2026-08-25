@@ -164,7 +164,14 @@ export const api = {
   deleteJob: (id) => requestJSON(`/api/jobs/${id}`, { method: 'DELETE' }),
   cancelJob: (id) => requestJSON(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   resumeJob: (id) => requestJSON(`/api/jobs/${id}/resume`, { method: 'POST' }),
-  retryJobTts: (id) => requestJSON(`/api/jobs/${id}/retry-tts`, { method: 'POST' }),
+  advanceStepWorkflow: (id, action, parameters = {}) => requestJSON(`/api/jobs/${id}/step-workflow/advance`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, parameters }),
+  }),
+  stepWorkflowSubtitles: (id) => requestJSON(`/api/jobs/${id}/step-workflow/subtitles`),
+  saveStepWorkflowSubtitles: (id, updates) => requestJSON(`/api/jobs/${id}/step-workflow/subtitles`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }),
+  }),
+  retryJobTts: (id, parameters = {}) => requestJSON(`/api/jobs/${id}/retry-tts`, { method: 'POST', body: JSON.stringify({ parameters }) }),
   downloadDiagnosticPackage: (id) => downloadFile(`/api/jobs/${id}/diagnostic-package`),
   openJobOutputFolder: (id) => requestJSON(`/api/jobs/${id}/output-folder`, { method: 'POST' }),
   subtitleFonts: () => requestJSON('/api/subtitle-fonts'),

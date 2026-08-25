@@ -18,7 +18,9 @@ import wave
 from pathlib import Path
 from typing import Any
 
-from .pipeline import JOBS_DIR, PROJECT_ROOT, store
+from .pipeline import (
+    JOBS_DIR, PROJECT_ROOT, is_step_workflow_v2, persist_step_workflow_state, store,
+)
 from .visual_editor import VisualEditor
 
 
@@ -102,6 +104,43 @@ def _concat_wavs(sources: list[Path], destination: Path) -> None:
                 if actual != expected:
                     raise ValueError(f"逐句音频格式不一致: {source.name}")
                 output.writeframes(audio.readframes(audio.getnframes()))
+
+
+def _build_regeneration_plan(
+    reading_texts: dict[int, str],
+    engine: str,
+) -> tuple[list[str], dict[int, list[int]], dict[int, int]]:
+    """Flatten selected sentences into engine-safe synthesis chunks.
+
+    Oversized IndexTTS-2.5 text is generated in safe pieces, but the mapping
+    keeps the editor's original sentence boundary authoritative. The pieces
+    are merged back before timestamps, subtitles or the visual timeline move.
+    """
+
+    flattened: list[str] = []
+    chunk_positions: dict[int, list[int]] = {}
+    token_totals: dict[int, int] = {}
+    token_count = None
+    if engine == "indextts25":
+        from .tts_segmentation import build_indextts25_token_counter
+
+        token_count = build_indextts25_token_counter()
+
+    for index, text in reading_texts.items():
+        chunks = [text]
+        if token_count is not None:
+            from .tts_segmentation import segment_indextts25_text
+
+            chunks, _source, total = segment_indextts25_text(
+                text,
+                token_count=token_count,
+                agent_enabled=False,
+            )
+            token_totals[index] = total
+        start = len(flattened)
+        flattened.extend(chunks)
+        chunk_positions[index] = list(range(start, len(flattened)))
+    return flattened, chunk_positions, token_totals
 
 
 class TtsEditor:
@@ -232,6 +271,7 @@ class TtsEditor:
         return {
             "available": bool(items),
             "message": "可选择一条或多条重新配音；完成后请重新渲染视频。" if items else "逐句音频文件不完整",
+            "revision": int(manifest.get("revision") or 0),
             "engine": "indextts25" if manifest.get("engine") == "indextts2" else (manifest.get("engine") or "indextts25"),
             "settings": {
                 "tts_voice_id": manifest.get("tts_voice_id") or "voice_05.wav",
@@ -356,20 +396,17 @@ class TtsEditor:
         if engine == "indextts2":
             engine = "indextts25"
             manifest["engine"] = engine
-        if engine == "indextts25":
-            from .tts_segmentation import (
-                INDEXTTS25_SEGMENT_MAX_TOKENS,
-                build_indextts25_token_counter,
-            )
-
-            token_count = build_indextts25_token_counter()
-            for index, text in reading_texts.items():
-                total = token_count(text)
-                if total > INDEXTTS25_SEGMENT_MAX_TOKENS:
-                    raise ValueError(
-                        f"第 {index} 句发音修正后为 {total} token，超过 "
-                        f"IndexTTS-2.5 单句 {INDEXTTS25_SEGMENT_MAX_TOKENS} token 安全上限"
-                    )
+        synthesis_chunks, chunk_positions, token_totals = _build_regeneration_plan(
+            reading_texts,
+            engine,
+        )
+        for index, positions in chunk_positions.items():
+            if len(positions) > 1:
+                store.log(
+                    job,
+                    f"第 {index} 句修正后为 {token_totals.get(index, 0)} token，"
+                    f"已安全拆成 {len(positions)} 段生成，完成后自动合并回原句",
+                )
         old_ranges = [
             (float(item.get("start") or 0), float(item.get("end") or 0))
             for item in segments
@@ -401,11 +438,11 @@ class TtsEditor:
         work_dir.mkdir(parents=True, exist_ok=True)
         chunks_path = work_dir / "chunks.json"
         chunks_path.write_text(
-            json.dumps([reading_texts[index] for index in indices], ensure_ascii=False),
+            json.dumps(synthesis_chunks, ensure_ascii=False),
             encoding="utf-8",
         )
         script_path = work_dir / "selected.txt"
-        script_path.write_text("\n".join(reading_texts[index] for index in indices), encoding="utf-8")
+        script_path.write_text("\n".join(synthesis_chunks), encoding="utf-8")
 
         store.log(job, f"开始单句重配：第 {', '.join(map(str, indices))} 句（{engine}）")
         if engine == "cluster":
@@ -438,7 +475,7 @@ class TtsEditor:
                 ),
                 on_log=lambda line: store.log(job, f"[单句重配] {line}"),
                 on_remote_job=lambda _job_id, _payload: None,
-                chunks_override=[reading_texts[index] for index in indices],
+                chunks_override=synthesis_chunks,
             )
         else:
             command = [
@@ -492,11 +529,18 @@ class TtsEditor:
 
         generated_manifest = json.loads((generated_dir / SEGMENT_MANIFEST).read_text(encoding="utf-8"))
         generated = generated_manifest.get("segments") or []
-        if len(generated) != len(indices):
-            raise RuntimeError("重配结果句数与所选句数不一致")
-        for original_index, new_item in zip(indices, generated):
-            source = generated_dir / str(new_item["filename"])
-            shutil.copy2(source, segment_dir / str(by_index[original_index]["filename"]))
+        if len(generated) != len(synthesis_chunks):
+            raise RuntimeError("重配结果分段数与安全断句计划不一致")
+        for original_index in indices:
+            generated_sources = [
+                generated_dir / str(generated[position]["filename"])
+                for position in chunk_positions[original_index]
+            ]
+            destination = segment_dir / str(by_index[original_index]["filename"])
+            if len(generated_sources) == 1:
+                shutil.copy2(generated_sources[0], destination)
+            else:
+                _concat_wavs(generated_sources, destination)
             # Keep the display subtitle in ``text``.  Only the synthesis layer
             # remembers pinyin or other pronunciation hints entered by users.
             by_index[original_index]["tts_text"] = reading_texts[original_index]
@@ -556,6 +600,28 @@ class TtsEditor:
         manifest["revision"] = int(manifest.get("revision") or 0) + 1
         manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        request_updates = {
+            "tts_voice_id": manifest.get("tts_voice_id"),
+            "tts_speed": manifest.get("tts_speed", 1),
+            "tts_volume": manifest.get("tts_volume", 1),
+            "tts_pitch": manifest.get("tts_pitch", 0),
+            "tts_parallelism": manifest.get("tts_parallelism", 1),
+            "tts_emotion": manifest.get("tts_emotion") or "",
+            "tts_emotion_weight": manifest.get("tts_emotion_weight", 0.65),
+            "cluster_voice_type": manifest.get("cluster_voice_type") or "preset",
+            "cluster_voice_id": manifest.get("cluster_voice_id") or "",
+            "qwen_tts_voice": manifest.get("qwen_voice") or "Elias",
+            "qwen_tts_instructions": manifest.get("qwen_instructions") or "",
+        }
+        job.request.update(request_updates)
+        store.update(job, request=job.request)
+        if is_step_workflow_v2(job.request):
+            persist_step_workflow_state(
+                job,
+                str(job.request.get("_step_mode_stage") or "audio_review"),
+                message="配音精修已保存",
+            )
+            store.update(job, request=job.request)
         shutil.rmtree(work_dir, ignore_errors=True)
 
 

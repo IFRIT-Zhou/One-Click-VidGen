@@ -75,6 +75,18 @@ POSTER_PROGRESS_RE = re.compile(
     r"^\[POSTER_PROGRESS\]\s*(?P<completed>\d+)\s*/\s*(?P<total>\d+)"
 )
 
+STEP_WORKFLOW_VERSION = 2
+STEP_WORKFLOW_STAGES = {
+    "audio_running",
+    "audio_review",
+    "visual_setup",
+    "visual_running",
+    "visual_review",
+    "render_setup",
+    "render_running",
+    "completed",
+}
+
 
 class GenerationCancelled(RuntimeError):
     """The user requested that this generation job stop."""
@@ -95,6 +107,66 @@ def normalize_project_name(value: str | None) -> str:
     if name.upper() in WINDOWS_RESERVED_NAMES:
         name = f"项目_{name}"
     return name[:80].rstrip(" .") or default_project_name()
+
+
+def is_step_workflow_v2(request: dict[str, Any]) -> bool:
+    return bool(request.get("step_mode")) and int(request.get("_step_workflow_version") or 0) == STEP_WORKFLOW_VERSION
+
+
+def step_workflow_output_dir(job: "Job", *, create: bool = False) -> Path | None:
+    folder = str(job.request.get("_step_output_dir") or "").strip()
+    if not folder:
+        if not create:
+            return None
+        candidate = _available_output_path(str(job.request.get("project_name") or job.id))
+        folder = candidate.name
+        job.request["_step_output_dir"] = folder
+    output_dir = (OUTPUT_DIR / Path(folder).name).resolve()
+    if OUTPUT_DIR.resolve() not in output_dir.parents:
+        raise ValueError("分步任务输出目录无效")
+    if create:
+        for child in ("input", "image", "video", "other"):
+            (output_dir / child).mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def persist_step_workflow_state(job: "Job", stage: str, *, message: str = "") -> Path:
+    if stage not in STEP_WORKFLOW_STAGES:
+        raise ValueError(f"未知分步阶段: {stage}")
+    job.request["_step_workflow_version"] = STEP_WORKFLOW_VERSION
+    job.request["_step_mode_stage"] = stage
+    payload = {
+        "schema_version": STEP_WORKFLOW_VERSION,
+        "job_id": job.id,
+        "project_name": str(job.request.get("project_name") or job.id),
+        "stage": stage,
+        "job_status": job.status,
+        "message": message or job.message,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    job_state = JOBS_DIR / job.id / "step_workflow_state_v2.json"
+    job_state.parent.mkdir(parents=True, exist_ok=True)
+    job_state.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    output_dir = step_workflow_output_dir(job, create=True)
+    assert output_dir is not None
+    output_state = output_dir / "other" / "step_workflow_state_v2.json"
+    shutil.copy2(job_state, output_state)
+    (output_dir / "other" / "任务参数.json").write_text(
+        json.dumps(job.request, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    register_job_asset(job, output_state, "project_output", {"step_workflow": True, "stage": stage})
+    return output_state
+
+
+def initialize_step_workflow(job: "Job") -> None:
+    """Create a durable v2 workspace before the first paid stage starts."""
+    if not bool(job.request.get("step_mode")):
+        return
+    job.request["_step_workflow_version"] = STEP_WORKFLOW_VERSION
+    job.request["_step_mode_stage"] = "audio_running"
+    step_workflow_output_dir(job, create=True)
+    persist_step_workflow_state(job, "audio_running", message="正在生成配音与字幕")
+    upsert_generation_job(job.snapshot())
 
 
 VISUAL_PACING_DEFAULTS = {
@@ -259,7 +331,11 @@ class JobStore:
             upsert_generation_job(job.snapshot())
         for job in sorted(queued, key=lambda item: item.created_at):
             self.log(job, "服务重启后已恢复本地排队")
-            self.run_async(job)
+            guided_stage = str(job.request.get("_step_mode_stage") or "")
+            if is_step_workflow_v2(job.request) and guided_stage in {"visual_running", "render_running"}:
+                self.run_async(job, resume=True)
+            else:
+                self.run_async(job)
 
     def import_legacy_jobs(self, default_user_id: int | None) -> int:
         if not JOBS_DIR.is_dir():
@@ -458,7 +534,9 @@ class JobStore:
                 priority or bool(previous and previous[1]),
             )
             ahead = sum(
-                item.status in {"queued", "running", "waiting_confirmation"}
+                item.status in {"queued", "running"} or (
+                    item.status == "waiting_confirmation" and not is_step_workflow_v2(item.request)
+                )
                 for item in self._jobs.values()
                 if item.id != job.id
             )
@@ -484,7 +562,10 @@ class JobStore:
                 # A step-mode checkpoint owns the shared workspace until the
                 # user resumes or cancels it. Starting another job would erase
                 # that checkpoint.
-                if any(job.status == "waiting_confirmation" for job in self._jobs.values()):
+                if any(
+                    job.status == "waiting_confirmation" and not is_step_workflow_v2(job.request)
+                    for job in self._jobs.values()
+                ):
                     self._dispatcher_running = False
                     return
                 candidates = [
@@ -538,14 +619,28 @@ class JobStore:
 
     def retry_tts(self, job: Job) -> dict[str, Any]:
         """Restart a step-mode job from Module 1 after its audio review."""
-        if job.status != "waiting_confirmation" or str(job.request.get("_step_mode_stage") or "") != "audio":
+        valid_audio_stages = {"audio", "audio_review"} if is_step_workflow_v2(job.request) else {"audio"}
+        if job.status != "waiting_confirmation" or str(job.request.get("_step_mode_stage") or "") not in valid_audio_stages:
             raise ValueError("only the audio review checkpoint can retry TTS")
         if bool(job.request.get("skip_tts")):
             raise ValueError("uploaded source audio cannot be regenerated")
 
         with self._lock:
             self._cancel_events[job.id] = threading.Event()
-        job.request.pop("_step_mode_stage", None)
+        if is_step_workflow_v2(job.request):
+            job.request["_step_mode_stage"] = "audio_running"
+            output_dir = step_workflow_output_dir(job)
+            if output_dir is not None:
+                shutil.rmtree(output_dir / "input", ignore_errors=True)
+                shutil.rmtree(output_dir / "image", ignore_errors=True)
+                shutil.rmtree(output_dir / "other" / "tts_segments", ignore_errors=True)
+                for child in ("input", "image"):
+                    (output_dir / child).mkdir(parents=True, exist_ok=True)
+                for name in ("最终字幕.srt", "画面时间线.json", "模块2.5_校对后字幕场景.json"):
+                    (output_dir / "other" / name).unlink(missing_ok=True)
+            persist_step_workflow_state(job, "audio_running", message="正在重新生成配音与字幕")
+        else:
+            job.request.pop("_step_mode_stage", None)
         if str(job.request.get("tts_engine") or "") == "cluster":
             job.request.pop("_cloud_job_id", None)
             job.request.pop("_cloud_job_status", None)
@@ -564,6 +659,39 @@ class JobStore:
             artifacts={},
         )
         self.run_async(job, resume=False, priority=True)
+        return job.snapshot()
+
+    def advance_step_workflow(self, job: Job, action: str) -> dict[str, Any]:
+        """Perform one explicit v2 transition; no action is allowed to guess a stage."""
+        if not is_step_workflow_v2(job.request):
+            raise ValueError("该任务不是新版分步任务")
+        stage = str(job.request.get("_step_mode_stage") or "")
+        transitions = {
+            ("audio_review", "confirm_audio"): ("visual_setup", False, "配音与字幕已确认，请设置画面参数"),
+            ("visual_setup", "start_visual"): ("visual_running", True, "等待开始分镜与图片生成"),
+            ("visual_review", "confirm_visual"): ("render_setup", False, "画面与时序已确认，请设置 BGM 与成片版本"),
+            ("render_setup", "start_render"): ("render_running", True, "等待开始最终渲染"),
+        }
+        transition = transitions.get((stage, action))
+        if transition is None:
+            raise ValueError(f"当前阶段 {stage or '未知'} 不能执行 {action}")
+        next_stage, should_run, message = transition
+        job.request["_step_mode_stage"] = next_stage
+        with self._lock:
+            self._cancel_events[job.id] = threading.Event()
+        self.update(
+            job,
+            request=job.request,
+            status="queued" if should_run else "waiting_confirmation",
+            step="queued" if should_run else f"await_{next_stage}",
+            message=message,
+            error=None,
+        )
+        persist_step_workflow_state(job, next_stage, message=message)
+        self.update(job, request=job.request)
+        self.log(job, f"分步模式：{message}")
+        if should_run:
+            self.run_async(job, resume=True, priority=True)
         return job.snapshot()
 
     def is_cancelled(self, job: Job) -> bool:
@@ -637,7 +765,8 @@ class JobStore:
 
     def delete(self, job: Job) -> None:
         """Remove a terminal task and only the files explicitly owned by it."""
-        if job.status not in TERMINAL_JOB_STATUSES:
+        removable_guided_pause = is_step_workflow_v2(job.request) and job.status == "waiting_confirmation"
+        if job.status not in TERMINAL_JOB_STATUSES and not removable_guided_pause:
             raise ValueError("运行中的任务不能删除，请先停止并等待它完全结束")
         with self._lock:
             process = self._processes.get(job.id)
@@ -726,6 +855,20 @@ class JobStore:
                     self.log(job, f"失败: {exc}")
                     self.update(job, status="failed", error=str(exc), message="生成失败")
             finally:
+                if is_step_workflow_v2(job.request) and job.status in {"failed", "cancelled"}:
+                    try:
+                        persist_step_workflow_state(
+                            job,
+                            str(job.request.get("_step_mode_stage") or "audio_running"),
+                            message=job.message,
+                        )
+                        self.update(job, request=job.request)
+                    except Exception as exc:
+                        # 状态快照属于尽力保存，绝不能遮蔽真正的生成失败或取消结果。
+                        try:
+                            self.log(job, f"分步状态持久化失败，但任务资产已保留：{exc}")
+                        except Exception:
+                            pass
                 with self._lock:
                     if self._pipeline_owner_id == job.id:
                         self._pipeline_owner_id = None
@@ -1948,7 +2091,12 @@ def slice_audio(
 
 def pause_for_step_confirmation(job: Job, store: JobStore, stage: str, message: str) -> None:
     """Persist an intentional, resumable pause for the guided workflow."""
-    if stage == "visual":
+    if is_step_workflow_v2(job.request):
+        if stage == "audio_review":
+            sync_step_audio_snapshot(job)
+        elif stage == "visual_review":
+            sync_step_visual_snapshot(job)
+    elif stage == "visual":
         source = WORKSPACE_DIR / "3_visual_template" / "assets"
         target = JOBS_DIR / job.id / "step_mode_preview_images"
         if source.is_dir():
@@ -1961,10 +2109,13 @@ def pause_for_step_confirmation(job: Job, store: JobStore, stage: str, message: 
         request=request,
         status="waiting_confirmation",
         step=f"await_{stage}",
-        progress=30 if stage == "audio" else 85,
+        progress=46 if stage in {"audio", "audio_review"} else 85,
         message=message,
         error=None,
     )
+    if is_step_workflow_v2(request):
+        persist_step_workflow_state(job, stage, message=message)
+        store.update(job, request=job.request)
     store.log(job, f"分步模式：{message}")
     raise GenerationPaused(message)
 
@@ -1978,6 +2129,7 @@ def render_semantic_visual_video(
     story_plan_path: Path | None = None,
     story_plan_is_global: bool = True,
     apply_bgm: bool = True,
+    defer_render: bool = False,
 ) -> None:
     store.raise_if_cancelled(job)
     # Agent 1 must see the original subtitle timeline before Module 3 adds
@@ -2144,7 +2296,17 @@ def render_semantic_visual_video(
         raise ValueError(f"不支持的视觉后端: {visual_backend}")
 
     store.raise_if_cancelled(job)
-    if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") != "visual":
+    if defer_render:
+        return
+    step_stage = str(request.get("_step_mode_stage") or "")
+    if is_step_workflow_v2(request) and step_stage == "visual_running":
+        pause_for_step_confirmation(
+            job,
+            store,
+            "visual_review",
+            "画面已生成，请完成重绘与时序调整",
+        )
+    if bool(request.get("step_mode")) and not is_step_workflow_v2(request) and step_stage != "visual":
         pause_for_step_confirmation(
             job,
             store,
@@ -2242,6 +2404,50 @@ def copy_part_outputs(
                     "generation_part:image",
                     {"part_index": part_index},
                 )
+    return result
+
+
+def copy_part_visual_outputs(job: Job, part_index: int, render_variant: str) -> dict[str, Path]:
+    """Persist one long-text part after Image2, before the user approves rendering."""
+    part_dir = JOBS_DIR / job.id / "artifacts" / "parts"
+    part_dir.mkdir(parents=True, exist_ok=True)
+    prefix = f"part_{part_index:03d}"
+    copied = {
+        "audio": part_dir / f"{prefix}_audio.wav",
+        "subtitle": part_dir / f"{prefix}.srt",
+        "scene_timeline": part_dir / f"{prefix}_scene_timeline.json",
+        "fine_grained_timeline": part_dir / f"{prefix}_fine_grained_timeline.json",
+        "poster_mapping": part_dir / f"{prefix}_poster_mapping.json",
+        "story_plan": part_dir / f"{prefix}_story_plan.json",
+        "visual_prompt_plan": part_dir / f"{prefix}_visual_prompt_plan.json",
+        "html": part_dir / f"{prefix}.html",
+    }
+    sources = {
+        "audio": WORKSPACE_DIR / "2_audio_srt" / "final_output.wav",
+        "subtitle": WORKSPACE_DIR / "2_audio_srt" / "final_short.srt",
+        "scene_timeline": WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
+        "fine_grained_timeline": WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json",
+        "poster_mapping": WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+        "story_plan": WORKSPACE_DIR / "3_visual_template" / "story_plan.json",
+        "visual_prompt_plan": WORKSPACE_DIR / "3_visual_template" / "visual_prompt_plan.json",
+        "html": WORKSPACE_DIR / "3_visual_template" / "index.html",
+    }
+    validation = validate_visual_coverage(
+        sources["scene_timeline"],
+        sources["poster_mapping"],
+        WORKSPACE_DIR / "3_visual_template" / "assets",
+        subtitle_path=sources["subtitle"] if render_variant in {"subtitles", "both"} else None,
+    )
+    result: dict[str, Path] = {}
+    for key, source in sources.items():
+        if source.is_file():
+            _copy_file_atomic(source, copied[key])
+            result[key] = copied[key]
+            register_job_asset(job, copied[key], f"generation_part:{key}", {"part_index": part_index})
+    image_dir = part_dir / f"{prefix}_images"
+    shutil.rmtree(image_dir, ignore_errors=True)
+    shutil.copytree(WORKSPACE_DIR / "3_visual_template" / "assets", image_dir)
+    result["images"] = image_dir
     return result
 
 
@@ -2811,6 +3017,164 @@ def _copy_visual_segment(
     return adjusted_scenes, poster_timeline, duration, archived_mapping
 
 
+def sync_step_audio_snapshot(job: Job) -> Path:
+    """Publish the reviewed audio/subtitle checkpoint without marking the job complete."""
+    output_dir = step_workflow_output_dir(job, create=True)
+    assert output_dir is not None
+    input_dir = output_dir / "input"
+    other_dir = output_dir / "other"
+    script_path = JOBS_DIR / job.id / "script.txt"
+    if script_path.is_file():
+        shutil.copy2(script_path, input_dir / "文案.txt")
+    audio = WORKSPACE_DIR / "2_audio_srt" / "final_output.wav"
+    subtitle = WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
+    timeline = WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json"
+    if not audio.is_file() or audio.stat().st_size <= 0:
+        raise FileNotFoundError("分步任务未找到有效配音，无法进入配音精修")
+    if not subtitle.is_file() or subtitle.stat().st_size <= 0:
+        raise FileNotFoundError("分步任务未找到校对后字幕，无法进入配音精修")
+    shutil.copy2(audio, input_dir / "配音.wav")
+    shutil.copy2(subtitle, other_dir / "最终字幕.srt")
+    if timeline.is_file():
+        shutil.copy2(timeline, other_dir / "画面时间线.json")
+        shutil.copy2(timeline, other_dir / "模块2.5_校对后字幕场景.json")
+    segment_archive = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+    if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
+        shutil.copytree(segment_archive, other_dir / "tts_segments", dirs_exist_ok=True)
+    if str(job.request.get("tts_engine") or "indextts25") in {"indextts2", "indextts25"} and job.user_id is not None:
+        try:
+            from .indextts25_local import load_indextts25_config, resolve_voice_reference
+            voice = resolve_voice_reference(
+                load_indextts25_config(),
+                str(job.request.get("tts_voice_id") or "voice_05.wav"),
+                user_id=int(job.user_id),
+            )
+            shutil.copy2(voice, input_dir / f"TTS参考音色{voice.suffix.lower()}")
+        except (OSError, ValueError):
+            pass
+    for path in (input_dir / "配音.wav", other_dir / "最终字幕.srt"):
+        register_job_asset(job, path, "project_output", {"step_workflow": True, "stage": "audio_review"})
+    return output_dir
+
+
+def restore_step_audio_snapshot(job: Job) -> bool:
+    output_dir = step_workflow_output_dir(job)
+    if output_dir is None:
+        return False
+    audio = output_dir / "input" / "配音.wav"
+    subtitle = output_dir / "other" / "最终字幕.srt"
+    timeline = output_dir / "other" / "画面时间线.json"
+    if not audio.is_file() or not subtitle.is_file():
+        return False
+    audio_dir = WORKSPACE_DIR / "2_audio_srt"
+    visual_dir = WORKSPACE_DIR / "3_visual_template"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    visual_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(audio, audio_dir / "final_output.wav")
+    shutil.copy2(subtitle, audio_dir / "final_short.srt")
+    if timeline.is_file():
+        shutil.copy2(timeline, visual_dir / "scene_timeline.json")
+    segment_archive = output_dir / "other" / "tts_segments"
+    if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
+        target = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+        shutil.copytree(segment_archive, target, dirs_exist_ok=True)
+    return True
+
+
+def sync_step_visual_snapshot(job: Job) -> Path:
+    """Publish generated pictures and mappings for the guided visual review."""
+    output_dir = step_workflow_output_dir(job, create=True)
+    assert output_dir is not None
+    image_dir = output_dir / "image"
+    other_dir = output_dir / "other"
+    shutil.rmtree(image_dir, ignore_errors=True)
+    image_dir.mkdir(parents=True, exist_ok=True)
+    scenes: list[dict[str, Any]] = []
+    posters: list[dict[str, Any]] = []
+    mapping: list[dict[str, Any]] = []
+    parts_dir = JOBS_DIR / job.id / "artifacts" / "parts"
+    part_mappings = sorted(parts_dir.glob("part_*_poster_mapping.json")) if parts_dir.is_dir() else []
+    if part_mappings:
+        time_offset = 0.0
+        for mapping_path in part_mappings:
+            part_name = mapping_path.name.removesuffix("_poster_mapping.json")
+            part_scenes, part_posters, duration, part_mapping = _copy_visual_segment(
+                mapping_path=mapping_path,
+                timeline_path=parts_dir / f"{part_name}_fine_grained_timeline.json",
+                source_image_dir=parts_dir / f"{part_name}_images",
+                output_image_dir=image_dir,
+                file_prefix=part_name,
+                time_offset=time_offset,
+            )
+            scenes.extend(part_scenes)
+            posters.extend(part_posters)
+            mapping.extend(part_mapping)
+            time_offset += duration
+    else:
+        scenes, posters, _duration, mapping = _copy_visual_segment(
+            mapping_path=WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
+            timeline_path=WORKSPACE_DIR / "3_visual_template" / "fine_grained_timeline.json",
+            source_image_dir=WORKSPACE_DIR / "3_visual_template" / "assets",
+            output_image_dir=image_dir,
+            file_prefix="",
+            time_offset=0.0,
+        )
+    if not scenes or not mapping:
+        raise RuntimeError("分步任务画面归档不完整，已停留在画面阶段")
+    (other_dir / "画面映射.json").write_text(
+        json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (other_dir / "画面时间线.json").write_text(
+        json.dumps(scenes, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (other_dir / "画面修改清单.json").write_text(
+        json.dumps({"job_id": job.id, "project_name": output_dir.name}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    from module4_video_render import write_html
+    from module5_video_render import with_subtitles
+    html = write_html(
+        scenes,
+        sorted(posters, key=lambda item: float(item["start"])),
+        html_path=other_dir / "最终画面.html",
+        audio_url="../input/配音.wav",
+    )
+    subtitle = other_dir / "最终字幕.srt"
+    if subtitle.is_file():
+        html.write_text(with_subtitles(html.read_text(encoding="utf-8"), subtitle), encoding="utf-8")
+    for path in image_dir.iterdir():
+        if path.is_file():
+            register_job_asset(job, path, "project_output", {"step_workflow": True, "stage": "visual_review"})
+    return output_dir
+
+
+def restore_step_visual_snapshot(job: Job) -> bool:
+    output_dir = step_workflow_output_dir(job)
+    if output_dir is None:
+        return False
+    mapping = output_dir / "other" / "画面映射.json"
+    timeline = output_dir / "other" / "画面时间线.json"
+    image_dir = output_dir / "image"
+    if not mapping.is_file() or not timeline.is_file() or not image_dir.is_dir():
+        return False
+    visual_dir = WORKSPACE_DIR / "3_visual_template"
+    assets = visual_dir / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(assets, ignore_errors=True)
+    assets.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(mapping, visual_dir / "poster_mapping.json")
+    shutil.copy2(timeline, visual_dir / "fine_grained_timeline.json")
+    shutil.copy2(timeline, visual_dir / "scene_timeline.json")
+    for source in image_dir.iterdir():
+        if source.is_file() and source.suffix.lower() in IMAGE_EXTENSIONS | {".txt"}:
+            shutil.copy2(source, assets / source.name)
+    html = output_dir / "other" / "最终画面.html"
+    if html.is_file():
+        shutil.copy2(html, visual_dir / "index.html")
+    restore_step_audio_snapshot(job)
+    return True
+
+
 def validate_and_write_output_manifest(
     output_root: Path,
     job: Job,
@@ -2870,6 +3234,34 @@ def validate_and_write_output_manifest(
 
 
 def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
+    if is_step_workflow_v2(request):
+        final_dir = step_workflow_output_dir(job, create=True)
+        assert final_dir is not None
+        video_dir = final_dir / "video"
+        other_dir = final_dir / "other"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        render_variant = str(request.get("video_render_variant") or "both").strip().lower()
+        copies = {
+            "subtitles": (FINAL_DIR / "final_with_subtitles.mp4", video_dir / "最终视频_字幕版.mp4"),
+            "raw": (FINAL_DIR / "final_raw_presentation.mp4", video_dir / "最终视频_纯净版.mp4"),
+        }
+        requested = {"subtitles", "raw"} if render_variant == "both" else {render_variant}
+        for key, (source, target) in copies.items():
+            if key in requested:
+                if not source.is_file() or source.stat().st_size <= 0:
+                    raise FileNotFoundError(f"分步渲染完成后缺少{key}成片")
+                _copy_file_atomic(source, target)
+            else:
+                target.unlink(missing_ok=True)
+        (other_dir / "任务参数.json").write_text(
+            json.dumps(request, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        validate_and_write_output_manifest(final_dir, job, request, project_name=final_dir.name)
+        for output_path in final_dir.rglob("*"):
+            if output_path.is_file():
+                register_job_asset(job, output_path, "project_output", {"project_name": final_dir.name})
+        return final_dir
+
     project_name = normalize_project_name(str(request.get("project_name") or ""))
     final_dir = _available_output_path(project_name)
     temp_dir = OUTPUT_DIR / f".{final_dir.name}.{job.id}.building"
@@ -3165,7 +3557,16 @@ def require_validated_output(job: Job, request: dict[str, Any]) -> None:
     if render_variant not in {"subtitles", "raw", "both"}:
         render_variant = "both"
     path = long_split_state_path(job)
-    if not path.is_file():
+    # A long guided task deliberately stops after every part has produced its
+    # images.  Once the user approves those images, Module 5 renders the
+    # combined output-scoped timeline as one final project.  The old long-split
+    # state therefore describes the *image preparation* checkpoint, not a set
+    # of completed part videos, and must not be used for final-video validation.
+    combined_step_render = (
+        is_step_workflow_v2(request)
+        and str(request.get("_step_mode_stage") or "") == "render_running"
+    )
+    if not path.is_file() or combined_step_render:
         coverage = validate_visual_coverage(
             WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json",
             WORKSPACE_DIR / "3_visual_template" / "poster_mapping.json",
@@ -3274,7 +3675,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         int(os.getenv("AGENT_HIERARCHICAL_MIN_CHARS", "6000")),
     )
     hierarchical_planning = total_chars > hierarchical_min_chars
-    if bool(request.get("step_mode")) and auto_split and total_chars > threshold:
+    if bool(request.get("step_mode")) and not is_step_workflow_v2(request) and auto_split and total_chars > threshold:
         # Segment rendering produces and encodes one part at a time.  Keep the
         # existing reliable long-text path intact; the audio checkpoint still works.
         store.log(job, "分步模式：超长文将保留配音确认；画面确认将在分段渲染流程稳定后开放。")
@@ -3449,6 +3850,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
                 story_plan_path=segment_plan_path,
                 story_plan_is_global=segment_plan_is_global,
                 apply_bgm=False,
+                defer_render=is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "visual_running",
             )
         except Exception:
             # Module 4 may already be complete when module 5 fails.  Preserve
@@ -3497,6 +3899,9 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             validations={"coverage": visual_validation},
         )
         store.log(job, f"分段状态 {index}/{len(groups)}：图片完成")
+        if is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "visual_running":
+            copy_part_visual_outputs(job, index, render_variant)
+            continue
         copied = copy_part_outputs(job, index, render_variant, expected_part_duration)
         _validated_outputs, validations = validate_saved_part(
             job, index, render_variant, expected_part_duration
@@ -3519,6 +3924,15 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         shutil.copy2(global_story_context, WORKSPACE_DIR / "3_visual_template" / "story_context.json")
     if global_story_plan.is_file():
         shutil.copy2(global_story_plan, WORKSPACE_DIR / "3_visual_template" / "story_plan.json")
+    if is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "visual_running":
+        split_state["overall_status"] = "images_completed"
+        save_long_split_state(job, split_state)
+        pause_for_step_confirmation(
+            job,
+            store,
+            "visual_review",
+            "全部画面已生成，请完成重绘与时序调整",
+        )
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     store.update(job, step="render", progress=88, message="拼接分段视频")
     expected_parts = len(groups)
@@ -3595,6 +4009,9 @@ def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, An
         message="视频生成完成",
         artifacts=artifacts,
     )
+    if is_step_workflow_v2(request):
+        persist_step_workflow_state(job, "completed", message="视频生成完成，可进入成片精修")
+        store.update(job, request=job.request)
     manifest = output_dir / "other" / "归档清单.json"
     if manifest.is_file():
         try:
@@ -3608,6 +4025,8 @@ def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, An
 def render_from_visual_checkpoint(job: Job, store: JobStore, request: dict[str, Any]) -> None:
     """Finish module 5 without calling Agent or Image2 again after visual approval."""
     store.raise_if_cancelled(job)
+    if is_step_workflow_v2(request) and not restore_step_visual_snapshot(job):
+        raise RuntimeError("分步任务的画面精修快照不完整，无法安全渲染")
     store.update(job, status="running", step="render", progress=86, message=STEPS[5][1])
     render_variant = str(request.get("video_render_variant") or "both").strip().lower()
     if render_variant not in {"subtitles", "raw", "both"}:
@@ -3630,12 +4049,21 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     request = job.request
     job_dir = JOBS_DIR / job.id
     job_dir.mkdir(parents=True, exist_ok=True)
-    if resume and bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") == "visual":
+    step_stage = str(request.get("_step_mode_stage") or "")
+    if resume and is_step_workflow_v2(request) and step_stage == "render_running":
+        render_from_visual_checkpoint(job, store, request)
+        return
+    if resume and bool(request.get("step_mode")) and not is_step_workflow_v2(request) and step_stage == "visual":
         render_from_visual_checkpoint(job, store, request)
         return
     if not resume:
         reset_generation_workspace()
         store.log(job, "已清理本轮生成的共享 workspace 旧产物")
+    elif is_step_workflow_v2(request) and step_stage == "visual_running":
+        # A guided job may wait while other jobs use the shared workspace.
+        # Always rebuild this stage from its output-scoped durable snapshot.
+        reset_generation_workspace()
+        store.log(job, "分步模式：已清理共享 workspace，准备从本任务快照恢复配音与字幕")
     else:
         store.log(job, "断点续跑：保留 workspace 中已生成的音频、字幕、分镜和海报")
     script = str(request.get("script") or "")
@@ -3649,7 +4077,11 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     module1_srt_path = WORKSPACE_DIR / "2_audio_srt" / "final_output.srt"
     subtitle_path = WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
     scene_timeline_path = WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json"
-    if resume:
+    if resume and is_step_workflow_v2(request) and step_stage == "visual_running":
+        if not restore_step_audio_snapshot(job):
+            raise RuntimeError("分步任务的配音与字幕快照不完整，无法安全开始画面阶段")
+        store.log(job, "分步模式：已从 output 快照恢复确认后的配音、字幕与时间线")
+    if resume and not (is_step_workflow_v2(request) and step_stage == "visual_running"):
         restored_checkpoint = restore_long_split_checkpoint(job)
         if restored_checkpoint is not None:
             store.log(job, f"断点续跑：已恢复长文全文检查点，避免将失败时的小段误判为完整任务: {restored_checkpoint}")
@@ -3785,7 +4217,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         store.log(job, f"模块 1 检查点已保存；后续失败断点续跑不会重复配音: {checkpoint}")
 
     store.raise_if_cancelled(job)
-    if bool(request.get("step_mode")) and str(request.get("_step_mode_stage") or "") not in {"audio", "visual"}:
+    if bool(request.get("step_mode")) and not is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") not in {"audio", "visual"}:
         store.update(job, artifacts=copy_artifacts(job))
         pause_for_step_confirmation(
             job,
@@ -3869,6 +4301,17 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         run_command(job, store, [sys.executable, "module2_5_text_corrector.py"], STEPS[2][1])
 
     store.raise_if_cancelled(job)
+    if is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "audio_running":
+        store.update(job, artifacts=copy_artifacts(job))
+        pause_for_step_confirmation(
+            job,
+            store,
+            "audio_review",
+            "配音与字幕校对已完成，请试听、精修并确认",
+        )
+    if is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "visual_running":
+        if restore_step_audio_snapshot(job):
+            store.log(job, "分步模式：已恢复用户精修后的配音、字幕和时间轴")
     with cloud_model_pool_environment(job, store, request):
         render_downstream(job, store, request, resume=resume)
 

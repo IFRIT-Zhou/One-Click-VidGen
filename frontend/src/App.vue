@@ -304,7 +304,7 @@
             class="page-tab-step-toggle"
             :class="{ active: activePage === 'workspace' && form.step_mode }"
           >
-            <input v-model="form.step_mode" type="checkbox" @change="activePage = 'workspace'" />
+            <input v-model="form.step_mode" type="checkbox" @change="handleStepModeToggle" />
             <span class="page-tab-step-switch" aria-hidden="true"><i></i></span>
             <span class="page-tab-step-copy"><strong>分步模式</strong><small>试听、验图后继续</small></span>
           </label>
@@ -325,7 +325,7 @@
             <small>音频转 SRT 与校对</small>
           </button>
           <div class="page-tabs-actions">
-            <div v-if="activePage === 'workspace'" class="generation-top-actions">
+            <div v-if="activePage === 'workspace' && !form.step_mode" class="generation-top-actions">
               <label class="main-render-variant">
                 <span>成片版本</span>
                 <select v-model="form.video_render_variant">
@@ -347,11 +347,7 @@
                 <button class="primary-btn launch-generation-btn" type="button" :disabled="!canSubmitGeneration" @click="submit">
                   {{ submitButtonText }}
                 </button>
-                <small v-if="generationBlockReason" class="generation-block-reason" role="status">
-                  <span>{{ generationBlockReason.code }}</span>{{ generationBlockReason.message }}
-                </small>
               </div>
-              <small v-if="generationSubmitMessage" class="generation-submit-message"><span>[SUBMIT_FAILED]</span>{{ generationSubmitMessage }}</small>
             </div>
             <template v-if="session.user">
               <button class="toolbar-save-button" type="button" :disabled="savingParameterPreset" @click="saveCurrentParameterPreset">
@@ -373,9 +369,79 @@
             </template>
             <span v-if="parameterPresetMessage" class="muted small page-tabs-message">{{ parameterPresetMessage }}</span>
           </div>
+          <div
+            v-if="activePage === 'workspace' && !form.step_mode && (generationBlockReason || generationSubmitMessage)"
+            class="generation-nav-status"
+            role="status"
+          >
+            <small v-if="generationBlockReason" class="generation-block-reason">
+              <span>{{ generationBlockReason.code }}</span>{{ generationBlockReason.message }}
+            </small>
+            <small v-if="generationSubmitMessage" class="generation-submit-message">
+              <span>[SUBMIT_FAILED]</span>{{ generationSubmitMessage }}
+            </small>
+          </div>
         </nav>
 
-        <section v-if="activePage === 'workspace'" class="workspace-page stack">
+        <section v-if="activePage === 'workspace'" class="workspace-page stack" :class="guidedWorkspaceClass">
+        <section v-if="form.step_mode" class="guided-workflow-shell" aria-label="分步制作流程">
+          <div class="guided-stage-strip">
+            <div v-for="stage in guidedStageSteps" :key="stage.key" class="guided-stage-chip" :class="guidedStageChipClass(stage.key)">
+              <span>{{ stage.index }}</span>
+              <div><strong>{{ stage.label }}</strong><small>{{ stage.description }}</small></div>
+            </div>
+          </div>
+          <div class="guided-stage-console">
+            <div>
+              <div class="eyebrow">{{ guidedStageEyebrow }}</div>
+              <h2>{{ guidedStageTitle }}</h2>
+              <p class="muted">{{ guidedStageDescription }}</p>
+            </div>
+            <div class="guided-stage-actions">
+              <button
+                v-if="guidedHasExistingWorkflow && guidedStage !== 'completed'"
+                class="ghost-btn danger-btn guided-cancel-workflow"
+                type="button"
+                :disabled="guidedCancelling"
+                @click="cancelGuidedWorkflow"
+              >{{ guidedCancelling ? '正在取消…' : '取消本次分步任务' }}</button>
+              <button v-if="guidedCanStop" class="ghost-btn stop-btn" type="button" :disabled="cancellingGeneration" @click="cancelGeneration">
+                {{ cancellingGeneration ? '正在停止…' : '停止当前阶段' }}
+              </button>
+              <button v-if="guidedCanResume" class="primary-btn guided-primary-action" type="button" :disabled="resumingGeneration" @click="resumeGeneration">
+                {{ resumingGeneration ? '正在恢复…' : '继续当前阶段' }}
+              </button>
+              <button v-else-if="guidedStage === 'audio_setup'" class="primary-btn guided-primary-action" type="button" :disabled="!canSubmitGeneration" @click="submit">
+                {{ submitting ? '正在提交…' : '开始生成配音与字幕' }}
+              </button>
+              <button v-else-if="guidedStage === 'audio_review'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="advanceGuidedWorkflow('confirm_audio')">
+                {{ guidedAdvancing ? '正在确认…' : '确认配音与字幕' }}
+              </button>
+              <button v-else-if="guidedStage === 'visual_setup'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing" @click="advanceGuidedWorkflow('start_visual')">
+                {{ guidedAdvancing ? '正在启动…' : '确认设置并开始作图' }}
+              </button>
+              <button v-else-if="guidedStage === 'visual_review'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || visualEditor.has_active_image_tasks || ttsEditor.task?.status === 'running'" @click="advanceGuidedWorkflow('confirm_visual')">
+                {{ guidedAdvancing ? '正在确认…' : '确认画面与时序' }}
+              </button>
+              <button v-else-if="guidedStage === 'render_setup'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || (form.bgm_enabled && !form.bgm_tracks.length)" @click="advanceGuidedWorkflow('start_render')">
+                {{ guidedAdvancing ? '正在启动…' : '开始最终渲染' }}
+              </button>
+              <button v-else-if="guidedStage === 'completed'" class="primary-btn guided-primary-action" type="button" @click="enterGuidedPostProduction">
+                进入成片精修
+              </button>
+            </div>
+          </div>
+          <div v-if="guidedStageMessage" class="guided-stage-message" :class="{ error: guidedStageError }">{{ guidedStageMessage }}</div>
+          <div v-if="guidedStage === 'visual_setup'" class="guided-cost-estimate">
+            <span>本阶段预估</span>
+            <strong>约 {{ guidedVisualEstimate.images }} 张图片</strong>
+            <small>文本导演约 3–4 次请求；图片按实际成功张数计费。开始前请确认接口或号池余额。</small>
+          </div>
+          <div v-if="guidedRunning" class="guided-inline-progress">
+            <span><i :style="{ width: `${activeJob?.progress || 0}%` }"></i></span>
+            <small>{{ activeJob?.message || '正在处理当前阶段' }} · {{ activeJob?.progress || 0 }}%</small>
+          </div>
+        </section>
         <section id="create">
           <article class="panel hero-panel">
             <div class="panel-head">
@@ -751,6 +817,80 @@
               <small v-if="stepAudioSaveMessage" class="muted">{{ stepAudioSaveMessage }}</small>
               <small v-if="canRetryTts" class="muted">重新配音会清理本任务的当前中间产物，并再次停在试听确认。</small>
             </section>
+            <section v-if="form.step_mode && guidedStage === 'audio_review'" class="guided-audio-editor">
+              <div class="guided-editor-head">
+                <div><div class="sidebar-label">配音精修</div><strong>逐句试听与选择重配</strong></div>
+                <button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
+                  {{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}
+                </button>
+              </div>
+              <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
+              <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前配音没有可逐句精修的素材。' }}</div>
+              <template v-else>
+              <details class="guided-tts-settings">
+                <summary>本次重配参数（默认沿用当前项目）</summary>
+                <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
+                  <div class="tts-refine-parameter-head">
+                    <div><span class="sidebar-label">{{ ttsRefineEngineLabel }}</span><h4>只作用于本次选中的句子</h4></div>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="hydrateTtsRefineSettings(ttsEditor)">恢复项目参数</button>
+                  </div>
+                  <div v-if="ttsEditor.engine === 'indextts25'" class="tts-refine-voice-row">
+                    <label class="script-file-picker">
+                      <input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="ttsRefineVoiceUploading || ttsEditor.task?.status === 'running'" @change="uploadTtsRefineVoice" />
+                      <span>{{ ttsRefineVoiceUploading ? '上传中' : '更换音源' }}</span>
+                      <strong>{{ ttsRefineVoiceName || '沿用该项目当前参考音色' }}</strong>
+                    </label>
+                  </div>
+                  <label v-else-if="ttsEditor.engine === 'cluster'" class="tts-refine-wide-field">
+                    <span>云端音色</span>
+                    <select v-model="ttsRefineForm.cluster_voice_key">
+                      <optgroup label="云端默认音色"><option v-for="voice in cloudPresetVoiceOptions" :key="`guided-refine-preset:${voice.id}`" :value="`preset:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup>
+                      <optgroup v-if="cloudUploadedVoiceOptions.length" label="我上传的音色"><option v-for="voice in cloudUploadedVoiceOptions" :key="`guided-refine-uploaded:${voice.id}`" :value="`uploaded:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup>
+                    </select>
+                  </label>
+                  <div v-else-if="ttsEditor.engine === 'qwen'" class="form-grid tts-refine-qwen-grid">
+                    <label><span>Qwen 系统音色</span><select v-model="ttsRefineForm.qwen_voice"><optgroup v-for="group in qwenVoiceGroups" :key="`guided-refine-${group.label}`" :label="group.label"><option v-for="voice in group.voices" :key="`guided-refine-${voice.value}`" :value="voice.value">{{ voice.label }}</option></optgroup></select></label>
+                    <label><span>配音描述</span><textarea v-model="ttsRefineForm.qwen_instructions" rows="3" maxlength="1600"></textarea></label>
+                  </div>
+                  <div class="form-grid tts-refine-grid">
+                    <label v-if="ttsEditor.engine !== 'qwen'"><span>情绪</span><select v-model="ttsRefineForm.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="`guided-refine-${emotion}`" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
+                    <label v-if="ttsEditor.engine !== 'qwen'" class="tts-emotion-strength"><span>情绪强度 · {{ Number(ttsRefineForm.tts_emotion_weight).toFixed(2) }}</span><input v-model.number="ttsRefineForm.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!ttsRefineForm.tts_emotion" /></label>
+                    <label><span>语速</span><input v-model.number="ttsRefineForm.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label>
+                    <label><span>音量</span><input v-model.number="ttsRefineForm.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label>
+                    <label><span>音调</span><input v-model.number="ttsRefineForm.tts_pitch" type="number" min="-12" max="12" step="1" /></label>
+                    <label v-if="ttsEditor.engine === 'indextts25'"><span>并行数</span><input v-model.number="ttsRefineForm.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                  </div>
+                </div>
+              </details>
+              <div class="guided-tts-grid">
+                <article v-for="item in ttsEditor.segments" :key="`guided-tts-${item.index}-${item.audio_url}`" class="guided-tts-card" :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }">
+                  <div><strong>第 {{ item.index }} 句</strong><small>{{ Number(item.duration || 0).toFixed(2) }} 秒</small></div>
+                  <p>{{ item.text }}</p>
+                  <audio controls preload="none" :src="item.audio_url"></audio>
+                  <label><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" /></label>
+                  <button class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
+                  <div v-if="isTtsPronunciationOpen(item.index)" class="guided-pronunciation-editor">
+                    <small>朗读文本只发送给配音引擎，字幕仍保留原文字。</small>
+                    <textarea :value="ttsReadingDrafts[item.index]" rows="2" maxlength="1200" :disabled="ttsEditor.task?.status === 'running'" placeholder="例如：点击chong2绘按钮" @input="updateTtsReadingDraft(item, $event)"></textarea>
+                    <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" @click="resetTtsReadingDraft(item)">恢复原文</button>
+                  </div>
+                </article>
+              </div>
+              </template>
+              <div class="guided-editor-head guided-subtitle-head">
+                <div><div class="sidebar-label">字幕校对</div><strong>修改文字，不改变当前时间边界</strong></div>
+                <button class="primary-btn compact-btn" type="button" :disabled="!guidedSubtitleDirtyCount || guidedSubtitleSaving" @click="saveGuidedSubtitles">
+                  {{ guidedSubtitleSaving ? '保存中…' : `保存字幕修改${guidedSubtitleDirtyCount ? `（${guidedSubtitleDirtyCount}）` : ''}` }}
+                </button>
+              </div>
+              <div v-if="guidedSubtitleLoading" class="empty-state">正在读取字幕…</div>
+              <div v-else class="guided-subtitle-list">
+                <label v-for="(item, index) in guidedSubtitles" :key="item.slide_id">
+                  <span>第 {{ index + 1 }} 句 · {{ formatGuidedTimestamp(item.start) }}–{{ formatGuidedTimestamp(item.end) }}</span>
+                  <textarea v-model="guidedSubtitleDrafts[item.slide_id]" rows="2" maxlength="1200"></textarea>
+                </label>
+              </div>
+            </section>
             </div>
             </div>
 
@@ -1053,7 +1193,7 @@
               <div>{{ step.label }}</div>
             </div>
           </div>
-          <div v-if="activeJob?.status === 'waiting_confirmation'" class="step-confirmation-card">
+          <div v-if="activeJob?.status === 'waiting_confirmation' && !isGuidedWorkflowJob(activeJob)" class="step-confirmation-card">
             <template v-if="activeJob.request?._step_mode_stage === 'audio'">
               <strong>配音已生成，等待你的确认</strong>
               <span class="muted small">请使用上方“分步模式 · 配音试听”播放器检查内容、音色与语气；确认后点击右上角“确认配音，开始配图”。</span>
@@ -1140,7 +1280,7 @@
                     <button
                       type="button"
                       class="task-delete-btn"
-                      :disabled="['queued', 'running', 'waiting_confirmation'].includes(job.status)"
+                      :disabled="['queued', 'running'].includes(job.status) || (job.status === 'waiting_confirmation' && !isGuidedWorkflowJob(job))"
                       title="删除任务及其专属产物"
                       @click.stop="deleteGenerationJob(job)"
                     >删除</button>
@@ -1148,6 +1288,12 @@
                 </div>
                 <h3>{{ job.request?.project_name || job.id }}</h3>
                 <p>{{ job.message }}</p>
+                <button
+                  v-if="isGuidedWorkflowJob(job) && job.status !== 'completed'"
+                  class="ghost-btn compact-btn guided-task-resume"
+                  type="button"
+                  @click.stop="continueGuidedJob(job)"
+                >继续分步制作</button>
               </div>
               <div v-if="!jobs.length" class="empty-state">暂无任务。</div>
             </div>
@@ -1569,7 +1715,10 @@
                   </div>
                 </div>
               </section>
-              <div class="visual-render-footer">
+              <div
+                v-if="!(form.step_mode && isGuidedWorkflowJob(activeJob) && activeJob?.id === visualEditorProjectId && guidedStage !== 'completed')"
+                class="visual-render-footer"
+              >
                 <label>渲染设置
                   <select v-model="visualRenderMode">
                     <option value="subtitles">仅渲染字幕版</option>
@@ -2450,6 +2599,15 @@ const stepAudioDuration = ref(0)
 const savingStepAudio = ref(false)
 const stepAudioSaveMessage = ref('')
 const retryingTts = ref(false)
+const guidedAdvancing = ref(false)
+const guidedCreatingNew = ref(false)
+const guidedCancelling = ref(false)
+const guidedStageMessage = ref('')
+const guidedStageError = ref(false)
+const guidedSubtitles = ref([])
+const guidedSubtitleDrafts = reactive({})
+const guidedSubtitleLoading = ref(false)
+const guidedSubtitleSaving = ref(false)
 const folderOpenMessage = ref('')
 const visualEditorOpen = ref(false)
 const visualEditorLoading = ref(false)
@@ -3147,9 +3305,70 @@ const cloudVoiceModel = computed({
     cloudQuote.value = {}
   },
 })
+function isGuidedWorkflowJob(job) {
+  return Boolean(job?.request?.step_mode && Number(job?.request?._step_workflow_version || 0) >= 2)
+}
+
+const guidedStage = computed(() => {
+  if (!form.step_mode) return 'inactive'
+  if (guidedCreatingNew.value) return 'audio_setup'
+  if (!isGuidedWorkflowJob(activeJob.value)) return 'audio_setup'
+  return String(activeJob.value?.request?._step_mode_stage || 'audio_running')
+})
+const guidedRunning = computed(() => ['queued', 'running'].includes(activeJob.value?.status) && isGuidedWorkflowJob(activeJob.value))
+const guidedCanStop = computed(() => guidedRunning.value)
+const guidedCanResume = computed(() => isGuidedWorkflowJob(activeJob.value) && ['failed', 'cancelled'].includes(activeJob.value?.status))
+const guidedHasExistingWorkflow = computed(() => !guidedCreatingNew.value && isGuidedWorkflowJob(activeJob.value))
+const guidedStageSteps = [
+  { key: 'audio', index: '01', label: '配音与字幕', description: '生成、试听、校对' },
+  { key: 'visual', index: '02', label: '画面设计', description: '设定、作图、验图' },
+  { key: 'render', index: '03', label: '成片渲染', description: '配乐、版本、导出' },
+]
+const guidedStageGroup = computed(() => {
+  if (['audio_setup', 'audio_running', 'audio_review'].includes(guidedStage.value)) return 'audio'
+  if (['visual_setup', 'visual_running', 'visual_review'].includes(guidedStage.value)) return 'visual'
+  return 'render'
+})
+const guidedStageOrder = { audio: 1, visual: 2, render: 3 }
+function guidedStageChipClass(key) {
+  const current = guidedStageOrder[guidedStageGroup.value] || 1
+  const value = guidedStageOrder[key]
+  return { active: value === current, completed: value < current || guidedStage.value === 'completed' }
+}
+const guidedStageEyebrow = computed(() => ({ audio: '阶段 1 / 3', visual: '阶段 2 / 3', render: '阶段 3 / 3' }[guidedStageGroup.value]))
+const guidedStageTitle = computed(() => ({
+  audio_setup: '先完成配音与字幕', audio_running: '正在生成配音与字幕', audio_review: '试听配音并校对字幕',
+  visual_setup: '设置作品画面', visual_running: '正在规划并生成图片', visual_review: '检查图片与画面时序',
+  render_setup: '设置 BGM 与成片版本', render_running: '正在渲染最终视频', completed: '分步制作已完成',
+}[guidedStage.value] || '分步制作'))
+const guidedStageDescription = computed(() => ({
+  audio_setup: '这一阶段只读取文案、配音方式和长文分段参数；完成后会自动暂停。',
+  audio_running: '可以切换到其他页面，完成后会停在试听与字幕校对。',
+  audio_review: '可试听整段和逐句配音、重配选中句，并直接修正字幕文字。',
+  visual_setup: '现在再填写画风、人物、环境、参考图、节奏和 Agent 参数。',
+  visual_running: 'Agent 正在理解全文、规划镜头并生成图片，完成后会再次暂停。',
+  visual_review: '请在下方画面修改区重绘、替换或调整画面时序，确认后进入渲染设置。',
+  render_setup: '最后选择 BGM 和字幕/无字幕版本；点击后只运行最终渲染。',
+  render_running: '渲染完成后会归档为普通项目，并保留全部后期编辑能力。',
+  completed: '视频已归档，可播放、打开输出目录或进入普通成片精修。',
+}[guidedStage.value] || ''))
+const guidedWorkspaceClass = computed(() => ({
+  'guided-mode': form.step_mode,
+  [`guided-stage-${guidedStage.value}`]: form.step_mode,
+}))
+const guidedSubtitleDirtyCount = computed(() => guidedSubtitles.value.filter((item) => (
+  String(guidedSubtitleDrafts[item.slide_id] ?? '').trim() !== String(item.text ?? '').trim()
+)).length)
+const guidedVisualEstimate = computed(() => {
+  const duration = Number(guidedSubtitles.value.at(-1)?.end || stepAudioDuration.value || 0)
+  const defaults = VISUAL_PACING_DEFAULTS[form.content_mode] || VISUAL_PACING_DEFAULTS.general
+  const target = Number(form.visual_pacing_preset === 'custom' ? form.visual_target_duration : defaults.target) || 8
+  return { images: Math.max(1, Math.ceil(duration / Math.max(4, target))) }
+})
 const pendingGenerationJob = computed(() => (
   [activeJob.value, ...jobs.value].filter(Boolean).find((job) => (
-    ['queued', 'running', 'waiting_confirmation'].includes(job.status)
+    ['queued', 'running'].includes(job.status)
+    || (job.status === 'waiting_confirmation' && !isGuidedWorkflowJob(job))
   )) || null
 ))
 const hasPendingGeneration = computed(() => Boolean(pendingGenerationJob.value))
@@ -3167,8 +3386,8 @@ const generationBlockReason = computed(() => {
   if (String(form.script || '').length > MAX_SCRIPT_CHARACTERS) {
     return block('SCRIPT_TOO_LONG', `文案超过 ${MAX_SCRIPT_CHARACTERS.toLocaleString('zh-CN')} 字，请缩短后再生成。`)
   }
-  if (form.bgm_enabled && !form.bgm_tracks.length) return block('BGM_REQUIRED', '你已开启添加 BGM，但还没有选择音乐。')
-  if (form.use_cloud_image_pool && !cloudSession.value.authenticated) return block('CLOUD_LOGIN_REQUIRED', '使用云端号池前，请先登录云端账户。')
+  if (!form.step_mode && form.bgm_enabled && !form.bgm_tracks.length) return block('BGM_REQUIRED', '你已开启添加 BGM，但还没有选择音乐。')
+  if (!form.step_mode && form.use_cloud_image_pool && !cloudSession.value.authenticated) return block('CLOUD_LOGIN_REQUIRED', '使用云端号池前，请先登录云端账户。')
   if (form.skip_tts) {
     if (!form.source_audio_id) return block('AUDIO_REQUIRED', '已选择跳过配音，请先上传已有配音。')
     if (!form.skip_text_correction && !form.script.trim()) return block('SCRIPT_REQUIRED', '请填写与已有配音对应的文案，或选择“没有文案”。')
@@ -3250,7 +3469,7 @@ const scriptPlaceholder = computed(() => {
 })
 const canCancelGeneration = computed(() => (
   session.value.user
-  && ['queued', 'running', 'waiting_confirmation'].includes(activeJob.value?.status)
+  && ['queued', 'running'].includes(activeJob.value?.status)
 ))
 const canResumeGeneration = computed(() => (
   session.value.user
@@ -3259,18 +3478,22 @@ const canResumeGeneration = computed(() => (
 const canContinueStepMode = computed(() => Boolean(
   session.value.user
   && activeJob.value?.status === 'waiting_confirmation'
+  && !isGuidedWorkflowJob(activeJob.value)
 ))
 const stepModeContinueLabel = computed(() => {
   const stage = activeJob.value?.request?._step_mode_stage
   return stage === 'visual' ? '确认画面，开始渲染' : '确认配音，开始配图'
 })
 const stepModeAudioUrl = computed(() => {
+  if (isGuidedWorkflowJob(activeJob.value) && activeJob.value?.id && guidedStage.value !== 'audio_running') {
+    return `/api/jobs/${encodeURIComponent(activeJob.value.id)}/visual-editor/audio?v=${Number(ttsEditor.value?.revision || 0)}`
+  }
   return activeJob.value?.artifacts?.audio || ''
 })
 const canRetryTts = computed(() => Boolean(
   session.value.user
   && activeJob.value?.status === 'waiting_confirmation'
-  && activeJob.value?.request?._step_mode_stage === 'audio'
+  && ['audio', 'audio_review'].includes(activeJob.value?.request?._step_mode_stage)
   && !activeJob.value?.request?.skip_tts
 ))
 const ttsStatusText = computed(() => {
@@ -5283,7 +5506,8 @@ function stopTtsEditorPolling() {
 }
 
 async function pollTtsEditorStatus() {
-  if (!visualEditorOpen.value || !visualEditorProjectId.value) return
+  const guidedAudioReview = form.step_mode && guidedStage.value === 'audio_review'
+  if ((!visualEditorOpen.value && !guidedAudioReview) || !visualEditorProjectId.value) return
   try {
     const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
     const previous = ttsEditor.value.task?.status
@@ -5293,7 +5517,11 @@ async function pollTtsEditorStatus() {
       if (payload.task?.status === 'completed') {
         resetTtsSegmentAudio()
         selectedTtsSegmentIndices.value = []
-        await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
+        if (guidedAudioReview) {
+          await Promise.all([loadTtsEditor(), loadGuidedSubtitles()])
+        } else {
+          await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
+        }
       }
     }
   } catch {
@@ -6031,6 +6259,230 @@ function generationRequestPayload() {
   return payload
 }
 
+function guidedVisualParameters() {
+  return {
+    content_mode: form.content_mode,
+    auto_split_long_text: form.auto_split_long_text,
+    split_text_threshold: form.split_text_threshold,
+    visual_backend: form.visual_backend,
+    use_cloud_image_pool: form.use_cloud_image_pool,
+    visual_prompt_mode: form.visual_prompt_mode,
+    visual_pacing_preset: form.visual_pacing_preset,
+    visual_min_duration: form.visual_min_duration,
+    visual_target_duration: form.visual_target_duration,
+    visual_max_duration: form.visual_max_duration,
+    visual_max_slides: form.visual_max_slides,
+    visual_style_prompt: form.visual_style_prompt,
+    global_character_prompt: form.global_character_prompt,
+    reference_image_ids: [...form.reference_image_ids],
+    story_environment_prompt: form.story_environment_prompt,
+    visual_prompt_system: form.visual_prompt_system,
+    agent0_prompt_system: form.agent0_prompt_system,
+    agent1_prompt_system: form.agent1_prompt_system,
+  }
+}
+
+function guidedRenderParameters() {
+  return {
+    video_render_variant: form.video_render_variant,
+    bgm_enabled: form.bgm_enabled,
+    bgm_tracks: form.bgm_tracks.map((track) => ({ ...track })),
+    bgm_fade_enabled: form.bgm_fade_enabled,
+    bgm_fade_duration: form.bgm_fade_duration,
+  }
+}
+
+function hydrateGuidedForm(job) {
+  if (!job?.request) return
+  for (const [key, value] of Object.entries(job.request)) {
+    if (!(key in form) || key.startsWith('_')) continue
+    form[key] = Array.isArray(value) ? value.map((item) => (typeof item === 'object' ? { ...item } : item)) : value
+  }
+  ttsEngine.value = job.request.tts_engine === 'indextts2' ? 'indextts25' : (job.request.tts_engine || ttsEngine.value)
+}
+
+async function loadGuidedAudioReview() {
+  if (!activeJob.value?.id) return
+  visualEditorProjectId.value = activeJob.value.id
+  await Promise.all([loadTtsEditor(), loadGuidedSubtitles()])
+}
+
+async function loadGuidedSubtitles() {
+  if (!activeJob.value?.id) return
+  guidedSubtitleLoading.value = true
+  try {
+    const payload = await api.stepWorkflowSubtitles(activeJob.value.id)
+    guidedSubtitles.value = payload.items || []
+    for (const key of Object.keys(guidedSubtitleDrafts)) delete guidedSubtitleDrafts[key]
+    for (const item of guidedSubtitles.value) guidedSubtitleDrafts[item.slide_id] = item.text || ''
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '无法读取字幕校对资料'
+  } finally {
+    guidedSubtitleLoading.value = false
+  }
+}
+
+async function saveGuidedSubtitles() {
+  if (!activeJob.value?.id || !guidedSubtitleDirtyCount.value) return
+  const updates = {}
+  for (const item of guidedSubtitles.value) {
+    const text = String(guidedSubtitleDrafts[item.slide_id] ?? '').trim()
+    if (text !== String(item.text || '').trim()) updates[item.slide_id] = text
+  }
+  guidedSubtitleSaving.value = true
+  try {
+    const payload = await api.saveStepWorkflowSubtitles(activeJob.value.id, updates)
+    guidedSubtitles.value = payload.items || []
+    for (const item of guidedSubtitles.value) guidedSubtitleDrafts[item.slide_id] = item.text || ''
+    guidedStageError.value = false
+    guidedStageMessage.value = `已保存 ${Object.keys(updates).length} 句字幕修改。`
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '字幕修改保存失败'
+  } finally {
+    guidedSubtitleSaving.value = false
+  }
+}
+
+function formatGuidedTimestamp(seconds) {
+  const value = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(value / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor((value % 1) * 10))}`
+}
+
+async function openGuidedVisualEditor() {
+  if (!activeJob.value?.id) return
+  visualEditorOpen.value = true
+  visualEditorProjectId.value = activeJob.value.id
+  const current = {
+    id: activeJob.value.id,
+    name: activeJob.value.request?.project_name || activeJob.value.id,
+  }
+  if (!visualEditorProjects.value.some((item) => item.id === current.id)) {
+    visualEditorProjects.value = [current, ...visualEditorProjects.value]
+  }
+  await Promise.all([loadVisualEditor({ preservePage: true, hydrateBgm: true }), loadTtsEditor()])
+}
+
+async function advanceGuidedWorkflow(action) {
+  if (!activeJob.value?.id || guidedAdvancing.value) return
+  guidedAdvancing.value = true
+  guidedStageMessage.value = ''
+  guidedStageError.value = false
+  try {
+    if (action === 'confirm_audio' && guidedSubtitleDirtyCount.value) {
+      await saveGuidedSubtitles()
+      if (guidedSubtitleDirtyCount.value) throw new Error('字幕修改尚未保存，请处理后再确认配音与字幕')
+    }
+    const parameters = action === 'start_visual'
+      ? guidedVisualParameters()
+      : action === 'start_render' ? guidedRenderParameters() : {}
+    activeJob.value = await api.advanceStepWorkflow(activeJob.value.id, action, parameters)
+    followLiveJob.value = true
+    await refresh()
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '无法进入下一阶段'
+  } finally {
+    guidedAdvancing.value = false
+  }
+}
+
+async function continueGuidedJob(job) {
+  guidedCreatingNew.value = false
+  await selectJob(job.id)
+  form.step_mode = true
+  hydrateGuidedForm(activeJob.value)
+  activePage.value = 'workspace'
+  if (guidedStage.value === 'audio_review') await loadGuidedAudioReview()
+  if (guidedStage.value === 'visual_review') await openGuidedVisualEditor()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function clearGuidedEditingState() {
+  guidedSubtitles.value = []
+  for (const key of Object.keys(guidedSubtitleDrafts)) delete guidedSubtitleDrafts[key]
+  selectedTtsSegmentIndices.value = []
+  ttsEditor.value = { available: false, message: '', segments: [], task: { status: 'idle', message: '' } }
+  visualEditorOpen.value = false
+  visualEditorProjectId.value = ''
+  stepAudioPlaying.value = false
+  stepAudioCurrentTime.value = 0
+  stepAudioDuration.value = 0
+}
+
+function returnToFreshGuidedSetup(message = '') {
+  followLiveJob.value = false
+  activeJob.value = null
+  form.step_mode = true
+  guidedCreatingNew.value = true
+  guidedStageError.value = false
+  guidedStageMessage.value = message
+  clearGuidedEditingState()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+async function finishGuidedCancellation(jobId) {
+  // GPU TTS may need to finish its current inference point before the backend
+  // can safely remove files. Keep retrying quietly without trapping the user
+  // in the old workflow screen.
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    try {
+      await api.deleteJob(jobId)
+      await refresh()
+      return true
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    }
+  }
+  return false
+}
+
+async function cancelGuidedWorkflow() {
+  const job = activeJob.value
+  if (!isGuidedWorkflowJob(job) || guidedCancelling.value) return
+  const name = job.request?.project_name || job.id
+  if (!window.confirm(`确定取消分步任务“${name}”？\n\n该任务的临时文件和已归档阶段资产会被删除，此操作不可撤销。`)) return
+  guidedCancelling.value = true
+  const wasRunning = ['queued', 'running'].includes(job.status)
+  try {
+    if (wasRunning) await api.cancelJob(job.id)
+    returnToFreshGuidedSetup(
+      wasRunning
+        ? '旧任务正在安全停止并清理；现在可以重新填写新任务，提交后会在资源释放完成后自动开始。'
+        : '上一条分步任务已取消，可以从头创建新任务。',
+    )
+    const removed = await finishGuidedCancellation(job.id)
+    if (!removed) {
+      guidedStageError.value = true
+      guidedStageMessage.value = '已退出旧任务，但后台未能自动删除其记录；稍后可在任务列表中再次点击删除。'
+    }
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '取消分步任务失败'
+  } finally {
+    guidedCancelling.value = false
+  }
+}
+
+function handleStepModeToggle() {
+  activePage.value = 'workspace'
+  guidedStageMessage.value = ''
+  guidedStageError.value = false
+  if (form.step_mode) {
+    const resumable = isGuidedWorkflowJob(activeJob.value) && activeJob.value?.status !== 'completed'
+    guidedCreatingNew.value = !resumable
+  } else {
+    guidedCreatingNew.value = false
+  }
+}
+
+async function enterGuidedPostProduction() {
+  await openGuidedVisualEditor()
+  document.getElementById('visual-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function runManualPreflight() {
   if (!session.value.user || preflightRunning.value) return
   preflightResult.value = null
@@ -6078,6 +6530,7 @@ async function submit() {
   submitting.value = true
   try {
     activeJob.value = await api.createJob(generationRequestPayload())
+    if (form.step_mode) guidedCreatingNew.value = false
     jobPage.value = 1
     await refresh()
   } catch (error) {
@@ -6096,6 +6549,12 @@ async function selectJob(id, replace = true) {
   // the post-production editor the user is currently working in.
   if (replace) {
     visualEditorOpen.value = false
+    if (isGuidedWorkflowJob(payload) && payload.status !== 'completed') {
+      form.step_mode = true
+      hydrateGuidedForm(payload)
+      if (String(payload.request?._step_mode_stage || '') === 'audio_review') await loadGuidedAudioReview()
+      if (String(payload.request?._step_mode_stage || '') === 'visual_review') await openGuidedVisualEditor()
+    }
   }
 }
 
@@ -6114,12 +6573,14 @@ async function deleteGenerationJob(job) {
   if (!job?.id) return
   const name = job.request?.project_name || job.id
   if (!window.confirm(`确定删除任务“${name}”？\n将同时删除它的专属 workspace、output/TTS_Output 归档和日志，此操作不可撤销。`)) return
+  const deletedActiveGuided = activeJob.value?.id === job.id && isGuidedWorkflowJob(job)
   try {
     await api.deleteJob(job.id)
     if (activeJob.value?.id === job.id) activeJob.value = null
     if (module1Job.value?.id === job.id) module1Job.value = null
     if (subtitleJob.value?.id === job.id) subtitleJob.value = null
     await refresh()
+    if (deletedActiveGuided) returnToFreshGuidedSetup('上一条分步任务已删除，可以从头创建新任务。')
     if (!jobs.value.length && jobPage.value > 1) await changeJobPage(jobPage.value - 1)
   } catch (error) {
     window.alert(error.message || '删除任务失败')
@@ -6389,7 +6850,23 @@ async function retryTts() {
   stepAudioCurrentTime.value = 0
   retryingTts.value = true
   try {
-    activeJob.value = await api.retryJobTts(activeJob.value.id)
+    const requestPayload = generationRequestPayload()
+    const ttsParameters = {
+      tts_voice_id: requestPayload.tts_voice_id,
+      tts_speed: requestPayload.tts_speed,
+      tts_volume: requestPayload.tts_volume,
+      tts_pitch: requestPayload.tts_pitch,
+      tts_parallelism: requestPayload.tts_parallelism,
+      tts_emotion: requestPayload.tts_emotion,
+      tts_emotion_weight: requestPayload.tts_emotion_weight,
+      tts_pronunciation: requestPayload.tts_pronunciation,
+      qwen_tts_voice: requestPayload.qwen_tts_voice,
+      qwen_tts_instructions: requestPayload.qwen_tts_instructions,
+      qwen_tts_optimize_instructions: requestPayload.qwen_tts_optimize_instructions,
+      cluster_voice_type: requestPayload.cluster_voice_type,
+      cluster_voice_id: requestPayload.cluster_voice_id,
+    }
+    activeJob.value = await api.retryJobTts(activeJob.value.id, ttsParameters)
     await refresh()
   } finally {
     retryingTts.value = false
@@ -6567,6 +7044,19 @@ watch(() => cloudRechargeOpen.value || Boolean(cloudRechargeSuccess.value), (ope
     document.body.style.overflow = cloudRechargePreviousBodyOverflow
   }
 })
+
+watch(
+  () => `${activeJob.value?.id || ''}:${activeJob.value?.request?._step_mode_stage || ''}:${activeJob.value?.status || ''}`,
+  async () => {
+    if (!isGuidedWorkflowJob(activeJob.value) || !form.step_mode) return
+    hydrateGuidedForm(activeJob.value)
+    if (guidedStage.value === 'audio_review' && activeJob.value?.status === 'waiting_confirmation') {
+      await loadGuidedAudioReview()
+    } else if (guidedStage.value === 'visual_review' && activeJob.value?.status === 'waiting_confirmation') {
+      await openGuidedVisualEditor()
+    }
+  },
+)
 
 onUnmounted(() => {
   if (timer) window.clearInterval(timer)

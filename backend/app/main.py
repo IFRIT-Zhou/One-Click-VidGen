@@ -57,7 +57,9 @@ from .editor import (
 )
 from .pipeline import (
     JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, GenerationCancelled, SUBTITLE_VIDEO_STYLES,
-    normalize_project_name, render_standalone_subtitle_video, store, system_subtitle_fonts,
+    initialize_step_workflow, is_step_workflow_v2, normalize_project_name,
+    persist_step_workflow_state, render_standalone_subtitle_video, step_workflow_output_dir,
+    store, system_subtitle_fonts, validate_visual_coverage,
     user_reference_image_path, user_upload_path,
 )
 from .visual_editor import IMAGE_EXTENSIONS, visual_editor
@@ -207,6 +209,19 @@ class GenerateRequest(BaseModel):
 class ParameterPresetRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     parameters: dict[str, Any]
+
+
+class StepWorkflowAdvanceRequest(BaseModel):
+    action: Literal["confirm_audio", "start_visual", "confirm_visual", "start_render"]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class StepWorkflowSubtitleRequest(BaseModel):
+    updates: dict[str, str] = Field(min_length=1, max_length=300)
+
+
+class RetryTtsRequest(BaseModel):
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentPromptPresetRequest(BaseModel):
@@ -1060,6 +1075,11 @@ def _api_key_status() -> dict[str, Any]:
 
 def _required_job_config_error(data: dict[str, Any]) -> str | None:
     main_workflow = not bool(data.get("module1_only")) and not bool(data.get("subtitle_only"))
+    # A v2 guided job is created before its visual settings are shown.  Image
+    # and language credentials are therefore validated at ``start_visual``
+    # instead of blocking the audio stage up front.
+    if bool(data.get("step_mode")):
+        return None
     if not main_workflow or bool(data.get("use_cloud_image_pool")):
         return None
     status = _api_key_status()
@@ -1819,7 +1839,7 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     config_error = _required_job_config_error(data)
     if config_error:
         raise HTTPException(status_code=400, detail=config_error)
-    if data.get("use_cloud_image_pool") and not data.get("module1_only") and not data.get("subtitle_only"):
+    if data.get("use_cloud_image_pool") and not data.get("step_mode") and not data.get("module1_only") and not data.get("subtitle_only"):
         client = cloud_client_for(int(user["id"]))
         cloud_state = client.session_snapshot()
         if not cloud_state.get("configured"):
@@ -1918,6 +1938,8 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     elif data.get("skip_text_correction"):
         raise HTTPException(status_code=400, detail="只有使用已有配音时才能跳过字幕校对")
     job = store.create(data, user_id=int(user["id"]))
+    if data.get("step_mode"):
+        initialize_step_workflow(job)
     store.run_async(job)
     return job.snapshot()
 
@@ -1980,12 +2002,247 @@ def resume_job(job_id: str, request: Request) -> dict[str, Any]:
     return store.resume(job)
 
 
-@app.post("/api/jobs/{job_id}/retry-tts")
-def retry_job_tts(job_id: str, request: Request) -> dict[str, Any]:
+@app.post("/api/jobs/{job_id}/step-workflow/advance")
+def advance_step_workflow(
+    job_id: str,
+    payload: StepWorkflowAdvanceRequest,
+    request: Request,
+) -> dict[str, Any]:
     user = require_user(request)
     job = store.get(job_id)
     if not job or job.user_id != int(user["id"]):
         raise HTTPException(status_code=404, detail="job not found")
+    if not is_step_workflow_v2(job.request):
+        raise HTTPException(status_code=409, detail="该任务不是新版分步任务")
+    if job.status != "waiting_confirmation":
+        raise HTTPException(status_code=409, detail="当前分步阶段仍在运行或尚未准备好")
+    if payload.action == "confirm_audio" and tts_editor.status(job.id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="选中句仍在重配音，请等待完成后再确认")
+    if payload.action == "confirm_visual" and visual_editor.status(job.id).get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="仍有图片正在重绘或替换，请等待完成后再确认")
+
+    allowed_by_action = {
+        "confirm_audio": set(),
+        "start_visual": {
+            "content_mode", "auto_split_long_text", "split_text_threshold",
+            "visual_backend", "use_cloud_image_pool", "visual_prompt_mode",
+            "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
+            "visual_max_duration", "visual_max_slides", "visual_style_prompt",
+            "global_character_prompt", "reference_image_ids", "story_environment_prompt",
+            "visual_prompt_system", "agent0_prompt_system", "agent1_prompt_system",
+            "agent2_director_theme",
+        },
+        "confirm_visual": set(),
+        "start_render": {
+            "video_render_variant", "bgm_enabled", "bgm_tracks",
+            "bgm_fade_enabled", "bgm_fade_duration",
+        },
+    }
+    allowed = allowed_by_action[payload.action]
+    updates = {key: value for key, value in payload.parameters.items() if key in allowed}
+    if updates:
+        merged = {**job.request, **updates}
+        try:
+            validated = GenerateRequest(**{
+                key: value for key, value in merged.items()
+                if key in GenerateRequest.model_fields
+            }).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"阶段参数格式不正确：{exc}") from exc
+        if payload.action == "start_visual" and validated.get("visual_prompt_mode") == "simple":
+            validated["visual_prompt_system"] = build_visual_prompt_system(
+                str(validated.get("visual_style_prompt") or ""),
+                str(validated.get("content_mode") or CONTENT_MODE_STORY),
+                str(validated.get("global_character_prompt") or ""),
+            )
+        job.request.update({key: validated[key] for key in allowed if key in validated})
+        store.update(job, request=job.request)
+        persist_step_workflow_state(
+            job,
+            str(job.request.get("_step_mode_stage") or "audio_review"),
+            message=job.message,
+        )
+        store.update(job, request=job.request)
+    if payload.action == "start_visual":
+        visual_request = {**job.request, "step_mode": False}
+        config_error = _required_job_config_error(visual_request)
+        if config_error:
+            raise HTTPException(status_code=400, detail=config_error)
+        if bool(job.request.get("use_cloud_image_pool")):
+            client = cloud_client_for(int(user["id"]))
+            cloud_state = client.session_snapshot()
+            if not cloud_state.get("configured"):
+                raise HTTPException(status_code=503, detail="号池云端地址尚未配置，请设置 CLOUD_API_BASE_URL")
+            if not cloud_state.get("authenticated"):
+                raise HTTPException(status_code=401, detail="使用号池前请先登录右上角云端账户")
+            try:
+                account = client.account_summary()
+                client.model_pool_status()
+                client.image_pool_status()
+                credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
+                if float(credits.get("available") or 0) <= 0:
+                    raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")
+            except CloudApiError as exc:
+                raise _cloud_error(exc) from exc
+    if payload.action == "start_render" and bool(job.request.get("bgm_enabled")):
+        tracks = job.request.get("bgm_tracks") or []
+        if not tracks:
+            raise HTTPException(status_code=400, detail="已开启 BGM，但尚未添加音乐")
+        for track in tracks:
+            try:
+                source = user_upload_path(int(user["id"]), str(track.get("asset_id") or ""))
+            except (FileNotFoundError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if source.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+                raise HTTPException(status_code=400, detail=f"BGM 只支持常规音频文件：{source.name}")
+    if payload.action == "confirm_visual":
+        output_dir = step_workflow_output_dir(job)
+        if output_dir is None:
+            raise HTTPException(status_code=409, detail="分步任务尚未建立画面快照")
+        try:
+            validate_visual_coverage(
+                output_dir / "other" / "画面时间线.json",
+                output_dir / "other" / "画面映射.json",
+                output_dir / "image",
+                subtitle_path=None,
+            )
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"画面尚未完整，不能进入渲染阶段：{exc}",
+            ) from exc
+    try:
+        return store.advance_step_workflow(job, payload.action)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _step_srt_timestamp(seconds: float) -> str:
+    millis = max(0, int(round(float(seconds) * 1000)))
+    hours, millis = divmod(millis, 3_600_000)
+    minutes, millis = divmod(millis, 60_000)
+    secs, millis = divmod(millis, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _step_subtitle_payload(job: Any) -> tuple[Path, Path, list[dict[str, Any]]]:
+    output_dir = step_workflow_output_dir(job)
+    if output_dir is None:
+        raise FileNotFoundError("分步任务尚未建立可编辑快照")
+    timeline_path = output_dir / "other" / "画面时间线.json"
+    subtitle_path = output_dir / "other" / "最终字幕.srt"
+    if not timeline_path.is_file() or not subtitle_path.is_file():
+        raise FileNotFoundError("配音与字幕尚未生成完成")
+    raw = json.loads(timeline_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("字幕时间线格式不正确")
+    items = [item for item in raw if isinstance(item, dict)]
+    return timeline_path, subtitle_path, items
+
+
+@app.get("/api/jobs/{job_id}/step-workflow/subtitles")
+def get_step_workflow_subtitles(job_id: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    if not is_step_workflow_v2(job.request):
+        raise HTTPException(status_code=409, detail="该任务不是新版分步任务")
+    try:
+        _timeline_path, _subtitle_path, items = _step_subtitle_payload(job)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "items": [
+            {
+                "slide_id": str(item.get("slide_id") or item.get("id") or f"scene_{index:03d}"),
+                "start": float(item.get("start") or 0),
+                "end": float(item.get("end") or 0),
+                "text": str(item.get("text_content") or item.get("text") or ""),
+            }
+            for index, item in enumerate(items, start=1)
+        ]
+    }
+
+
+@app.post("/api/jobs/{job_id}/step-workflow/subtitles")
+def save_step_workflow_subtitles(
+    job_id: str,
+    payload: StepWorkflowSubtitleRequest,
+    request: Request,
+) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    if not is_step_workflow_v2(job.request):
+        raise HTTPException(status_code=409, detail="该任务不是新版分步任务")
+    stage = str(job.request.get("_step_mode_stage") or "")
+    if stage not in {"audio_review", "visual_setup"} or job.status != "waiting_confirmation":
+        raise HTTPException(status_code=409, detail="只能在配音与字幕确认阶段修改文字")
+    try:
+        timeline_path, subtitle_path, items = _step_subtitle_payload(job)
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    valid_ids = {
+        str(item.get("slide_id") or item.get("id") or f"scene_{index:03d}")
+        for index, item in enumerate(items, start=1)
+    }
+    unknown = sorted(set(payload.updates) - valid_ids)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"字幕编号不存在：{', '.join(unknown[:5])}")
+    for index, item in enumerate(items, start=1):
+        slide_id = str(item.get("slide_id") or item.get("id") or f"scene_{index:03d}")
+        if slide_id in payload.updates:
+            text = str(payload.updates[slide_id]).strip()
+            if not text:
+                raise HTTPException(status_code=422, detail=f"{slide_id} 的字幕不能为空")
+            item["text_content"] = text
+            if "text" in item:
+                item["text"] = text
+    timeline_path.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+    srt_blocks = []
+    for index, item in enumerate(items, start=1):
+        start = _step_srt_timestamp(float(item.get("start") or 0))
+        end = _step_srt_timestamp(float(item.get("end") or 0))
+        text = str(item.get("text_content") or item.get("text") or "").strip()
+        srt_blocks.append(f"{index}\n{start} --> {end}\n{text}")
+    subtitle_path.write_text("\n\n".join(srt_blocks) + "\n", encoding="utf-8")
+    persist_step_workflow_state(job, stage, message="字幕文字已保存，等待确认")
+    store.update(job, request=job.request, message="字幕文字已保存，等待确认")
+    store.log(job, f"分步模式：已保存 {len(payload.updates)} 句字幕修改")
+    return get_step_workflow_subtitles(job_id, request)
+
+
+@app.post("/api/jobs/{job_id}/retry-tts")
+def retry_job_tts(
+    job_id: str,
+    request: Request,
+    payload: RetryTtsRequest | None = None,
+) -> dict[str, Any]:
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user["id"]):
+        raise HTTPException(status_code=404, detail="job not found")
+    allowed = {
+        "tts_voice_id", "tts_speed", "tts_volume", "tts_pitch", "tts_parallelism",
+        "tts_emotion", "tts_emotion_weight", "tts_pronunciation",
+        "qwen_tts_voice", "qwen_tts_instructions", "qwen_tts_optimize_instructions",
+        "cluster_voice_type", "cluster_voice_id",
+    }
+    requested = dict(payload.parameters if payload else {})
+    updates = {key: value for key, value in requested.items() if key in allowed}
+    if updates:
+        merged = {**job.request, **updates}
+        try:
+            validated = GenerateRequest(**{
+                key: value for key, value in merged.items()
+                if key in GenerateRequest.model_fields
+            }).model_dump()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"配音参数格式不正确：{exc}") from exc
+        job.request.update({key: validated[key] for key in allowed if key in validated})
+        store.update(job, request=job.request)
     try:
         return store.retry_tts(job)
     except ValueError as exc:
@@ -2220,7 +2477,13 @@ def _owned_completed_job(job_id: str, request: Request) -> tuple[Any, int]:
     job = store.get(job_id)
     if not job or job.user_id != int(user["id"]):
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != "completed":
+    step_editable = (
+        is_step_workflow_v2(job.request)
+        and job.status == "waiting_confirmation"
+        and str(job.request.get("_step_mode_stage") or "")
+        in {"audio_review", "visual_setup", "visual_review", "render_setup"}
+    )
+    if job.status != "completed" and not step_editable:
         raise HTTPException(status_code=409, detail="visual editing is available after a job completes")
     return job, int(user["id"])
 

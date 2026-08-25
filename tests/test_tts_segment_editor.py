@@ -7,7 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import module1_agent_director as module1
-from backend.app.tts_editor import TtsEditor, _concat_wavs, _rewrite_srt_times
+from backend.app.tts_editor import (
+    TtsEditor,
+    _build_regeneration_plan,
+    _concat_wavs,
+    _rewrite_srt_times,
+)
 from backend.app.main import TtsSegmentRegenerateRequest
 
 
@@ -69,35 +74,17 @@ class TtsSegmentEditorTest(unittest.TestCase):
         self.assertEqual(payload["segments"][0]["tts_text"], "点击chong2绘。")
         self.assertTrue(payload["segments"][0]["pronunciation_modified"])
 
-    def test_indextts25_pronunciation_override_keeps_single_sentence_token_limit(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            project = Path(directory)
-            segment_dir = project / "other" / "tts_segments"
-            segment_dir.mkdir(parents=True)
-            (segment_dir / "manifest.json").write_text(json.dumps({
-                "engine": "indextts25",
-                "segments": [{
-                    "index": 1, "text": "点击重绘。", "filename": "segment_0001.wav",
-                    "start": 0, "end": 0.5, "duration": 0.5,
-                }],
-            }, ensure_ascii=False), encoding="utf-8")
-            editor = TtsEditor()
-            job = SimpleNamespace(id="job", request={"tts_engine": "indextts25"})
-            with (
-                patch.object(editor, "_project_dir", return_value=project),
-                patch(
-                    "backend.app.tts_segmentation.build_indextts25_token_counter",
-                    return_value=lambda _text: 111,
-                ),
-            ):
-                with self.assertRaisesRegex(ValueError, "超过 IndexTTS-2.5 单句 110 token"):
-                    editor._regenerate_sync(
-                        job,
-                        1,
-                        [1],
-                        {},
-                        {1: "点击chong2绘。"},
-                    )
+    def test_indextts25_pronunciation_override_safely_splits_oversized_sentence(self) -> None:
+        text = "甲" * 70 + "。" + "乙" * 69 + "。"
+        with patch(
+            "backend.app.tts_segmentation.build_indextts25_token_counter",
+            return_value=len,
+        ):
+            chunks, positions, totals = _build_regeneration_plan({1: text}, "indextts25")
+        self.assertEqual("".join(chunks), text)
+        self.assertEqual(positions, {1: [0, 1]})
+        self.assertEqual(totals, {1: len(text)})
+        self.assertTrue(all(len(chunk) <= 110 for chunk in chunks))
 
     def test_legacy_module1_srt_recovers_exact_sentence_wavs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

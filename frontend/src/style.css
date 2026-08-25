@@ -50,12 +50,30 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   padding: 28px 22px;
   background: linear-gradient(180deg, rgba(7, 14, 27, 0.98), rgba(8, 17, 31, 0.95));
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 219, 255, .42) rgba(8, 17, 31, .55);
+}
+.sidebar::-webkit-scrollbar { width: 9px; }
+.sidebar::-webkit-scrollbar-track { background: rgba(8, 17, 31, .55); }
+.sidebar::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(8, 17, 31, .55);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(124, 219, 255, .56), rgba(139, 92, 246, .48));
+}
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(124, 219, 255, .8), rgba(139, 92, 246, .68));
 }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
@@ -601,6 +619,7 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   top: 12px;
   z-index: 12;
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 6px;
   width: 100%;
@@ -720,14 +739,26 @@ h3 { font-size: 1.05rem; margin-bottom: 0.5rem; }
   max-width: 170px;
 }
 .launch-generation-control .launch-generation-btn { width: 100%; }
+.generation-nav-status {
+  order: 10;
+  display: grid;
+  flex: 1 0 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  padding: 6px 10px 4px;
+  border-top: 1px solid rgba(124, 219, 255, .12);
+}
 .generation-block-reason {
   display: block;
-  width: 100%;
-  margin-top: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   color: #fbbf24;
-  font-size: .58rem;
-  line-height: 1.28;
-  text-align: center;
+  font-size: .66rem;
+  line-height: 1.4;
+  text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -1989,7 +2020,17 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   box-shadow: 0 0 0 2px rgba(186, 230, 253, .38), 0 14px 34px rgba(59, 130, 246, .42);
 }
 .launch-generation-btn:disabled { filter: grayscale(.35); }
-.generation-submit-message { width: 100%; color: #fbbf24; line-height: 1.45; text-align: right; }
+.generation-submit-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: #fbbf24;
+  font-size: .66rem;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .ghost-btn {
   background: rgba(255, 255, 255, 0.04);
   color: var(--soft);
@@ -2709,4 +2750,178 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   .cloud-recharge-success-dialog h2 { font-size: 1.5rem; }
   .cloud-recharge-success-credit strong { font-size: 1.9rem; }
   .cloud-recharge-success-actions { flex-direction: column-reverse; }
+}
+/* Guided workflow v2 ----------------------------------------------------- */
+.guided-workflow-shell {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(94, 205, 255, 0.24);
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(10, 32, 51, 0.98), rgba(17, 21, 48, 0.96));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18);
+}
+
+.guided-stage-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guided-stage-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid rgba(143, 172, 211, 0.16);
+  border-radius: 14px;
+  color: #8296b3;
+  background: rgba(5, 15, 30, 0.38);
+}
+
+.guided-stage-chip > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 10px;
+  color: #8fa6c5;
+  background: rgba(111, 139, 178, 0.13);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.guided-stage-chip div { min-width: 0; }
+.guided-stage-chip strong,
+.guided-stage-chip small { display: block; }
+.guided-stage-chip small { margin-top: 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.guided-stage-chip.active { border-color: rgba(78, 207, 255, 0.55); color: #eaf9ff; background: rgba(34, 151, 201, 0.17); }
+.guided-stage-chip.active > span { color: #071827; background: #65d8ff; box-shadow: 0 0 18px rgba(69, 199, 255, 0.38); }
+.guided-stage-chip.completed { color: #8cebd5; border-color: rgba(74, 224, 186, 0.25); }
+.guided-stage-chip.completed > span { color: #08231e; background: #62ddbd; }
+
+.guided-stage-console {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-top: 3px;
+}
+
+.guided-stage-console h2 { margin: 3px 0 4px; }
+.guided-stage-console p { margin: 0; }
+.guided-stage-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.guided-primary-action { min-width: 190px; }
+.guided-stage-message { padding: 9px 12px; border-radius: 10px; color: #8eead8; background: rgba(40, 191, 155, 0.1); }
+.guided-stage-message.error { color: #ffaaa7; background: rgba(218, 67, 78, 0.13); }
+.guided-cost-estimate { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; border: 1px solid rgba(125, 147, 255, 0.2); border-radius: 11px; background: rgba(85, 91, 196, 0.09); }
+.guided-cost-estimate span { color: #8ea4c2; font-size: 12px; }
+.guided-cost-estimate strong { color: #b7caff; }
+.guided-cost-estimate small { color: #91a4bf; }
+.guided-inline-progress { display: grid; gap: 5px; }
+.guided-inline-progress > span { height: 7px; overflow: hidden; border-radius: 999px; background: rgba(4, 11, 24, 0.7); }
+.guided-inline-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #56d7f8, #7c7cff); transition: width .25s ease; }
+
+.guided-audio-editor {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(89, 218, 206, 0.22);
+  border-radius: 16px;
+  background: rgba(6, 22, 38, 0.58);
+}
+.guided-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.guided-subtitle-head { padding-top: 8px; border-top: 1px solid rgba(130, 160, 200, 0.14); }
+.guided-tts-settings { border: 1px solid rgba(92, 193, 226, 0.2); border-radius: 12px; background: rgba(4, 18, 34, 0.48); }
+.guided-tts-settings > summary { padding: 11px 13px; color: #bfeeff; cursor: pointer; user-select: none; }
+.guided-tts-settings[open] > summary { border-bottom: 1px solid rgba(92, 193, 226, 0.16); }
+.guided-tts-settings .tts-refine-parameter-panel { margin: 10px; }
+.guided-tts-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.guided-tts-card { display: grid; gap: 7px; min-width: 0; padding: 10px; border: 1px solid rgba(130, 160, 200, 0.15); border-radius: 12px; background: rgba(5, 13, 28, 0.62); }
+.guided-tts-card.selected { border-color: #57cfff; background: rgba(52, 166, 210, 0.12); }
+.guided-tts-card > div { display: flex; justify-content: space-between; gap: 8px; }
+.guided-tts-card p { min-height: 3.2em; margin: 0; color: #dbe7f6; font-size: 13px; line-height: 1.55; }
+.guided-tts-card audio { width: 100%; height: 30px; }
+.guided-tts-card > label { display: flex; justify-content: flex-end; align-items: center; gap: 6px; font-size: 12px; }
+.guided-tts-card > .guided-pronunciation-editor { display: grid; gap: 7px; padding-top: 7px; border-top: 1px solid rgba(129, 166, 205, 0.16); }
+.guided-pronunciation-editor small { color: #8fa9c8; line-height: 1.45; }
+.guided-pronunciation-editor textarea { min-height: 64px; resize: vertical; }
+.guided-pronunciation-editor .compact-btn { justify-self: end; }
+.guided-subtitle-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; max-height: 440px; overflow: auto; padding-right: 4px; }
+.guided-subtitle-list label { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(130, 160, 200, 0.14); border-radius: 11px; background: rgba(5, 13, 28, 0.5); }
+.guided-subtitle-list label > span { color: #78cfea; font-size: 11px; }
+.guided-subtitle-list textarea { min-height: 60px; resize: vertical; }
+.guided-task-resume { margin-top: 8px; }
+
+/* The audio review stage is an editor, not another setup form. Promote its
+   useful controls out of the old right column and let them use the full row. */
+.guided-mode.guided-stage-audio_review #create .hero-panel > .create-copy-column,
+.guided-mode.guided-stage-audio_review #create .create-audio-column > .tts-parameter-panel { display: none; }
+.guided-mode.guided-stage-audio_review #create .hero-panel > .create-settings-column,
+.guided-mode.guided-stage-audio_review #create .hero-panel > .create-settings-column > .create-audio-column { display: contents; }
+.guided-mode.guided-stage-audio_review #create .step-audio-review-card {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.guided-mode.guided-stage-audio_review #create .guided-audio-editor {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+/* Put all post-generation editors before logs and outputs. This also avoids a
+   tall task list leaving a large empty column above the visual tools. */
+.workspace-page > .guided-workflow-shell { order: 0; }
+.workspace-page > #create { order: 10; }
+.workspace-page > #visual-editor { order: 20; }
+.workspace-page > #jobs { order: 30; }
+.workspace-page > #outputs { order: 40; }
+
+/* Each guided stage exposes only the controls needed for that decision. */
+.guided-mode.guided-stage-audio_setup .bgm-full-row,
+.guided-mode.guided-stage-audio_setup .content-mode-full-row,
+.guided-mode.guided-stage-audio_setup .visual-pacing-standalone,
+.guided-mode.guided-stage-audio_setup .visual-prompt-panel,
+.guided-mode.guided-stage-audio_setup .advanced-agent-console,
+.guided-mode.guided-stage-audio_running .bgm-full-row,
+.guided-mode.guided-stage-audio_running .content-mode-full-row,
+.guided-mode.guided-stage-audio_running .visual-pacing-standalone,
+.guided-mode.guided-stage-audio_running .visual-prompt-panel,
+.guided-mode.guided-stage-audio_running .advanced-agent-console,
+.guided-mode.guided-stage-audio_review .bgm-full-row,
+.guided-mode.guided-stage-audio_review .content-mode-full-row,
+.guided-mode.guided-stage-audio_review .visual-pacing-standalone,
+.guided-mode.guided-stage-audio_review .visual-prompt-panel,
+.guided-mode.guided-stage-audio_review .advanced-agent-console { display: none; }
+
+.guided-mode.guided-stage-visual_setup .create-copy-column,
+.guided-mode.guided-stage-visual_setup .create-audio-column,
+.guided-mode.guided-stage-visual_setup .bgm-full-row,
+.guided-mode.guided-stage-visual_running #create,
+.guided-mode.guided-stage-visual_review #create,
+.guided-mode.guided-stage-render_running #create,
+.guided-mode.guided-stage-completed #create { display: none; }
+
+.guided-mode.guided-stage-render_setup .create-copy-column,
+.guided-mode.guided-stage-render_setup .create-settings-column,
+.guided-mode.guided-stage-render_setup .content-mode-full-row,
+.guided-mode.guided-stage-render_setup .visual-pacing-standalone,
+.guided-mode.guided-stage-render_setup .visual-prompt-panel,
+.guided-mode.guided-stage-render_setup .advanced-agent-console { display: none; }
+
+@media (max-width: 1100px) {
+  .guided-stage-console { align-items: stretch; flex-direction: column; }
+  .guided-stage-actions { justify-content: flex-end; }
+  .guided-tts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .guided-workflow-shell { padding: 12px; border-radius: 16px; }
+  .guided-stage-strip { grid-template-columns: 1fr; }
+  .guided-stage-chip small { white-space: normal; }
+  .guided-stage-actions { align-items: stretch; flex-direction: column; }
+  .guided-primary-action { width: 100%; min-width: 0; }
+  .guided-tts-grid,
+  .guided-subtitle-list { grid-template-columns: 1fr; }
 }

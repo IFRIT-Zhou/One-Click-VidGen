@@ -1,11 +1,11 @@
 {
-  "release_id": "2026.08.25.3",
-  "release_order": 2026082503,
-  "display_version": "2026.08.25 云端号池更新版",
+  "release_id": "2026.08.25.4",
+  "release_order": 2026082504,
+  "display_version": "2026.08.25 分步制作优化版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
-  "notes": "更新云端号池相关事项。",
-  "content_fingerprint": "006bf3d684e1bb11485d58dcb32ef0f933f9dc6569a12ba546c401a6f4cd7995"
+  "notes": "优化分步制作、阶段精修、任务取消与编辑界面，修复超长单句重配问题。",
+  "content_fingerprint": "339ffd6b8a9217242e5f3881a1ccfd32eed8d8a09357e79e5610764431437630"
 }
