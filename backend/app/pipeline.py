@@ -2231,6 +2231,14 @@ def render_semantic_visual_video(
         if story_plan_path is not None:
             poster_env["STORY_AGENT_PLAN_PATH"] = str(story_plan_path.resolve())
             poster_env["STORY_AGENT_PLAN_IS_GLOBAL"] = "1" if story_plan_is_global else "0"
+        checkpoint_label = re.sub(
+            r"[^A-Za-z0-9_.-]+",
+            "_",
+            (story_plan_path.stem if story_plan_path is not None else "story_plan"),
+        ).strip("._") or "story_plan"
+        poster_env["VISUAL_CHECKPOINT_DIR"] = str(
+            (JOBS_DIR / job.id / "artifacts" / "visual_runtime" / checkpoint_label).resolve()
+        )
         if resume:
             poster_env["VOICE_OVER_VIDEO_RESUME"] = "1"
         visual_prompt_system = str(request.get("visual_prompt_system") or "").strip()
@@ -3079,6 +3087,35 @@ def restore_step_audio_snapshot(job: Job) -> bool:
         target = JOBS_DIR / job.id / "artifacts" / "tts_segments"
         shutil.copytree(segment_archive, target, dirs_exist_ok=True)
     return True
+
+
+def restore_step_visual_runtime_checkpoint(job: Job) -> bool:
+    """Restore partial paid visual work before Agent 0/1/2 resume decisions run."""
+    checkpoint = JOBS_DIR / job.id / "artifacts" / "visual_runtime" / "story_plan"
+    if not checkpoint.is_dir():
+        return False
+    visual_dir = WORKSPACE_DIR / "3_visual_template"
+    visual_dir.mkdir(parents=True, exist_ok=True)
+    restored = False
+    for name in (
+        "story_context.json",
+        "story_plan.json",
+        "poster_mapping.json",
+        "visual_prompt_plan.json",
+    ):
+        source = checkpoint / name
+        if source.is_file() and source.stat().st_size > 0:
+            shutil.copy2(source, visual_dir / name)
+            restored = True
+    source_assets = checkpoint / "assets"
+    if source_assets.is_dir():
+        target_assets = visual_dir / "assets"
+        target_assets.mkdir(parents=True, exist_ok=True)
+        for source in source_assets.iterdir():
+            if source.is_file() and source.stat().st_size > 0:
+                shutil.copy2(source, target_assets / source.name)
+                restored = True
+    return restored
 
 
 def sync_step_visual_snapshot(job: Job) -> Path:
@@ -4081,6 +4118,8 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         if not restore_step_audio_snapshot(job):
             raise RuntimeError("分步任务的配音与字幕快照不完整，无法安全开始画面阶段")
         store.log(job, "分步模式：已从 output 快照恢复确认后的配音、字幕与时间线")
+        if restore_step_visual_runtime_checkpoint(job):
+            store.log(job, "分步模式：已恢复本任务中断前的 Agent 规划与已完成图片，只补缺失画面")
     if resume and not (is_step_workflow_v2(request) and step_stage == "visual_running"):
         restored_checkpoint = restore_long_split_checkpoint(job)
         if restored_checkpoint is not None:

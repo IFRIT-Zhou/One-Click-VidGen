@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -375,6 +376,72 @@ class VisualConstraintsTest(unittest.TestCase):
         leases = [pool.acquire() for _ in range(12)]
         for lease in leases:
             pool.release(lease)
+
+    def test_cloud_balance_failure_checkpoints_completed_images_for_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            visual_dir = root / "visual"
+            assets_dir = visual_dir / "assets"
+            mapping_path = visual_dir / "poster_mapping.json"
+            plan_path = visual_dir / "visual_prompt_plan.json"
+            checkpoint = root / "job" / "visual_runtime"
+            assets_dir.mkdir(parents=True)
+            mapping = [
+                {"macro_scene_id": "poster_001", "image_prompt": "第一张"},
+                {"macro_scene_id": "poster_002", "image_prompt": "第二张"},
+            ]
+            mapping_path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+            plan_path.write_text(json.dumps({"mapping": mapping}, ensure_ascii=False), encoding="utf-8")
+            first_completed = threading.Event()
+
+            def render_one(macro, _pool):
+                if macro["macro_scene_id"] == "poster_001":
+                    output = assets_dir / "poster_001_stable.jpg"
+                    output.write_bytes(b"valid-image")
+                    first_completed.set()
+                    return output
+                self.assertTrue(first_completed.wait(timeout=2))
+                raise visual.RunningHubAllAccountsPowerInsufficient("HTTP 402")
+
+            with (
+                patch.object(visual, "VISUAL_DIR", visual_dir),
+                patch.object(visual, "ASSETS_DIR", assets_dir),
+                patch.object(visual, "POSTER_MAPPING_PATH", mapping_path),
+                patch.object(visual, "VISUAL_PROMPT_PLAN_PATH", plan_path),
+                patch.object(visual, "_render_poster_with_retry", side_effect=render_one),
+                patch.dict(os.environ, {"VISUAL_CHECKPOINT_DIR": str(checkpoint)}, clear=False),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "断点续跑.*已完成图片"):
+                    visual.render_posters_concurrently(
+                        mapping,
+                        [{"api_key": "cloud", "cloud_pool": "1"}],
+                    )
+
+            saved_mapping = json.loads((checkpoint / "poster_mapping.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_mapping[0]["asset_filename"], "poster_001_stable.jpg")
+            self.assertTrue((checkpoint / "assets" / "poster_001_stable.jpg").is_file())
+
+    def test_visual_checkpoint_restores_mapping_plan_and_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            visual_dir = root / "visual"
+            assets_dir = visual_dir / "assets"
+            checkpoint = root / "checkpoint"
+            (checkpoint / "assets").mkdir(parents=True)
+            (checkpoint / "poster_mapping.json").write_text("[]", encoding="utf-8")
+            (checkpoint / "visual_prompt_plan.json").write_text("{}", encoding="utf-8")
+            (checkpoint / "assets" / "poster_001_hash.jpg").write_bytes(b"image")
+            with (
+                patch.object(visual, "VISUAL_DIR", visual_dir),
+                patch.object(visual, "ASSETS_DIR", assets_dir),
+                patch.object(visual, "POSTER_MAPPING_PATH", visual_dir / "poster_mapping.json"),
+                patch.object(visual, "VISUAL_PROMPT_PLAN_PATH", visual_dir / "visual_prompt_plan.json"),
+                patch.dict(os.environ, {"VISUAL_CHECKPOINT_DIR": str(checkpoint)}, clear=False),
+            ):
+                self.assertTrue(visual._restore_visual_checkpoint())
+                self.assertTrue((visual_dir / "poster_mapping.json").is_file())
+                self.assertTrue((visual_dir / "visual_prompt_plan.json").is_file())
+                self.assertTrue((assets_dir / "poster_001_hash.jpg").is_file())
 
     def test_auto_image_concurrency_uses_all_configured_key_capacity(self) -> None:
         configs = [{"api_key": f"key-{index}"} for index in range(7)]

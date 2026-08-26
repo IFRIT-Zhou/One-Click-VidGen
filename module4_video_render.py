@@ -13,6 +13,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -51,6 +52,84 @@ _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
 VISUAL_PROMPT_AGENT_VERSION = 16
 
 REFERENCE_IMAGE_LABELS = ("图1", "图2", "图3", "图4")
+
+
+def _visual_checkpoint_dir() -> Path | None:
+    raw = os.getenv("VISUAL_CHECKPOINT_DIR", "").strip()
+    return Path(raw).resolve() if raw else None
+
+
+def _atomic_write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _sync_visual_checkpoint(*, asset: Path | None = None) -> None:
+    """Persist paid visual work immediately instead of waiting for the whole batch."""
+    checkpoint = _visual_checkpoint_dir()
+    if checkpoint is None:
+        return
+    checkpoint.mkdir(parents=True, exist_ok=True)
+    for source in (
+        VISUAL_DIR / "story_context.json",
+        STORY_PLAN_PATH,
+        POSTER_MAPPING_PATH,
+        VISUAL_PROMPT_PLAN_PATH,
+    ):
+        if source.is_file():
+            shutil.copy2(source, checkpoint / source.name)
+    if asset is not None and asset.is_file() and asset.stat().st_size > 0:
+        target_dir = checkpoint / "assets"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(asset, target_dir / asset.name)
+
+
+def _restore_visual_checkpoint() -> bool:
+    checkpoint = _visual_checkpoint_dir()
+    if checkpoint is None or not checkpoint.is_dir():
+        return False
+    restored = False
+    for target in (
+        VISUAL_DIR / "story_context.json",
+        STORY_PLAN_PATH,
+        POSTER_MAPPING_PATH,
+        VISUAL_PROMPT_PLAN_PATH,
+    ):
+        source = checkpoint / target.name
+        if source.is_file() and source.stat().st_size > 0:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            restored = True
+    source_assets = checkpoint / "assets"
+    if source_assets.is_dir():
+        ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+        for source in source_assets.iterdir():
+            if source.is_file() and source.stat().st_size > 0:
+                shutil.copy2(source, ASSETS_DIR / source.name)
+                restored = True
+    return restored
+
+
+def _record_partial_poster_success(
+    mapping: list[dict[str, Any]], index: int, asset: Path
+) -> None:
+    """Commit one returned image and its mapping before another worker can fail."""
+    mapping[index]["asset_filename"] = asset.name
+    clean_mapping = [
+        {key: value for key, value in macro.items() if key != "progress_label"}
+        for macro in mapping
+    ]
+    _atomic_write_json(POSTER_MAPPING_PATH, clean_mapping)
+    try:
+        prompt_plan = json.loads(VISUAL_PROMPT_PLAN_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        prompt_plan = {}
+    if isinstance(prompt_plan, dict):
+        prompt_plan["mapping"] = clean_mapping
+        _atomic_write_json(VISUAL_PROMPT_PLAN_PATH, prompt_plan)
+    _sync_visual_checkpoint(asset=asset)
 
 
 AGENT2_DEVICE_SHOT_CONTRACT = """【设备画面三态硬约束（适用于所有模式）】
@@ -2900,6 +2979,7 @@ def render_posters_concurrently(
 
     completed: dict[int, Path] = {}
     failures: dict[int, str] = {}
+    fatal_error: RuntimeError | None = None
     with ThreadPoolExecutor(max_workers=active_workers, thread_name_prefix="runninghub-task") as executor:
         futures = {
             executor.submit(_render_poster_with_retry, macro, account_pool): index
@@ -2909,27 +2989,36 @@ def render_posters_concurrently(
             index = futures[future]
             try:
                 completed[index] = future.result()
+                _record_partial_poster_success(mapping, index, completed[index])
                 print(f"[POSTER_PROGRESS] {len(completed)}/{len(mapping)}", flush=True)
             except RunningHubAllAccountsPowerInsufficient as exc:
                 for pending in futures:
                     pending.cancel()
-                raise RuntimeError(
-                    "所有已配置的第三方图像账号余额或算力均不足，"
-                    "已停止后续海报提交。请充值后重新生成。"
-                ) from exc
+                if fatal_error is None:
+                    fatal_error = RuntimeError(
+                        "所有已配置的第三方图像账号余额或算力均不足，"
+                        "已停止后续海报提交。请充值后断点续跑；已完成图片会直接复用。"
+                    )
+                failures[index] = str(exc)
             except RunningHubAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
-                raise RuntimeError(f"第三方图像接口或模型拒绝访问：{exc}") from exc
+                if fatal_error is None:
+                    fatal_error = RuntimeError(f"第三方图像接口或模型拒绝访问：{exc}")
+                failures[index] = str(exc)
             except RunningHubAllAccountsAccessDenied as exc:
                 for pending in futures:
                     pending.cancel()
-                raise RuntimeError(
-                    "所有已配置的第三方图像账号都被当前接口或模型拒绝访问。"
-                    "已停止后续海报提交，请确认 API Key 具有当前模型的调用权限。"
-                ) from exc
+                if fatal_error is None:
+                    fatal_error = RuntimeError(
+                        "所有已配置的第三方图像账号都被当前接口或模型拒绝访问。"
+                        "已停止后续海报提交，请确认 API Key 具有当前模型的调用权限。"
+                    )
+                failures[index] = str(exc)
             except Exception as exc:
                 failures[index] = str(exc)
+    if fatal_error is not None:
+        raise fatal_error
     if failures:
         allow_neighbor_fallback = os.getenv(
             "RUNNINGHUB_ALLOW_NEIGHBOR_FALLBACK", "1"
@@ -3001,6 +3090,8 @@ def run_online_poster_engine() -> None:
     provider_configs = _provider_configs()
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     resume = os.getenv("VOICE_OVER_VIDEO_RESUME", "").strip().lower() in {"1", "true", "yes"}
+    if resume and _restore_visual_checkpoint():
+        print("断点续跑：已恢复本任务的分镜规划与已完成海报检查点。", flush=True)
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE"))
     configured_story_path = Path(os.getenv("STORY_AGENT_PLAN_PATH", str(STORY_PLAN_PATH))).resolve()
     global_story_plan = os.getenv("STORY_AGENT_PLAN_IS_GLOBAL", "").strip().lower() in {"1", "true", "yes"}
@@ -3072,6 +3163,7 @@ def run_online_poster_engine() -> None:
         json.dumps(visual_prompt_plan, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _sync_visual_checkpoint()
     print(f"Agent 2：可检查的分镜提示词计划已保存: {VISUAL_PROMPT_PLAN_PATH}", flush=True)
     scenes_by_id = {str(scene["slide_id"]): scene for scene in scenes}
     assets = render_posters_concurrently(mapping, provider_configs)

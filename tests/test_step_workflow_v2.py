@@ -52,6 +52,32 @@ class StepWorkflowV2Test(unittest.TestCase):
             )
             self.assertEqual(pipeline._parse_srt_texts(path), ["第一句", "第二句"])
 
+    def test_partial_visual_runtime_is_restored_before_agent_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs = root / "jobs"
+            workspace = root / "workspace"
+            checkpoint = jobs / "guided-job" / "artifacts" / "visual_runtime" / "story_plan"
+            (checkpoint / "assets").mkdir(parents=True)
+            for name, content in (
+                ("story_context.json", "{}"),
+                ("story_plan.json", "{}"),
+                ("poster_mapping.json", "[]"),
+                ("visual_prompt_plan.json", "{}"),
+            ):
+                (checkpoint / name).write_text(content, encoding="utf-8")
+            (checkpoint / "assets" / "poster_001_hash.jpg").write_bytes(b"image")
+            job = pipeline.Job(id="guided-job", request={"step_mode": True})
+            with (
+                patch.object(pipeline, "JOBS_DIR", jobs),
+                patch.object(pipeline, "WORKSPACE_DIR", workspace),
+            ):
+                self.assertTrue(pipeline.restore_step_visual_runtime_checkpoint(job))
+            visual = workspace / "3_visual_template"
+            self.assertTrue((visual / "story_plan.json").is_file())
+            self.assertTrue((visual / "poster_mapping.json").is_file())
+            self.assertTrue((visual / "assets" / "poster_001_hash.jpg").is_file())
+
     def test_long_guided_final_render_validates_combined_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

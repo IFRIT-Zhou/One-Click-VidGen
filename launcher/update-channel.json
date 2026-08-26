@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.08.26.1",
-  "release_order": 2026082601,
-  "display_version": "2026.08.26 国内更新源框架版",
+  "release_id": "2026.08.27.1",
+  "release_order": 2026082701,
+  "display_version": "2026.08.27 断点续跑保护修复版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.08.26.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.08.27.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "增加国内更新源接口与自动回退机制；国内源未部署时自动使用 GitHub，不影响现有更新。",
-  "content_fingerprint": "a1aef91a2eab49183cd90c2a992b18abe4acbb9842b8e45a9bddeeb1595685ff"
+  "notes": "修复出图中途失败后断点续跑重复规划和重复生成的问题；已完成图片会保留并复用。",
+  "content_fingerprint": "ab5e6720ca3da8f4eca8fa49e3c331d4d5f0b9b882f4caaae393a1e73f388298"
 }
