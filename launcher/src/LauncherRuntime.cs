@@ -189,7 +189,11 @@ namespace OcvLauncher
 
             var info = new ProcessStartInfo();
             info.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-            info.Arguments = "/d /s /c \"\"" + StartScript + "\"\"";
+            // Run the batch file by name from its working directory.  Passing the
+            // absolute path through cmd /c makes directory names such as
+            // "One-click VidGen (1)" part of CMD's command grammar, where the
+            // parentheses may be interpreted as block delimiters.
+            info.Arguments = "/d /s /c call start_windows.bat";
             info.WorkingDirectory = root;
             info.UseShellExecute = false;
             info.CreateNoWindow = true;

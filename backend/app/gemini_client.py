@@ -27,6 +27,9 @@ RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
     "gemini": {
         "label": "Google Gemini",
+        "family": "gemini",
+        "family_label": "Google Gemini",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "GEMINI_MODEL",
@@ -51,9 +54,32 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "models": [],
         "allow_custom_model": True,
         "hidden": True,
+        "family": "gemini",
+        "family_label": "Google Gemini",
+        "source": "relay",
+    },
+    "gemini_official": {
+        "label": "Google Gemini 官方 API",
+        "family": "gemini",
+        "family_label": "Google Gemini",
+        "source": "official",
+        "key_env": "GOOGLE_API_KEY",
+        "base_env": "GOOGLE_GEMINI_API_BASE",
+        "model_env": "GOOGLE_GEMINI_MODEL",
+        "default_base": DEFAULT_GEMINI_BASE_URL,
+        "default_model": "gemini-3.7-flash",
+        "protocol": "google",
+        "models": [
+            {"value": "gemini-3.7-flash", "label": "Gemini 3.7 Flash（推荐）"},
+            {"value": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+        ],
+        "allow_custom_model": True,
     },
     "anthropic": {
         "label": "Anthropic Claude",
+        "family": "anthropic",
+        "family_label": "Anthropic Claude",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "ANTHROPIC_MODEL",
@@ -66,8 +92,29 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
             {"value": "anthropic/claude-haiku-4.5", "label": "Claude Haiku 4.5（省钱）"},
         ],
     },
+    "anthropic_official": {
+        "label": "Anthropic Claude 官方 API",
+        "family": "anthropic",
+        "family_label": "Anthropic Claude",
+        "source": "official",
+        "key_env": "ANTHROPIC_API_KEY",
+        "base_env": "ANTHROPIC_API_BASE",
+        "model_env": "ANTHROPIC_OFFICIAL_MODEL",
+        "default_base": "https://api.anthropic.com/v1",
+        "default_model": "claude-sonnet-5",
+        "protocol": "anthropic",
+        "models": [
+            {"value": "claude-sonnet-5", "label": "Claude Sonnet 5（推荐）"},
+            {"value": "claude-opus-5", "label": "Claude Opus 5（高质量）"},
+            {"value": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5（省钱）"},
+        ],
+        "allow_custom_model": True,
+    },
     "deepseek": {
         "label": "DeepSeek（三方兼容节点）",
+        "family": "deepseek",
+        "family_label": "DeepSeek",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "DEEPSEEK_MODEL",
@@ -81,6 +128,9 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
     },
     "deepseek_official": {
         "label": "DeepSeek 官方 API",
+        "family": "deepseek",
+        "family_label": "DeepSeek",
+        "source": "official",
         "key_env": "DEEPSEEK_API_KEY",
         "base_env": "DEEPSEEK_API_BASE",
         "model_env": "DEEPSEEK_OFFICIAL_MODEL",
@@ -94,6 +144,9 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
     },
     "openai": {
         "label": "OpenAI GPT",
+        "family": "openai",
+        "family_label": "OpenAI GPT",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "OPENAI_MODEL",
@@ -107,8 +160,30 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
             {"value": "openai/gpt-5.4-mini", "label": "GPT-5.4 mini（兼顾速度）"},
         ],
     },
+    "openai_official": {
+        "label": "OpenAI GPT 官方 API",
+        "family": "openai",
+        "family_label": "OpenAI GPT",
+        "source": "official",
+        "key_env": "OPENAI_API_KEY",
+        "base_env": "OPENAI_API_BASE",
+        "model_env": "OPENAI_OFFICIAL_MODEL",
+        "default_base": "https://api.openai.com/v1",
+        "default_model": "gpt-5.6-terra",
+        "protocol": "openai",
+        "models": [
+            {"value": "gpt-5.6-terra", "label": "GPT-5.6 Terra（推荐）"},
+            {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol（高质量）"},
+            {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna（省钱）"},
+            {"value": "gpt-5.4-mini", "label": "GPT-5.4 mini（兼顾速度）"},
+        ],
+        "allow_custom_model": True,
+    },
     "qwen": {
         "label": "阿里云 Qwen",
+        "family": "qwen",
+        "family_label": "阿里云 Qwen",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "QWEN_MODEL",
@@ -121,8 +196,29 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
             {"value": "qwen/qwen3.6-flash", "label": "Qwen3.6 Flash（省钱）"},
         ],
     },
+    "qwen_official": {
+        "label": "阿里云 Qwen 官方 API",
+        "family": "qwen",
+        "family_label": "阿里云 Qwen",
+        "source": "official",
+        "key_env": "QWEN_API_KEY",
+        "base_env": "QWEN_API_BASE",
+        "model_env": "QWEN_OFFICIAL_MODEL",
+        "default_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen3.7-plus",
+        "protocol": "openai",
+        "models": [
+            {"value": "qwen3.8-max", "label": "Qwen3.8 Max（高质量）"},
+            {"value": "qwen3.7-plus", "label": "Qwen3.7 Plus（推荐）"},
+            {"value": "qwen3.6-flash", "label": "Qwen3.6 Flash（省钱）"},
+        ],
+        "allow_custom_model": True,
+    },
     "kimi": {
         "label": "Kimi（当前节点未开放）",
+        "family": "kimi",
+        "family_label": "Kimi",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "MOONSHOT_MODEL",
@@ -133,8 +229,29 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "disabled": True,
         "disabled_reason": "当前三方节点的 /models 列表尚未开放 Kimi",
     },
+    "kimi_official": {
+        "label": "Kimi 官方 API",
+        "family": "kimi",
+        "family_label": "Kimi",
+        "source": "official",
+        "key_env": "MOONSHOT_API_KEY",
+        "base_env": "MOONSHOT_API_BASE",
+        "model_env": "MOONSHOT_OFFICIAL_MODEL",
+        "default_base": "https://api.moonshot.cn/v1",
+        "default_model": "kimi-k3",
+        "protocol": "openai",
+        "models": [
+            {"value": "kimi-k3", "label": "Kimi K3（推荐）"},
+            {"value": "kimi-k2.7-code-highspeed", "label": "Kimi K2.7 Code Highspeed"},
+            {"value": "kimi-k2.6", "label": "Kimi K2.6"},
+        ],
+        "allow_custom_model": True,
+    },
     "glm": {
         "label": "智谱 GLM",
+        "family": "glm",
+        "family_label": "智谱 GLM",
+        "source": "relay",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "ZAI_MODEL",
@@ -147,8 +264,29 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
             {"value": "glm-5.1", "label": "GLM-5.1（兼顾成本）"},
         ],
     },
+    "glm_official": {
+        "label": "智谱 GLM 官方 API",
+        "family": "glm",
+        "family_label": "智谱 GLM",
+        "source": "official",
+        "key_env": "ZAI_API_KEY",
+        "base_env": "ZAI_API_BASE",
+        "model_env": "ZAI_OFFICIAL_MODEL",
+        "default_base": "https://open.bigmodel.cn/api/paas/v4",
+        "default_model": "glm-5.2",
+        "protocol": "openai",
+        "models": [
+            {"value": "glm-5.2", "label": "GLM-5.2（推荐）"},
+            {"value": "glm-5-turbo", "label": "GLM-5 Turbo（高速）"},
+            {"value": "glm-5.1", "label": "GLM-5.1（兼顾成本）"},
+        ],
+        "allow_custom_model": True,
+    },
     "custom": {
         "label": "自定义兼容接口（高级）",
+        "family": "custom",
+        "family_label": "自定义",
+        "source": "custom",
         "key_env": "CUSTOM_LLM_API_KEY",
         "base_env": "CUSTOM_LLM_API_BASE",
         "model_env": "CUSTOM_LLM_MODEL",
@@ -218,6 +356,14 @@ def language_model(provider: str | None = None) -> str:
     return os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
 
 
+def language_base_url(provider: str | None = None) -> str:
+    """Resolve an endpoint without allowing official credentials to cross vendors."""
+    config = language_provider_config(provider)
+    if config.get("source") == "official":
+        return str(config["default_base"]).rstrip("/")
+    return os.getenv(config["base_env"], config["default_base"]).strip().rstrip("/")
+
+
 def language_model_allowed(provider: str, model: str) -> bool:
     config = language_provider_config(provider)
     if config.get("allow_custom_model"):
@@ -247,6 +393,9 @@ def language_provider_status() -> dict[str, Any]:
         options.append({
             "value": name,
             "label": config["label"],
+            "family": config.get("family", name),
+            "family_label": config.get("family_label", config["label"]),
+            "source": config.get("source", "relay"),
             "configured": language_provider_configured(name) and not bool(config.get("disabled")),
             "selected_model": language_model(name),
             "models": language_provider_models(name),
@@ -336,7 +485,7 @@ def _generate_openai_compatible_text(
     json_root: str | None = None,
 ) -> str:
     config = language_provider_config(provider)
-    base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
+    base_url = language_base_url(provider)
     extra_body: dict[str, Any] = {}
     reasoning_effort = os.getenv("GEMINI_REASONING_EFFORT", "none").strip()
     if reasoning_effort and reasoning_effort.lower() != "none":
@@ -364,7 +513,7 @@ def _generate_openai_compatible_text(
         }
         # Existing RunningHub relays historically accept this wrapper; official
         # OpenAI-compatible providers expect these fields at the request root.
-        if provider in {"deepseek", "deepseek_official", "openai", "qwen", "kimi", "glm"}:
+        if config.get("source") == "official" or provider in {"deepseek", "openai", "qwen", "kimi", "glm"}:
             payload.update(extra_body)
         elif extra_body:
             payload["extra_body"] = extra_body
@@ -404,7 +553,7 @@ def _generate_openai_compatible_text(
         response = None
 
     if response is None or not response.ok:
-        raise GeminiError("OpenAI 兼容 Gemini 调用失败: " + "；".join(errors[-6:]))
+        raise GeminiError(f"{config['label']} 调用失败: " + "；".join(errors[-6:]))
 
     data = response.json()
     try:
@@ -412,15 +561,86 @@ def _generate_openai_compatible_text(
         finish_reason = str(choice.get("finish_reason") or "").strip().lower()
         message = choice["message"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise GeminiError(f"无法解析 OpenAI 兼容响应: {data}") from exc
+        raise GeminiError(f"无法解析 {config['label']} 响应: {data}") from exc
     if finish_reason == "length":
         usage = data.get("usage") if isinstance(data, dict) else None
         raise GeminiOutputTruncated(
-            f"Gemini 输出被长度上限截断（max_tokens={payload['max_tokens']}，usage={usage}）"
+            f"{config['label']} 输出被长度上限截断（max_tokens={payload['max_tokens']}，usage={usage}）"
         )
     text = str(message.get("content") or "").strip() if isinstance(message, dict) else ""
     if not text:
-        raise GeminiError(f"OpenAI 兼容 Gemini 返回为空: {data}")
+        raise GeminiError(f"{config['label']} 返回为空: {data}")
+    return text
+
+
+def _generate_anthropic_text(
+    *,
+    api_key: str,
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float,
+    max_output_tokens: int | None,
+    provider: str,
+) -> str:
+    config = language_provider_config(provider)
+    base_url = language_base_url(provider)
+    errors: list[str] = []
+    response: requests.Response | None = None
+    payload: dict[str, Any] = {}
+    for model in _gemini_models(provider):
+        payload = {
+            "model": model,
+            "system": system_prompt.strip(),
+            "messages": [{"role": "user", "content": user_prompt.strip()}],
+            "max_tokens": max_output_tokens or int(os.getenv("GEMINI_MAX_TOKENS", "4096")),
+            "temperature": temperature,
+        }
+        response = None
+        for attempt in range(1, _gemini_retry_count() + 1):
+            try:
+                response = requests.post(
+                    f"{base_url}/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=_gemini_timeout(),
+                )
+            except requests.RequestException as exc:
+                errors.append(f"{model}: 网络异常 {type(exc).__name__}")
+                if attempt < _gemini_retry_count():
+                    time.sleep(_gemini_retry_delay(attempt))
+                    continue
+                break
+            if response.ok:
+                break
+            errors.append(f"{model}: HTTP {response.status_code} {_extract_error_message(response)}")
+            if response.status_code in RETRYABLE_STATUS_CODES and attempt < _gemini_retry_count():
+                time.sleep(_gemini_retry_delay(attempt))
+                continue
+            break
+        if response is not None and response.ok:
+            break
+    else:
+        response = None
+
+    if response is None or not response.ok:
+        raise GeminiError("Anthropic 调用失败: " + "；".join(errors[-6:]))
+    data = response.json()
+    if str(data.get("stop_reason") or "").lower() == "max_tokens":
+        raise GeminiOutputTruncated(
+            f"Anthropic 输出被长度上限截断（max_tokens={payload['max_tokens']}，usage={data.get('usage')}）"
+        )
+    content = data.get("content") if isinstance(data, dict) else None
+    text = "".join(
+        str(block.get("text") or "")
+        for block in content or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+    if not text:
+        raise GeminiError(f"无法解析 Anthropic 响应: {data}")
     return text
 
 
@@ -454,7 +674,16 @@ def generate_gemini_text(
             provider=provider,
             json_root=json_root,
         )
-    base_url = os.getenv(config["base_env"], config["default_base"]).rstrip("/")
+    if config["protocol"] == "anthropic":
+        return _generate_anthropic_text(
+            api_key=api_key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            provider=provider,
+        )
+    base_url = language_base_url(provider)
     payload: dict[str, Any] = {
         "contents": [
             {

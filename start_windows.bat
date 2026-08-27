@@ -32,15 +32,15 @@ for /r "%ROOT_DIR%runtime\hyperframes\.cache\hyperframes\chrome" %%F in (chrome-
 for %%D in ("%APPDATA%" "%LOCALAPPDATA%" "%TEMP%" "%XDG_CACHE_HOME%" "%NUMBA_CACHE_DIR%" "%MPLCONFIGDIR%" "%CUDA_CACHE_PATH%" "%npm_config_cache%") do if not exist "%%~D" mkdir "%%~D"
 
 echo Checking runtime commands...
-if not exist "%BACKEND_PYTHON%" (
+if not exist "!BACKEND_PYTHON!" (
     echo [ERROR] Backend Python venv was not found:
-    echo %BACKEND_PYTHON%
+    echo !BACKEND_PYTHON!
     pause
     exit /b 1
 )
-if not exist "%WATCHDOG_PYTHON%" (
+if not exist "!WATCHDOG_PYTHON!" (
     echo [ERROR] Portable Python windowless runtime was not found:
-    echo %WATCHDOG_PYTHON%
+    echo !WATCHDOG_PYTHON!
     pause
     exit /b 1
 )
@@ -53,9 +53,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%NPM%" (
+if not exist "!NPM!" (
     echo [ERROR] Portable Node/npm runtime was not found:
-    echo %NPM%
+    echo !NPM!
     pause
     exit /b 1
 )
@@ -113,7 +113,7 @@ if "%BACKEND_STATE%"=="2" (
 )
 if "%BACKEND_STATE%"=="1" (
     echo [START] Backend in unified console...
-    start "" /b "%BACKEND_PYTHON%" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010 1>>"%ROOT_DIR%runtime_logs\backend.stdout.log" 2>>"%ROOT_DIR%runtime_logs\backend.stderr.log"
+    start "" /b "!BACKEND_PYTHON!" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010 1>>"!ROOT_DIR!runtime_logs\backend.stdout.log" 2>>"!ROOT_DIR!runtime_logs\backend.stderr.log"
 ) else (
     echo [OK] Backend is already running and source is current.
 )
@@ -121,7 +121,7 @@ if "%BACKEND_STATE%"=="1" (
 call :check_url "http://127.0.0.1:5173"
 if errorlevel 1 (
     echo [START] Frontend in unified console...
-    start "" /b "%NODE%" "%VITE%" "%ROOT_DIR%frontend" --host 127.0.0.1 --port 5173 --strictPort 1>>"%ROOT_DIR%runtime_logs\frontend.stdout.log" 2>>"%ROOT_DIR%runtime_logs\frontend.stderr.log"
+    start "" /b "!NODE!" "!VITE!" "!ROOT_DIR!frontend" --host 127.0.0.1 --port 5173 --strictPort 1>>"!ROOT_DIR!runtime_logs\frontend.stdout.log" 2>>"!ROOT_DIR!runtime_logs\frontend.stderr.log"
 ) else (
     echo [OK] Frontend is already running.
 )
@@ -153,7 +153,7 @@ if defined OCV_EXTRA_WATCHDOG_PID set "WATCHDOG_EXTRA_ARGS=--pid !OCV_EXTRA_WATC
 
 set "LIFETIME_HEARTBEAT=%ROOT_DIR%runtime_logs\launcher_%RANDOM%_%RANDOM%.heartbeat"
 >"!LIFETIME_HEARTBEAT!" echo alive
-start "" /b "%WATCHDOG_PYTHON%" "%ROOT_DIR%tools\local_service_watchdog.py" --heartbeat "!LIFETIME_HEARTBEAT!" --pid "!BACKEND_PID!" --pid "!FRONTEND_PID!" !WATCHDOG_EXTRA_ARGS! --log "%ROOT_DIR%runtime_logs\service_watchdog.log"
+start "" /b "!WATCHDOG_PYTHON!" "!ROOT_DIR!tools\local_service_watchdog.py" --heartbeat "!LIFETIME_HEARTBEAT!" --pid "!BACKEND_PID!" --pid "!FRONTEND_PID!" !WATCHDOG_EXTRA_ARGS! --log "!ROOT_DIR!runtime_logs\service_watchdog.log"
 if errorlevel 1 (
     echo [ERROR] Could not start the service lifetime watchdog.
     goto :startup_failed
@@ -167,7 +167,7 @@ goto :keep_services_alive
 :startup_failed
 echo.
 echo [ERROR] One or more services failed to start.
-echo         Check logs under: %ROOT_DIR%runtime_logs
+echo         Check logs under: !ROOT_DIR!runtime_logs
 pause
 exit /b 1
 

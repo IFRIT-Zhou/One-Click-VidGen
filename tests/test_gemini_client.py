@@ -91,6 +91,74 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer official-deepseek-key")
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek-v4-pro")
 
+    def test_gemini_official_uses_native_google_endpoint_and_key(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "[]"}]}}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "gemini_official",
+                "GEMINI_API_KEY": "relay-key-must-not-be-used",
+                "GOOGLE_API_KEY": "official-google-key",
+                "GOOGLE_GEMINI_MODEL": "gemini-3.7-flash",
+            }, clear=True),
+        ):
+            text = gemini_client.generate_gemini_text(
+                system_prompt="system",
+                user_prompt="user",
+                response_mime_type="application/json",
+            )
+        self.assertEqual(text, "[]")
+        self.assertEqual(
+            request_post.call_args.args[0],
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
+        )
+        self.assertEqual(request_post.call_args.kwargs["headers"]["x-goog-api-key"], "official-google-key")
+
+    def test_anthropic_official_uses_messages_protocol(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "content": [{"type": "text", "text": "[]"}],
+            "stop_reason": "end_turn",
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "anthropic_official",
+                "ANTHROPIC_API_KEY": "official-anthropic-key",
+                "ANTHROPIC_OFFICIAL_MODEL": "claude-sonnet-5",
+            }, clear=True),
+        ):
+            text = gemini_client.generate_gemini_text(system_prompt="system", user_prompt="user")
+        self.assertEqual(text, "[]")
+        self.assertEqual(request_post.call_args.args[0], "https://api.anthropic.com/v1/messages")
+        self.assertEqual(request_post.call_args.kwargs["headers"]["x-api-key"], "official-anthropic-key")
+        self.assertEqual(request_post.call_args.kwargs["json"]["system"], "system")
+
+    def test_openai_official_does_not_reuse_relay_key(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "openai_official",
+                "GEMINI_API_KEY": "relay-key-must-not-be-used",
+                "OPENAI_API_KEY": "official-openai-key",
+                "OPENAI_OFFICIAL_MODEL": "gpt-5.6-terra",
+            }, clear=True),
+        ):
+            text = gemini_client.generate_gemini_text(system_prompt="system", user_prompt="user")
+        self.assertEqual(text, "[]")
+        self.assertEqual(request_post.call_args.args[0], "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer official-openai-key")
+
     def test_openai_compatible_length_finish_is_reported_as_truncation(self) -> None:
         response = Mock()
         response.ok = True
@@ -189,6 +257,31 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(config["key_env"], "DEEPSEEK_API_KEY")
         self.assertEqual(config["base_env"], "DEEPSEEK_API_BASE")
         self.assertEqual(config["model_env"], "DEEPSEEK_OFFICIAL_MODEL")
+
+    def test_official_providers_have_isolated_credentials_and_fixed_sources(self) -> None:
+        official = {
+            "gemini_official", "anthropic_official", "deepseek_official",
+            "openai_official", "qwen_official", "kimi_official", "glm_official",
+        }
+        for name in official:
+            config = gemini_client.LANGUAGE_PROVIDER_OPTIONS[name]
+            self.assertEqual(config["source"], "official")
+            self.assertNotEqual(config["key_env"], "GEMINI_API_KEY")
+            self.assertNotEqual(config["base_env"], "GEMINI_API_BASE")
+
+    def test_official_endpoint_cannot_be_redirected_by_stale_env(self) -> None:
+        with patch.dict("os.environ", {
+            "GOOGLE_GEMINI_API_BASE": "https://relay.example/v1",
+            "GEMINI_API_BASE": "https://another-relay.example/v1",
+        }, clear=False):
+            self.assertEqual(
+                gemini_client.language_base_url("gemini_official"),
+                "https://generativelanguage.googleapis.com/v1beta",
+            )
+            self.assertEqual(
+                gemini_client.language_base_url("gemini"),
+                "https://another-relay.example/v1",
+            )
 
     def test_legacy_runninghub_selection_is_normalized_to_gemini(self) -> None:
         with patch.dict("os.environ", {"LANGUAGE_PROVIDER": "runninghub"}, clear=False):

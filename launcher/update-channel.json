@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.08.27.3",
-  "release_order": 2026082703,
-  "display_version": "2026.08.27 国内镜像更新通道版",
+  "release_id": "2026.08.28.1",
+  "release_order": 2026082801,
+  "display_version": "2026.08.28 官方模型与路径兼容修复版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.08.27.3/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.08.27.3/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.08.28.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.08.28.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增魔搭国内镜像更新通道，保留官网主通道与 GitHub 备用通道。",
-  "content_fingerprint": "2c0eb73d0c21c7476bf393f90abf587aca95bc81cf0187d5e8ddcc5aff55e49a"
+  "notes": "新增多家语言模型官方 API 独立接入；修复安装目录含括号时 Launcher 启动失败。",
+  "content_fingerprint": "5aa0b0bbe4fb47b22017cbd564522e40cb6fcef15c8ee9331201b71b1c9473ab"
 }

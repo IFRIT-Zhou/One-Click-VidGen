@@ -70,10 +70,16 @@
         <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
         <div class="api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
           <span>语言模型</span>
+          <small class="api-model-field-label">接口来源</small>
+          <select v-model="apiKeyForm.language_source" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageSourceChanged">
+            <option value="relay">第三方兼容接口</option>
+            <option value="official">官方 API</option>
+            <option value="custom">自定义兼容接口（高级）</option>
+          </select>
           <small class="api-model-field-label">模型家族</small>
           <select v-model="apiKeyForm.language_provider" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageProviderChanged">
-            <option v-for="provider in languageProviderOptions" :key="provider.value" :value="provider.value" :disabled="provider.disabled">
-              {{ provider.label }}
+            <option v-for="provider in visibleLanguageProviderOptions" :key="provider.value" :value="provider.value" :disabled="provider.disabled">
+              {{ provider.family_label || provider.label }}
             </option>
           </select>
           <small class="api-model-field-label">Agent 模型</small>
@@ -104,7 +110,7 @@
                 </div>
               </div>
             </details>
-            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加三方语言节点 API Key" aria-label="添加三方语言节点 API Key" @click="addApiKeyAccount('language')">＋</button>
+            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加语言模型 API Key" aria-label="添加语言模型 API Key" @click="addApiKeyAccount('language')">＋</button>
           </div>
         </div>
         <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
@@ -2339,7 +2345,7 @@
         <strong class="official-disclaimer">
           官方声明：OCV 目前未授权任何培训机构、付费课程或软件售卖方；第三方收费服务不代表 OCV 官方授权，其交付与售后由第三方自行承担。
         </strong>
-        <span>OCV v1.1.0 · Copyright © 2026 周若雨、何允</span>
+        <span>OCV v1.1.1 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
@@ -2880,6 +2886,7 @@ const referenceImageNames = ref([])
 const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
+  language_source: 'relay',
   language_provider: 'gemini',
   language_model: 'google/gemini-3.1-flash-lite-preview',
   language_api_key: '',
@@ -2902,16 +2909,15 @@ const imageConcurrencyPreview = computed(() => {
   return `${keyCount} 个 Key × 每 Key ${perKey} 路，当前预计 ${effective} 路并发`
 })
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
-  { value: 'gemini', label: 'Google Gemini', configured: false },
-  { value: 'anthropic', label: 'Anthropic Claude', configured: false },
-  { value: 'deepseek', label: 'DeepSeek（三方兼容节点）', configured: false },
-  { value: 'deepseek_official', label: 'DeepSeek 官方 API', configured: false },
-  { value: 'openai', label: 'OpenAI GPT', configured: false },
-  { value: 'qwen', label: '阿里云 Qwen', configured: false },
-  { value: 'kimi', label: 'Kimi（当前节点未开放）', configured: false, disabled: true },
-  { value: 'glm', label: '智谱 GLM', configured: false },
-  { value: 'custom', label: '自定义兼容接口（高级）', configured: false },
+  { value: 'gemini', family: 'gemini', family_label: 'Google Gemini', source: 'relay', label: 'Google Gemini', configured: false },
+  { value: 'gemini_official', family: 'gemini', family_label: 'Google Gemini', source: 'official', label: 'Google Gemini 官方 API', configured: false },
+  { value: 'deepseek', family: 'deepseek', family_label: 'DeepSeek', source: 'relay', label: 'DeepSeek（三方兼容节点）', configured: false },
+  { value: 'deepseek_official', family: 'deepseek', family_label: 'DeepSeek', source: 'official', label: 'DeepSeek 官方 API', configured: false },
+  { value: 'custom', family: 'custom', family_label: '自定义', source: 'custom', label: '自定义兼容接口（高级）', configured: false },
 ])
+const visibleLanguageProviderOptions = computed(() => (
+  languageProviderOptions.value.filter((item) => item.source === apiKeyForm.language_source)
+))
 const currentLanguageProvider = computed(() => (
   languageProviderOptions.value.find((item) => item.value === apiKeyForm.language_provider)
   || languageProviderOptions.value[0]
@@ -4344,6 +4350,17 @@ async function onLanguageProviderChanged() {
   }
 }
 
+async function onLanguageSourceChanged() {
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+  const previousFamily = currentLanguageProvider.value?.family
+  const candidates = visibleLanguageProviderOptions.value
+  const matched = candidates.find((item) => item.family === previousFamily) || candidates[0]
+  if (!matched) return
+  apiKeyForm.language_provider = matched.value
+  await onLanguageProviderChanged()
+}
+
 async function onLanguageModelChanged() {
   apiKeyRuntimeErrors.language = ''
   apiKeyMessage.value = ''
@@ -4358,7 +4375,7 @@ function addApiKeyAccount(kind) {
 
 async function deleteConfiguredApiKey(kind, index) {
   if (form.use_cloud_image_pool || deletingApiKey.value) return
-  const targetLabel = kind === 'language' ? '三方语言节点 API Key' : '这个已保存的 API Key'
+  const targetLabel = kind === 'language' ? '这个语言模型 API Key' : '这个已保存的 API Key'
   if (!window.confirm(`确定删除${targetLabel}吗？`)) return
   deletingApiKey.value = true
   try {
@@ -4381,6 +4398,9 @@ async function loadApiKeySettings() {
     const payload = await api.apiKeySettings()
     apiKeyStatus.value = payload.keys || { language: {}, image: {}, qwen_tts: {} }
     apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini'
+    apiKeyForm.language_source = apiKeyStatus.value.language?.source
+      || currentLanguageProvider.value?.source
+      || 'relay'
     apiKeyForm.language_model = apiKeyStatus.value.language?.model
       || currentLanguageProvider.value?.selected_model
       || currentLanguageModels.value[0]?.value
@@ -4423,7 +4443,9 @@ async function saveApiKeySettings() {
     if (payload.language_api_key || payload.language_provider) touched.add('language')
     if (payload.image_api_key || payload.image_api_keys?.length) touched.add('image')
     for (const kind of touched) {
-      apiKeyEditing[kind] = false
+      apiKeyEditing[kind] = kind === 'language'
+        ? !currentLanguageProvider.value?.configured
+        : false
       apiKeyRuntimeErrors[kind] = ''
     }
     apiKeyForm.language_api_key = ''

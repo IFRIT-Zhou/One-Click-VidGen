@@ -37,6 +37,7 @@ from .db import (
 )
 from .gemini_client import (
     LANGUAGE_PROVIDER_OPTIONS,
+    language_base_url,
     language_model_allowed,
     language_provider_configured,
     language_provider_models,
@@ -341,7 +342,13 @@ class CloudRechargeRequest(BaseModel):
 
 class ApiKeySettingsRequest(BaseModel):
     language_provider: Literal[
-        "gemini", "runninghub", "anthropic", "deepseek", "deepseek_official", "openai", "qwen", "kimi", "glm", "custom"
+        "gemini", "runninghub", "gemini_official",
+        "anthropic", "anthropic_official",
+        "deepseek", "deepseek_official",
+        "openai", "openai_official",
+        "qwen", "qwen_official",
+        "kimi", "kimi_official",
+        "glm", "glm_official", "custom"
     ] | None = None
     language_model: str | None = Field(default=None, max_length=256)
     language_api_key: str | None = Field(default=None, max_length=2048)
@@ -1014,6 +1021,9 @@ def _api_key_status() -> dict[str, Any]:
         provider_statuses.append({
             "value": name,
             "label": config["label"],
+            "family": config.get("family", name),
+            "family_label": config.get("family_label", config["label"]),
+            "source": config.get("source", "relay"),
             "configured": provider_configured,
             "count": 1 if provider_key and provider_configured else 0,
             "key_hints": _masked_api_keys([provider_key]) if not config.get("disabled") else [],
@@ -1050,6 +1060,8 @@ def _api_key_status() -> dict[str, Any]:
             "key_hints": _masked_api_keys([selected_key]),
             "provider": provider,
             "provider_label": selected["label"],
+            "source": selected.get("source", "relay"),
+            "family": selected.get("family", provider),
             "model": str(values.get(selected["model_env"]) or selected["default_model"]),
             "providers": provider_statuses,
         },
@@ -1138,7 +1150,7 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
         return "error", f"请在 .env 中填写 {config['base_env']} 和 {config['model_env']}"
     try:
         if config["protocol"] == "openai":
-            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            base_url = language_base_url(provider)
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             response = requests.get(
                 f"{base_url}/models",
@@ -1146,14 +1158,14 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
                 timeout=(3, 6),
             )
         elif config["protocol"] == "anthropic":
-            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            base_url = language_base_url(provider)
             response = requests.get(
                 f"{base_url}/models",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
                 timeout=(3, 6),
             )
         else:
-            base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
+            base_url = language_base_url(provider)
             response = requests.get(
                 f"{base_url}/models",
                 headers={"x-goog-api-key": api_key},
@@ -1546,7 +1558,7 @@ def delete_api_key(kind: str, index: int, request: Request, provider: str | None
             save_project_env_values({key_env: ""})
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=500, detail=f"删除 API Key 失败: {exc}") from exc
-        return {"keys": _api_key_status(), "message": "三方语言节点 API Key 已删除。"}
+        return {"keys": _api_key_status(), "message": "语言模型 API Key 已删除。"}
     image_pool = _runninghub_api_keys(values)
     pool = image_pool
     if index >= len(pool):
