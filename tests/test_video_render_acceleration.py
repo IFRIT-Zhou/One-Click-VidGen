@@ -56,6 +56,49 @@ class VideoRenderAccelerationTest(unittest.TestCase):
                 Path("/usr/bin/google-chrome").resolve(),
             )
 
+    def test_portable_subprocess_env_replaces_case_variant_path(self) -> None:
+        ffmpeg = Path("C:/OCV/tools/ffmpeg/bin/ffmpeg.exe")
+        environment = module5_video_render.portable_subprocess_env(
+            ffmpeg,
+            {"Path": "C:/Windows/System32", "OTHER": "kept"},
+        )
+        path_keys = [key for key in environment if key.lower() == "path"]
+        self.assertEqual(path_keys, ["PATH"])
+        self.assertTrue(environment["PATH"].startswith(str(ffmpeg.parent)))
+        self.assertIn("C:/Windows/System32", environment["PATH"])
+        self.assertEqual(environment["FFMPEG_BINARY"], str(ffmpeg))
+        self.assertEqual(environment["FFMPEG_PATH"], str(ffmpeg))
+        self.assertEqual(environment["OTHER"], "kept")
+
+    def test_render_temp_directory_falls_back_to_system_temp(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            expected = Path(temporary)
+            real_mkdtemp = tempfile.mkdtemp
+            failed_workspace = expected / "blocked-workspace"
+            calls = []
+
+            def make_temp(prefix, dir=None):
+                calls.append(dir)
+                if dir is not None:
+                    raise PermissionError("workspace ACL denied")
+                return real_mkdtemp(prefix=prefix, dir=str(expected))
+
+            with (
+                patch.dict(os.environ, {"OCV_RENDER_TEMP_DIR": ""}, clear=False),
+                patch.object(module5_video_render, "WORKSPACE_DIR", failed_workspace),
+                patch.object(
+                    module5_video_render.tempfile,
+                    "mkdtemp",
+                    side_effect=make_temp,
+                ),
+            ):
+                with module5_video_render.writable_render_temp_directory() as directory:
+                    self.assertTrue(directory.is_dir())
+                    self.assertEqual(directory.parent, expected)
+                    (directory / "staged.jpg").write_bytes(b"image")
+                self.assertFalse(directory.exists())
+                self.assertEqual(calls, [str(failed_workspace), None])
+
     def test_windows_source_checkout_can_use_installed_edge(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             program_files = Path(temporary)

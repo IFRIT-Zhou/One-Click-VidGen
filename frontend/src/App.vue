@@ -89,7 +89,7 @@
             <code>CUSTOM_LLM_API_KEY=可选，本地服务无鉴权时留空</code>
             <small>本地模型需支持 /chat/completions、足够的上下文长度与稳定 JSON 输出；不保证所有模型都能完成 Agent 规划。</small>
           </div>
-          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" placeholder="三方语言节点 API Key（所有模型共用）" />
+          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
           <div v-else-if="!customLanguageProvider" class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
             <div class="api-key-pool-heading">
               <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · ${currentLanguageModelLabel}`) }}</strong>
@@ -2904,7 +2904,8 @@ const imageConcurrencyPreview = computed(() => {
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
   { value: 'gemini', label: 'Google Gemini', configured: false },
   { value: 'anthropic', label: 'Anthropic Claude', configured: false },
-  { value: 'deepseek', label: 'DeepSeek', configured: false },
+  { value: 'deepseek', label: 'DeepSeek（三方兼容节点）', configured: false },
+  { value: 'deepseek_official', label: 'DeepSeek 官方 API', configured: false },
   { value: 'openai', label: 'OpenAI GPT', configured: false },
   { value: 'qwen', label: '阿里云 Qwen', configured: false },
   { value: 'kimi', label: 'Kimi（当前节点未开放）', configured: false, disabled: true },

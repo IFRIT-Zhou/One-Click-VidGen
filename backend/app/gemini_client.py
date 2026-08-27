@@ -20,10 +20,10 @@ DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://llm.runninghub.ai/v1"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 
-# The configured third-party node is the transport; provider names below are
-# model families, not separate API accounts. All visible families therefore
-# share one base URL and one language-model key while retaining their own last
-# selected model. ``runninghub`` remains as a hidden legacy alias only.
+# Most provider names below are model families exposed by the configured
+# third-party relay, so they share one base URL and one language-model key.
+# Providers explicitly suffixed with ``_official`` keep independent official
+# credentials. ``runninghub`` remains as a hidden legacy alias only.
 LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
     "gemini": {
         "label": "Google Gemini",
@@ -67,7 +67,7 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         ],
     },
     "deepseek": {
-        "label": "DeepSeek",
+        "label": "DeepSeek（三方兼容节点）",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "DEEPSEEK_MODEL",
@@ -77,6 +77,19 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "models": [
             {"value": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash（推荐）"},
             {"value": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro（高质量）"},
+        ],
+    },
+    "deepseek_official": {
+        "label": "DeepSeek 官方 API",
+        "key_env": "DEEPSEEK_API_KEY",
+        "base_env": "DEEPSEEK_API_BASE",
+        "model_env": "DEEPSEEK_OFFICIAL_MODEL",
+        "default_base": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "protocol": "openai",
+        "models": [
+            {"value": "deepseek-v4-flash", "label": "DeepSeek V4 Flash（推荐）"},
+            {"value": "deepseek-v4-pro", "label": "DeepSeek V4 Pro（高质量）"},
         ],
     },
     "openai": {
@@ -351,7 +364,7 @@ def _generate_openai_compatible_text(
         }
         # Existing RunningHub relays historically accept this wrapper; official
         # OpenAI-compatible providers expect these fields at the request root.
-        if provider in {"deepseek", "openai", "qwen", "kimi", "glm"}:
+        if provider in {"deepseek", "deepseek_official", "openai", "qwen", "kimi", "glm"}:
             payload.update(extra_body)
         elif extra_body:
             payload["extra_body"] = extra_body

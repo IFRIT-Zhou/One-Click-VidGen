@@ -64,6 +64,33 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer shared-relay-key")
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek/deepseek-v4-pro")
 
+    def test_deepseek_official_uses_independent_key_base_and_model(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "deepseek_official",
+                "GEMINI_API_KEY": "relay-key-must-not-be-used",
+                "DEEPSEEK_API_KEY": "official-deepseek-key",
+                "DEEPSEEK_API_BASE": "https://api.deepseek.com",
+                "DEEPSEEK_OFFICIAL_MODEL": "deepseek-v4-pro",
+            }, clear=False),
+        ):
+            text = gemini_client.generate_gemini_text(
+                system_prompt="system",
+                user_prompt="user",
+                response_mime_type="application/json",
+            )
+
+        self.assertEqual(text, "[]")
+        self.assertEqual(request_post.call_args.args[0], "https://api.deepseek.com/chat/completions")
+        self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer official-deepseek-key")
+        self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek-v4-pro")
+
     def test_openai_compatible_length_finish_is_reported_as_truncation(self) -> None:
         response = Mock()
         response.ok = True
@@ -148,11 +175,20 @@ class GeminiClientTest(unittest.TestCase):
         self.assertNotIn("runninghub", {item["value"] for item in status["providers"]})
 
     def test_visible_model_families_share_one_relay_credential(self) -> None:
-        for config in gemini_client.LANGUAGE_PROVIDER_OPTIONS.values():
+        relay_providers = {"gemini", "anthropic", "deepseek", "openai", "qwen", "kimi", "glm"}
+        for name, config in gemini_client.LANGUAGE_PROVIDER_OPTIONS.items():
+            if name not in relay_providers:
+                continue
             if config.get("hidden") or config.get("disabled") or config.get("optional_key"):
                 continue
             self.assertEqual(config["key_env"], "GEMINI_API_KEY")
             self.assertEqual(config["base_env"], "GEMINI_API_BASE")
+
+    def test_deepseek_official_is_exposed_as_an_independent_provider(self) -> None:
+        config = gemini_client.LANGUAGE_PROVIDER_OPTIONS["deepseek_official"]
+        self.assertEqual(config["key_env"], "DEEPSEEK_API_KEY")
+        self.assertEqual(config["base_env"], "DEEPSEEK_API_BASE")
+        self.assertEqual(config["model_env"], "DEEPSEEK_OFFICIAL_MODEL")
 
     def test_legacy_runninghub_selection_is_normalized_to_gemini(self) -> None:
         with patch.dict("os.environ", {"LANGUAGE_PROVIDER": "runninghub"}, clear=False):

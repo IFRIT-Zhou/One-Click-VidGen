@@ -341,7 +341,7 @@ class CloudRechargeRequest(BaseModel):
 
 class ApiKeySettingsRequest(BaseModel):
     language_provider: Literal[
-        "gemini", "runninghub", "anthropic", "deepseek", "openai", "qwen", "kimi", "glm", "custom"
+        "gemini", "runninghub", "anthropic", "deepseek", "deepseek_official", "openai", "qwen", "kimi", "glm", "custom"
     ] | None = None
     language_model: str | None = Field(default=None, max_length=256)
     language_api_key: str | None = Field(default=None, max_length=2048)
@@ -1484,8 +1484,8 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         or (image_pool[0] if image_pool else "")
     )
 
-    # The language selector chooses a model family on one shared third-party
-    # node. Switching families must never require or overwrite a second key.
+    # Relay model families share GEMINI_API_KEY. Official providers keep their
+    # own credentials so an official key is never accidentally sent to a relay.
     updates: dict[str, str] = {}
     if language_provider:
         provider_config = LANGUAGE_PROVIDER_OPTIONS[language_provider]
@@ -1503,8 +1503,6 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
             updates[provider_config["key_env"]] = language
     elif language:
         # Preserve the old behavior for callers which do not send a provider.
-        updates["GEMINI_API_KEY"] = language
-    if language:
         updates["GEMINI_API_KEY"] = language
     if supplied_image:
         updates["RUNNINGHUB_API_KEY"] = image_primary

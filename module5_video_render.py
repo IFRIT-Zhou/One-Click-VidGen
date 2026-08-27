@@ -12,8 +12,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping
 
 from bgm_mixer import mix_bgm_into_videos, tracks_from_env
 
@@ -81,6 +82,86 @@ def require_ffmpeg_binary() -> Path:
         "未找到 FFmpeg。Windows 整合包应包含 tools/ffmpeg/bin/ffmpeg.exe；"
         "Linux/macOS 请安装 ffmpeg 或设置 FFMPEG_BINARY。"
     )
+
+
+def portable_subprocess_env(
+    ffmpeg: Path,
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Expose portable FFmpeg reliably to child processes on Windows.
+
+    Windows environment names are case-insensitive, but a copied Python dict
+    can contain an inherited ``Path`` and a newly-added ``PATH`` at the same
+    time.  Node/Hyperframes may then observe the stale value and fail its
+    ``where ffmpeg`` probe.  Keep exactly one PATH entry and also publish the
+    resolved binary through common explicit environment names.
+    """
+    source = os.environ if base_env is None else base_env
+    render_env = {str(key): str(value) for key, value in source.items()}
+    path_value = next(
+        (value for key, value in render_env.items() if key.lower() == "path"),
+        "",
+    )
+    for key in [key for key in render_env if key.lower() == "path"]:
+        render_env.pop(key, None)
+    render_env["PATH"] = f"{ffmpeg.parent}{os.pathsep}{path_value}"
+    render_env["FFMPEG_BINARY"] = str(ffmpeg)
+    render_env["FFMPEG_PATH"] = str(ffmpeg)
+    return render_env
+
+
+@contextmanager
+def writable_render_temp_directory() -> Iterator[Path]:
+    """Create a verified writable staging directory for direct FFmpeg render.
+
+    Some extracted portable packages live on drives whose inherited ACLs allow
+    writing ordinary workspace files but reject newly-created temporary child
+    directories.  Keep the portable workspace as the normal location, but
+    verify it with a real write and fall back to the user's system temp when
+    its inherited permissions are broken. Cleanup errors must never hide the
+    actual render result.
+    """
+    configured = str(os.getenv("OCV_RENDER_TEMP_DIR") or "").strip()
+    candidates: list[tuple[str, Path | None]] = []
+    if configured:
+        configured_path = Path(configured).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = PROJECT_ROOT / configured_path
+        candidates.append(("configured", configured_path.resolve(strict=False)))
+    candidates.extend((
+        ("workspace", WORKSPACE_DIR),
+        ("system", None),
+    ))
+
+    errors: list[str] = []
+    seen: set[str] = set()
+    for label, directory in candidates:
+        identity = str(directory.resolve(strict=False)) if directory is not None else "<system-temp>"
+        if identity in seen:
+            continue
+        seen.add(identity)
+        temp_dir: Path | None = None
+        try:
+            if directory is not None:
+                directory.mkdir(parents=True, exist_ok=True)
+            temp_dir = Path(tempfile.mkdtemp(prefix="ocv_ffmpeg_", dir=str(directory) if directory else None))
+            probe = temp_dir / ".ocv_write_probe"
+            probe.write_bytes(b"ok")
+            probe.unlink()
+        except OSError as exc:
+            errors.append(f"{label}: {type(exc).__name__} {exc}")
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            continue
+
+        print(f"FFmpeg 临时工作区: {label}", flush=True)
+        try:
+            yield temp_dir
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        return
+
+    raise RuntimeError("无法创建可写的 FFmpeg 临时工作区：" + " | ".join(errors))
 
 
 def find_portable_hyperframes_browser() -> Path | None:
@@ -435,8 +516,7 @@ def render_direct_raw_video(
     output.unlink(missing_ok=True)
     attempts = [env_flag("VIDEO_RENDER_GPU_ENCODING", True), False]
     errors: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="ocv_ffmpeg_", dir=str(WORKSPACE_DIR)) as temp_name:
-        temp_dir = Path(temp_name)
+    with writable_render_temp_directory() as temp_dir:
         staged_inputs: list[Path] = []
         for index, item in enumerate(timeline):
             source = Path(item["path"])
@@ -514,9 +594,9 @@ def render(composition: Path, output: Path, phase_label: str) -> None:
     ffmpeg = require_ffmpeg_binary()
 
     command = build_render_command(node, cli, composition, output)
-    render_env = os.environ.copy()
-    # Hyperframes launches ffmpeg by name. Keep the resolved binary first in PATH.
-    render_env["PATH"] = f"{ffmpeg.parent}{os.pathsep}{render_env.get('PATH', '')}"
+    # Hyperframes launches ffmpeg by name. Keep the resolved portable binary
+    # first in a case-normalized PATH so Node's `where ffmpeg` can always find it.
+    render_env = portable_subprocess_env(ffmpeg)
     browser = find_portable_hyperframes_browser()
     if browser is None:
         raise RuntimeError(

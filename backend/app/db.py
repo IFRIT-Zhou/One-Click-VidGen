@@ -47,6 +47,10 @@ class SQLiteCursor:
     def lastrowid(self) -> int | None:
         return self._cursor.lastrowid
 
+    @property
+    def rowcount(self) -> int:
+        return self._cursor.rowcount
+
     def execute(self, query: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Cursor:
         return self._cursor.execute(query.replace("%s", "?"), params)
 
