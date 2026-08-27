@@ -63,3 +63,9 @@ launcher/ui-preview.png
 # Root-level scripts and media used as local generation inputs.
 /*.txt
 /*.zip
+
+# Private project notes kept only on the maintainer's local machine.
+/Codex项目记忆备份_*.md
+/技术架构与实现总览_*.md
+/默认模式完整技术路线_*.md
+/更新日志_*.md
