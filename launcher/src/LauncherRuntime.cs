@@ -635,6 +635,7 @@ namespace OcvLauncher
         {
             var settings = new UpdateSourceSettings();
             settings.ChannelUrls.Add("https://download.oneclickvidgen.com/launcher/update-channel.json");
+            settings.ChannelUrls.Add("https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/launcher/update-channel.json");
             settings.ChannelUrls.Add("https://raw.githubusercontent.com/IFRIT-Zhou/One-Click-VidGen/main/launcher/update-channel.json");
             settings.AllowedDownloadHosts.Add("*.oneclickvidgen.com");
             settings.AllowedDownloadHosts.Add("github.com");

@@ -1,6 +1,7 @@
 {
   "channel_urls": [
     "https://download.oneclickvidgen.com/launcher/update-channel.json",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/launcher/update-channel.json",
     "https://raw.githubusercontent.com/IFRIT-Zhou/One-Click-VidGen/main/launcher/update-channel.json"
   ],
   "allowed_download_hosts": [
