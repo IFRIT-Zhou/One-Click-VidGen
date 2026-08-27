@@ -812,7 +812,7 @@ namespace OcvLauncher
             foreach (string relativePath in ReleaseIntegrityFiles)
             {
                 string fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                string fileHash = File.Exists(fullPath) ? ComputeFileSha256(fullPath) : "MISSING";
+                string fileHash = File.Exists(fullPath) ? ComputeReleaseFileSha256(fullPath) : "MISSING";
                 summary.Append(relativePath.Replace('\\', '/'));
                 summary.Append('|');
                 summary.Append(fileHash);
@@ -866,6 +866,23 @@ namespace OcvLauncher
             client.Headers[HttpRequestHeader.UserAgent] = "One-Click-VidGen-Launcher/2";
             client.Headers[HttpRequestHeader.Accept] = "application/json, text/plain, */*";
             return client;
+        }
+
+        private static string ComputeReleaseFileSha256(string path)
+        {
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            bool isText = extension == ".bat" || extension == ".css" || extension == ".js"
+                || extension == ".json" || extension == ".ps1" || extension == ".py"
+                || extension == ".vue";
+            if (!isText) return ComputeFileSha256(path);
+
+            string text = File.ReadAllText(path, Encoding.UTF8)
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n");
+            using (SHA256 sha = SHA256.Create())
+            {
+                return BytesToHex(sha.ComputeHash(Encoding.UTF8.GetBytes(text)));
+            }
         }
 
         private static string ReadJsonString(string json, string key)

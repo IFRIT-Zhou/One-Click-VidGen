@@ -30,6 +30,18 @@ INTEGRITY_FILES = (
     "launcher/update-sources.json",
 )
 
+TEXT_EXTENSIONS = {".bat", ".css", ".js", ".json", ".ps1", ".py", ".vue"}
+
+
+def release_file_bytes(path: Path) -> bytes:
+    """Make text fingerprints independent from Git/Windows line endings."""
+    data = path.read_bytes()
+    if path.suffix.lower() in TEXT_EXTENSIONS:
+        if data.startswith(b"\xef\xbb\xbf"):
+            data = data[3:]
+        data = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return data
+
 
 def fingerprint(root: Path) -> tuple[str, list[str]]:
     lines: list[str] = []
@@ -37,7 +49,7 @@ def fingerprint(root: Path) -> tuple[str, list[str]]:
     for relative in INTEGRITY_FILES:
         path = root / Path(relative)
         if path.is_file():
-            file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            file_hash = hashlib.sha256(release_file_bytes(path)).hexdigest()
         else:
             file_hash = "MISSING"
             missing.append(relative)

@@ -13,5 +13,5 @@
   ],
   "archive_sha256": "",
   "notes": "新增多家语言模型官方 API 独立接入；修复安装目录含括号时 Launcher 启动失败。",
-  "content_fingerprint": "5aa0b0bbe4fb47b22017cbd564522e40cb6fcef15c8ee9331201b71b1c9473ab"
+  "content_fingerprint": "e8099f77b5ec03cb4f4ae834fe9d909349a805a5eae09f789fa6ce01de65a88d"
 }
