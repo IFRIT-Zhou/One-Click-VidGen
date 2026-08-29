@@ -20,6 +20,7 @@ import time
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,10 +42,13 @@ ASSETS_DIR = VISUAL_DIR / "assets"
 TIMELINE_PATH = VISUAL_DIR / "fine_grained_timeline.json"
 POSTER_MAPPING_PATH = VISUAL_DIR / "poster_mapping.json"
 VISUAL_PROMPT_PLAN_PATH = VISUAL_DIR / "visual_prompt_plan.json"
+CLOUD_RETRY_STATE_PATH = VISUAL_DIR / "cloud_image_retry_state.json"
 DEFAULT_RUNNINGHUB_BASE_URL = "https://www.runninghub.ai"
 _QUEUE_RETRY_LOCK = threading.Lock()
 _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _CLOUD_TOKEN_REFRESH_LOCK = threading.Lock()
+_CLOUD_RETRY_STATE_LOCK = threading.Lock()
+_VISUAL_CHECKPOINT_LOCK = threading.Lock()
 _REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
 # v13: screen/file contents are scoped again to each fixed image group. A long
 # Agent 1 unit can no longer stamp the same evidence insert across every child
@@ -66,24 +70,124 @@ def _atomic_write_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def _cloud_retry_state_key(macro: dict[str, Any]) -> str:
+    """Return a stable per-job/per-poster key, independent of retry prompts."""
+    job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip() or "desktop"
+    scene_id = str(macro.get("macro_scene_id") or "scene").strip()
+    return hashlib.sha1(f"{job_id}\n{scene_id}".encode("utf-8")).hexdigest()
+
+
+def _load_cloud_retry_state_unlocked() -> dict[str, dict[str, Any]]:
+    try:
+        value = json.loads(CLOUD_RETRY_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items() if isinstance(item, dict)}
+
+
+def _hydrate_cloud_retry_context(macro: dict[str, Any]) -> dict[str, Any]:
+    """Restore a confirmed retry generation after a process restart."""
+    hydrated = dict(macro)
+    with _CLOUD_RETRY_STATE_LOCK:
+        entry = _load_cloud_retry_state_unlocked().get(_cloud_retry_state_key(hydrated), {})
+    try:
+        generation = max(0, int(entry.get("generation", 0)))
+    except (TypeError, ValueError):
+        generation = 0
+    hydrated["_cloud_retry_generation"] = generation
+    current_prompt = str(hydrated.get("image_prompt") or "")
+    retry_prompt = str(entry.get("retry_prompt") or "")
+    root_prompt_hash = str(entry.get("root_prompt_hash") or "")
+    current_hash = hashlib.sha1(current_prompt.encode("utf-8")).hexdigest()
+    if retry_prompt and root_prompt_hash and current_hash == root_prompt_hash:
+        hydrated["image_prompt"] = retry_prompt
+    return hydrated
+
+
+def _advance_cloud_retry_generation(
+    macro: dict[str, Any],
+    *,
+    status: str,
+    error_code: int | None,
+    error_message: str,
+    retry_prompt: str | None = None,
+) -> int:
+    """Persist a new request identity only after a confirmed terminal result."""
+    key = _cloud_retry_state_key(macro)
+    with _CLOUD_RETRY_STATE_LOCK:
+        state = _load_cloud_retry_state_unlocked()
+        previous = state.get(key, {})
+        try:
+            previous_generation = max(0, int(previous.get("generation", 0)))
+        except (TypeError, ValueError):
+            previous_generation = 0
+        try:
+            memory_generation = max(0, int(macro.get("_cloud_retry_generation", 0)))
+        except (TypeError, ValueError):
+            memory_generation = 0
+        generation = max(previous_generation, memory_generation) + 1
+        entry: dict[str, Any] = {
+            "generation": generation,
+            "status": str(status or "FAILED"),
+            "error_code": error_code,
+            "error_message": str(error_message or ""),
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        if retry_prompt is not None:
+            original_prompt = str(macro.get("image_prompt") or "")
+            entry["root_prompt_hash"] = str(
+                previous.get("root_prompt_hash")
+                or hashlib.sha1(original_prompt.encode("utf-8")).hexdigest()
+            )
+            entry["retry_prompt"] = str(retry_prompt)
+        elif previous.get("retry_prompt"):
+            entry["root_prompt_hash"] = previous.get("root_prompt_hash")
+            entry["retry_prompt"] = previous.get("retry_prompt")
+        state[key] = entry
+        _atomic_write_json(CLOUD_RETRY_STATE_PATH, state)
+    macro["_cloud_retry_generation"] = generation
+    if retry_prompt is not None:
+        macro["image_prompt"] = retry_prompt
+    _sync_visual_checkpoint()
+    return generation
+
+
+def _clear_cloud_retry_state(macro: dict[str, Any]) -> None:
+    """A completed asset no longer needs a pending retry generation."""
+    key = _cloud_retry_state_key(macro)
+    changed = False
+    with _CLOUD_RETRY_STATE_LOCK:
+        state = _load_cloud_retry_state_unlocked()
+        if key in state:
+            del state[key]
+            _atomic_write_json(CLOUD_RETRY_STATE_PATH, state)
+            changed = True
+    if changed:
+        _sync_visual_checkpoint()
+
+
 def _sync_visual_checkpoint(*, asset: Path | None = None) -> None:
     """Persist paid visual work immediately instead of waiting for the whole batch."""
     checkpoint = _visual_checkpoint_dir()
     if checkpoint is None:
         return
-    checkpoint.mkdir(parents=True, exist_ok=True)
-    for source in (
-        VISUAL_DIR / "story_context.json",
-        STORY_PLAN_PATH,
-        POSTER_MAPPING_PATH,
-        VISUAL_PROMPT_PLAN_PATH,
-    ):
-        if source.is_file():
-            shutil.copy2(source, checkpoint / source.name)
-    if asset is not None and asset.is_file() and asset.stat().st_size > 0:
-        target_dir = checkpoint / "assets"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(asset, target_dir / asset.name)
+    with _VISUAL_CHECKPOINT_LOCK:
+        checkpoint.mkdir(parents=True, exist_ok=True)
+        for source in (
+            VISUAL_DIR / "story_context.json",
+            STORY_PLAN_PATH,
+            POSTER_MAPPING_PATH,
+            VISUAL_PROMPT_PLAN_PATH,
+            CLOUD_RETRY_STATE_PATH,
+        ):
+            if source.is_file():
+                shutil.copy2(source, checkpoint / source.name)
+        if asset is not None and asset.is_file() and asset.stat().st_size > 0:
+            target_dir = checkpoint / "assets"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(asset, target_dir / asset.name)
 
 
 def _restore_visual_checkpoint() -> bool:
@@ -96,6 +200,7 @@ def _restore_visual_checkpoint() -> bool:
         STORY_PLAN_PATH,
         POSTER_MAPPING_PATH,
         VISUAL_PROMPT_PLAN_PATH,
+        CLOUD_RETRY_STATE_PATH,
     ):
         source = checkpoint / target.name
         if source.is_file() and source.stat().st_size > 0:
@@ -457,7 +562,22 @@ class RunningHubReferenceUploadError(RuntimeError):
 
 
 class RunningHubResultRetryableError(RuntimeError):
-    """A cloud task completed with a transient result-file failure."""
+    """A result failure that is retryable, with explicit remote-state certainty."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        confirmed_terminal: bool = False,
+        status: str = "",
+        error_code: int | None = None,
+        error_message: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.confirmed_terminal = bool(confirmed_terminal)
+        self.status = str(status or "")
+        self.error_code = error_code
+        self.error_message = str(error_message or "")
 
 
 class RunningHubModerationError(RunningHubResultRetryableError):
@@ -2440,14 +2560,13 @@ def _runninghub_error_code(payload: dict[str, Any], status_code: int | None = No
 
 
 def _runninghub_error_message(payload: dict[str, Any]) -> str:
-    message = (
-        payload.get("msg")
-        or payload.get("message")
-        or payload.get("errorMessage")
-        or payload.get("error")
-        or ""
-    )
-    return str(message).strip()
+    message = _find_first_key(payload, {
+        "msg", "message", "errorMessage", "error_message", "errorMsg", "error",
+        "failReason", "failureReason", "reason", "detail",
+    })
+    if isinstance(message, (dict, list)):
+        return json.dumps(message, ensure_ascii=False, separators=(",", ":"))
+    return str(message or "").strip()
 
 
 def _looks_like_power_insufficient(code: int | None, message: str) -> bool:
@@ -2469,7 +2588,7 @@ def _looks_like_power_insufficient(code: int | None, message: str) -> bool:
 
 
 def _runninghub_result_error_code(payload: dict[str, Any]) -> int | None:
-    raw_code = _find_first_key(payload, {"errorCode"})
+    raw_code = _find_first_key(payload, {"errorCode", "error_code", "errorCodeValue"})
     try:
         if raw_code not in {None, ""}:
             return int(raw_code)
@@ -2518,6 +2637,25 @@ def _find_first_key(value: Any, key_names: set[str]) -> Any:
             if found:
                 return found
     return None
+
+
+def _cloud_client_job_id(macro: dict[str, Any], payload: dict[str, Any]) -> str:
+    """Keep generation zero byte-for-byte compatible; suffix confirmed retries."""
+    job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip() or "desktop"
+    scene_id = str(macro.get("macro_scene_id") or "scene").strip()
+    request_fingerprint = hashlib.sha1(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    stable_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{job_id}-{scene_id}").strip("-._")
+    base = f"ocv-{stable_prefix[:80]}-{request_fingerprint}"
+    try:
+        generation = max(0, int(macro.get("_cloud_retry_generation", 0)))
+    except (TypeError, ValueError):
+        generation = 0
+    if generation == 0:
+        return base
+    suffix = f"-retry-{generation}"
+    return f"{base[:max(1, 128 - len(suffix))]}{suffix}"
 
 
 def _find_image_url(value: Any, *, base_url: str | None = None) -> str | None:
@@ -2671,13 +2809,7 @@ def _submit_poster_request(
         endpoint = os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
             str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
     if config.get("cloud_pool") == "1":
-        job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip() or "desktop"
-        scene_id = str(macro.get("macro_scene_id") or "scene").strip()
-        request_fingerprint = hashlib.sha1(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:16]
-        stable_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{job_id}-{scene_id}").strip("-._")
-        payload["clientJobId"] = f"ocv-{stable_prefix[:80]}-{request_fingerprint}"
+        payload["clientJobId"] = _cloud_client_job_id(macro, payload)
     response = _request_with_cloud_refresh(
         session,
         "POST",
@@ -2784,7 +2916,7 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
             downloaded = _download_image(session, poster_id, str(file_url), task.output, config)
             if downloaded:
                 return downloaded
-        elif status in {"RUNNING", "QUEUED", "PENDING", ""}:
+        elif status in {"RUNNING", "QUEUED", "PENDING", "PROCESSING", "SUBMITTED", ""}:
             now = time.monotonic()
             if now >= next_notice_at:
                 elapsed = int(now - started_at)
@@ -2794,7 +2926,10 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
                     flush=True,
                 )
                 next_notice_at = now + 30
-        else:
+        elif status in {
+            "FAILED", "FAILURE", "ERROR", "CANCELLED", "CANCELED", "REJECTED",
+            "BLOCKED", "ABORTED", "TERMINATED", "TIMEOUT", "TIMED_OUT", "EXPIRED",
+        }:
             message = _runninghub_error_message(result)
             error_code = _runninghub_result_error_code(result)
             if error_code is None:
@@ -2809,17 +2944,41 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
                 )
             if error_code == 1501 or _looks_like_moderation_failure(message):
                 raise RunningHubModerationError(
-                    f"{poster_id} 的提示词被云端审核拦截: {message or status}"
+                    f"{poster_id} 的提示词被云端审核拦截: {message or status}",
+                    confirmed_terminal=True, status=status, error_code=error_code,
+                    error_message=message,
                 )
             if error_code == 1516:
                 raise RunningHubResultRetryableError(
-                    f"{poster_id} 云端返图文件异常（1516）: {message or status}"
+                    f"{poster_id} 云端返图文件异常（1516）: {message or status}",
+                    confirmed_terminal=True, status=status, error_code=error_code,
+                    error_message=message,
                 )
-            raise RunningHubResultRetryableError(
-                f"{poster_id} 的云端图像工作流执行失败: {message or status}"
+            detail = (
+                f"状态 {status}，错误码 {error_code if error_code is not None else '未提供'}，"
+                f"错误信息 {message or '云端未提供详情'}"
             )
+            raise RunningHubResultRetryableError(
+                f"{poster_id} 的云端图像工作流执行失败：{detail}",
+                confirmed_terminal=True, status=status, error_code=error_code,
+                error_message=message,
+            )
+        else:
+            now = time.monotonic()
+            if now >= next_notice_at:
+                elapsed = int(now - started_at)
+                print(
+                    f"{progress_label} 返回未知云端状态 {status}，暂不创建新任务，继续查询原任务，"
+                    f"已等待 {elapsed}s",
+                    flush=True,
+                )
+                next_notice_at = now + 30
         time.sleep(5)
-    raise RunningHubResultRetryableError(f"{poster_id} 图像生成超时")
+    raise RunningHubResultRetryableError(
+        f"{poster_id} 图像生成查询超时，提交结果尚未确认；将复用原请求身份继续查询",
+        confirmed_terminal=False,
+        status="UNKNOWN",
+    )
 
 
 def _render_poster_with_retry(
@@ -2832,7 +2991,7 @@ def _render_poster_with_retry(
     max_moderation_retries = _positive_env_int("RUNNINGHUB_MODERATION_MAX_RETRIES", 3)
     result_retries = 0
     moderation_retries = 0
-    working_macro = dict(macro)
+    working_macro = _hydrate_cloud_retry_context(dict(macro))
     queued = False
     try:
         config = account_pool.acquire()
@@ -2850,6 +3009,8 @@ def _render_poster_with_retry(
                 task = _submit_poster(working_macro, config)
             result = _wait_for_poster(task, config)
             account_pool.mark_available(config)
+            if config.get("cloud_pool") == "1":
+                _clear_cloud_retry_state(working_macro)
             return result
         except RunningHubQueueFull:
             account_pool.mark_queue_full(config)
@@ -2911,31 +3072,68 @@ def _render_poster_with_retry(
                     f"{poster_id} 已安全改写并重试 {max_moderation_retries} 次，仍被审核拦截: {exc}"
                 ) from exc
             moderation_retries += 1
-            working_macro["image_prompt"] = _rewrite_prompt_after_moderation(
+            rewritten_prompt = _rewrite_prompt_after_moderation(
                 str(working_macro.get("image_prompt") or ""), moderation_retries
             )
+            if config.get("cloud_pool") == "1":
+                generation = _advance_cloud_retry_generation(
+                    working_macro,
+                    status=exc.status or "MODERATION_BLOCKED",
+                    error_code=exc.error_code,
+                    error_message=exc.error_message or str(exc),
+                    retry_prompt=rewritten_prompt,
+                )
+            else:
+                working_macro["image_prompt"] = rewritten_prompt
+                generation = moderation_retries
             delay = _retry_delay_seconds(moderation_retries)
             print(
                 f"{poster_id} 被审核拦截，已自动安全改写提示词，{delay:.0f}s 后只重跑该图片 "
-                f"（{moderation_retries}/{max_moderation_retries}）: {exc}",
+                f"（{moderation_retries}/{max_moderation_retries}，新请求 retry-{generation}）: {exc}",
                 flush=True,
             )
             time.sleep(delay)
         except RunningHubResultRetryableError as exc:
-            if result_retries >= max_result_retries:
+            is_generic_cloud_terminal_failure = (
+                config.get("cloud_pool") == "1"
+                and exc.confirmed_terminal
+                and exc.error_code != 1516
+            )
+            allowed_result_retries = 1 if is_generic_cloud_terminal_failure else max_result_retries
+            if result_retries >= allowed_result_retries:
                 account_pool.release(config)
+                if is_generic_cloud_terminal_failure:
+                    failure_hint = (
+                        "云端只返回通用终态失败；为避免同一图片反复创建新任务和重复扣费，"
+                        "OCV 已在一次新任务尝试后停止。请检查提示词、余额或云端工作流后断点续跑"
+                    )
+                else:
+                    failure_hint = f"云端返图异常，额外重试 {allowed_result_retries} 次后仍失败"
                 raise RuntimeError(
-                    f"{poster_id} 云端返图异常，额外重试 {max_result_retries} 次后仍失败: {exc}"
+                    f"{poster_id} {failure_hint}: {exc}"
                 ) from exc
             result_retries += 1
             macro_output = _poster_output_path(working_macro)
             macro_output.unlink(missing_ok=True)
             delay = _retry_delay_seconds(result_retries)
-            print(
-                f"{poster_id} 返图文件异常，{delay:.0f}s 后重新提交该图片 "
-                f"（第 {result_retries}/{max_result_retries} 次重试）: {exc}",
-                flush=True,
-            )
+            if exc.confirmed_terminal and config.get("cloud_pool") == "1":
+                generation = _advance_cloud_retry_generation(
+                    working_macro,
+                    status=exc.status or "FAILED",
+                    error_code=exc.error_code,
+                    error_message=exc.error_message or str(exc),
+                )
+                print(
+                    f"{poster_id} 已确认云端任务进入终态失败，{delay:.0f}s 后使用新请求 "
+                    f"retry-{generation} 只重跑该图片（{result_retries}/{allowed_result_retries}）: {exc}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"{poster_id} 尚无法确认云端任务是否失败，{delay:.0f}s 后复用原请求身份，"
+                    f"避免重复扣费（{result_retries}/{allowed_result_retries}）: {exc}",
+                    flush=True,
+                )
             time.sleep(delay)
         except Exception:
             account_pool.release(config)

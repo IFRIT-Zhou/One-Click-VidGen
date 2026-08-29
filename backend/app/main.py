@@ -493,6 +493,7 @@ def _plugin_manifest_items() -> list[dict[str, Any]]:
 def health() -> dict[str, Any]:
     indextts25 = load_indextts25_config()
     cloud = load_cloud_config()
+    active_tasks = store.active_job_summary() + edit_store.active_job_summary()
     return {
         "ok": True,
         # Stable aliases used by older launchers/frontends now describe 2.5.
@@ -521,6 +522,23 @@ def health() -> dict[str, Any]:
         # If code was updated while an old background process remained alive, it
         # can restart that stale process instead of silently reusing it.
         "server_started_at": SERVER_STARTED_AT,
+        # Launcher reads this public, non-sensitive summary before any action
+        # that could replace the backend process. It intentionally excludes
+        # scripts, prompts, account data and file paths.
+        "active_task_count": len(active_tasks),
+        "active_tasks": active_tasks,
+    }
+
+
+@app.get("/api/runtime-state")
+def runtime_state() -> dict[str, Any]:
+    """Lightweight lifecycle status polled by Launcher; contains no user content."""
+    active_tasks = store.active_job_summary() + edit_store.active_job_summary()
+    return {
+        "ok": True,
+        "server_started_at": SERVER_STARTED_AT,
+        "active_task_count": len(active_tasks),
+        "active_tasks": active_tasks,
     }
 
 

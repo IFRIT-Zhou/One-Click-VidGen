@@ -12,6 +12,11 @@ from typing import Any, Callable
 from .cloud_client import CloudApiError, CloudClient
 
 
+CLOUD_MAX_CHUNKS = 20
+CLOUD_MAX_CHUNK_CHARS = 1000
+CLOUD_MAX_TOTAL_CHARS = 5000
+
+
 class CloudTtsCancelled(RuntimeError):
     pass
 
@@ -23,7 +28,37 @@ def split_cloud_text(text: str) -> list[str]:
     chunks = split_cluster_tts_text(text)
     if not chunks:
         raise ValueError("清洗和断句后没有可合成的文案")
-    return chunks
+    total_chars = sum(len(chunk) for chunk in chunks)
+    if total_chars > CLOUD_MAX_TOTAL_CHARS:
+        raise ValueError(
+            f"单次集群配音最多支持 {CLOUD_MAX_TOTAL_CHARS} 字，"
+            f"当前断句后共 {total_chars} 字；请启用长文自动分段或拆分后生成"
+        )
+
+    # The cloud API accepts at most 20 chunks in one atomic quote/job.  The
+    # local prosody splitter deliberately emits shorter chunks, so ordinary
+    # 1,000+ character scripts can exceed that list limit even though both the
+    # total text and every individual chunk are valid.  Merge the shortest
+    # neighbouring pair until the protocol limit is met.  This preserves text
+    # order and exact coverage, and only affects the remote cluster path.
+    merged = list(chunks)
+    while len(merged) > CLOUD_MAX_CHUNKS:
+        candidates = [
+            (len(merged[index]) + len(merged[index + 1]), index)
+            for index in range(len(merged) - 1)
+            if len(merged[index]) + len(merged[index + 1]) <= CLOUD_MAX_CHUNK_CHARS
+        ]
+        if not candidates:
+            raise ValueError(
+                f"集群配音无法安全合并到 {CLOUD_MAX_CHUNKS} 个分块以内；"
+                "请拆分文案后重试"
+            )
+        _combined_length, index = min(candidates)
+        merged[index:index + 2] = [merged[index] + merged[index + 1]]
+
+    if "".join(merged) != "".join(chunks):
+        raise RuntimeError("集群配音分块合并完整性检查失败")
+    return merged
 
 
 def cloud_voice_payload(request: dict[str, Any]) -> dict[str, str]:

@@ -20,6 +20,14 @@ namespace OcvLauncher
                 }
                 Console.WriteLine("UPDATE_SOURCE_PARSER=PASS");
 
+                if (LauncherRuntime.ParseActiveTaskCount("{\"active_task_count\":2}") != 2
+                    || LauncherRuntime.ParseActiveTaskCount("{\"ok\":true}") != -1)
+                {
+                    Console.Error.WriteLine("Active-task health parser failed.");
+                    return 9;
+                }
+                Console.WriteLine("ACTIVE_TASK_PARSER=PASS");
+
                 var runtime = new LauncherRuntime();
                 Console.WriteLine("ROOT=" + runtime.Root);
                 Console.WriteLine("VERSION=" + runtime.VersionText);

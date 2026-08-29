@@ -68,6 +68,220 @@ class VisualConstraintsTest(unittest.TestCase):
             r"^ocv-job-test-123-poster_001-[0-9a-f]{16}$",
         )
 
+    def test_cloud_terminal_failure_uses_new_retry_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "poster_002.jpg"
+            macro = {
+                "macro_scene_id": "poster_002",
+                "image_prompt": "雨夜中的城市街道",
+                "_output_path": str(output),
+            }
+            config = {"api_key": "cloud", "cloud_pool": "1", "account_label": "号池"}
+            pool = visual.RunningHubAccountPool([config], per_key_concurrency=1)
+            client_ids = []
+
+            def submit(current_macro, _config):
+                client_ids.append(visual._cloud_client_job_id(current_macro, {"prompt": current_macro["image_prompt"]}))
+                return visual.PosterTask(current_macro, output, f"task-{len(client_ids)}")
+
+            terminal = visual.RunningHubResultRetryableError(
+                "cloud failed",
+                confirmed_terminal=True,
+                status="FAILED",
+                error_code=1516,
+                error_message="result file missing",
+            )
+            with (
+                patch.object(visual, "CLOUD_RETRY_STATE_PATH", root / "retry-state.json"),
+                patch.object(visual, "_submit_poster", side_effect=submit),
+                patch.object(visual, "_wait_for_poster", side_effect=[terminal, output]),
+                patch.object(visual, "_poster_output_path", return_value=output),
+                patch.object(visual, "_retry_delay_seconds", return_value=0),
+                patch.object(visual.time, "sleep"),
+                patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-terminal-test"}, clear=False),
+            ):
+                self.assertEqual(visual._render_poster_with_retry(macro, pool), output)
+
+            self.assertEqual(len(client_ids), 2)
+            self.assertNotEqual(client_ids[0], client_ids[1])
+            self.assertRegex(client_ids[0], r"-[0-9a-f]{16}$")
+            self.assertTrue(client_ids[1].endswith("-retry-1"))
+
+    def test_cloud_unknown_result_reuses_original_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "poster_003.jpg"
+            macro = {
+                "macro_scene_id": "poster_003",
+                "image_prompt": "清晨的河岸",
+                "_output_path": str(output),
+            }
+            config = {"api_key": "cloud", "cloud_pool": "1", "account_label": "号池"}
+            pool = visual.RunningHubAccountPool([config], per_key_concurrency=1)
+            client_ids = []
+
+            def submit(current_macro, _config):
+                client_ids.append(visual._cloud_client_job_id(current_macro, {"prompt": current_macro["image_prompt"]}))
+                return visual.PosterTask(current_macro, output, "same-server-task")
+
+            unknown = visual.RunningHubResultRetryableError(
+                "query timed out",
+                confirmed_terminal=False,
+                status="UNKNOWN",
+            )
+            with (
+                patch.object(visual, "CLOUD_RETRY_STATE_PATH", root / "retry-state.json"),
+                patch.object(visual, "_submit_poster", side_effect=submit),
+                patch.object(visual, "_wait_for_poster", side_effect=[unknown, output]),
+                patch.object(visual, "_poster_output_path", return_value=output),
+                patch.object(visual, "_retry_delay_seconds", return_value=0),
+                patch.object(visual.time, "sleep"),
+                patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-unknown-test"}, clear=False),
+            ):
+                self.assertEqual(visual._render_poster_with_retry(macro, pool), output)
+
+            self.assertEqual(client_ids[0], client_ids[1])
+            self.assertNotIn("-retry-", client_ids[0])
+
+    def test_generic_cloud_terminal_failure_stops_after_one_new_task(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "poster_004.jpg"
+            macro = {
+                "macro_scene_id": "poster_004",
+                "image_prompt": "普通场景",
+                "_output_path": str(output),
+            }
+            config = {"api_key": "cloud", "cloud_pool": "1", "account_label": "号池"}
+            pool = visual.RunningHubAccountPool([config], per_key_concurrency=1)
+            client_ids = []
+
+            def submit(current_macro, _config):
+                client_ids.append(
+                    visual._cloud_client_job_id(
+                        current_macro, {"prompt": current_macro["image_prompt"]}
+                    )
+                )
+                return visual.PosterTask(current_macro, output, f"task-{len(client_ids)}")
+
+            terminal = visual.RunningHubResultRetryableError(
+                "cloud failed",
+                confirmed_terminal=True,
+                status="FAILED",
+                error_message="generic workflow failure",
+            )
+            with (
+                patch.object(visual, "CLOUD_RETRY_STATE_PATH", root / "retry-state.json"),
+                patch.object(visual, "_submit_poster", side_effect=submit),
+                patch.object(visual, "_wait_for_poster", side_effect=[terminal, terminal]),
+                patch.object(visual, "_poster_output_path", return_value=output),
+                patch.object(visual, "_retry_delay_seconds", return_value=0),
+                patch.object(visual.time, "sleep"),
+                patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-generic-failure"}, clear=False),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "避免.*重复扣费"):
+                    visual._render_poster_with_retry(macro, pool)
+
+            self.assertEqual(len(client_ids), 2)
+            self.assertNotEqual(client_ids[0], client_ids[1])
+            self.assertTrue(client_ids[1].endswith("-retry-1"))
+
+    def test_cloud_moderation_rewrite_uses_new_retry_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "poster_005.jpg"
+            macro = {
+                "macro_scene_id": "poster_005",
+                "image_prompt": "危险场景",
+                "_output_path": str(output),
+            }
+            config = {"api_key": "cloud", "cloud_pool": "1", "account_label": "号池"}
+            pool = visual.RunningHubAccountPool([config], per_key_concurrency=1)
+            identities_and_prompts = []
+
+            def submit(current_macro, _config):
+                identities_and_prompts.append((
+                    visual._cloud_client_job_id(current_macro, {"prompt": current_macro["image_prompt"]}),
+                    current_macro["image_prompt"],
+                ))
+                return visual.PosterTask(current_macro, output, f"task-{len(identities_and_prompts)}")
+
+            blocked = visual.RunningHubModerationError(
+                "blocked",
+                confirmed_terminal=True,
+                status="BLOCKED",
+                error_code=1501,
+                error_message="content policy",
+            )
+            with (
+                patch.object(visual, "CLOUD_RETRY_STATE_PATH", root / "retry-state.json"),
+                patch.object(visual, "_submit_poster", side_effect=submit),
+                patch.object(visual, "_wait_for_poster", side_effect=[blocked, output]),
+                patch.object(visual, "_retry_delay_seconds", return_value=0),
+                patch.object(visual.time, "sleep"),
+                patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-moderation-test"}, clear=False),
+            ):
+                self.assertEqual(visual._render_poster_with_retry(macro, pool), output)
+
+            self.assertNotEqual(identities_and_prompts[0][0], identities_and_prompts[1][0])
+            self.assertTrue(identities_and_prompts[1][0].endswith("-retry-1"))
+            self.assertNotEqual(identities_and_prompts[0][1], identities_and_prompts[1][1])
+
+    def test_cloud_retry_generation_survives_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "retry-state.json"
+            macro = {"macro_scene_id": "poster_006", "image_prompt": "山间公路"}
+            with (
+                patch.object(visual, "CLOUD_RETRY_STATE_PATH", state_path),
+                patch.dict(os.environ, {"VOICE_OVER_VIDEO_JOB_ID": "job-resume-test"}, clear=False),
+            ):
+                visual._advance_cloud_retry_generation(
+                    macro,
+                    status="FAILED",
+                    error_code=5001,
+                    error_message="workflow failed",
+                )
+                resumed = visual._hydrate_cloud_retry_context({
+                    "macro_scene_id": "poster_006",
+                    "image_prompt": "山间公路",
+                })
+                client_id = visual._cloud_client_job_id(resumed, {"prompt": "山间公路"})
+
+            self.assertEqual(resumed["_cloud_retry_generation"], 1)
+            self.assertTrue(client_id.endswith("-retry-1"))
+
+    def test_nested_cloud_failure_details_are_preserved(self) -> None:
+        payload = {
+            "status": "FAILED",
+            "data": {"failure": {"error_code": 7301, "failureReason": "model workflow crashed"}},
+        }
+        self.assertEqual(visual._runninghub_result_error_code(payload), 7301)
+        self.assertEqual(visual._runninghub_error_message(payload), "model workflow crashed")
+
+    def test_wait_for_poster_marks_generic_failed_as_confirmed_terminal(self) -> None:
+        task = visual.PosterTask(
+            {"macro_scene_id": "poster_006"},
+            Path("poster_006.jpg"),
+            "img-failed-1",
+        )
+        result = {
+            "status": "FAILED",
+            "data": {"failure": {"error_code": 7301, "failureReason": "model workflow crashed"}},
+        }
+        config = {"api_key": "cloud", "query_url": "https://cloud.test/query", "cloud_pool": "1"}
+        with (
+            patch.object(visual, "_new_session", return_value=object()),
+            patch.object(visual, "_request_json", return_value=result),
+        ):
+            with self.assertRaises(visual.RunningHubResultRetryableError) as raised:
+                visual._wait_for_poster(task, config)
+
+        self.assertTrue(raised.exception.confirmed_terminal)
+        self.assertEqual(raised.exception.status, "FAILED")
+        self.assertEqual(raised.exception.error_code, 7301)
+        self.assertIn("model workflow crashed", str(raised.exception))
+
     def test_cloud_reference_upload_replays_bytes_after_token_refresh(self) -> None:
         class Response:
             def __init__(self, status_code: int, payload: dict):

@@ -17,6 +17,8 @@ namespace OcvLauncher
     {
         public bool BackendOnline;
         public bool FrontendOnline;
+        // -1 means an older/unreachable health response cannot prove idleness.
+        public int ActiveTaskCount;
 
         public bool IsRunning
         {
@@ -228,12 +230,43 @@ namespace OcvLauncher
         {
             var backendTask = IsPortOpenAsync(8010, 450);
             var frontendTask = IsPortOpenAsync(5173, 450);
-            await Task.WhenAll(backendTask, frontendTask);
+            var activeTask = ReadActiveTaskCountAsync();
+            await Task.WhenAll(backendTask, frontendTask, activeTask);
             return new RuntimeStatus
             {
                 BackendOnline = backendTask.Result,
-                FrontendOnline = frontendTask.Result
+                FrontendOnline = frontendTask.Result,
+                ActiveTaskCount = backendTask.Result ? activeTask.Result : 0
             };
+        }
+
+        internal static int ParseActiveTaskCount(string json)
+        {
+            Match match = Regex.Match(
+                json ?? string.Empty,
+                "\\\"active_task_count\\\"\\s*:\\s*(\\d+)",
+                RegexOptions.IgnoreCase);
+            int count;
+            return match.Success && int.TryParse(match.Groups[1].Value, out count)
+                ? Math.Max(0, count)
+                : -1;
+        }
+
+        private static async Task<int> ReadActiveTaskCountAsync()
+        {
+            return await Task.Run(delegate
+            {
+                try
+                {
+                    using (var client = new TimeoutWebClient(900, 900))
+                    {
+                        client.Proxy = null;
+                        string json = client.DownloadString("http://127.0.0.1:8010/api/runtime-state");
+                        return ParseActiveTaskCount(json);
+                    }
+                }
+                catch { return -1; }
+            });
         }
 
         public async Task<List<CheckItem>> RunEnvironmentCheckAsync(Action<string> log)

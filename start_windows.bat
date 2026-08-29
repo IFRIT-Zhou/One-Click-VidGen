@@ -111,6 +111,11 @@ if "%BACKEND_STATE%"=="2" (
     if errorlevel 1 goto :startup_failed
     set "BACKEND_STATE=1"
 )
+if "%BACKEND_STATE%"=="3" (
+    echo [SAFE] Backend source changed, but an OCV task is still active.
+    echo        Keeping the existing backend until the task completes.
+    set "BACKEND_STATE=0"
+)
 if "%BACKEND_STATE%"=="1" (
     echo [START] Backend in unified console...
     start "" /b "!BACKEND_PYTHON!" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010 1>>"!ROOT_DIR!runtime_logs\backend.stdout.log" 2>>"!ROOT_DIR!runtime_logs\backend.stderr.log"
@@ -178,7 +183,7 @@ exit /b %errorlevel%
 
 :check_backend_state
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri 'http://127.0.0.1:8010/api/health'; $data = $response.Content | ConvertFrom-Json; if (-not $data.server_started_at) { exit 2 }; $started = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]([double]$data.server_started_at * 1000)).UtcDateTime; $files = @(); $files += Get-ChildItem -LiteralPath '%ROOT_DIR%backend\app' -Recurse -File -Filter '*.py'; $files += Get-ChildItem -LiteralPath '%ROOT_DIR%' -File -Filter '*.py'; $latest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if ($latest -and $latest.LastWriteTimeUtc -gt $started.AddSeconds(2)) { exit 2 }; exit 0 } catch { exit 1 }" >nul 2>nul
+  "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri 'http://127.0.0.1:8010/api/health'; $data = $response.Content | ConvertFrom-Json; if (-not $data.server_started_at) { exit 2 }; $started = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]([double]$data.server_started_at * 1000)).UtcDateTime; $files = @(); $files += Get-ChildItem -LiteralPath '%ROOT_DIR%backend\app' -Recurse -File -Filter '*.py'; $files += Get-ChildItem -LiteralPath '%ROOT_DIR%' -File -Filter '*.py'; $latest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if ($latest -and $latest.LastWriteTimeUtc -gt $started.AddSeconds(2)) { if ($null -eq $data.active_task_count -or [int]$data.active_task_count -gt 0) { exit 3 }; exit 2 }; exit 0 } catch { exit 1 }" >nul 2>nul
 exit /b %errorlevel%
 
 :stop_port

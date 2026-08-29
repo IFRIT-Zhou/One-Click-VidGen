@@ -261,6 +261,20 @@ class EditStore:
         jobs.sort(key=lambda job: job.created_at, reverse=True)
         return [job.snapshot() for job in jobs[:25]]
 
+    def active_job_summary(self) -> list[dict[str, Any]]:
+        """Return lifecycle-only data used to prevent destructive service restarts."""
+        with self._lock:
+            return [
+                {
+                    "id": job.id,
+                    "status": job.status,
+                    "step": "editor",
+                    "progress": job.progress,
+                }
+                for job in self._jobs.values()
+                if job.status in {"queued", "running"}
+            ]
+
     def update(self, job: EditJob, **changes: Any) -> None:
         for key, value in changes.items():
             setattr(job, key, value)

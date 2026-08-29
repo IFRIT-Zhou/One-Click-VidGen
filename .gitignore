@@ -59,6 +59,7 @@ launcher/ui-preview.png
 # Local distributable package; source remains in the repository, archives do not.
 /indexTTS2_standalone_package.zip
 /One-click vidgen/
+/OneClickVidgen/
 
 # Root-level scripts and media used as local generation inputs.
 /*.txt
@@ -69,3 +70,5 @@ launcher/ui-preview.png
 /技术架构与实现总览_*.md
 /默认模式完整技术路线_*.md
 /更新日志_*.md
+/launcher/UPDATE_SOURCE_INTEGRATION.md
+/deploy/content_guard/

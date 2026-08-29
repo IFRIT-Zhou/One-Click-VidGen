@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.08.28.1",
-  "release_order": 2026082801,
-  "display_version": "2026.08.28 官方模型与路径兼容修复版",
+  "release_id": "2026.08.30.1",
+  "release_order": 2026083001,
+  "display_version": "2026.08.30 云端重试与任务保护修复版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.08.28.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.08.28.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.08.30.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.08.30.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增多家语言模型官方 API 独立接入；修复安装目录含括号时 Launcher 启动失败。",
-  "content_fingerprint": "e8099f77b5ec03cb4f4ae834fe9d909349a805a5eae09f789fa6ce01de65a88d"
+  "notes": "修复云端号池失败图片的无效重试与重复扣费风险；增加运行中任务保护，避免重复启动 Launcher 中断渲染；优化集群长文分块。",
+  "content_fingerprint": "f56445b4d683a3c51aacff1688108da1cee54014bebe241c6982a09e80b64aa7"
 }

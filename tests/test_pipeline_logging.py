@@ -15,6 +15,20 @@ from backend.app.pipeline import (
 
 
 class PipelineLoggingTest(unittest.TestCase):
+    def test_launcher_restart_guard_reports_running_and_confirmation_jobs_only(self) -> None:
+        store = JobStore()
+        store._jobs = {
+            "running": Job(id="running", status="running", step="render", progress=86),
+            "review": Job(id="review", status="waiting_confirmation", step="audio_review", progress=40),
+            "queued": Job(id="queued", status="queued", step="queued", progress=0),
+            "done": Job(id="done", status="completed", step="completed", progress=100),
+        }
+
+        summary = store.active_job_summary()
+
+        self.assertEqual({item["id"] for item in summary}, {"running", "review"})
+        self.assertEqual(next(item for item in summary if item["id"] == "running")["step"], "render")
+
     def test_step_mode_resume_does_not_treat_raw_asr_timeline_as_corrected(self) -> None:
         with TemporaryDirectory() as temporary:
             timeline = Path(temporary) / "scene_timeline.json"

@@ -6,9 +6,11 @@ from pathlib import Path
 
 from backend.app.cloud_client import CloudConfig
 from backend.app.cloud_tts import (
+    CLOUD_MAX_CHUNKS,
     assemble_cloud_audio,
     build_job_payload,
     build_quote_payload,
+    split_cloud_text,
     synthesize_cloud_tts,
 )
 
@@ -23,6 +25,18 @@ def write_wav(path: Path, frames: int, value: int = 1000) -> None:
 
 
 class CloudTtsTest(unittest.TestCase):
+    def test_long_script_is_coalesced_to_cloud_chunk_limit_without_text_loss(self) -> None:
+        paragraphs = [
+            f"第{index}段用于验证集群报价分块限制，内容保持完整并按原始顺序提交。"
+            for index in range(30)
+        ]
+        source = "\n".join(paragraphs)
+
+        chunks = split_cloud_text(source)
+
+        self.assertLessEqual(len(chunks), CLOUD_MAX_CHUNKS)
+        self.assertEqual("".join(chunks), "".join(paragraphs))
+
     def test_failed_job_surfaces_remote_error_instead_of_stale_message(self) -> None:
         class FakeClient:
             config = CloudConfig(

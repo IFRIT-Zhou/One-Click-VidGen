@@ -504,12 +504,43 @@ namespace OcvLauncher
 
         private async void StopButtonClick(object sender, EventArgs e)
         {
+            RuntimeStatus status = await runtime.GetStatusAsync();
+            if (status.ActiveTaskCount != 0)
+            {
+                string taskState = status.ActiveTaskCount > 0
+                    ? "检测到 " + status.ActiveTaskCount + " 个任务仍在运行或等待确认。"
+                    : "当前后端版本无法可靠确认是否有任务正在运行。";
+                DialogResult answer = MessageBox.Show(
+                    taskState + "\n\n"
+                    + "停止服务会中断这些任务。建议返回工作台停止任务，或等待任务完成后再关闭。\n\n"
+                    + "仍然确定要强制停止服务吗？",
+                    "运行中任务保护",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (answer != DialogResult.Yes) return;
+            }
             await StopServices(false);
         }
 
         private async void RestartButtonClick(object sender, EventArgs e)
         {
             if (busy) return;
+            RuntimeStatus status = await runtime.GetStatusAsync();
+            if (status.ActiveTaskCount != 0)
+            {
+                string taskState = status.ActiveTaskCount > 0
+                    ? "检测到 " + status.ActiveTaskCount + " 个任务仍在运行或等待确认。"
+                    : "当前后端版本无法可靠确认是否有任务正在运行。";
+                MessageBox.Show(
+                    taskState + "\n\n"
+                    + "为避免丢失渲染、配音或出图进度，Launcher 已阻止重启。请等待任务完成，"
+                    + "或先在工作台中停止任务。",
+                    "运行中任务保护",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                AppendLog("已阻止服务重启：后台仍有运行中任务。");
+                return;
+            }
             await StopServices(true);
             StartButtonClick(sender, e);
         }
@@ -684,20 +715,28 @@ namespace OcvLauncher
                 statusPill.Text = "●  OCV 正在运行";
                 statusPill.ForeColor = Green;
                 statusTitle.Text = "工作台已经就绪";
-                statusDetail.Text = "点击“打开工作台”进入浏览器；关闭浏览器不会停止后台任务。";
+                statusDetail.Text = status.ActiveTaskCount > 0
+                    ? "后台有 " + status.ActiveTaskCount + " 个任务运行中；为保护任务，重启功能已锁定。"
+                    : status.ActiveTaskCount < 0
+                        ? "无法确认后台任务状态；为防止误中断，重启功能已锁定。"
+                        : "点击“打开工作台”进入浏览器；关闭浏览器不会停止后台任务。";
                 startButton.Text = "↗  打开 OCV 工作台";
                 stopButton.Enabled = !busy;
-                restartButton.Enabled = !busy;
+                restartButton.Enabled = !busy && status.ActiveTaskCount == 0;
             }
             else if (status.BackendOnline || status.FrontendOnline)
             {
                 statusPill.Text = "●  服务不完整";
                 statusPill.ForeColor = Amber;
                 statusTitle.Text = "部分服务正在运行";
-                statusDetail.Text = "建议点击“重新启动”，让前端和后端恢复到一致状态。";
+                statusDetail.Text = status.ActiveTaskCount > 0
+                    ? "后台任务仍在运行；可以补全前端，但不会替换后端。"
+                    : status.ActiveTaskCount < 0 && status.BackendOnline
+                        ? "无法确认后台任务状态；可以补全前端，但重启功能已锁定。"
+                        : "建议点击“重新启动”，让前端和后端恢复到一致状态。";
                 startButton.Text = "▶  补全并启动 OCV";
                 stopButton.Enabled = !busy;
-                restartButton.Enabled = !busy;
+                restartButton.Enabled = !busy && status.ActiveTaskCount == 0;
             }
             else
             {

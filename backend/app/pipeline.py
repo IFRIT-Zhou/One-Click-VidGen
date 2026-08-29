@@ -427,6 +427,20 @@ class JobStore:
     def list_recent(self, user_id: int | None = None) -> list[dict[str, Any]]:
         return self.list_page(user_id=user_id, page=1, page_size=25)["jobs"]
 
+    def active_job_summary(self) -> list[dict[str, Any]]:
+        """Expose only non-sensitive lifecycle fields for Launcher restart protection."""
+        with self._lock:
+            return [
+                {
+                    "id": job.id,
+                    "status": job.status,
+                    "step": job.step,
+                    "progress": job.progress,
+                }
+                for job in self._jobs.values()
+                if job.status in {"running", "waiting_confirmation"}
+            ]
+
     def list_page(
         self,
         user_id: int | None = None,
