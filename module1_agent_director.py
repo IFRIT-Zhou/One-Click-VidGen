@@ -3,6 +3,7 @@
 # AGPL-3.0 Section 7 terms: ADDITIONAL_TERMS.md
 
 import argparse
+from array import array
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
@@ -555,23 +556,41 @@ def _build_indextts25_command(
 
 
 def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int) -> None:
+    """Apply controls and a peak-safe output stage to one generated chunk.
+
+    IndexTTS-2.5 emits normalized floating point audio.  Leaving the default
+    path untouched used to let occasional overshoots reach PCM16 unchanged,
+    which produced hard clipping and a harsh, stair-stepped sound.  Always run
+    a small look-ahead limiter (when FFmpeg is available), even when the user
+    selected default controls.  The system FFmpeg fallback keeps Linux runs
+    working when the Windows portable binary is not present.
+    """
     speed = min(2.0, max(0.5, float(speed)))
     volume = min(10.0, max(0.1, float(volume)))
     pitch = min(12, max(-12, int(pitch)))
-    if math.isclose(speed, 1.0) and math.isclose(volume, 1.0) and pitch == 0:
-        return
-    if not FFMPEG.is_file():
-        raise FileNotFoundError(f"找不到 FFmpeg: {FFMPEG}")
+    controls_are_default = (
+        math.isclose(speed, 1.0) and math.isclose(volume, 1.0) and pitch == 0
+    )
+
+    portable_usable = FFMPEG.is_file() and (
+        os.name == "nt" or os.access(FFMPEG, os.X_OK)
+    )
+    ffmpeg = str(FFMPEG) if portable_usable else shutil.which("ffmpeg")
+    if not ffmpeg:
+        if controls_are_default:
+            _peak_safe_pcm16_fallback(path)
+            return
+        raise FileNotFoundError(f"找不到 FFmpeg: {FFMPEG}（且系统 PATH 中没有 ffmpeg）")
 
     filters: list[str] = []
+    with wave.open(str(path), "rb") as audio:
+        sample_rate = audio.getframerate()
     if pitch:
-        with wave.open(str(path), "rb") as audio:
-            sample_rate = audio.getframerate()
         factor = 2 ** (pitch / 12)
         filters.extend(
             [
                 f"asetrate={sample_rate}*{factor:.8f}",
-                f"aresample={sample_rate}",
+                f"aresample={sample_rate}:resampler=soxr:precision=28:dither_method=triangular_hp",
                 f"atempo={1 / factor:.8f}",
             ]
         )
@@ -579,11 +598,13 @@ def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int
         filters.append(f"atempo={speed:.8f}")
     if not math.isclose(volume, 1.0):
         filters.append(f"volume={volume:.8f}")
+    # Keep user volume semantics, then limit only peaks which would clip.
+    filters.append("alimiter=limit=0.9500:attack=5:release=50:level=false")
 
-    adjusted = path.with_name(f"{path.stem}.adjusted.wav")
+    adjusted = path.with_name(f"{path.stem}.safe.wav")
     result = subprocess.run(
         [
-            str(FFMPEG),
+            str(ffmpeg),
             "-hide_banner",
             "-loglevel",
             "error",
@@ -605,6 +626,40 @@ def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int
         adjusted.unlink(missing_ok=True)
         raise RuntimeError(f"FFmpeg 音频参数处理失败: {result.stderr.strip()}")
     os.replace(adjusted, path)
+
+
+def _peak_safe_pcm16_fallback(path: Path) -> None:
+    """Scale PCM16 files below full scale when FFmpeg is unavailable.
+
+    This is a portability fallback only; it cannot reconstruct samples already
+    clipped by a broken upstream encoder.  The production path uses FFmpeg's
+    look-ahead limiter above.
+    """
+    temporary = path.with_name(f"{path.stem}.safe.wav")
+    with wave.open(str(path), "rb") as source:
+        params = source.getparams()
+        if params.sampwidth != 2 or params.nchannels < 1:
+            return
+        payload = source.readframes(params.nframes)
+    samples = array("h")
+    samples.frombytes(payload)
+    if not samples:
+        return
+    peak = max(abs(value) for value in samples)
+    # Floor the target so integer PCM16 quantization cannot round one sample
+    # above the normalized 0.95 safety limit.
+    target = int(0.95 * 32767)
+    if peak <= target:
+        return
+    scale = target / peak
+    samples = array("h", [
+        max(-32768, min(32767, int(round(value * scale))))
+        for value in samples
+    ])
+    with wave.open(str(temporary), "wb") as destination:
+        destination.setparams(params)
+        destination.writeframes(samples.tobytes())
+    os.replace(temporary, path)
 
 
 def step2_indextts25_synthesize(chunks: list[str], args) -> tuple[list[Path], list[str]]:

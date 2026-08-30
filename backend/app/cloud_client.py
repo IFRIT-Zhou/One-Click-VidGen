@@ -277,7 +277,7 @@ class CloudClient:
                     status_code=503,
                     code="CLOUD_CONNECTION_ERROR",
                 ) from exc
-            if response.status_code in {429, 502, 503, 504} and retryable and attempt < self.config.retry_count:
+            if response.status_code in {408, 429, 502, 503, 504} and retryable and attempt < self.config.retry_count:
                 retry_after = response.headers.get("Retry-After", "")
                 response.close()
                 try:

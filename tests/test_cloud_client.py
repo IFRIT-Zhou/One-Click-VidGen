@@ -105,6 +105,26 @@ class CloudClientTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(request.call_count, 1)
 
+    def test_idempotent_request_retries_gateway_408(self) -> None:
+        self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
+        first = json_response({"detail": "timeout"}, status_code=408)
+        second = json_response({"ok": True})
+        config = CloudConfig(
+            base_url="https://cluster.example/api/v1",
+            retry_count=1,
+            retry_delay=0.001,
+        )
+        client = CloudClient(7, config=config, session_store=self.store)
+        with patch("backend.app.cloud_client.time.sleep"), patch(
+            "backend.app.cloud_client.requests.request", side_effect=[first, second]
+        ) as request:
+            result = client.create_job(
+                {"client_job_id": "job-408"}, idempotency_key="job-408"
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(request.call_count, 2)
+
     def test_download_rejects_cross_origin_url_without_leaking_token(self) -> None:
         self.store.set(7, CloudAuthSession("access", "refresh", time.time() + 900, {}))
         with tempfile.TemporaryDirectory() as directory, patch("backend.app.cloud_client.requests.request") as request:

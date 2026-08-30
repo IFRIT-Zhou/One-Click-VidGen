@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import sys
 import time
 import wave
+from array import array
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,6 +22,57 @@ CLOUD_MAX_TOTAL_CHARS = 5000
 
 class CloudTtsCancelled(RuntimeError):
     pass
+
+
+def _sanitize_pcm16_wav(path: Path, *, target_peak: float = 0.95) -> dict[str, Any]:
+    """Keep a downloaded PCM16 chunk below full scale before concatenation.
+
+    The cluster finalizer performs the authoritative look-ahead limiting.  This
+    client-side guard protects users from older/cached cluster results and from
+    a future finalizer regression; it is deliberately lossless when the peak is
+    already within the safe range.  It cannot restore waveform detail that was
+    clipped upstream, which is why the model-side float-save fix is still
+    required.
+    """
+    with wave.open(str(path), "rb") as source:
+        params = source.getparams()
+        payload = source.readframes(params.nframes)
+    if params.sampwidth != 2:
+        return {"peak": None, "clipped_samples": 0, "sample_count": 0}
+    samples = array("h")
+    samples.frombytes(payload)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
+        return {"peak": 0.0, "clipped_samples": 0, "sample_count": 0}
+    peak_raw = max(abs(value) for value in samples)
+    clipped = sum(1 for value in samples if abs(value) >= 32767)
+    peak = peak_raw / 32767.0
+    # Floor the target so integer PCM quantization cannot round one sample
+    # above the requested normalized peak.
+    target_raw = max(1, min(32767, int(float(target_peak) * 32767)))
+    if peak_raw > target_raw:
+        scale = target_raw / peak_raw
+        converted = array(
+            "h",
+            [
+                max(-32768, min(32767, int(round(value * scale))))
+                for value in samples
+            ],
+        )
+        if sys.byteorder != "little":
+            converted.byteswap()
+        temporary = path.with_name(f".{path.name}.safe-{os.getpid()}")
+        with wave.open(str(temporary), "wb") as destination:
+            destination.setparams(params)
+            destination.writeframes(converted.tobytes())
+        os.replace(temporary, path)
+        peak = target_raw / 32767.0
+    return {
+        "peak": round(float(peak), 8),
+        "clipped_samples": clipped,
+        "sample_count": len(samples),
+    }
 
 
 def split_cloud_text(text: str) -> list[str]:
@@ -129,7 +183,14 @@ def _wav_info(path: Path) -> tuple[wave._wave_params, float]:
                 raise RuntimeError(
                     f"云端音频格式错误：{path.name} 必须是 24 kHz、单声道、16-bit PCM WAV"
                 )
-            duration = audio.getnframes() / max(1, audio.getframerate())
+            frame_count = audio.getnframes()
+            payload = audio.readframes(frame_count)
+            expected_bytes = frame_count * params.nchannels * params.sampwidth
+            if len(payload) != expected_bytes:
+                raise RuntimeError(
+                    f"云端音频下载不完整：{path.name}（期望 {expected_bytes} 字节，实际 {len(payload)}）"
+                )
+            duration = frame_count / max(1, audio.getframerate())
     except (wave.Error, EOFError) as exc:
         raise RuntimeError(f"云端返回的音频不是有效 WAV：{path.name}") from exc
     if duration <= 0:
@@ -152,6 +213,7 @@ def assemble_cloud_audio(
 
     params: wave._wave_params | None = None
     durations: list[float] = []
+    quality: list[dict[str, Any]] = []
     for path in wav_paths:
         current_params, duration = _wav_info(path)
         current_format = (current_params.nchannels, current_params.sampwidth, current_params.framerate)
@@ -159,6 +221,7 @@ def assemble_cloud_audio(
             params = current_params
         elif current_format != (params.nchannels, params.sampwidth, params.framerate):
             raise RuntimeError(f"云端 WAV 分块格式不一致：{path.name}")
+        quality.append(_sanitize_pcm16_wav(path))
         durations.append(duration)
     assert params is not None
 
@@ -198,6 +261,7 @@ def assemble_cloud_audio(
         "engine": "cluster",
         **manifest_metadata,
         "total_duration": round(current_time, 6),
+        "audio_quality": quality,
         "segments": segment_items,
     }
     (segment_archive_dir / "manifest.json").write_text(
@@ -344,7 +408,7 @@ def synthesize_cloud_tts(
             try:
                 client.download_to(audio_url, target)
                 _wav_info(target)
-            except CloudApiError as exc:
+            except (CloudApiError, RuntimeError) as exc:
                 on_log(f"云端分块 {index + 1} 已生成，下载尚未就绪，将自动重试：{exc}")
                 continue
             downloaded_wavs[index] = target

@@ -2,11 +2,14 @@ import json
 import tempfile
 import unittest
 import wave
+from array import array
 from pathlib import Path
 
 from backend.app.cloud_client import CloudConfig
 from backend.app.cloud_tts import (
     CLOUD_MAX_CHUNKS,
+    _sanitize_pcm16_wav,
+    _wav_info,
     assemble_cloud_audio,
     build_job_payload,
     build_quote_payload,
@@ -36,6 +39,44 @@ class CloudTtsTest(unittest.TestCase):
 
         self.assertLessEqual(len(chunks), CLOUD_MAX_CHUNKS)
         self.assertEqual("".join(chunks), "".join(paragraphs))
+
+    def test_sanitize_pcm16_chunk_removes_full_scale_peak_before_assembly(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "clipped.wav"
+            write_wav(path, 1000, value=32767)
+
+            quality = _sanitize_pcm16_wav(path)
+
+            self.assertEqual(quality["sample_count"], 1000)
+            self.assertEqual(quality["clipped_samples"], 1000)
+            self.assertLessEqual(quality["peak"], 0.95)
+            with wave.open(str(path), "rb") as audio:
+                payload = audio.readframes(audio.getnframes())
+            samples = array("h")
+            samples.frombytes(payload)
+            self.assertLessEqual(max(abs(value) for value in samples), round(0.95 * 32767))
+
+    def test_sanitize_pcm16_chunk_is_lossless_when_peak_has_headroom(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "safe.wav"
+            write_wav(path, 1000, value=12000)
+            before = path.read_bytes()
+
+            quality = _sanitize_pcm16_wav(path)
+
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(quality["clipped_samples"], 0)
+            self.assertLess(quality["peak"], 0.95)
+
+    def test_wav_info_rejects_a_truncated_download(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "truncated.wav"
+            write_wav(path, 24000)
+            payload = path.read_bytes()
+            path.write_bytes(payload[:-100])
+
+            with self.assertRaisesRegex(RuntimeError, "下载不完整"):
+                _wav_info(path)
 
     def test_failed_job_surfaces_remote_error_instead_of_stale_message(self) -> None:
         class FakeClient:
