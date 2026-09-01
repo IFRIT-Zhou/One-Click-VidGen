@@ -512,11 +512,18 @@
             <label class="stack">
               <span>{{ form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
               <textarea
+                ref="workspaceScriptTextarea"
                 v-model="form.script"
                 rows="14"
                 :disabled="form.skip_text_correction"
                 :placeholder="scriptPlaceholder"
               ></textarea>
+              <div v-if="!form.skip_tts" class="structural-blank-toolbar">
+                <span>结构留白</span>
+                <input v-model.number="structuralBlankSeconds" type="number" min="0.2" max="30" step="0.1" aria-label="留白秒数" />
+                <button type="button" class="ghost-btn" @click="insertStructuralBlank(workspaceScriptTextarea)">在光标处插入</button>
+                <small>强制断开配音与画面，留白时保持上一张图；可能增加图片数量及费用。</small>
+              </div>
               <small class="script-character-count" :class="{ error: scriptTooLong }">
                 {{ scriptCharacterCount.toLocaleString() }} / {{ MAX_SCRIPT_CHARACTERS.toLocaleString() }} 字符
                 <template v-if="scriptTooLong"> · 超出单次上限，请按完整章节拆分后分批生成</template>
@@ -826,7 +833,8 @@
             <section v-if="form.step_mode && guidedStage === 'audio_review'" class="guided-audio-editor">
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听与选择重配</strong></div>
-                <button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
+                <button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button>
+                <button v-if="ttsEditor.structural_edit_available !== false" class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
                   {{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}
                 </button>
               </div>
@@ -868,19 +876,34 @@
                   </div>
                 </div>
               </details>
+              <div v-if="ttsEditor.structural_edit_available === false" class="timing-unavailable">{{ ttsEditor.structural_edit_message }}</div>
               <div class="guided-tts-grid">
                 <article v-for="item in ttsEditor.segments" :key="`guided-tts-${item.index}-${item.audio_url}`" class="guided-tts-card" :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }">
                   <div><strong>第 {{ item.index }} 句</strong><small>{{ Number(item.duration || 0).toFixed(2) }} 秒</small></div>
                   <p>{{ item.text }}</p>
                   <audio controls preload="none" :src="item.audio_url"></audio>
-                  <label><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" /></label>
-                  <button class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
+                  <label v-if="ttsEditor.structural_edit_available !== false"><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" /></label>
+                  <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
                   <div v-if="isTtsPronunciationOpen(item.index)" class="guided-pronunciation-editor">
                     <small>朗读文本只发送给配音引擎，字幕仍保留原文字。</small>
                     <textarea :value="ttsReadingDrafts[item.index]" rows="2" maxlength="1200" :disabled="ttsEditor.task?.status === 'running'" placeholder="例如：点击chong2绘按钮" @input="updateTtsReadingDraft(item, $event)"></textarea>
                     <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" @click="resetTtsReadingDraft(item)">恢复原文</button>
                   </div>
+                  <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">
+                    <label><span>停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label>
+                    <button class="ghost-btn compact-btn" type="button" @click="previewTtsBoundary(item)">试听</button>
+                    <button class="ghost-btn compact-btn" type="button" @click="saveTtsPause(item)">保存</button>
+                    <button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" @click="openTtsBoundaryEditor(item, true)">调整断点</button>
+                  </div>
+                  <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" @click="openTtsBoundaryEditor(item, false)">新增断点</button>
                 </article>
+              </div>
+              <div v-if="ttsBoundary.open" class="tts-boundary-editor">
+                <div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div>
+                <label><span>点击文字中的断开位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)" @keyup="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label>
+                <label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>合并为一句</strong></label>
+                <div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句朗读文本</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label><label><span>后半句朗读文本</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
+                <div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超出 {{ ttsBoundary.limit }} token 的片段。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundaryOverLimit()" @click="submitTtsBoundary">确认并重配</button></div>
               </div>
               </template>
               <div class="guided-editor-head guided-subtitle-head">
@@ -1280,7 +1303,7 @@
                 @keydown.enter="selectJob(job.id)"
               >
                 <div class="project-top">
-                  <span class="status-chip" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span>
+                  <div class="inline-actions"><span class="status-chip" :class="statusClass(job.status)">{{ statusLabel(job.status) }}</span><span v-if="job.request?.module1_only" class="status-chip module1-task-chip">仅配音</span></div>
                   <div class="project-actions">
                     <span class="muted small">{{ job.progress }}%</span>
                     <button
@@ -1413,6 +1436,7 @@
                     <p class="muted small">移动字幕句可调整画面边界；点击单句右侧的编辑键可修正最终字幕文字，不会改变配音内容。</p>
                   </div>
                   <div class="visual-timing-head-actions">
+                    <button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销上一步 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button>
                     <select v-model="selectedVisualTimingHistory" class="timing-history-select" :disabled="visualTimingAdjusting || ttsEditor.task?.status === 'running' || !visualEditor.timing_history?.length" @change="restoreSelectedVisualTimingHistory">
                       <option value="">历史时序</option>
                       <option v-for="entry in visualEditor.timing_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
@@ -1466,10 +1490,14 @@
                           v-for="sentence in selectedVisualTimingItem.timing?.sentences || []"
                           :key="sentence.slide_id"
                           class="timing-sentence"
-                          :class="{ editing: visualSubtitleEditingId === sentence.slide_id, modified: isVisualSubtitleModified(sentence) }"
+                          :class="{ editing: visualSubtitleEditingId === sentence.slide_id, modified: isVisualSubtitleModified(sentence), hidden: sentence.subtitle_hidden }"
                         >
                           <span class="timing-sentence-meta"><strong>{{ sentence.slide_id }}</strong><small>{{ formatSubtitleTiming(sentence) }}</small></span>
-                          <div class="timing-sentence-content">
+                          <div v-if="sentence.subtitle_hidden" class="timing-sentence-content hidden-subtitle-copy">
+                            <p>已隐藏字幕 · {{ visualSubtitleHiddenModeLabel(sentence.subtitle_hidden_mode) }}</p>
+                            <small>配音、图片与画面时序仍保留</small>
+                          </div>
+                          <div v-else class="timing-sentence-content">
                             <textarea
                               v-if="visualSubtitleEditingId === sentence.slide_id"
                               v-model="visualSubtitleDrafts[sentence.slide_id]"
@@ -1482,10 +1510,29 @@
                             <small v-if="visualSubtitlePaceWarning(sentence)" class="visual-subtitle-pace-warning">{{ visualSubtitlePaceWarning(sentence) }}</small>
                           </div>
                           <div class="timing-sentence-actions">
-                            <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="toggleVisualSubtitleEdit(sentence)">{{ visualSubtitleEditingId === sentence.slide_id ? '完成' : '✏️' }}</button>
-                            <button v-if="isVisualSubtitleModified(sentence)" class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="撤销本句未保存修改" @click="resetVisualSubtitleDraft(sentence)">↶</button>
-                            <button v-if="hasNextVisualSubtitle(sentence)" class="ghost-btn compact-btn subtitle-align-trigger" type="button" :disabled="visualBoundaryAlign.status === 'loading' || visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="试听并手动调整本句与下一句的时间边界" @click="previewVisualSubtitleBoundary(sentence)">调整后界</button>
+                            <button v-if="sentence.subtitle_hidden" class="ghost-btn compact-btn subtitle-restore-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="restoreHiddenVisualSubtitle(sentence)">恢复</button>
+                            <template v-else>
+                              <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="toggleVisualSubtitleEdit(sentence)">{{ visualSubtitleEditingId === sentence.slide_id ? '完成' : '✏️' }}</button>
+                              <button v-if="isVisualSubtitleModified(sentence)" class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="撤销本句未保存修改" @click="resetVisualSubtitleDraft(sentence)">↶</button>
+                              <button v-if="hasNextVisualSubtitle(sentence)" class="ghost-btn compact-btn subtitle-align-trigger" type="button" :disabled="visualBoundaryAlign.status === 'loading' || visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="只移动本句结束与下一句开始的共同边界" @click="previewVisualSubtitleBoundary(sentence)">调整与下一句分界</button>
+                              <button class="ghost-btn compact-btn subtitle-hide-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="从成片与 SRT 中隐藏这条字幕" @click="openVisualSubtitleRemove(sentence)">×</button>
+                            </template>
                           </div>
+                        </div>
+                      </div>
+                      <div v-if="visualSubtitleRemoveDialog.open" class="subtitle-remove-panel">
+                        <div class="subtitle-remove-head">
+                          <div>
+                            <strong>隐藏 {{ visualSubtitleRemoveDialog.sentence?.slide_id }} 的字幕</strong>
+                            <small>{{ visualSubtitleRemoveDialog.sentence?.text }}</small>
+                          </div>
+                          <button class="icon-action" type="button" title="取消" @click="closeVisualSubtitleRemove">×</button>
+                        </div>
+                        <p>只移除成片和 SRT 中的显示文字，不删除配音、图片或画面时间线。请选择这段时间如何处理：</p>
+                        <div class="subtitle-remove-options">
+                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving" @click="hideVisualSubtitle('blank')"><strong>留空</strong><small>这段时间不显示字幕</small></button>
+                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'previous')" @click="hideVisualSubtitle('merge_previous')"><strong>并入前句</strong><small>前一条可见字幕延长到这里</small></button>
+                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'next')" @click="hideVisualSubtitle('merge_next')"><strong>并入后句</strong><small>后一条可见字幕提前到这里</small></button>
                         </div>
                       </div>
                       <div class="timing-actions">
@@ -1510,14 +1557,15 @@
                     <template v-else-if="visualBoundaryAlign.status === 'ready'">
                       <div class="subtitle-boundary-copy"><span>{{ visualBoundaryAlign.left_text }}</span><i>｜</i><span>{{ visualBoundaryAlign.right_text }}</span></div>
                       <label class="subtitle-boundary-slider">
-                        <span>共同边界：{{ formatBoundaryOffset(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_start) }}</span>
+                        <span>共同边界：{{ formatBoundaryOffset(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_start) }} · {{ formatBoundaryDelta(visualBoundaryAlign.boundary, visualBoundaryAlign.current_boundary) }}</span>
                         <input v-model.number="visualBoundaryAlign.boundary" type="range" :min="visualBoundaryAlign.minimum_boundary" :max="visualBoundaryAlign.maximum_boundary" step="0.01" />
                       </label>
-                      <small class="muted small">先修改上方两句的文字归属，再试听并把滑块拖到对应发音结束的位置。</small>
+                      <small class="muted small">只会移动这两句的共享分界：前句结束时间与后句开始时间同步变化；后句结束、下一张画面和更后面的内容保持不变。</small>
                       <div class="subtitle-boundary-actions">
                         <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.pair_start, visualBoundaryAlign.boundary)">▶ 试听前句</button>
                         <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_end)">▶ 试听后句</button>
                         <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.clip_start, visualBoundaryAlign.clip_end)">▶ 连续试听</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="Math.abs(Number(visualBoundaryAlign.boundary) - Number(visualBoundaryAlign.current_boundary)) < 0.005" @click="visualBoundaryAlign.boundary = Number(visualBoundaryAlign.current_boundary)">恢复原边界</button>
                         <button class="primary-btn compact-btn" type="button" :disabled="visualBoundaryApplying" @click="applyVisualSubtitleBoundary">{{ visualBoundaryApplying ? '应用中…' : '确认应用边界' }}</button>
                       </div>
                     </template>
@@ -1536,7 +1584,7 @@
                     <button
                       class="primary-btn compact-btn"
                       type="button"
-                      :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'"
+                      :disabled="ttsEditor.structural_edit_available === false || !selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'"
                       @click="regenerateSelectedTtsSegments"
                     >{{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}</button>
                   </div>
@@ -1584,6 +1632,7 @@
                       <label v-if="ttsEditor.engine === 'indextts25'"><span>并行数</span><input v-model.number="ttsRefineForm.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
                     </div>
                   </div>
+                  <div v-if="ttsEditor.structural_edit_available === false" class="timing-unavailable">{{ ttsEditor.structural_edit_message }}</div>
                   <div class="tts-segment-grid">
                     <article
                       v-for="item in ttsEditor.segments"
@@ -1654,7 +1703,22 @@
                           <small class="tts-subtitle-preview">成片字幕保持：{{ item.text }}</small>
                         </template>
                       </div>
+                      <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">
+                        <label><span>额外停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="previewTtsBoundary(item)">试听交界</button>
+                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="saveTtsPause(item)">保存停顿</button>
+                        <button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="openTtsBoundaryEditor(item, true)">调整断点</button>
+                      </div>
+                      <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running' || String(item.text || '').length < 2" @click="openTtsBoundaryEditor(item, false)">在本句内新增断点</button>
                     </article>
+                  </div>
+                  <div v-if="ttsBoundary.open" class="tts-boundary-editor">
+                    <div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '在本句内新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div>
+                    <label><span>在文字中点击需要断开的位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)" @keyup="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label>
+                    <label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>不再断开，合并为一句</strong></label>
+                    <div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label><label><span>后半句</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
+                    <div v-else class="tts-boundary-preview-grid"><label><span>合并后的朗读文本</span><textarea :value="ttsBoundary.leftReading + ttsBoundary.rightReading" rows="3" readonly></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
+                    <div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超过 {{ ttsBoundary.limit }} token 的片段，请重新选择断点。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundary.checking || ttsBoundaryOverLimit()" @click="submitTtsBoundary">{{ ttsBoundaryBusy ? '处理中…' : '确认并重配' }}</button></div>
                   </div>
                 </template>
               </section>
@@ -2005,7 +2069,13 @@
                 </div>
                 <label class="module1-script-field">
                   <span>配音文案</span>
-                  <textarea v-model="form.script" rows="18" placeholder="粘贴需要转换成语音的文案。"></textarea>
+                  <textarea ref="module1ScriptTextarea" v-model="form.script" rows="18" placeholder="粘贴需要转换成语音的文案。"></textarea>
+                  <div class="structural-blank-toolbar">
+                    <span>结构留白</span>
+                    <input v-model.number="structuralBlankSeconds" type="number" min="0.2" max="30" step="0.1" aria-label="留白秒数" />
+                    <button type="button" class="ghost-btn" @click="insertStructuralBlank(module1ScriptTextarea)">在光标处插入</button>
+                    <small>建议放在完整句之间；标记不会被朗读或显示为字幕。</small>
+                  </div>
                 </label>
               </div>
 
@@ -2120,7 +2190,7 @@
               <span class="progress-percent">{{ module1Job?.progress || 0 }}%</span>
             </div>
             <div class="progress-track"><span :style="{ width: `${module1Job?.progress || 0}%` }"></span></div>
-            <audio v-if="module1Job?.artifacts?.audio" class="module1-audio-player" controls :src="module1Job.artifacts.audio"></audio>
+            <audio v-if="module1Job?.artifacts?.audio" class="module1-audio-player" controls :src="module1AudioPreviewUrl"></audio>
             <div v-if="module1ArtifactEntries.length" class="artifact-grid module1-artifacts">
               <button v-for="item in module1ArtifactEntries" :key="item.key" class="artifact-card" type="button" @click="openArtifactFolder(item.url)">
                 <div class="artifact-label">{{ artifactLabel(item.key) }}</div>
@@ -2128,6 +2198,48 @@
                 <div class="artifact-action">打开所在文件夹</div>
               </button>
             </div>
+            <section v-if="module1Job?.status === 'completed'" class="guided-audio-editor module1-refine-editor">
+              <div class="guided-editor-head">
+                <div><div class="sidebar-label">配音精修</div><strong>逐句试听、重配、断句与停顿</strong></div>
+                <div class="inline-actions"><button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button><button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">重配选中句</button></div>
+              </div>
+              <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
+              <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前任务没有可精修的逐句音频。' }}</div>
+              <template v-else>
+                <details class="guided-tts-settings">
+                  <summary>本次重配参数（默认沿用项目）</summary>
+                  <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
+                    <div class="tts-refine-parameter-head">
+                      <div><span class="sidebar-label">{{ ttsRefineEngineLabel }}</span><h4>只作用于本次选中的句子</h4></div>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="hydrateTtsRefineSettings(ttsEditor)">恢复项目参数</button>
+                    </div>
+                    <div v-if="ttsEditor.engine === 'indextts25'" class="tts-refine-voice-row">
+                      <label class="script-file-picker"><input type="file" accept=".wav,.mp3,.flac,audio/wav,audio/mpeg,audio/flac" :disabled="ttsRefineVoiceUploading || ttsEditor.task?.status === 'running'" @change="uploadTtsRefineVoice" /><span>{{ ttsRefineVoiceUploading ? '上传中' : '更换音源' }}</span><strong>{{ ttsRefineVoiceName || '沿用该任务当前参考音色' }}</strong></label>
+                      <small v-if="ttsRefineVoiceError" class="script-upload-error">{{ ttsRefineVoiceError }}</small>
+                    </div>
+                    <label v-else-if="ttsEditor.engine === 'cluster'" class="tts-refine-wide-field"><span>云端音色</span><select v-model="ttsRefineForm.cluster_voice_key"><optgroup label="云端默认音色"><option v-for="voice in cloudPresetVoiceOptions" :key="`module1-refine-preset:${voice.id}`" :value="`preset:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup><optgroup v-if="cloudUploadedVoiceOptions.length" label="我上传的音色"><option v-for="voice in cloudUploadedVoiceOptions" :key="`module1-refine-uploaded:${voice.id}`" :value="`uploaded:${voice.id}`">{{ voice.display_name || voice.id }}</option></optgroup></select></label>
+                    <div v-else-if="ttsEditor.engine === 'qwen'" class="form-grid tts-refine-qwen-grid"><label><span>Qwen 系统音色</span><select v-model="ttsRefineForm.qwen_voice"><optgroup v-for="group in qwenVoiceGroups" :key="`module1-refine-${group.label}`" :label="group.label"><option v-for="voice in group.voices" :key="`module1-refine-${voice.value}`" :value="voice.value">{{ voice.label }}</option></optgroup></select></label><label><span>配音描述</span><textarea v-model="ttsRefineForm.qwen_instructions" rows="3" maxlength="1600"></textarea></label></div>
+                    <div class="form-grid tts-refine-grid">
+                      <label v-if="ttsEditor.engine !== 'qwen'"><span>情绪</span><select v-model="ttsRefineForm.tts_emotion"><option value="">模型默认</option><option v-for="emotion in settings.tts?.emotions || []" :key="`module1-refine-${emotion}`" :value="emotion">{{ emotionLabel(emotion) }}</option></select></label>
+                      <label v-if="ttsEditor.engine !== 'qwen'" class="tts-emotion-strength"><span>情绪强度 · {{ Number(ttsRefineForm.tts_emotion_weight).toFixed(2) }}</span><input v-model.number="ttsRefineForm.tts_emotion_weight" type="range" min="0" max="1" step="0.05" :disabled="!ttsRefineForm.tts_emotion" /></label>
+                      <label><span>语速</span><input v-model.number="ttsRefineForm.tts_speed" type="number" min="0.5" max="2" step="0.01" /></label><label><span>音量</span><input v-model.number="ttsRefineForm.tts_volume" type="number" min="0.1" max="10" step="0.01" /></label><label><span>音调</span><input v-model.number="ttsRefineForm.tts_pitch" type="number" min="-12" max="12" step="1" /></label><label v-if="ttsEditor.engine === 'indextts25'"><span>并行数</span><input v-model.number="ttsRefineForm.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
+                    </div>
+                  </div>
+                </details>
+                <div v-if="ttsEditor.structural_edit_available === false" class="timing-unavailable">{{ ttsEditor.structural_edit_message }}</div>
+                <div class="guided-tts-grid">
+                  <article v-for="item in ttsEditor.segments" :key="`module1-edit-${item.index}-${item.audio_url}`" class="guided-tts-card" :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }">
+                    <div><strong>第 {{ item.index }} 句</strong><small>{{ Number(item.duration || 0).toFixed(2) }} 秒</small></div><p>{{ item.text }}</p><audio controls preload="none" :src="item.audio_url"></audio>
+                    <label><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" /></label>
+                    <button class="tts-pronunciation-toggle" type="button" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
+                    <div v-if="isTtsPronunciationOpen(item.index)" class="guided-pronunciation-editor"><small>朗读文本只发送给配音引擎，字幕仍保留原文字。</small><textarea :value="ttsReadingDrafts[item.index]" rows="2" @input="updateTtsReadingDraft(item, $event)"></textarea></div>
+                    <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row"><label><span>停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label><button class="ghost-btn compact-btn" type="button" @click="previewTtsBoundary(item)">试听</button><button class="ghost-btn compact-btn" type="button" @click="saveTtsPause(item)">保存</button><button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" @click="openTtsBoundaryEditor(item, true)">调整断点</button></div>
+                    <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" @click="openTtsBoundaryEditor(item, false)">新增断点</button>
+                  </article>
+                </div>
+                <div v-if="ttsBoundary.open" class="tts-boundary-editor"><div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div><label><span>点击文字中的断开位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label><label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>合并为一句</strong></label><div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句朗读文本</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }} / {{ ttsBoundary.limit || '-' }} token</small></label><label><span>后半句朗读文本</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }} / {{ ttsBoundary.limit || '-' }} token</small></label></div><div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超限片段。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundaryOverLimit()" @click="submitTtsBoundary">确认并重配</button></div></div>
+              </template>
+            </section>
             <div class="log-toolbar compact-log-toolbar">
               <span class="muted small">模块 1 日志</span>
               <button class="ghost-btn compact-btn" type="button" :disabled="diagnosticExporting || !module1Job" @click="exportDiagnosticPackage(module1Job)">
@@ -2589,6 +2701,9 @@ const pluginNotice = ref('')
 const pluginMessage = ref('')
 const scriptUploadName = ref('')
 const scriptUploadError = ref('')
+const workspaceScriptTextarea = ref(null)
+const module1ScriptTextarea = ref(null)
+const structuralBlankSeconds = ref(3.0)
 const sourceAudioName = ref('')
 const sourceAudioError = ref('')
 const sourceAudioUploading = ref(false)
@@ -2630,6 +2745,7 @@ const visualSubtitleDrafts = reactive({})
 const visualSubtitleOriginals = reactive({})
 const visualSubtitleSaving = ref(false)
 let visualSubtitleProjectKey = ''
+const visualSubtitleRemoveDialog = ref({ open: false, sentence: null })
 const visualBoundaryAlign = ref({ open: false, status: 'idle', message: '', boundary: 0 })
 const visualBoundaryApplying = ref(false)
 let visualBoundaryAudio = null
@@ -2639,6 +2755,15 @@ const ttsEditorLoading = ref(false)
 const selectedTtsSegmentIndices = ref([])
 const ttsReadingDrafts = reactive({})
 const ttsPronunciationOpenIndices = ref([])
+const ttsBoundary = reactive({
+  open: false, startIndex: 0, replaceCount: 1, sourceText: '', sourceReading: '', caret: 0,
+  merge: false, pause: 0.6, leftText: '', rightText: '',
+  leftReading: '', rightReading: '', counts: [], limit: null, checking: false,
+})
+const ttsBoundaryBusy = ref(false)
+const ttsPauseDrafts = reactive({})
+let ttsBoundaryPreviewAudio = null
+let ttsBoundaryPreviewTimer = null
 const ttsRefineForm = reactive({
   tts_voice_id: '',
   tts_speed: 1,
@@ -2840,6 +2965,24 @@ let originalDocumentTitle = ''
 let lastCompletionAlertAt = 0
 const MAX_SCRIPT_FILE_SIZE = 2 * 1024 * 1024
 const MAX_SCRIPT_CHARACTERS = 12_000
+
+function insertStructuralBlank(textareaRef) {
+  const seconds = Number(structuralBlankSeconds.value)
+  if (!Number.isFinite(seconds) || seconds < 0.2 || seconds > 30) {
+    window.alert('留白时长请填写 0.2–30 秒。')
+    return
+  }
+  structuralBlankSeconds.value = Math.round(seconds * 10) / 10
+  const marker = `【OCV留白：${structuralBlankSeconds.value.toFixed(1)}秒】`
+  const element = textareaRef || null
+  const start = Number.isInteger(element?.selectionStart) ? element.selectionStart : form.script.length
+  const end = Number.isInteger(element?.selectionEnd) ? element.selectionEnd : start
+  form.script = `${form.script.slice(0, start)}${marker}${form.script.slice(end)}`
+  window.requestAnimationFrame(() => {
+    element?.focus()
+    element?.setSelectionRange(start + marker.length, start + marker.length)
+  })
+}
 
 const loginForm = reactive({
   email: '',
@@ -3437,6 +3580,12 @@ const module1JobRunning = computed(() => ['queued', 'running'].includes(module1J
 const module1ArtifactEntries = computed(() => Object.entries(module1Job.value?.artifacts || {})
   .filter(([key]) => ['audio', 'module1_subtitle'].includes(key))
   .map(([key, url]) => ({ key, url })))
+const module1AudioPreviewUrl = computed(() => {
+  const url = String(module1Job.value?.artifacts?.audio || '')
+  if (!url) return ''
+  const revision = Number(ttsEditor.value?.revision || 0)
+  return `${url}${url.includes('?') ? '&' : '?'}tts_revision=${revision}`
+})
 const module1LogText = computed(() => (module1Job.value?.logs || []).join('\n') || '模块 1 日志会显示在这里。')
 const subtitleJobRunning = computed(() => ['queued', 'running'].includes(subtitleJob.value?.status))
 const canSubmitSubtitle = computed(() => Boolean(
@@ -3706,6 +3855,10 @@ async function refresh() {
     }
     if (module1Job.value?.id) {
       module1Job.value = await api.job(module1Job.value.id)
+      if (activePage.value === 'module1' && module1Job.value.status === 'completed') {
+        visualEditorProjectId.value = module1Job.value.id
+        if (!ttsEditor.value.available || ttsEditor.value.project_id !== module1Job.value.id) await loadTtsEditor()
+      }
     }
     if (subtitleJob.value?.id) {
       subtitleJob.value = await api.job(subtitleJob.value.id)
@@ -5334,6 +5487,7 @@ function hydrateVisualSubtitleDrafts({ preserveDirty = true } = {}) {
   if (projectChanged) {
     visualSubtitleEditingId.value = ''
     selectedVisualSubtitleHistory.value = ''
+    closeVisualSubtitleRemove()
     closeVisualBoundaryAlign()
   }
   visualSubtitleProjectKey = visualEditorProjectId.value
@@ -5351,6 +5505,7 @@ async function loadTtsEditor() {
     for (const key of Object.keys(ttsReadingDrafts)) delete ttsReadingDrafts[key]
     for (const item of ttsEditor.value.segments || []) {
       ttsReadingDrafts[item.index] = String(item.tts_text || item.text || '')
+      ttsPauseDrafts[item.index] = Number(item.pause_after || 0)
     }
   } catch (error) {
     ttsEditor.value = { available: false, message: error.message || '无法读取逐句配音', segments: [], task: { status: 'failed', message: '' } }
@@ -5523,6 +5678,204 @@ function isTtsReadingModified(item) {
   return String(ttsReadingDrafts[item.index] ?? item.tts_text ?? item.text ?? '').trim() !== String(item.text || '').trim()
 }
 
+function closeTtsBoundaryEditor() {
+  ttsBoundary.open = false
+  ttsBoundary.counts = []
+  ttsBoundary.limit = null
+}
+
+function openTtsBoundaryEditor(item, adjustExisting = false) {
+  const segments = ttsEditor.value.segments || []
+  const next = segments.find((entry) => entry.index === item.index + 1)
+  if (adjustExisting && !next) return
+  const sourceText = adjustExisting ? `${item.text || ''}${next.text || ''}` : String(item.text || '')
+  const sourceReading = adjustExisting
+    ? `${item.tts_text || item.text || ''}${next.tts_text || next.text || ''}`
+    : String(item.tts_text || item.text || '')
+  const firstLength = String(item.text || '').length
+  Object.assign(ttsBoundary, {
+    open: true,
+    startIndex: item.index,
+    replaceCount: adjustExisting ? 2 : 1,
+    sourceText,
+    sourceReading,
+    caret: adjustExisting ? firstLength : Math.max(1, Math.floor(sourceText.length / 2)),
+    merge: false,
+    pause: Number(item.pause_after || 0.6),
+    leftText: '', rightText: '',
+    leftReading: '', rightReading: '', counts: [], limit: null,
+  })
+  updateTtsBoundaryParts()
+}
+
+function updateTtsBoundaryParts(selection) {
+  if (Number.isInteger(selection)) ttsBoundary.caret = selection
+  const text = ttsBoundary.sourceText
+  const caret = Math.max(1, Math.min(text.length - 1, Number(ttsBoundary.caret || 1)))
+  ttsBoundary.caret = caret
+  ttsBoundary.leftText = text.slice(0, caret)
+  ttsBoundary.rightText = text.slice(caret)
+  // Reading text can contain pinyin corrections and therefore need not have
+  // the same length as the subtitle text. Preserve it and choose a nearby
+  // split; both fields remain editable when that approximation needs tuning.
+  const reading = String(ttsBoundary.sourceReading || text)
+  const readingCaret = Math.max(1, Math.min(
+    Math.max(1, reading.length - 1),
+    Math.round((caret / Math.max(1, text.length)) * reading.length),
+  ))
+  ttsBoundary.leftReading = reading.slice(0, readingCaret)
+  ttsBoundary.rightReading = reading.slice(readingCaret)
+  refreshTtsBoundaryTokenCounts()
+}
+
+function confirmTtsHistoryCapacity() {
+  const count = Number(ttsEditor.value.history_count || 0)
+  const limit = Number(ttsEditor.value.history_limit || 20)
+  if (count < limit || window.localStorage.getItem('ocv_skip_tts_history_limit_warning') === '1') return true
+  if (!window.confirm(`音频编辑历史已达到 ${limit} 次。继续后会自动删除最早的一次记录，仍要继续吗？`)) return false
+  if (window.confirm('以后不再提醒音频历史上限？\n（仍会始终保留最近 20 次。）')) {
+    window.localStorage.setItem('ocv_skip_tts_history_limit_warning', '1')
+  }
+  return true
+}
+
+async function refreshTtsBoundaryTokenCounts() {
+  if (!visualEditorProjectId.value || !ttsBoundary.open) return
+  const texts = ttsBoundary.merge
+    ? [ttsBoundary.leftReading + ttsBoundary.rightReading]
+    : [ttsBoundary.leftReading, ttsBoundary.rightReading]
+  ttsBoundary.checking = true
+  try {
+    const payload = await api.countTtsTokens(visualEditorProjectId.value, texts)
+    ttsBoundary.counts = payload.counts || []
+    ttsBoundary.limit = payload.limit
+  } catch {
+    ttsBoundary.counts = []
+    ttsBoundary.limit = null
+  } finally {
+    ttsBoundary.checking = false
+  }
+}
+
+function ttsBoundaryOverLimit() {
+  return Number(ttsBoundary.limit) > 0 && ttsBoundary.counts.some((value) => Number(value) > Number(ttsBoundary.limit))
+}
+
+async function submitTtsBoundary() {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsBoundaryOverLimit()) return
+  if (!confirmTtsHistoryCapacity()) return
+  const parts = ttsBoundary.merge
+    ? [{ text: ttsBoundary.sourceText, tts_text: `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`, pause_after: 0 }]
+    : [
+        { text: ttsBoundary.leftText, tts_text: ttsBoundary.leftReading, pause_after: Number(ttsBoundary.pause || 0) },
+        { text: ttsBoundary.rightText, tts_text: ttsBoundary.rightReading, pause_after: 0 },
+      ]
+  if (parts.some((part) => !String(part.text).trim() || !String(part.tts_text).trim())) return
+  if (['cluster', 'qwen'].includes(ttsEditor.value.engine)) {
+    if (!window.confirm('这次操作会重配调整后的句子，可能产生配音费用。是否继续？')) return
+  }
+  ttsBoundaryBusy.value = true
+  try {
+    const refineSettings = {
+      tts_speed: ttsRefineForm.tts_speed, tts_volume: ttsRefineForm.tts_volume,
+      tts_pitch: ttsRefineForm.tts_pitch, tts_parallelism: ttsRefineForm.tts_parallelism,
+      tts_emotion: ttsRefineForm.tts_emotion, tts_emotion_weight: ttsRefineForm.tts_emotion_weight,
+      qwen_voice: ttsRefineForm.qwen_voice, qwen_instructions: ttsRefineForm.qwen_instructions,
+    }
+    if (ttsRefineForm.tts_voice_id) refineSettings.tts_voice_id = ttsRefineForm.tts_voice_id
+    if (ttsRefineForm.cluster_voice_key) {
+      const [voiceType, ...voiceIdParts] = ttsRefineForm.cluster_voice_key.split(':')
+      refineSettings.cluster_voice_type = voiceType
+      refineSettings.cluster_voice_id = voiceIdParts.join(':')
+    }
+    await api.resegmentTts(visualEditorProjectId.value, {
+      start_index: ttsBoundary.startIndex,
+      replace_count: ttsBoundary.replaceCount,
+      parts,
+      ...refineSettings,
+    })
+    closeTtsBoundaryEditor()
+    ttsEditor.value.task = { status: 'running', progress: 0, message: '正在重配断句前后的内容…' }
+    startTtsEditorPolling()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法调整断句' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function saveTtsPause(item) {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value) return
+  if (!confirmTtsHistoryCapacity()) return
+  ttsBoundaryBusy.value = true
+  try {
+    const result = await api.saveTtsPause(
+      visualEditorProjectId.value, item.index,
+      Math.max(0, Math.min(30, Number(ttsPauseDrafts[item.index] || 0))),
+    )
+    ttsEditor.value.task = { status: 'completed', message: result.message }
+    await loadTtsEditor()
+    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法保存停顿' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function undoLastTtsEdit() {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || !ttsEditor.value.history_count) return
+  if (!window.confirm('撤销上一次音频编辑并恢复当时的配音、字幕和时间轴？')) return
+  ttsBoundaryBusy.value = true
+  try {
+    await api.undoTtsEdit(visualEditorProjectId.value)
+    resetTtsSegmentAudio()
+    await loadTtsEditor()
+    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法撤销音频编辑' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function previewTtsBoundary(item) {
+  const next = (ttsEditor.value.segments || []).find((entry) => entry.index === item.index + 1)
+  if (!next) return
+  if (ttsBoundaryPreviewTimer) window.clearTimeout(ttsBoundaryPreviewTimer)
+  if (ttsBoundaryPreviewAudio) {
+    ttsBoundaryPreviewAudio.pause()
+    ttsBoundaryPreviewAudio = null
+  }
+  const waitForMetadata = (audio) => new Promise((resolve, reject) => {
+    if (Number.isFinite(audio.duration)) return resolve()
+    audio.addEventListener('loadedmetadata', resolve, { once: true })
+    audio.addEventListener('error', reject, { once: true })
+    audio.load()
+  })
+  try {
+    const first = new Audio(item.audio_url)
+    const second = new Audio(next.audio_url)
+    await Promise.all([waitForMetadata(first), waitForMetadata(second)])
+    first.currentTime = Math.max(0, first.duration - 3)
+    ttsBoundaryPreviewAudio = first
+    first.onended = () => {
+      const delay = Math.round(Math.max(0, Number(ttsPauseDrafts[item.index] || 0)) * 1000)
+      ttsBoundaryPreviewTimer = window.setTimeout(() => {
+        ttsBoundaryPreviewAudio = second
+        second.currentTime = 0
+        second.play().catch(() => {})
+        window.setTimeout(() => {
+          if (ttsBoundaryPreviewAudio === second) second.pause()
+        }, 3000)
+      }, delay)
+    }
+    await first.play()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error?.message || '局部试听失败' }
+  }
+}
+
 function stopTtsEditorPolling() {
   if (ttsEditorTaskTimer) window.clearInterval(ttsEditorTaskTimer)
   ttsEditorTaskTimer = null
@@ -5530,7 +5883,8 @@ function stopTtsEditorPolling() {
 
 async function pollTtsEditorStatus() {
   const guidedAudioReview = form.step_mode && guidedStage.value === 'audio_review'
-  if ((!visualEditorOpen.value && !guidedAudioReview) || !visualEditorProjectId.value) return
+  const module1Review = activePage.value === 'module1' && module1Job.value?.status === 'completed'
+  if ((!visualEditorOpen.value && !guidedAudioReview && !module1Review) || !visualEditorProjectId.value) return
   try {
     const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
     const previous = ttsEditor.value.task?.status
@@ -5542,6 +5896,9 @@ async function pollTtsEditorStatus() {
         selectedTtsSegmentIndices.value = []
         if (guidedAudioReview) {
           await Promise.all([loadTtsEditor(), loadGuidedSubtitles()])
+        } else if (module1Review) {
+          await loadTtsEditor()
+          module1Job.value = await api.job(module1Job.value.id)
         } else {
           await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
         }
@@ -5559,6 +5916,7 @@ function startTtsEditorPolling() {
 
 async function regenerateSelectedTtsSegments() {
   if (!visualEditorProjectId.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
+  if (!confirmTtsHistoryCapacity()) return
   const count = selectedTtsSegmentIndices.value.length
   const textOverrides = {}
   for (const index of selectedTtsSegmentIndices.value) {
@@ -5654,6 +6012,75 @@ function resetVisualSubtitleDraft(sentence) {
   if (visualSubtitleEditingId.value === slideId) visualSubtitleEditingId.value = ''
 }
 
+function visualSubtitleHiddenModeLabel(mode) {
+  return ({ blank: '该时段留空', merge_previous: '时间并入前句', merge_next: '时间并入后句' })[String(mode || '')] || '已从成片隐藏'
+}
+
+function canMergeHiddenSubtitle(sentence, direction) {
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  if (index < 0) return false
+  const candidates = direction === 'previous' ? sentences.slice(0, index) : sentences.slice(index + 1)
+  return candidates.some((item) => !item.subtitle_hidden)
+}
+
+function openVisualSubtitleRemove(sentence) {
+  if (!sentence?.slide_id || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_hide', message: '请先保存当前字幕文字修改，再隐藏字幕。' }
+    return
+  }
+  closeVisualBoundaryAlign()
+  visualSubtitleRemoveDialog.value = { open: true, sentence }
+}
+
+function closeVisualSubtitleRemove() {
+  visualSubtitleRemoveDialog.value = { open: false, sentence: null }
+}
+
+async function hideVisualSubtitle(mode) {
+  const sentence = visualSubtitleRemoveDialog.value.sentence
+  if (!visualEditorProjectId.value || !sentence?.slide_id || visualSubtitleSaving.value) return
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.hideVisualSubtitle(visualEditorProjectId.value, sentence.slide_id, mode)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    closeVisualSubtitleRemove()
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_hide', message: `${sentence.slide_id} 已从成片字幕中隐藏；配音、图片与画面时序未改变。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_hide', message: error.message || '隐藏字幕失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+async function restoreHiddenVisualSubtitle(sentence, force = false) {
+  if (!visualEditorProjectId.value || !sentence?.slide_id || visualSubtitleSaving.value) return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_restore', message: '请先保存当前字幕文字修改，再恢复隐藏字幕。' }
+    return
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.restoreHiddenVisualSubtitle(visualEditorProjectId.value, sentence.slide_id, force)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_restore', message: `${sentence.slide_id} 已恢复到成片字幕。` }
+  } catch (error) {
+    const message = String(error.message || '')
+    if (!force && message.includes('RESTORE_CONFLICT:')) {
+      visualSubtitleSaving.value = false
+      const confirmed = window.confirm('这条字幕隐藏后，相关时间边界又被调整过。继续恢复会还原删除前的时间范围，可能覆盖后续调整。是否继续？')
+      if (confirmed) await restoreHiddenVisualSubtitle(sentence, true)
+      return
+    }
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_restore', message: message || '恢复字幕失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
 async function saveVisualSubtitles() {
   if (!visualEditorProjectId.value || !visualSubtitleDirtyCount.value || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
   const updates = {}
@@ -5705,7 +6132,7 @@ async function restoreSelectedVisualSubtitleHistory() {
 function hasNextVisualSubtitle(sentence) {
   const sentences = visualSubtitleSentences()
   const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
-  return index >= 0 && index < sentences.length - 1
+  return index >= 0 && index < sentences.length - 1 && !sentences[index + 1]?.subtitle_hidden
 }
 
 function closeVisualBoundaryAlign() {
@@ -5759,6 +6186,12 @@ async function previewVisualSubtitleBoundary(sentence) {
 function formatBoundaryOffset(boundary, pairStart) {
   const offset = Math.max(0, Number(boundary || 0) - Number(pairStart || 0))
   return `前句开始后 ${offset.toFixed(2)} 秒`
+}
+
+function formatBoundaryDelta(boundary, original) {
+  const delta = Number(boundary || 0) - Number(original || 0)
+  if (Math.abs(delta) < 0.005) return '未改变'
+  return `${delta > 0 ? '延后' : '提前'} ${Math.abs(delta).toFixed(2)} 秒`
 }
 
 async function playVisualBoundaryRange(start, end) {
@@ -6571,6 +7004,14 @@ async function selectJob(id, replace = true) {
   // Background refreshes also call selectJob(..., false). They must not close
   // the post-production editor the user is currently working in.
   if (replace) {
+    if (payload.request?.module1_only) {
+      module1Job.value = payload
+      activePage.value = 'module1'
+      visualEditorProjectId.value = payload.id
+      await loadTtsEditor()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
     visualEditorOpen.value = false
     if (isGuidedWorkflowJob(payload) && payload.status !== 'completed') {
       form.step_mode = true

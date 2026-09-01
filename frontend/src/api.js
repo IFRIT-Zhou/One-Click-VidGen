@@ -211,6 +211,12 @@ export const api = {
   restoreVisualSubtitleHistory: (id, historyId) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/history`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
   }),
+  hideVisualSubtitle: (id, slideId, mode) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/hide`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slide_id: slideId, mode }),
+  }),
+  restoreHiddenVisualSubtitle: (id, slideId, force = false) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/restore-hidden`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slide_id: slideId, force }),
+  }),
   previewVisualSubtitleBoundary: (id, leftSlideId) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/boundary-preview`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_slide_id: leftSlideId }),
   }),
@@ -221,6 +227,16 @@ export const api = {
   ttsEditorStatus: (id) => requestJSON(`/api/jobs/${id}/tts-editor/status`),
   regenerateTtsSegments: (id, indices, settings = {}, textOverrides = {}) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices, tts_text_overrides: textOverrides, ...settings }),
+  }),
+  saveTtsPause: (id, leftIndex, seconds) => requestJSON(`/api/jobs/${id}/tts-editor/pause`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_index: leftIndex, seconds }),
+  }),
+  undoTtsEdit: (id) => requestJSON(`/api/jobs/${id}/tts-editor/undo`, { method: 'POST' }),
+  countTtsTokens: (id, texts) => requestJSON(`/api/jobs/${id}/tts-editor/token-count`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts }),
+  }),
+  resegmentTts: (id, payload) => requestJSON(`/api/jobs/${id}/tts-editor/resegment`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
   renderVisualEditor: (id, payload) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typeof payload === 'string' ? { mode: payload } : payload),

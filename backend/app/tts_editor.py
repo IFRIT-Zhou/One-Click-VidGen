@@ -14,12 +14,15 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 import wave
 from pathlib import Path
 from typing import Any
 
+from .db import list_media_assets
 from .pipeline import (
-    JOBS_DIR, PROJECT_ROOT, is_step_workflow_v2, persist_step_workflow_state, store,
+    JOBS_DIR, PROJECT_ROOT, TTS_OUTPUT_DIR, is_step_workflow_v2,
+    persist_step_workflow_state, store,
 )
 from .visual_editor import VisualEditor
 
@@ -28,6 +31,7 @@ SEGMENT_DIRNAME = "tts_segments"
 SEGMENT_MANIFEST = "manifest.json"
 SUBTITLE_FILENAME = "最终字幕.srt"
 TIMELINE_FILENAME = "画面时间线.json"
+TTS_HISTORY_LIMIT = 20
 
 
 def _srt_time(value: float) -> str:
@@ -89,6 +93,16 @@ def _srt_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def _write_srt_entries(path: Path, entries: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    blocks = []
+    for index, item in enumerate(entries, 1):
+        start = max(0.0, float(item.get("start") or 0))
+        end = max(start + 0.001, float(item.get("end") or 0))
+        blocks.append(f"{index}\n{_srt_time(start)} --> {_srt_time(end)}\n{str(item.get('text') or '').strip()}")
+    path.write_text("\n\n".join(blocks) + ("\n" if blocks else ""), encoding="utf-8")
+
+
 def _concat_wavs(sources: list[Path], destination: Path) -> None:
     if not sources:
         raise ValueError("没有可合并的逐句音频")
@@ -104,6 +118,31 @@ def _concat_wavs(sources: list[Path], destination: Path) -> None:
                 if actual != expected:
                     raise ValueError(f"逐句音频格式不一致: {source.name}")
                 output.writeframes(audio.readframes(audio.getnframes()))
+
+
+def _concat_segment_wavs(segments: list[dict[str, Any]], segment_dir: Path, destination: Path) -> None:
+    """Concatenate speech WAVs and materialize boundary silence from metadata."""
+    if not segments:
+        raise ValueError("没有可合并的逐句音频")
+    sources = [segment_dir / str(item.get("filename") or "") for item in segments]
+    if any(not source.is_file() for source in sources):
+        raise FileNotFoundError("逐句音频文件不完整")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(sources[0]), "rb") as first:
+        params = first.getparams()
+        expected = (params.nchannels, params.sampwidth, params.framerate)
+    with wave.open(str(destination), "wb") as output:
+        output.setparams(params)
+        silence_frame = b"\0" * (params.nchannels * params.sampwidth)
+        for item, source in zip(segments, sources):
+            with wave.open(str(source), "rb") as audio:
+                actual = (audio.getnchannels(), audio.getsampwidth(), audio.getframerate())
+                if actual != expected:
+                    raise ValueError(f"逐句音频格式不一致: {source.name}")
+                output.writeframes(audio.readframes(audio.getnframes()))
+            pause = max(0.0, min(30.0, float(item.get("pause_after") or 0)))
+            if pause:
+                output.writeframes(silence_frame * int(round(pause * params.framerate)))
 
 
 def _build_regeneration_plan(
@@ -161,7 +200,58 @@ class TtsEditor:
 
     @staticmethod
     def _project_dir(job_id: str, user_id: int) -> Path:
-        return VisualEditor.output_dir(job_id, user_id)
+        try:
+            return VisualEditor.output_dir(job_id, user_id)
+        except FileNotFoundError:
+            root = TTS_OUTPUT_DIR.resolve()
+            for asset in list_media_assets(user_id=user_id, generation_job_id=job_id):
+                if str(asset.get("role") or "") != "tts_output":
+                    continue
+                stored = Path(str(asset.get("storage_path") or ""))
+                candidate = (stored if stored.is_absolute() else PROJECT_ROOT / stored).resolve()
+                try:
+                    relative = candidate.relative_to(root)
+                except ValueError:
+                    continue
+                if relative.parts:
+                    directory = root / relative.parts[0]
+                    if directory.is_dir():
+                        return directory
+            raise FileNotFoundError("配音项目输出文件夹不可用")
+
+    @staticmethod
+    def _ensure_module1_layout(job_id: str, project_dir: Path) -> None:
+        """Give stand-alone TTS outputs the same editable layout as video projects."""
+        flat_audio = project_dir / "配音.wav"
+        flat_subtitle = project_dir / "配音字幕.srt"
+        input_dir = project_dir / "input"
+        other_dir = project_dir / "other"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        other_dir.mkdir(parents=True, exist_ok=True)
+        if flat_audio.is_file() and not (input_dir / "配音.wav").is_file():
+            shutil.copy2(flat_audio, input_dir / "配音.wav")
+        if flat_subtitle.is_file() and not (other_dir / SUBTITLE_FILENAME).is_file():
+            shutil.copy2(flat_subtitle, other_dir / SUBTITLE_FILENAME)
+        archived_segments = JOBS_DIR / job_id / "artifacts" / SEGMENT_DIRNAME
+        target_segments = other_dir / SEGMENT_DIRNAME
+        if archived_segments.is_dir() and not (target_segments / SEGMENT_MANIFEST).is_file():
+            shutil.copytree(archived_segments, target_segments, dirs_exist_ok=True)
+
+    @staticmethod
+    def _sync_module1_flat_outputs(project_dir: Path, job_id: str | None = None) -> None:
+        """Keep the original user-facing stand-alone filenames current."""
+        audio = project_dir / "input" / "配音.wav"
+        subtitle = project_dir / "other" / SUBTITLE_FILENAME
+        if (project_dir / "配音.wav").exists() and audio.is_file():
+            shutil.copy2(audio, project_dir / "配音.wav")
+        if (project_dir / "配音字幕.srt").exists() and subtitle.is_file():
+            shutil.copy2(subtitle, project_dir / "配音字幕.srt")
+        if job_id:
+            artifacts = JOBS_DIR / job_id / "artifacts"
+            if (artifacts / "final_output.wav").exists() and audio.is_file():
+                shutil.copy2(audio, artifacts / "final_output.wav")
+            if (artifacts / "final_output.srt").exists() and subtitle.is_file():
+                shutil.copy2(subtitle, artifacts / "final_output.srt")
 
     @staticmethod
     def _segment_dir(project_dir: Path) -> Path:
@@ -177,6 +267,183 @@ class TtsEditor:
         if not isinstance(segments, list) or not segments:
             raise ValueError("逐句配音清单损坏或为空")
         return payload
+
+    @staticmethod
+    def _history_root(project_dir: Path) -> Path:
+        return TtsEditor._segment_dir(project_dir) / "history"
+
+    @staticmethod
+    def _history_entries(project_dir: Path) -> list[Path]:
+        root = TtsEditor._history_root(project_dir)
+        return sorted(
+            [path for path in root.iterdir() if path.is_dir()] if root.is_dir() else [],
+            key=lambda path: path.name,
+        )
+
+    @staticmethod
+    def _snapshot_history(
+        project_dir: Path,
+        manifest: dict[str, Any],
+        affected_indices: list[int],
+        action: str,
+    ) -> tuple[int, bool]:
+        segment_dir = TtsEditor._segment_dir(project_dir)
+        history_id = f"{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1_000_000_000:09d}"
+        history = TtsEditor._history_root(project_dir) / history_id
+        history.mkdir(parents=True, exist_ok=False)
+        for source in (
+            segment_dir / SEGMENT_MANIFEST,
+            project_dir / "other" / SUBTITLE_FILENAME,
+            project_dir / "other" / TIMELINE_FILENAME,
+        ):
+            if source.is_file():
+                shutil.copy2(source, history / source.name)
+        by_index = {
+            int(item.get("index") or 0): item
+            for item in manifest.get("segments") or []
+            if isinstance(item, dict)
+        }
+        backed_up: list[str] = []
+        for index in sorted(set(affected_indices)):
+            item = by_index.get(index)
+            filename = Path(str((item or {}).get("filename") or "")).name
+            source = segment_dir / filename
+            if filename and source.is_file():
+                shutil.copy2(source, history / filename)
+                backed_up.append(filename)
+        (history / "history.json").write_text(
+            json.dumps(
+                {"action": action, "affected_indices": affected_indices, "audio_files": backed_up},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        entries = TtsEditor._history_entries(project_dir)
+        pruned = len(entries) > TTS_HISTORY_LIMIT
+        for old in entries[:-TTS_HISTORY_LIMIT]:
+            shutil.rmtree(old, ignore_errors=True)
+        return min(len(entries), TTS_HISTORY_LIMIT), pruned
+
+    @staticmethod
+    def _refresh_segment_timing(segments: list[dict[str, Any]], segment_dir: Path) -> float:
+        current = 0.0
+        for index, item in enumerate(segments, 1):
+            audio = segment_dir / str(item.get("filename") or "")
+            with wave.open(str(audio), "rb") as reader:
+                duration = reader.getnframes() / reader.getframerate()
+            item["index"] = index
+            item["start"] = round(current, 6)
+            item["end"] = round(current + duration, 6)
+            item["duration"] = round(duration, 6)
+            item["pause_after"] = round(max(0.0, min(30.0, float(item.get("pause_after") or 0))), 3)
+            current += duration + item["pause_after"]
+        return round(current, 6)
+
+    def _synthesize_parts(
+        self,
+        *,
+        job: Any,
+        user_id: int,
+        project_dir: Path,
+        manifest: dict[str, Any],
+        texts: list[str],
+        work_dir: Path,
+    ) -> list[Path]:
+        """Generate logical replacement parts without touching live project files."""
+        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts25")
+        if engine == "indextts2":
+            engine = "indextts25"
+        reading = {index: text for index, text in enumerate(texts, 1)}
+        chunks, positions, _totals = _build_regeneration_plan(reading, engine)
+        output_dir = work_dir / "output"
+        generated_dir = work_dir / "segments"
+        chunks_path = work_dir / "chunks.json"
+        script_path = work_dir / "selected.txt"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        chunks_path.write_text(json.dumps(chunks, ensure_ascii=False), encoding="utf-8")
+        script_path.write_text("\n".join(chunks), encoding="utf-8")
+        if engine == "cluster":
+            from .cloud_client import cloud_client_for
+            from .cloud_tts import synthesize_cloud_tts
+
+            cloud_request = dict(job.request)
+            cloud_request.pop("_cloud_job_id", None)
+            cloud_request.pop("_cloud_job_status", None)
+            for key in (
+                "cluster_voice_type", "cluster_voice_id", "tts_speed", "tts_volume",
+                "tts_pitch", "tts_emotion", "tts_emotion_weight",
+            ):
+                if key in manifest:
+                    cloud_request[key] = manifest[key]
+            synthesize_cloud_tts(
+                client=cloud_client_for(user_id),
+                local_job_id=f"{job.id}-boundary-{uuid.uuid4().hex[:10]}",
+                request=cloud_request,
+                output_dir=output_dir,
+                segment_archive_dir=generated_dir,
+                temp_dir=work_dir / "temp",
+                is_cancelled=lambda: False,
+                on_progress=lambda percent, message: self._set_task(
+                    job.id, status="running", progress=max(1, min(95, int(percent))), message=message
+                ),
+                on_log=lambda line: store.log(job, f"[断句重配] {line}"),
+                on_remote_job=lambda _job_id, _payload: None,
+                chunks_override=chunks,
+            )
+        else:
+            command = [
+                sys.executable, str(PROJECT_ROOT / "module1_agent_director.py"),
+                "--text", str(script_path), "--job-id", f"{job.id}_boundary_edit",
+                "--tts-engine", engine, "--chunks-json", str(chunks_path),
+                "--output-dir", str(output_dir), "--segment-archive-dir", str(generated_dir),
+                "--tts-speed", str(manifest.get("tts_speed") or 1),
+                "--tts-volume", str(manifest.get("tts_volume") or 1),
+                "--tts-pitch", str(manifest.get("tts_pitch") or 0),
+                "--tts-parallelism", str(manifest.get("tts_parallelism") or 1),
+            ]
+            if user_id:
+                command.extend(["--user-id", str(user_id)])
+            if engine == "qwen":
+                command.extend(["--qwen-voice", str(manifest.get("qwen_voice") or "Elias")])
+                instructions = str(manifest.get("qwen_instructions") or "").strip()
+                if instructions:
+                    command.extend(["--qwen-instructions", instructions])
+            else:
+                archived_voice = next((project_dir / "input").glob("TTS参考音色.*"), None)
+                if archived_voice and archived_voice.is_file():
+                    command.extend(["--tts-voice-path", str(archived_voice)])
+                else:
+                    command.extend(["--tts-voice-id", str(manifest.get("tts_voice_id") or "voice_05.wav")])
+                emotion = str(manifest.get("tts_emotion") or "").strip()
+                if emotion:
+                    command.extend(["--tts-emotion", emotion, "--tts-emotion-weight", str(manifest.get("tts_emotion_weight", 0.65))])
+            process = subprocess.run(
+                command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            for line in process.stdout.splitlines():
+                if line.strip():
+                    store.log(job, f"[断句重配] {line.strip()}")
+            if process.returncode != 0:
+                raise RuntimeError(f"TTS 子任务退出码 {process.returncode}")
+        generated = json.loads((generated_dir / SEGMENT_MANIFEST).read_text(encoding="utf-8")).get("segments") or []
+        if len(generated) != len(chunks):
+            raise RuntimeError("断句重配结果与安全分段计划不一致")
+        results: list[Path] = []
+        for logical_index in range(1, len(texts) + 1):
+            sources = [generated_dir / str(generated[pos]["filename"]) for pos in positions[logical_index]]
+            result = work_dir / f"part_{logical_index}.wav"
+            if len(sources) == 1:
+                shutil.copy2(sources[0], result)
+            else:
+                _concat_wavs(sources, result)
+            with wave.open(str(result), "rb") as audio:
+                if audio.getnframes() <= 0:
+                    raise RuntimeError(f"第 {logical_index} 段重配音频为空")
+            results.append(result)
+        return results
 
     @staticmethod
     def _migrate_legacy_archive(job_id: str, project_dir: Path) -> bool:
@@ -238,6 +505,9 @@ class TtsEditor:
 
     def inspect(self, job_id: str, user_id: int) -> dict[str, Any]:
         project_dir = self._project_dir(job_id, user_id)
+        stored_job = store.get(job_id)
+        uploaded_finished_audio = bool(stored_job and stored_job.request.get("skip_tts"))
+        self._ensure_module1_layout(job_id, project_dir)
         self._migrate_legacy_archive(job_id, project_dir)
         try:
             manifest = self._load_manifest(project_dir)
@@ -269,6 +539,7 @@ class TtsEditor:
                 "audio_url": f"/api/jobs/{job_id}/tts-editor/audio/{index}?v={audio.stat().st_mtime_ns}",
             })
         return {
+            "project_id": job_id,
             "available": bool(items),
             "message": "可选择一条或多条重新配音；完成后请重新渲染视频。" if items else "逐句音频文件不完整",
             "revision": int(manifest.get("revision") or 0),
@@ -287,6 +558,13 @@ class TtsEditor:
                 "qwen_instructions": manifest.get("qwen_instructions") or "",
             },
             "segments": items,
+            "history_count": len(self._history_entries(project_dir)),
+            "history_limit": TTS_HISTORY_LIMIT,
+            "structural_edit_available": not uploaded_finished_audio,
+            "structural_edit_message": (
+                "上传的成品配音只能调整已有句间停顿；拆句或合并会改变原音频，需要配音引擎才能重配。"
+                if uploaded_finished_audio else ""
+            ),
             "task": self.status(job_id),
         }
 
@@ -302,6 +580,311 @@ class TtsEditor:
         if segment_dir not in path.parents or not path.is_file():
             raise FileNotFoundError("找不到该句配音文件")
         return path
+
+    @staticmethod
+    def _apply_boundary_delta(project_dir: Path, boundary: float, delta: float) -> None:
+        if abs(delta) < 0.0005:
+            return
+        subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
+        entries = _srt_entries(subtitle_path)
+        for item in entries:
+            start = float(item["start"])
+            end = float(item["end"])
+            if start >= boundary - 0.0005:
+                item["start"] = max(0.0, start + delta)
+                item["end"] = max(item["start"] + 0.001, end + delta)
+            elif end > boundary:
+                item["end"] = max(start + 0.001, end + delta)
+        if entries:
+            _write_srt_entries(subtitle_path, entries)
+        timeline_path = project_dir / "other" / TIMELINE_FILENAME
+        if not timeline_path.is_file():
+            return
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        if not isinstance(timeline, list):
+            return
+        for item in timeline:
+            if not isinstance(item, dict):
+                continue
+            start = float(item.get("start") or 0)
+            end = float(item.get("end") or 0)
+            if start >= boundary - 0.0005:
+                item["start"] = round(max(0.0, start + delta), 6)
+                item["end"] = round(max(float(item["start"]) + 0.001, end + delta), 6)
+            elif end >= boundary - 0.0005:
+                # Keep the preceding picture visible while subtitles are blank.
+                item["end"] = round(max(start + 0.001, end + delta), 6)
+        timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def set_pause(self, *, job: Any, user_id: int, left_index: int, seconds: float) -> dict[str, Any]:
+        if self.status(job.id).get("status") == "running":
+            raise RuntimeError("该项目已有音频编辑任务正在运行")
+        project_dir = self._project_dir(job.id, user_id)
+        self._ensure_module1_layout(job.id, project_dir)
+        self._migrate_legacy_archive(job.id, project_dir)
+        manifest = self._load_manifest(project_dir)
+        segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
+        if left_index < 1 or left_index >= len(segments):
+            raise ValueError("只能在两句配音的交界处设置停顿")
+        seconds = round(max(0.0, min(30.0, float(seconds))), 3)
+        left = segments[left_index - 1]
+        old_pause = max(0.0, float(left.get("pause_after") or 0))
+        delta = seconds - old_pause
+        if abs(delta) < 0.0005:
+            return {"ok": True, "history_count": len(self._history_entries(project_dir)), "message": "停顿时长未变化"}
+        boundary = float(left.get("end") or 0) + old_pause
+        history_count, pruned = self._snapshot_history(project_dir, manifest, [], "修改额外停顿")
+        try:
+            left["pause_after"] = seconds
+            manifest["segments"] = segments
+            manifest["total_duration"] = self._refresh_segment_timing(segments, self._segment_dir(project_dir))
+            manifest["revision"] = int(manifest.get("revision") or 0) + 1
+            manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            self._apply_boundary_delta(project_dir, boundary, delta)
+            temp_audio = project_dir / "input" / ".配音.pause-edit.wav"
+            _concat_segment_wavs(segments, self._segment_dir(project_dir), temp_audio)
+            temp_audio.replace(project_dir / "input" / "配音.wav")
+            (self._segment_dir(project_dir) / SEGMENT_MANIFEST).write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            self._sync_module1_flat_outputs(project_dir, job.id)
+        except Exception:
+            self._restore_history(project_dir, self._history_entries(project_dir)[-1], consume=True)
+            raise
+        store.log(job, f"已将第 {left_index}、{left_index + 1} 句之间的额外停顿设为 {seconds:.1f} 秒")
+        return {
+            "ok": True, "history_count": history_count, "history_pruned": pruned,
+            "message": f"已保存 {seconds:.1f} 秒额外停顿",
+        }
+
+    @staticmethod
+    def _reshape_subtitles_for_span(
+        project_dir: Path,
+        old_start: float,
+        old_end: float,
+        new_parts: list[dict[str, Any]],
+        requested_texts: list[str],
+    ) -> None:
+        path = project_dir / "other" / SUBTITLE_FILENAME
+        entries = _srt_entries(path)
+        if not entries:
+            return
+        affected = [i for i, item in enumerate(entries) if float(item["end"]) > old_start + 0.0005 and float(item["start"]) < old_end - 0.0005]
+        if not affected:
+            raise ValueError("无法在最终字幕中定位需要调整的句子")
+        first, last = affected[0], affected[-1]
+        preserved_text = "".join(str(entries[i]["text"]) for i in affected)
+        weights = [max(1, len(re.sub(r"\s+", "", text))) for text in requested_texts]
+        split_texts: list[str] = []
+        cursor = 0
+        total_weight = sum(weights)
+        for position, weight in enumerate(weights):
+            if position == len(weights) - 1:
+                end = len(preserved_text)
+            else:
+                end = round(len(preserved_text) * sum(weights[: position + 1]) / total_weight)
+            split_texts.append(preserved_text[cursor:end])
+            cursor = end
+        replacements = [
+            {"text": text or requested_texts[index], "start": part["start"], "end": part["end"]}
+            for index, (text, part) in enumerate(zip(split_texts, new_parts))
+        ]
+        delta = float(new_parts[-1]["end"]) - old_end
+        following = [dict(item) for item in entries[last + 1:]]
+        for item in following:
+            item["start"] = float(item["start"]) + delta
+            item["end"] = float(item["end"]) + delta
+        _write_srt_entries(path, [*entries[:first], *replacements, *following])
+
+    @staticmethod
+    def _warp_timeline_span(project_dir: Path, old_start: float, old_end: float, new_end: float) -> None:
+        path = project_dir / "other" / TIMELINE_FILENAME
+        if not path.is_file():
+            return
+        timeline = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(timeline, list):
+            return
+        old_duration = max(0.001, old_end - old_start)
+        new_duration = max(0.001, new_end - old_start)
+        delta = new_end - old_end
+
+        def warp(value: float) -> float:
+            if value <= old_start:
+                return value
+            if value < old_end:
+                return old_start + (value - old_start) * new_duration / old_duration
+            return value + delta
+
+        for item in timeline:
+            if isinstance(item, dict):
+                start = warp(float(item.get("start") or 0))
+                end = max(start + 0.001, warp(float(item.get("end") or 0)))
+                item["start"], item["end"] = round(start, 6), round(end, 6)
+        path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def resegment(
+        self,
+        *,
+        job: Any,
+        user_id: int,
+        start_index: int,
+        replace_count: int,
+        parts: list[dict[str, Any]],
+        settings_override: dict[str, Any] | None = None,
+    ) -> None:
+        if bool(job.request.get("skip_tts")):
+            raise ValueError("上传成品配音只能修改现有交界处停顿，不能断句或合并重配")
+        if replace_count not in {1, 2} or len(parts) not in {1, 2}:
+            raise ValueError("断句调整范围无效")
+        if self.status(job.id).get("status") == "running":
+            raise RuntimeError("该项目已有音频编辑任务正在运行")
+        self._set_task(job.id, status="running", progress=0, message="准备调整断句")
+
+        def work() -> None:
+            project_dir: Path | None = None
+            history: Path | None = None
+            work_dir: Path | None = None
+            try:
+                project_dir = self._project_dir(job.id, user_id)
+                self._ensure_module1_layout(job.id, project_dir)
+                manifest = self._load_manifest(project_dir)
+                for key, value in dict(settings_override or {}).items():
+                    if key in {
+                        "tts_voice_id", "tts_speed", "tts_volume", "tts_pitch", "tts_parallelism",
+                        "tts_emotion", "tts_emotion_weight", "cluster_voice_type", "cluster_voice_id",
+                        "qwen_voice", "qwen_instructions",
+                    }:
+                        manifest[key] = value
+                segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
+                offset = start_index - 1
+                if offset < 0 or offset + replace_count > len(segments):
+                    raise ValueError("需要调整的原句不存在")
+                replaced = segments[offset: offset + replace_count]
+                old_display = "".join(str(item.get("text") or "") for item in replaced)
+                display_texts = [str(item.get("text") or "").strip() for item in parts]
+                reading_texts = [str(item.get("tts_text") or item.get("text") or "").strip() for item in parts]
+                if any(not text for text in display_texts + reading_texts):
+                    raise ValueError("断句前后文字不能为空")
+                compact = lambda value: re.sub(r"\s+", "", value)
+                if compact(old_display) != compact("".join(display_texts)):
+                    raise ValueError("调整断点不能增加、删除或改写字幕文字")
+                engine = str(manifest.get("engine") or "indextts25")
+                if engine in {"indextts2", "indextts25", "cluster"}:
+                    from .tts_segmentation import INDEXTTS25_SEGMENT_MAX_TOKENS, build_indextts25_token_counter
+                    count = build_indextts25_token_counter()
+                    totals = [count(text) for text in reading_texts]
+                    if any(total > INDEXTTS25_SEGMENT_MAX_TOKENS for total in totals):
+                        raise ValueError(f"断句后仍有片段超过 110 token：{totals}")
+                work_dir = self._segment_dir(project_dir) / f".boundary-{uuid.uuid4().hex}"
+                generated = self._synthesize_parts(
+                    job=job, user_id=user_id, project_dir=project_dir,
+                    manifest=manifest, texts=reading_texts, work_dir=work_dir,
+                )
+                history_count, pruned = self._snapshot_history(
+                    project_dir, manifest,
+                    [int(item.get("index") or 0) for item in replaced],
+                    "新增断点" if replace_count == 1 and len(parts) == 2 else "调整断点",
+                )
+                history = self._history_entries(project_dir)[-1]
+                old_start = float(replaced[0].get("start") or 0)
+                old_end = float(replaced[-1].get("end") or 0)
+                trailing_pause = float(replaced[-1].get("pause_after") or 0)
+                new_items: list[dict[str, Any]] = []
+                for position, (part, audio) in enumerate(zip(parts, generated), 1):
+                    filename = f"segment_{uuid.uuid4().hex[:12]}.wav"
+                    shutil.copy2(audio, self._segment_dir(project_dir) / filename)
+                    new_items.append({
+                        "text": display_texts[position - 1],
+                        "tts_text": reading_texts[position - 1],
+                        "filename": filename,
+                        "pause_after": (
+                            max(0.0, min(30.0, float(part.get("pause_after") or 0)))
+                            if position < len(parts) else trailing_pause
+                        ),
+                    })
+                updated = [*segments[:offset], *new_items, *segments[offset + replace_count:]]
+                manifest["segments"] = updated
+                manifest["total_duration"] = self._refresh_segment_timing(updated, self._segment_dir(project_dir))
+                manifest["revision"] = int(manifest.get("revision") or 0) + 1
+                manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                self._reshape_subtitles_for_span(project_dir, old_start, old_end, new_items, display_texts)
+                self._warp_timeline_span(project_dir, old_start, old_end, float(new_items[-1]["end"]))
+                temp_audio = project_dir / "input" / ".配音.boundary-edit.wav"
+                _concat_segment_wavs(updated, self._segment_dir(project_dir), temp_audio)
+                temp_audio.replace(project_dir / "input" / "配音.wav")
+                (self._segment_dir(project_dir) / SEGMENT_MANIFEST).write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                used = {str(item.get("filename") or "") for item in updated}
+                for item in replaced:
+                    old_file = self._segment_dir(project_dir) / str(item.get("filename") or "")
+                    if old_file.name not in used:
+                        old_file.unlink(missing_ok=True)
+                self._sync_module1_flat_outputs(project_dir, job.id)
+                self._set_task(
+                    job.id, status="completed", progress=100,
+                    message=f"断句已调整；历史 {history_count}/20" + ("，最早一版已自动清理" if pruned else ""),
+                )
+                store.log(job, f"断句调整完成：从第 {start_index} 句开始，以 {len(parts)} 句替换原 {replace_count} 句")
+            except Exception as exc:
+                if project_dir is not None and history is not None and history.is_dir():
+                    try:
+                        self._restore_history(project_dir, history, consume=True)
+                    except Exception as rollback_exc:
+                        store.log(job, f"断句调整回滚失败：{rollback_exc}")
+                self._set_task(job.id, status="failed", progress=0, message=f"断句调整失败：{exc}")
+                store.log(job, f"断句调整失败：{type(exc).__name__}: {exc}")
+            finally:
+                if work_dir is not None:
+                    shutil.rmtree(work_dir, ignore_errors=True)
+
+        threading.Thread(target=work, daemon=True, name=f"tts-boundary-{job.id}").start()
+
+    @staticmethod
+    def _restore_history(project_dir: Path, history: Path, *, consume: bool) -> None:
+        segment_dir = TtsEditor._segment_dir(project_dir)
+        manifest_backup = history / SEGMENT_MANIFEST
+        if not manifest_backup.is_file():
+            raise FileNotFoundError("音频编辑历史不完整")
+        restored = json.loads(manifest_backup.read_text(encoding="utf-8"))
+        filenames = {
+            Path(str(item.get("filename") or "")).name
+            for item in restored.get("segments") or [] if isinstance(item, dict)
+        }
+        for backup in history.glob("*.wav"):
+            shutil.copy2(backup, segment_dir / backup.name)
+        for current in segment_dir.glob("*.wav"):
+            if current.name not in filenames:
+                current.unlink(missing_ok=True)
+        shutil.copy2(manifest_backup, segment_dir / SEGMENT_MANIFEST)
+        for name in (SUBTITLE_FILENAME, TIMELINE_FILENAME):
+            backup = history / name
+            target = project_dir / "other" / name
+            if backup.is_file():
+                shutil.copy2(backup, target)
+            else:
+                target.unlink(missing_ok=True)
+        temp_audio = project_dir / "input" / ".配音.undo.wav"
+        _concat_segment_wavs(restored["segments"], segment_dir, temp_audio)
+        temp_audio.replace(project_dir / "input" / "配音.wav")
+        TtsEditor._sync_module1_flat_outputs(project_dir)
+        if consume:
+            shutil.rmtree(history, ignore_errors=True)
+
+    def undo(self, *, job: Any, user_id: int) -> dict[str, Any]:
+        if self.status(job.id).get("status") == "running":
+            raise RuntimeError("请等待当前音频编辑完成后再撤销")
+        project_dir = self._project_dir(job.id, user_id)
+        entries = self._history_entries(project_dir)
+        if not entries:
+            raise ValueError("没有可撤销的音频编辑")
+        history = entries[-1]
+        meta_path = history / "history.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        self._restore_history(project_dir, history, consume=True)
+        self._sync_module1_flat_outputs(project_dir, job.id)
+        store.log(job, f"已撤销音频编辑：{meta.get('action') or '上一步'}")
+        return {"ok": True, "history_count": len(self._history_entries(project_dir)), "message": "已撤销上一步音频编辑"}
 
     def regenerate(
         self,
@@ -413,24 +996,6 @@ class TtsEditor:
         ]
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        history = segment_dir / "history" / timestamp
-        history.mkdir(parents=True, exist_ok=True)
-        for source in (
-            manifest_path,
-            project_dir / "input" / "配音.wav",
-            project_dir / "other" / SUBTITLE_FILENAME,
-            project_dir / "other" / TIMELINE_FILENAME,
-        ):
-            if source.is_file():
-                shutil.copy2(source, history / source.name)
-        for source in (project_dir / "input").glob("TTS参考音色.*"):
-            if source.is_file():
-                shutil.copy2(source, history / source.name)
-        for index in indices:
-            source = segment_dir / str(by_index[index]["filename"])
-            if source.is_file():
-                shutil.copy2(source, history / source.name)
-
         work_dir = segment_dir / ".regenerate"
         shutil.rmtree(work_dir, ignore_errors=True)
         output_dir = work_dir / "output"
@@ -531,6 +1096,9 @@ class TtsEditor:
         generated = generated_manifest.get("segments") or []
         if len(generated) != len(synthesis_chunks):
             raise RuntimeError("重配结果分段数与安全断句计划不一致")
+        # Generation is complete and validated, but live audio has not been
+        # replaced yet.  Capture the last good state at this exact boundary.
+        self._snapshot_history(project_dir, manifest, indices, "重配选中句")
         for original_index in indices:
             generated_sources = [
                 generated_dir / str(generated[position]["filename"])
@@ -566,7 +1134,7 @@ class TtsEditor:
             item["end"] = round(current + duration, 6)
             item["duration"] = round(duration, 6)
             new_ranges.append((current, current + duration))
-            current += duration
+            current += duration + max(0.0, min(30.0, float(item.get("pause_after") or 0)))
 
         def warp(value: float) -> float:
             value = max(0.0, float(value))
@@ -577,10 +1145,7 @@ class TtsEditor:
                     return new_start + ratio * (new_end - new_start)
             return current
 
-        _concat_wavs(
-            [segment_dir / str(item["filename"]) for item in segments],
-            project_dir / "input" / "配音.wav",
-        )
+        _concat_segment_wavs(segments, segment_dir, project_dir / "input" / "配音.wav")
         _rewrite_srt_times(project_dir / "other" / SUBTITLE_FILENAME, warp)
         timeline_path = project_dir / "other" / TIMELINE_FILENAME
         if timeline_path.is_file():
@@ -600,6 +1165,7 @@ class TtsEditor:
         manifest["revision"] = int(manifest.get("revision") or 0) + 1
         manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._sync_module1_flat_outputs(project_dir, job.id)
         request_updates = {
             "tts_voice_id": manifest.get("tts_voice_id"),
             "tts_speed": manifest.get("tts_speed", 1),

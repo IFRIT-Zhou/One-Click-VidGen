@@ -58,6 +58,14 @@ def normalize_scene(item: dict[str, Any], index: int) -> dict[str, Any]:
         normalized["source_paragraph_id"] = source_paragraph_id
     if source_boundary_after in {"line", "paragraph"}:
         normalized["source_boundary_after"] = source_boundary_after
+    if bool(item.get("hard_boundary_before")):
+        normalized["hard_boundary_before"] = True
+    structural_blank_after = float(item.get("structural_blank_after") or 0)
+    if structural_blank_after > 0:
+        normalized["structural_blank_after"] = round(structural_blank_after, 3)
+    visual_hold_until = float(item.get("visual_hold_until") or 0)
+    if visual_hold_until > end:
+        normalized["visual_hold_until"] = round(visual_hold_until, 3)
     return normalized
 
 

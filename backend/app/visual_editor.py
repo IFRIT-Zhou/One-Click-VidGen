@@ -383,17 +383,62 @@ class VisualEditor:
         timeline_temp.write_text(
             json.dumps(validated, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        display_timeline = VisualEditor._subtitle_display_timeline(validated)
         blocks = [
             "\n".join((
                 str(index),
                 f"{VisualEditor._srt_timestamp(item['start'])} --> {VisualEditor._srt_timestamp(item['end'])}",
                 str(item["text_content"]),
             ))
-            for index, item in enumerate(validated, 1)
+            for index, item in enumerate(display_timeline, 1)
         ]
-        subtitle_temp.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+        subtitle_temp.write_text(("\n\n".join(blocks) + "\n") if blocks else "", encoding="utf-8")
         os.replace(timeline_temp, timeline_path)
         os.replace(subtitle_temp, subtitle_path)
+
+    @staticmethod
+    def _subtitle_display_timeline(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Build the SRT view without removing nodes from the visual timeline.
+
+        Hidden subtitle nodes remain in ``画面时间线.json`` so picture ownership,
+        audio duration and later editing stay stable.  Merge modes only expand the
+        nearest visible subtitle in the exported SRT.
+        """
+        visible = [dict(item) for item in timeline if not bool(item.get("subtitle_hidden"))]
+        if not visible:
+            return []
+        visible_by_id = {str(item["slide_id"]): item for item in visible}
+        positions = {str(item["slide_id"]): index for index, item in enumerate(timeline)}
+        visible_positions = sorted((positions[slide_id], slide_id) for slide_id in visible_by_id)
+        for index, item in enumerate(timeline):
+            if not bool(item.get("subtitle_hidden")):
+                continue
+            mode = str(item.get("subtitle_hidden_mode") or "blank")
+            if mode == "merge_previous":
+                candidates = [slide_id for position, slide_id in visible_positions if position < index]
+                if not candidates:
+                    raise ValueError(f"{item['slide_id']} 前面没有可承接时间的可见字幕")
+                target = visible_by_id[candidates[-1]]
+                target["end"] = max(float(target["end"]), float(item["end"]))
+            elif mode == "merge_next":
+                candidates = [slide_id for position, slide_id in visible_positions if position > index]
+                if not candidates:
+                    raise ValueError(f"{item['slide_id']} 后面没有可承接时间的可见字幕")
+                target = visible_by_id[candidates[0]]
+                target["start"] = min(float(target["start"]), float(item["start"]))
+            elif mode != "blank":
+                raise ValueError(f"{item['slide_id']} 的字幕隐藏方式无效")
+        saw_merge_next = False
+        for item in timeline:
+            if not bool(item.get("subtitle_hidden")):
+                saw_merge_next = False
+                continue
+            mode = str(item.get("subtitle_hidden_mode") or "blank")
+            if mode == "merge_next":
+                saw_merge_next = True
+            elif mode == "merge_previous" and saw_merge_next:
+                raise ValueError("连续隐藏字幕的合并方向发生交叉，请改用留空或统一并入同一方向")
+        return sorted(visible, key=lambda item: (float(item["start"]), float(item["end"])))
 
     @staticmethod
     def _archive_subtitle_state(project_dir: Path, label: str) -> Path:
@@ -478,6 +523,8 @@ class VisualEditor:
                         "start": float(by_slide[slide_id].get("start", 0) or 0),
                         "end": float(by_slide[slide_id].get("end", 0) or 0),
                         "text": str(by_slide[slide_id].get("text_content") or ""),
+                        "subtitle_hidden": bool(by_slide[slide_id].get("subtitle_hidden")),
+                        "subtitle_hidden_mode": str(by_slide[slide_id].get("subtitle_hidden_mode") or ""),
                     }
                     for slide_id in slides
                 ],
@@ -771,7 +818,11 @@ class VisualEditor:
             except FileNotFoundError:
                 continue
             slides = [str(value) for value in entry.get("includes_slides", [])]
-            text = " ".join(str(timeline.get(value, {}).get("text_content") or "") for value in slides).strip()
+            text = " ".join(
+                str(timeline.get(value, {}).get("text_content") or "")
+                for value in slides
+                if not bool(timeline.get(value, {}).get("subtitle_hidden"))
+            ).strip()
             if not text:
                 text = legacy_text_by_image.get(image.name, "")
             items.append({
@@ -834,6 +885,9 @@ class VisualEditor:
                 for slide_id, text in normalized.items()
                 if str(by_id[slide_id].get("text_content") or "").strip() != text
             }
+            hidden = [slide_id for slide_id in changed if bool(by_id[slide_id].get("subtitle_hidden"))]
+            if hidden:
+                raise ValueError(f"请先恢复已隐藏字幕再修改文字：{', '.join(hidden[:3])}")
             if not changed:
                 return self.inspect(job_id, user_id)
             self._archive_subtitle_state(project_dir, "保存字幕修改前")
@@ -851,6 +905,85 @@ class VisualEditor:
             status="completed",
             action="subtitle",
             message=f"已保存 {len(changed)} 条字幕修改；重新渲染后进入成片。",
+        )
+        return self.inspect(job_id, user_id)
+
+    def hide_subtitle(
+        self, *, job_id: str, user_id: int, slide_id: str, mode: str
+    ) -> dict[str, Any]:
+        if mode not in {"blank", "merge_previous", "merge_next"}:
+            raise ValueError("字幕隐藏方式无效")
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            timeline = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+            index = next((i for i, item in enumerate(timeline) if str(item["slide_id"]) == slide_id), -1)
+            if index < 0:
+                raise ValueError("找不到需要隐藏的字幕")
+            item = timeline[index]
+            if bool(item.get("subtitle_hidden")):
+                return self.inspect(job_id, user_id)
+            visible_before = [entry for entry in timeline[:index] if not bool(entry.get("subtitle_hidden"))]
+            visible_after = [entry for entry in timeline[index + 1:] if not bool(entry.get("subtitle_hidden"))]
+            if mode == "merge_previous" and not visible_before:
+                raise ValueError("前面没有可承接时间的字幕，请选择留空或并入后句")
+            if mode == "merge_next" and not visible_after:
+                raise ValueError("后面没有可承接时间的字幕，请选择留空或并入前句")
+            self._archive_subtitle_state(project_dir, "隐藏字幕前")
+            item["subtitle_hidden"] = True
+            item["subtitle_hidden_mode"] = mode
+            item["subtitle_hidden_original_start"] = float(item["start"])
+            item["subtitle_hidden_original_end"] = float(item["end"])
+            # Validate the effective SRT before replacing either authoritative file.
+            self._subtitle_display_timeline(timeline)
+            self._write_subtitle_files(project_dir, timeline)
+            try:
+                self._write_timing_html(project_dir, self._load_mapping(project_dir), timeline)
+            except (OSError, ValueError, FileNotFoundError):
+                pass
+        labels = {"blank": "留空", "merge_previous": "并入前句", "merge_next": "并入后句"}
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle_hide",
+            message=f"已隐藏 {slide_id}（{labels[mode]}）；配音、图片和画面时序保持不变。",
+        )
+        return self.inspect(job_id, user_id)
+
+    def restore_hidden_subtitle(
+        self, *, job_id: str, user_id: int, slide_id: str, force: bool = False
+    ) -> dict[str, Any]:
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            timeline = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+            item = next((entry for entry in timeline if str(entry["slide_id"]) == slide_id), None)
+            if item is None:
+                raise ValueError("找不到需要恢复的字幕")
+            if not bool(item.get("subtitle_hidden")):
+                return self.inspect(job_id, user_id)
+            original_start = float(item.get("subtitle_hidden_original_start", item["start"]))
+            original_end = float(item.get("subtitle_hidden_original_end", item["end"]))
+            conflict = (
+                abs(float(item["start"]) - original_start) > 1e-6
+                or abs(float(item["end"]) - original_end) > 1e-6
+            )
+            if conflict and not force:
+                raise RuntimeError("RESTORE_CONFLICT:隐藏后该字幕的时间边界已被调整；恢复会还原删除前边界")
+            self._archive_subtitle_state(project_dir, "恢复隐藏字幕前")
+            item["start"] = original_start
+            item["end"] = original_end
+            for key in list(item):
+                if key.startswith("subtitle_hidden"):
+                    item.pop(key, None)
+            self._write_subtitle_files(project_dir, timeline)
+            try:
+                self._write_timing_html(project_dir, self._load_mapping(project_dir), timeline)
+            except (OSError, ValueError, FileNotFoundError):
+                pass
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle_restore",
+            message=f"已恢复 {slide_id} 的字幕文字与删除前时间范围。",
         )
         return self.inspect(job_id, user_id)
 
@@ -876,21 +1009,29 @@ class VisualEditor:
         )
         with self._mapping_lock:
             current = self._validated_subtitle_timeline(self._load_timeline(project_dir))
-            archived_text = {
-                str(item["slide_id"]): str(item["text_content"])
+            archived_by_id = {
+                str(item["slide_id"]): item
                 for item in archived
             }
             missing = [
                 str(item["slide_id"])
                 for item in current
-                if str(item["slide_id"]) not in archived_text
+                if str(item["slide_id"]) not in archived_by_id
             ]
             if missing:
                 raise ValueError("所选字幕历史与当前项目句子编号不一致，无法安全恢复")
-            # Subtitle history restores display text only. Current timestamps may
-            # have changed after a later TTS refinement and must remain authoritative.
+            # Keep current timestamps authoritative, but restore display text and
+            # hidden/visible state. Dedicated single-row restore handles the saved
+            # pre-hide timestamp when the user asks for an exact restoration.
             for item in current:
-                item["text_content"] = archived_text[str(item["slide_id"])]
+                historical = archived_by_id[str(item["slide_id"])]
+                item["text_content"] = str(historical["text_content"])
+                for key in list(item):
+                    if key.startswith("subtitle_hidden"):
+                        item.pop(key, None)
+                for key, value in historical.items():
+                    if key.startswith("subtitle_hidden"):
+                        item[key] = value
             self._archive_subtitle_state(project_dir, "恢复字幕历史前")
             self._write_subtitle_files(project_dir, current)
             try:
@@ -967,6 +1108,12 @@ class VisualEditor:
                 raise ValueError("字幕边界对应的相邻句子不存在")
             left = timeline[index]
             right = timeline[index + 1]
+            original_ranges = [
+                (str(item["slide_id"]), float(item["start"]), float(item["end"]))
+                for item in timeline
+            ]
+            original_left_start = float(left["start"])
+            original_right_end = float(right["end"])
             minimum = float(left["start"]) + 0.15
             maximum = float(right["end"]) - 0.15
             value = float(boundary)
@@ -975,6 +1122,21 @@ class VisualEditor:
             self._archive_subtitle_state(project_dir, "校准字幕边界前")
             left["end"] = round(value, 6)
             right["start"] = round(value, 6)
+            # This tool moves one shared boundary; it is not a ripple edit.
+            # Refuse the write if any unrelated timestamp was changed by a
+            # future refactor or malformed timeline transformation.
+            for position, item in enumerate(timeline):
+                slide_id, old_start, old_end = original_ranges[position]
+                if str(item["slide_id"]) != slide_id:
+                    raise RuntimeError("字幕顺序意外变化，已取消边界调整")
+                if position == index:
+                    if abs(float(item["start"]) - original_left_start) > 1e-6:
+                        raise RuntimeError("前句开始时间意外变化，已取消边界调整")
+                elif position == index + 1:
+                    if abs(float(item["end"]) - original_right_end) > 1e-6:
+                        raise RuntimeError("后句结束时间意外变化，已取消边界调整")
+                elif abs(float(item["start"]) - old_start) > 1e-6 or abs(float(item["end"]) - old_end) > 1e-6:
+                    raise RuntimeError("后续字幕时间意外变化，已取消边界调整")
             self._write_subtitle_files(project_dir, timeline)
             try:
                 self._write_timing_html(project_dir, self._load_mapping(project_dir), timeline)

@@ -31,6 +31,7 @@ from .html_generator import generate_visual_html
 from .semantic_timeline import generate_fine_grained_timeline
 from .gemini_client import GeminiError, gemini_configured, generate_gemini_text, parse_json_response
 from .cloud_client import cloud_client_for
+from .structural_blanks import parse_structural_blanks
 from story_agents import load_or_create_story_context, load_or_create_story_plan, story_fingerprint
 
 
@@ -1365,7 +1366,7 @@ def write_original_text_from_asr(job: Job) -> None:
 
 def canonical_story_text(request: dict[str, Any], scenes: list[dict[str, Any]]) -> str:
     """Agent 0 reads author text when supplied, otherwise corrected ASR text."""
-    authored = str(request.get("script") or "").strip()
+    authored = parse_structural_blanks(str(request.get("script") or "")).clean_text
     if authored:
         return authored
     return "\n".join(
@@ -1373,6 +1374,164 @@ def canonical_story_text(request: dict[str, Any], scenes: list[dict[str, Any]]) 
         for scene in scenes
         if str(scene.get("text_content") or "").strip()
     ).strip()
+
+
+def apply_structural_blank_boundaries(job: Job, store: JobStore) -> int:
+    """Keep corrected subtitles out of exact TTS blank intervals.
+
+    Whisper correctly detects silence, but the later text-correction splitter can
+    redistribute that silent duration across nearby subtitle text.  Re-anchor
+    only the TTS segments touching a structural blank, using their authoritative
+    per-segment WAV timings and text coverage.
+    """
+    manifest_path = JOBS_DIR / job.id / "artifacts" / "tts_segments" / "manifest.json"
+    timeline_path = WORKSPACE_DIR / "3_visual_template" / "scene_timeline.json"
+    if not manifest_path.is_file() or not timeline_path.is_file():
+        return 0
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        scenes = json.loads(timeline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    if not isinstance(scenes, list) or not scenes:
+        return 0
+    manifest_segments = [item for item in manifest.get("segments", []) if isinstance(item, dict)]
+    blank_segment_indices = [
+        index for index, item in enumerate(manifest_segments)
+        if item.get("structural_blank_after") and float(item.get("pause_after") or 0) > 0
+    ]
+    if not blank_segment_indices:
+        return 0
+
+    def alignment_text(value: Any) -> str:
+        return re.sub(r"[^\w\u4e00-\u9fff]", "", str(value or ""))
+
+    manifest_text = "".join(alignment_text(item.get("text")) for item in manifest_segments)
+    scene_text = "".join(alignment_text(item.get("text_content")) for item in scenes)
+    if not manifest_text or manifest_text != scene_text:
+        store.log(job, "结构性留白：字幕文字与配音清单无法逐字对应，已保留 ASR 原时间轴以避免误移字幕")
+        return 0
+
+    # Re-applying after a resume or editor save must replace, not accumulate,
+    # the boundary selected by an older timing heuristic.
+    for scene in scenes:
+        scene.pop("hard_boundary_before", None)
+        scene.pop("structural_blank_after", None)
+        scene.pop("visual_hold_until", None)
+
+    segment_spans: list[dict[str, Any]] = []
+    cursor = 0
+    for item in manifest_segments:
+        length = len(alignment_text(item.get("text")))
+        segment_spans.append({
+            "char_start": cursor,
+            "char_end": cursor + length,
+            "start": float(item.get("start") or 0),
+            "end": float(item.get("end") or 0),
+        })
+        cursor += length
+
+    # A marker can legally sit inside a sentence.  If the display splitter put
+    # text from both sides into one subtitle, split that subtitle at the same
+    # character boundary before assigning times.
+    hard_char_boundaries = {
+        int(segment_spans[index]["char_end"])
+        for index in blank_segment_indices
+        if index + 1 < len(segment_spans)
+    }
+
+    def raw_cut_for_clean_offset(text: str, clean_offset: int) -> int:
+        if clean_offset <= 0:
+            return 0
+        if clean_offset >= len(alignment_text(text)):
+            return len(text)
+        seen = 0
+        for raw_index, char in enumerate(text):
+            if alignment_text(char):
+                if seen >= clean_offset:
+                    return raw_index
+                seen += 1
+        return len(text)
+
+    split_scenes: list[dict[str, Any]] = []
+    cursor = 0
+    for scene in scenes:
+        raw_text = str(scene.get("text_content") or "")
+        clean_length = len(alignment_text(raw_text))
+        scene_end = cursor + clean_length
+        cuts = sorted(value for value in hard_char_boundaries if cursor < value < scene_end)
+        local_clean_starts = [0] + [value - cursor for value in cuts]
+        local_clean_ends = [value - cursor for value in cuts] + [clean_length]
+        original_start = float(scene.get("start") or 0)
+        original_end = max(float(scene.get("end") or original_start + 0.001), original_start + 0.001)
+        for clean_start, clean_end in zip(local_clean_starts, local_clean_ends):
+            raw_start = raw_cut_for_clean_offset(raw_text, clean_start)
+            raw_end = raw_cut_for_clean_offset(raw_text, clean_end)
+            piece = raw_text[raw_start:raw_end].strip()
+            if not piece:
+                continue
+            ratio_start = clean_start / max(1, clean_length)
+            ratio_end = clean_end / max(1, clean_length)
+            clone = dict(scene)
+            clone["text_content"] = piece
+            clone["start"] = round(original_start + (original_end - original_start) * ratio_start, 3)
+            clone["end"] = round(original_start + (original_end - original_start) * ratio_end, 3)
+            split_scenes.append(clone)
+        cursor = scene_end
+    scenes = split_scenes
+
+    scene_spans: list[tuple[int, int]] = []
+    cursor = 0
+    for scene in scenes:
+        length = len(alignment_text(scene.get("text_content")))
+        scene_spans.append((cursor, cursor + length))
+        cursor += length
+
+    affected_segments = set(blank_segment_indices)
+    affected_segments.update(index + 1 for index in blank_segment_indices if index + 1 < len(segment_spans))
+    for scene, (char_start, char_end) in zip(scenes, scene_spans):
+        for segment_index in affected_segments:
+            segment = segment_spans[segment_index]
+            if char_start < segment["char_start"] or char_end > segment["char_end"]:
+                continue
+            span_length = max(1, segment["char_end"] - segment["char_start"])
+            duration = max(0.001, segment["end"] - segment["start"])
+            scene["start"] = round(
+                segment["start"] + duration * (char_start - segment["char_start"]) / span_length,
+                3,
+            )
+            scene["end"] = round(
+                segment["start"] + duration * (char_end - segment["char_start"]) / span_length,
+                3,
+            )
+            break
+
+    applied = 0
+    for segment_index in blank_segment_indices:
+        if segment_index + 1 >= len(segment_spans):
+            continue
+        blank_start = float(manifest_segments[segment_index].get("end") or 0)
+        pause = float(manifest_segments[segment_index].get("pause_after") or 0)
+        blank_end = blank_start + pause
+        boundary_char = int(segment_spans[segment_index]["char_end"])
+        previous_index = max((i for i, (_start, end) in enumerate(scene_spans) if end <= boundary_char), default=-1)
+        next_index = next((i for i, (start, _end) in enumerate(scene_spans) if start >= boundary_char), -1)
+        if previous_index < 0 or next_index < 0:
+            continue
+        scenes[previous_index]["end"] = round(min(float(scenes[previous_index]["end"]), blank_start), 3)
+        scenes[previous_index]["structural_blank_after"] = round(pause, 3)
+        scenes[previous_index]["visual_hold_until"] = round(blank_end, 3)
+        scenes[next_index]["start"] = round(max(float(scenes[next_index]["start"]), blank_end), 3)
+        scenes[next_index]["hard_boundary_before"] = True
+        applied += 1
+    if applied:
+        for index, scene in enumerate(scenes, 1):
+            scene["id"] = f"segment_{index:03d}"
+            scene["slide_id"] = f"scene_{index:03d}"
+        timeline_path.write_text(json.dumps(scenes, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_srt_from_scenes(scenes, WORKSPACE_DIR / "2_audio_srt" / "final_short.srt")
+        store.log(job, f"结构性留白：已把 {applied} 个静音区间锁定为配音、字幕与画面的硬边界")
+    return applied
 
 
 def reset_generation_workspace() -> None:
@@ -2934,6 +3093,21 @@ def organize_tts_output(job: Job, request: dict[str, Any]) -> Path:
         shutil.copy2(audio_source, temp_dir / "配音.wav")
         if subtitle_source.is_file() and subtitle_source.stat().st_size > 0:
             shutil.copy2(subtitle_source, temp_dir / "配音字幕.srt")
+        # Preserve the editable project layout as well as the friendly flat
+        # download files.  This lets Module 1 tasks be reopened and refined
+        # after a browser or OCV restart.
+        (temp_dir / "input").mkdir(parents=True, exist_ok=True)
+        (temp_dir / "other").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(audio_source, temp_dir / "input" / "配音.wav")
+        if subtitle_source.is_file() and subtitle_source.stat().st_size > 0:
+            shutil.copy2(subtitle_source, temp_dir / "other" / "最终字幕.srt")
+        segment_archive = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+        if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
+            shutil.copytree(
+                segment_archive,
+                temp_dir / "other" / "tts_segments",
+                dirs_exist_ok=True,
+            )
         script_source = JOBS_DIR / job.id / "script.txt"
         if script_source.is_file() and script_source.stat().st_size > 0:
             shutil.copy2(script_source, temp_dir / "文案.txt")
@@ -4118,11 +4292,12 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
     else:
         store.log(job, "断点续跑：保留 workspace 中已生成的音频、字幕、分镜和海报")
     script = str(request.get("script") or "")
+    structural_plan = parse_structural_blanks(script)
     script_path = job_dir / "script.txt"
     script_path.write_text(script, encoding="utf-8")
     if script.strip():
         register_job_asset(job, script_path, "source_script")
-        (WORKSPACE_DIR / "1_original_text.txt").write_text(script, encoding="utf-8")
+        (WORKSPACE_DIR / "1_original_text.txt").write_text(structural_plan.clean_text, encoding="utf-8")
 
     audio_path = WORKSPACE_DIR / "2_audio_srt" / "final_output.wav"
     module1_srt_path = WORKSPACE_DIR / "2_audio_srt" / "final_output.srt"
@@ -4352,6 +4527,8 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
                 "将继续执行模块 2.5，避免最终覆盖校验失败",
             )
         run_command(job, store, [sys.executable, "module2_5_text_corrector.py"], STEPS[2][1])
+
+    apply_structural_blank_boundaries(job, store)
 
     store.raise_if_cancelled(job)
     if is_step_workflow_v2(request) and str(request.get("_step_mode_stage") or "") == "audio_running":

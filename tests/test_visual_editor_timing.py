@@ -255,6 +255,85 @@ class VisualEditorTimingTest(unittest.TestCase):
                 job_id="job", user_id=1, updates={"scene_003": "   "}
             )
 
+    def test_hiding_subtitle_as_blank_keeps_visual_timeline_and_omits_srt_entry(self) -> None:
+        before_mapping = VisualEditor._load_mapping(self.project)
+        before_ranges = [(item["start"], item["end"]) for item in VisualEditor._load_timeline(self.project)]
+        payload = self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", mode="blank"
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertTrue(timeline[1]["subtitle_hidden"])
+        self.assertEqual(timeline[1]["subtitle_hidden_mode"], "blank")
+        self.assertEqual([(item["start"], item["end"]) for item in timeline], before_ranges)
+        self.assertEqual(VisualEditor._load_mapping(self.project), before_mapping)
+        subtitle = (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+        self.assertNotIn("sentence 2", subtitle)
+        self.assertIn("sentence 1", subtitle)
+        sentence = payload["items"][0]["timing"]["sentences"][1]
+        self.assertTrue(sentence["subtitle_hidden"])
+
+    def test_leave_blank_remains_available_for_last_visible_subtitle(self) -> None:
+        for item in self.timeline:
+            self.editor.hide_subtitle(
+                job_id="job", user_id=1, slide_id=item["slide_id"], mode="blank"
+            )
+        self.assertEqual((self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"), "")
+        self.assertEqual(len(VisualEditor._load_timeline(self.project)), len(self.timeline))
+
+    def test_hidden_subtitle_can_merge_into_previous_visible_srt_without_moving_nodes(self) -> None:
+        self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", mode="merge_previous"
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(timeline[0]["end"], 2.0)
+        self.assertEqual(timeline[1]["start"], 2.0)
+        subtitle = (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+        self.assertIn("00:00:00,000 --> 00:00:04,000\nsentence 1", subtitle)
+        self.assertNotIn("sentence 2", subtitle)
+
+    def test_consecutive_hidden_subtitles_find_nearest_visible_neighbor(self) -> None:
+        self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", mode="merge_previous"
+        )
+        self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_003", mode="merge_previous"
+        )
+        subtitle = (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+        self.assertIn("00:00:00,000 --> 00:00:06,000\nsentence 1", subtitle)
+        self.assertNotIn("sentence 2", subtitle)
+        self.assertNotIn("sentence 3", subtitle)
+
+    def test_restoring_hidden_subtitle_restores_original_state_and_detects_boundary_conflict(self) -> None:
+        self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", mode="merge_next"
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        timeline[1]["start"] = 2.25
+        VisualEditor._write_subtitle_files(self.project, timeline)
+        with self.assertRaisesRegex(RuntimeError, "RESTORE_CONFLICT"):
+            self.editor.restore_hidden_subtitle(
+                job_id="job", user_id=1, slide_id="scene_002"
+            )
+        self.editor.restore_hidden_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", force=True
+        )
+        restored = VisualEditor._load_timeline(self.project)
+        self.assertEqual(restored[1]["start"], 2.0)
+        self.assertEqual(restored[1]["end"], 4.0)
+        self.assertNotIn("subtitle_hidden", restored[1])
+        self.assertIn("sentence 2", (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"))
+
+    def test_crossing_consecutive_merge_directions_are_rejected(self) -> None:
+        self.editor.hide_subtitle(
+            job_id="job", user_id=1, slide_id="scene_002", mode="merge_next"
+        )
+        with self.assertRaisesRegex(ValueError, "合并方向发生交叉"):
+            self.editor.hide_subtitle(
+                job_id="job", user_id=1, slide_id="scene_003", mode="merge_previous"
+            )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertFalse(bool(timeline[2].get("subtitle_hidden")))
+
     def test_preview_subtitle_boundary_returns_current_manual_slider_position(self) -> None:
         audio_dir = self.project / "input"
         audio_dir.mkdir()
@@ -281,6 +360,23 @@ class VisualEditorTimingTest(unittest.TestCase):
         self.assertEqual(timeline[2]["end"], 6.0)
         self.assertIn("00:00:04,350 --> 00:00:06,000", (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"))
         self.assertEqual(payload["task"]["action"], "subtitle_boundary")
+
+    def test_internal_subtitle_boundary_does_not_move_next_picture_or_later_subtitles(self) -> None:
+        before = VisualEditor._timing_details(self.mapping, self.timeline)
+        next_picture_start = before["poster_002"]["start"]
+        later_ranges = [
+            (item["start"], item["end"]) for item in self.timeline[2:]
+        ]
+        self.editor.apply_subtitle_boundary(
+            job_id="job", user_id=1, left_slide_id="scene_001", boundary=2.35
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        after = VisualEditor._timing_details(self.mapping, timeline)
+        self.assertEqual(after["poster_002"]["start"], next_picture_start)
+        self.assertEqual(
+            [(item["start"], item["end"]) for item in timeline[2:]],
+            later_ranges,
+        )
 
     def test_archived_main_references_keep_original_numbering(self) -> None:
         reference_dir = self.project / "other" / "reference_images"

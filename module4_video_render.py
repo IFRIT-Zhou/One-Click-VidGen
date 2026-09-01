@@ -2150,6 +2150,32 @@ def _finalize_mapping(
     scenes: list[dict[str, Any]],
     story_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    # A user-authored structural blank is an absolute visual boundary.  Agent 2
+    # may propose a wider group, but the deterministic layer must never allow
+    # one generated picture to span both sides of that blank.
+    scene_positions = {str(scene.get("slide_id") or ""): index for index, scene in enumerate(scenes)}
+    hard_starts = {
+        index for index, scene in enumerate(scenes)
+        if index > 0 and bool(scene.get("hard_boundary_before"))
+    }
+    if hard_starts:
+        split_mapping: list[dict[str, Any]] = []
+        for item in mapping:
+            slide_ids = [str(value) for value in item.get("includes_slides", []) if str(value) in scene_positions]
+            groups: list[list[str]] = []
+            current: list[str] = []
+            for slide_id in slide_ids:
+                if current and scene_positions[slide_id] in hard_starts:
+                    groups.append(current)
+                    current = []
+                current.append(slide_id)
+            if current:
+                groups.append(current)
+            for group in groups:
+                clone = dict(item)
+                clone["includes_slides"] = group
+                split_mapping.append(clone)
+        mapping = split_mapping
     forced_style = os.getenv("VISUAL_STYLE_PROMPT", "").strip()
     quality_requirement = (
         "避免噪点、脏污糊抹和无意义涂抹；保留所选画风需要的线稿、色块或可控绘制笔触，"

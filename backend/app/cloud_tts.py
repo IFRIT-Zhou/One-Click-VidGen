@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .cloud_client import CloudApiError, CloudClient
+from .structural_blanks import StructuralChunkPlan, segment_structural_script
 
 
 CLOUD_MAX_CHUNKS = 20
@@ -115,6 +116,18 @@ def split_cloud_text(text: str) -> list[str]:
     return merged
 
 
+def split_cloud_structural_text(text: str) -> StructuralChunkPlan:
+    plan = segment_structural_script(text, split_cloud_text)
+    if len(plan.chunks) > CLOUD_MAX_CHUNKS:
+        raise ValueError(
+            f"加入结构性留白后共形成 {len(plan.chunks)} 个不可跨越分块，"
+            f"超过集群单次 {CLOUD_MAX_CHUNKS} 段上限；请拆分文案后生成"
+        )
+    if sum(len(chunk) for chunk in plan.chunks) > CLOUD_MAX_TOTAL_CHARS:
+        raise ValueError(f"单次集群配音最多支持 {CLOUD_MAX_TOTAL_CHARS} 字")
+    return plan
+
+
 def cloud_voice_payload(request: dict[str, Any]) -> dict[str, str]:
     voice_type = str(request.get("cluster_voice_type") or "preset").strip().lower()
     if voice_type == "custom":
@@ -130,7 +143,7 @@ def cloud_voice_payload(request: dict[str, Any]) -> dict[str, str]:
 
 
 def build_quote_payload(request: dict[str, Any], chunks: list[str] | None = None) -> dict[str, Any]:
-    prepared = chunks or split_cloud_text(str(request.get("script") or ""))
+    prepared = chunks or split_cloud_structural_text(str(request.get("script") or "")).chunks
     return {
         "chunks": [{"index": index, "text": text} for index, text in enumerate(prepared)],
         "voice": cloud_voice_payload(request),
@@ -205,6 +218,9 @@ def assemble_cloud_audio(
     output_dir: Path,
     segment_archive_dir: Path,
     manifest_metadata: dict[str, Any],
+    pauses_after: list[float] | None = None,
+    leading_pause: float = 0.0,
+    trailing_pause: float = 0.0,
 ) -> dict[str, Any]:
     if not chunks or len(chunks) != len(wav_paths):
         raise RuntimeError("云端音频分块数量与原文不一致")
@@ -228,13 +244,23 @@ def assemble_cloud_audio(
     output_wav = output_dir / "final_output.wav"
     with wave.open(str(output_wav), "wb") as output:
         output.setparams(params)
-        for path in wav_paths:
+        silence_frame = b"\0" * params.nchannels * params.sampwidth
+        if leading_pause > 0:
+            output.writeframes(silence_frame * round(params.framerate * leading_pause))
+        pause_values = list(pauses_after or [0.0] * len(wav_paths))
+        for index, path in enumerate(wav_paths):
             with wave.open(str(path), "rb") as audio:
                 output.writeframes(audio.readframes(audio.getnframes()))
+            pause = max(0.0, float(pause_values[index] if index < len(pause_values) else 0))
+            if pause > 0:
+                output.writeframes(silence_frame * round(params.framerate * pause))
+        if trailing_pause > 0:
+            output.writeframes(silence_frame * round(params.framerate * trailing_pause))
 
     srt_entries: list[str] = []
     segment_items: list[dict[str, Any]] = []
-    current_time = 0.0
+    current_time = max(0.0, float(leading_pause or 0))
+    pause_values = list(pauses_after or [0.0] * len(chunks))
     for index, (text, source, duration) in enumerate(zip(chunks, wav_paths, durations), start=1):
         end_time = current_time + duration
         srt_entries.append(
@@ -242,6 +268,7 @@ def assemble_cloud_audio(
         )
         filename = f"segment_{index:04d}.wav"
         shutil.copy2(source, segment_archive_dir / filename)
+        pause_after = max(0.0, float(pause_values[index - 1] if index - 1 < len(pause_values) else 0))
         segment_items.append(
             {
                 "index": index,
@@ -250,9 +277,11 @@ def assemble_cloud_audio(
                 "start": round(current_time, 6),
                 "end": round(end_time, 6),
                 "duration": round(duration, 6),
+                "pause_after": round(pause_after, 6),
+                "structural_blank_after": bool(pause_after > 0),
             }
         )
-        current_time = end_time
+        current_time = end_time + pause_after
 
     output_srt = output_dir / "final_output.srt"
     output_srt.write_text("\n".join(srt_entries).rstrip() + "\n", encoding="utf-8")
@@ -260,7 +289,9 @@ def assemble_cloud_audio(
         "schema_version": 1,
         "engine": "cluster",
         **manifest_metadata,
-        "total_duration": round(current_time, 6),
+        "leading_pause": round(max(0.0, float(leading_pause or 0)), 6),
+        "trailing_pause": round(max(0.0, float(trailing_pause or 0)), 6),
+        "total_duration": round(current_time + max(0.0, float(trailing_pause or 0)), 6),
         "audio_quality": quality,
         "segments": segment_items,
     }
@@ -270,7 +301,7 @@ def assemble_cloud_audio(
     return {
         "audio_path": str(output_wav),
         "subtitle_path": str(output_srt),
-        "duration": round(current_time, 6),
+        "duration": round(current_time + max(0.0, float(trailing_pause or 0)), 6),
     }
 
 
@@ -320,8 +351,17 @@ def synthesize_cloud_tts(
     chunks_override: list[str] | None = None,
 ) -> dict[str, Any]:
     chunks = [str(value) for value in (chunks_override or []) if str(value).strip()]
+    pauses_after: list[float] = [0.0] * len(chunks)
+    leading_pause = 0.0
+    trailing_pause = 0.0
     if not chunks:
-        chunks = split_cloud_text(str(request.get("script") or ""))
+        structural = split_cloud_structural_text(str(request.get("script") or ""))
+        chunks = structural.chunks
+        pauses_after = structural.pauses_after
+        leading_pause = structural.leading_pause
+        trailing_pause = structural.trailing_pause
+        if any(pauses_after) or leading_pause or trailing_pause:
+            on_log("集群配音：已应用文案中的结构性留白，控制标记不会上传云端")
     attempt = max(1, int(request.get("_cloud_tts_attempt", 1) or 1))
     idempotency_key = f"{local_job_id}:tts:v{attempt}"
     remote_job_id = str(request.get("_cloud_job_id") or "").strip()
@@ -453,6 +493,9 @@ def synthesize_cloud_tts(
         output_dir=output_dir,
         segment_archive_dir=segment_archive_dir,
         manifest_metadata=metadata,
+        pauses_after=pauses_after,
+        leading_pause=leading_pause,
+        trailing_pause=trailing_pause,
     )
     on_remote_job(remote_job_id, remote)
     on_log(

@@ -297,9 +297,51 @@ class VisualSubtitleBoundaryApplyRequest(BaseModel):
     boundary: float = Field(ge=0, le=86400)
 
 
+class VisualSubtitleHideRequest(BaseModel):
+    slide_id: str = Field(min_length=1, max_length=180)
+    mode: Literal["blank", "merge_previous", "merge_next"]
+
+
+class VisualSubtitleRestoreRequest(BaseModel):
+    slide_id: str = Field(min_length=1, max_length=180)
+    force: bool = False
+
+
 class TtsSegmentRegenerateRequest(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=20)
     tts_text_overrides: dict[int, str] = Field(default_factory=dict)
+    tts_voice_id: str | None = Field(default=None, max_length=180)
+    tts_speed: float | None = Field(default=None, ge=0.5, le=2)
+    tts_volume: float | None = Field(default=None, ge=0.1, le=10)
+    tts_pitch: int | None = Field(default=None, ge=-12, le=12)
+    tts_parallelism: int | None = Field(default=None, ge=1, le=3)
+    tts_emotion: str | None = Field(default=None, max_length=30)
+    tts_emotion_weight: float | None = Field(default=None, ge=0, le=1)
+    cluster_voice_type: Literal["preset", "uploaded", "custom"] | None = None
+    cluster_voice_id: str | None = Field(default=None, max_length=180)
+    qwen_voice: str | None = Field(default=None, max_length=80)
+    qwen_instructions: str | None = Field(default=None, max_length=1600)
+
+
+class TtsBoundaryPauseRequest(BaseModel):
+    left_index: int = Field(ge=1)
+    seconds: float = Field(ge=0, le=30)
+
+
+class TtsTokenCountRequest(BaseModel):
+    texts: list[str] = Field(min_length=1, max_length=2)
+
+
+class TtsResegmentPart(BaseModel):
+    text: str = Field(min_length=1, max_length=1200)
+    tts_text: str | None = Field(default=None, max_length=1200)
+    pause_after: float = Field(default=0, ge=0, le=30)
+
+
+class TtsResegmentRequest(BaseModel):
+    start_index: int = Field(ge=1)
+    replace_count: Literal[1, 2]
+    parts: list[TtsResegmentPart] = Field(min_length=1, max_length=2)
     tts_voice_id: str | None = Field(default=None, max_length=180)
     tts_speed: float | None = Field(default=None, ge=0.5, le=2)
     tts_volume: float | None = Field(default=None, ge=0.1, le=10)
@@ -2892,6 +2934,141 @@ def regenerate_tts_segments(
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "message": "selected TTS regeneration started"}
+
+
+@app.post("/api/jobs/{job_id}/tts-editor/pause")
+def save_tts_boundary_pause(
+    job_id: str,
+    payload: TtsBoundaryPauseRequest,
+    request: Request,
+) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染完成后再修改停顿")
+    try:
+        return tts_editor.set_pause(
+            job=job, user_id=user_id, left_index=payload.left_index, seconds=payload.seconds
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/hide")
+def hide_visual_editor_subtitle(
+    job_id: str,
+    payload: VisualSubtitleHideRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再隐藏字幕")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请稍后再隐藏字幕")
+    try:
+        return visual_editor.hide_subtitle(
+            job_id=job_id,
+            user_id=user_id,
+            slide_id=payload.slide_id,
+            mode=payload.mode,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/restore-hidden")
+def restore_hidden_visual_editor_subtitle(
+    job_id: str,
+    payload: VisualSubtitleRestoreRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再恢复字幕")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请稍后再恢复字幕")
+    try:
+        return visual_editor.restore_hidden_subtitle(
+            job_id=job_id,
+            user_id=user_id,
+            slide_id=payload.slide_id,
+            force=payload.force,
+        )
+    except RuntimeError as exc:
+        status_code = 409 if str(exc).startswith("RESTORE_CONFLICT:") else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/tts-editor/undo")
+def undo_tts_edit(job_id: str, request: Request) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return tts_editor.undo(job=job, user_id=user_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/tts-editor/token-count")
+def count_tts_editor_tokens(
+    job_id: str,
+    payload: TtsTokenCountRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        project_dir = tts_editor._project_dir(job_id, user_id)
+        tts_editor._ensure_module1_layout(job_id, project_dir)
+        manifest = tts_editor._load_manifest(project_dir)
+        engine = str(manifest.get("engine") or "indextts25")
+        if engine == "indextts2":
+            engine = "indextts25"
+        if engine not in {"indextts25", "cluster"}:
+            return {"engine": engine, "limit": None, "counts": [None for _ in payload.texts]}
+        from .tts_segmentation import INDEXTTS25_SEGMENT_MAX_TOKENS, build_indextts25_token_counter
+        counter = build_indextts25_token_counter()
+        return {
+            "engine": engine,
+            "limit": INDEXTTS25_SEGMENT_MAX_TOKENS,
+            "counts": [counter(text) for text in payload.texts],
+        }
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/tts-editor/resegment")
+def resegment_tts_audio(
+    job_id: str,
+    payload: TtsResegmentRequest,
+    request: Request,
+) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染完成后再调整断句")
+    try:
+        tts_editor.resegment(
+            job=job,
+            user_id=user_id,
+            start_index=payload.start_index,
+            replace_count=payload.replace_count,
+            parts=[part.model_dump() for part in payload.parts],
+            settings_override=payload.model_dump(
+                exclude={"start_index", "replace_count", "parts"}, exclude_none=True
+            ),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "message": "TTS boundary adjustment started"}
 
 
 @app.post("/api/jobs/{job_id}/visual-editor/render")

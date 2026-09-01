@@ -37,9 +37,9 @@ CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
-STORY_AGENT_VERSION = 12
-CHARACTER_CONTINUITY_VERSION = 4
-STORY_CONTEXT_VERSION = 4
+STORY_AGENT_VERSION = 13
+CHARACTER_CONTINUITY_VERSION = 5
+STORY_CONTEXT_VERSION = 5
 
 
 class AgentPlanningFatalError(RuntimeError):
@@ -296,6 +296,71 @@ def _normalize_key_information_objects(raw: Any) -> list[dict[str, Any]]:
     ]
 
 
+_GENDER_IDENTITY_TERMS = (
+    "女性", "男性", "女人", "男人", "女孩", "男孩", "少女", "少年",
+    "女童", "男童", "女主", "男主", "女士", "先生", "母亲", "父亲",
+)
+_PRIMARY_CHARACTER_TERMS = (
+    "固定主角", "讲解主角", "视觉主角", "主讲人", "主持人", "讲解员", "主角",
+)
+
+
+def _enforce_user_character_identity(
+    characters: list[dict[str, Any]],
+    global_character_prompt: str,
+) -> list[dict[str, Any]]:
+    """Keep explicit user gender/age identity from being lost by Agent 0.
+
+    The model sometimes keeps hair and accessories but drops words such as
+    ``少女``.  That makes downstream image models infer gender from a name.
+    Preserve the user's own compact clause in the matched character card.
+    """
+    prompt = str(global_character_prompt or "").strip()
+    if not characters or not prompt:
+        return characters
+    clauses = [part.strip() for part in re.split(r"[\n。；;]+", prompt) if part.strip()]
+    identity_clauses = [
+        part for part in clauses if any(term in part for term in _GENDER_IDENTITY_TERMS)
+    ]
+    if not identity_clauses:
+        return characters
+    assignments: dict[int, list[str]] = {}
+    for clause in identity_clauses:
+        named = [
+            index for index, character in enumerate(characters)
+            if str(character.get("name") or "").strip()
+            and str(character.get("name") or "").strip() in clause
+        ]
+        if len(named) == 1:
+            assignments.setdefault(named[0], []).append(clause)
+            continue
+        if named:
+            # One long clause naming several people is ambiguous; Agent 0's
+            # own structured result is safer than copying it to every card.
+            continue
+        if len(characters) == 1:
+            assignments.setdefault(0, []).append(clause)
+            continue
+        if any(term in clause for term in _PRIMARY_CHARACTER_TERMS):
+            primary = [
+                index for index, character in enumerate(characters)
+                if any(
+                    term in f"{character.get('name') or ''}{character.get('role') or ''}"
+                    for term in _PRIMARY_CHARACTER_TERMS
+                )
+            ]
+            if len(primary) == 1:
+                assignments.setdefault(primary[0], []).append(clause)
+
+    for index, matched in assignments.items():
+        character = characters[index]
+        constraint = "；".join(matched)[:240]
+        appearance = str(character.get("appearance") or "").strip(" ，。；")
+        if constraint and constraint not in appearance:
+            character["appearance"] = f"{appearance}；用户明确设定：{constraint}".strip("；")
+    return characters
+
+
 def _fallback_story_context(
     full_text: str,
     content_mode: str,
@@ -338,6 +403,9 @@ def _normalize_story_context(
     # Agent 0 intentionally has no timeline.  Stable identity is useful here;
     # time-bounded wardrobe states remain an Agent 1 concern if needed later.
     context["characters"] = _normalize_characters(context.get("characters"), [])
+    context["characters"] = _enforce_user_character_identity(
+        context["characters"], global_character_prompt
+    )
     for character in context["characters"]:
         character["wardrobe_states"] = []
     context["content_mode"] = normalize_content_mode(content_mode)
@@ -388,6 +456,11 @@ def create_story_context(
         # Expert prompts may change creative analysis, but may not remove the
         # machine-readable identity contract required by downstream stages.
         system_prompt += "\n\n" + AGENT0_IDENTITY_CONTRACT
+        system_prompt += (
+            "\n【用户人物身份硬约束】user_global_character_bible 中明确写出的性别、年龄阶段、"
+            "人物身份及称谓必须逐字保留在对应角色 appearance 中；不得只保留发型或配饰，"
+            "也不得根据姓名刻板印象改变性别。"
+        )
         system_prompt += "\n\n" + AGENT0_DEVICE_INFORMATION_CONTRACT
         if content_mode == CONTENT_MODE_PURE_SCIENCE and PURE_SCIENCE_AGENT0_CONTRACT not in system_prompt:
             system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
@@ -568,6 +641,22 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
     # tiny units when subtitle recognition has already split a sentence.
     start = 0
     for index, scene in enumerate(scenes, 1):
+        if index - 1 > start and bool(scene.get("hard_boundary_before")):
+            previous = scenes[index - 2]
+            unit_scenes = scenes[start:index - 1]
+            device_mode, device_type, screen_content = _fallback_device_shot(unit_scenes)
+            units.append({
+                "unit_id": f"unit_{len(units) + 1:02d}",
+                "start_slide_id": str(scenes[start].get("slide_id") or ""),
+                "end_slide_id": str(previous.get("slide_id") or ""),
+                "purpose": "结构性留白前的连续叙事单元",
+                "visual_focus": "依据原文保持同一事件完整呈现",
+                "visual_mode": "literal_scene", "setting_hint": "依据原文当前地点",
+                "novelty_anchor": "当前单元新增的动作或信息", "visual_pacing": "normal",
+                "boundary_after": "hard", "device_shot_mode": device_mode,
+                "device_type": device_type, "screen_content": screen_content,
+            })
+            start = index - 1
         text = str(scene.get("text_content") or "").strip()
         is_sentence_end = bool(text and text[-1:] in "。！？!?；;")
         if (is_sentence_end and index - start >= 2) or index - start >= 5:
@@ -609,6 +698,35 @@ def _fallback_semantic_units(scenes: list[dict[str, Any]]) -> list[dict[str, str
             "screen_content": screen_content,
         })
     return units
+
+
+def _split_units_at_structural_boundaries(
+    units: list[dict[str, Any]], scenes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    positions = {str(scene.get("slide_id") or ""): index for index, scene in enumerate(scenes)}
+    hard_starts = {index for index, scene in enumerate(scenes) if index > 0 and bool(scene.get("hard_boundary_before"))}
+    if not hard_starts:
+        return units
+    result: list[dict[str, Any]] = []
+    for unit in units:
+        start = positions.get(str(unit.get("start_slide_id") or ""), 0)
+        end = positions.get(str(unit.get("end_slide_id") or ""), start)
+        cuts = [value for value in sorted(hard_starts) if start < value <= end]
+        ranges = []
+        cursor = start
+        for cut in cuts:
+            ranges.append((cursor, cut - 1))
+            cursor = cut
+        ranges.append((cursor, end))
+        for range_start, range_end in ranges:
+            item = dict(unit)
+            item["start_slide_id"] = str(scenes[range_start].get("slide_id") or "")
+            item["end_slide_id"] = str(scenes[range_end].get("slide_id") or "")
+            item["boundary_after"] = "hard"
+            result.append(item)
+    for index, item in enumerate(result, 1):
+        item["unit_id"] = f"unit_{index:02d}"
+    return result
 
 
 def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -657,7 +775,9 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             "screen_content": screen_content,
         })
         expected_start = end + 1
-    return normalized if normalized and expected_start == len(ordered_ids) else []
+    if not normalized or expected_start != len(ordered_ids):
+        return []
+    return _split_units_at_structural_boundaries(normalized, scenes)
 
 
 AGENT1B_BOUNDARY_REFINER_PROMPT = """你是视频流水线的 Agent 1B：语义边界副导演。
@@ -1204,6 +1324,8 @@ def _create_timeline_story_plan(
             "text": str(scene.get("text_content") or ""),
             "source_paragraph_id": str(scene.get("source_paragraph_id") or ""),
             "source_boundary_after": str(scene.get("source_boundary_after") or "none"),
+            "hard_boundary_before": bool(scene.get("hard_boundary_before")),
+            "structural_blank_after": float(scene.get("structural_blank_after") or 0),
         }
         for scene in scenes
     ]

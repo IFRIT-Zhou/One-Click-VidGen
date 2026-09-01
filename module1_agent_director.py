@@ -28,6 +28,7 @@ from backend.app.tts_segmentation import (
     INDEXTTS25_SEGMENT_MAX_TOKENS,
     segment_indextts25_text,
 )
+from backend.app.structural_blanks import segment_structural_script
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -314,7 +315,24 @@ def step1_dynamic_chunk_slicing(
     measure: Callable[[str], int] = len,
 ) -> list[str]:
     print("[Step 1] Dynamic chunk slicing...", flush=True)
-    cleaned = clean_text(text_path.read_text(encoding="utf-8"))
+    chunks = dynamic_chunk_text(
+        text_path.read_text(encoding="utf-8"),
+        min_len=min_len,
+        max_len=max_len,
+        measure=measure,
+    )
+    print(f"  -> Produced {len(chunks)} chunks (no batch cap)", flush=True)
+    return chunks
+
+
+def dynamic_chunk_text(
+    text: str,
+    *,
+    min_len: int = CHUNK_MIN_LEN,
+    max_len: int = CHUNK_MAX_LEN,
+    measure: Callable[[str], int] = len,
+) -> list[str]:
+    cleaned = clean_text(text)
     cleaned = re.sub(r"\n{2,}", "\n", cleaned)
     raw_segments = re.split(r"(?<=[。，！？\n])", cleaned)
     raw_segments = [segment.strip() for segment in raw_segments if segment.strip()]
@@ -357,7 +375,6 @@ def step1_dynamic_chunk_slicing(
             chunks[-2] = combined
             chunks.pop()
 
-    print(f"  -> Produced {len(chunks)} chunks (no batch cap)", flush=True)
     return chunks
 
 
@@ -590,7 +607,10 @@ def _apply_audio_controls(path: Path, *, speed: float, volume: float, pitch: int
         filters.extend(
             [
                 f"asetrate={sample_rate}*{factor:.8f}",
-                f"aresample={sample_rate}:resampler=soxr:precision=28:dither_method=triangular_hp",
+                # The portable FFmpeg build does not include libsoxr.  Its
+                # built-in SWR resampler is always available and the larger
+                # filter/phase settings retain high-quality pitch conversion.
+                f"aresample={sample_rate}:filter_size=64:phase_shift=10:dither_method=triangular_hp",
                 f"atempo={1 / factor:.8f}",
             ]
         )
@@ -981,17 +1001,22 @@ def export_tts_segments(
     chunks: list[str],
     wav_paths: list[Path],
     args,
+    pauses_after: list[float] | None = None,
+    leading_pause: float = 0.0,
+    trailing_pause: float = 0.0,
 ) -> None:
     """Persist exact per-request WAVs so completed projects can selectively regenerate speech."""
     shutil.rmtree(archive_dir, ignore_errors=True)
     archive_dir.mkdir(parents=True, exist_ok=True)
-    current_time = 0.0
+    current_time = max(0.0, float(leading_pause or 0))
+    pause_values = list(pauses_after or [0.0] * len(chunks))
     items: list[dict[str, object]] = []
     for index, (chunk, source) in enumerate(zip(chunks, wav_paths), 1):
         filename = f"segment_{index:04d}.wav"
         target = archive_dir / filename
         shutil.copy2(source, target)
         duration = get_wav_duration(target)
+        pause_after = max(0.0, float(pause_values[index - 1] if index - 1 < len(pause_values) else 0))
         items.append({
             "index": index,
             "text": chunk,
@@ -999,8 +1024,10 @@ def export_tts_segments(
             "start": round(current_time, 6),
             "end": round(current_time + duration, 6),
             "duration": round(duration, 6),
+            "pause_after": round(pause_after, 6),
+            "structural_blank_after": bool(pause_after > 0),
         })
-        current_time += duration
+        current_time += duration + pause_after
     manifest = {
         "schema_version": 1,
         "engine": str(getattr(args, "tts_engine", "indextts25") or "indextts25"),
@@ -1014,7 +1041,9 @@ def export_tts_segments(
         ))),
         "qwen_voice": str(getattr(args, "qwen_voice", "") or ""),
         "qwen_instructions": str(getattr(args, "qwen_instructions", "") or ""),
-        "total_duration": round(current_time, 6),
+        "leading_pause": round(max(0.0, float(leading_pause or 0)), 6),
+        "trailing_pause": round(max(0.0, float(trailing_pause or 0)), 6),
+        "total_duration": round(current_time + max(0.0, float(trailing_pause or 0)), 6),
         "segments": items,
     }
     (archive_dir / "manifest.json").write_text(
@@ -1028,6 +1057,9 @@ def step3_finalize(
     srt_entries: list[str],
     chunks: list[str] | None = None,
     args=None,
+    pauses_after: list[float] | None = None,
+    leading_pause: float = 0.0,
+    trailing_pause: float = 0.0,
 ) -> None:
     print("[Step 3] Finalizing output...", flush=True)
     ensure_dir(OUTPUT_DIR)
@@ -1037,7 +1069,11 @@ def step3_finalize(
         expected_format = (params.nchannels, params.sampwidth, params.framerate)
     with wave.open(str(output_wav), "wb") as output:
         output.setparams(params)
-        for path in wav_paths:
+        silence_frame = b"\0" * params.nchannels * params.sampwidth
+        if leading_pause > 0:
+            output.writeframes(silence_frame * round(params.framerate * leading_pause))
+        pause_values = list(pauses_after or [0.0] * len(wav_paths))
+        for index, path in enumerate(wav_paths):
             with wave.open(str(path), "rb") as audio:
                 actual_format = (
                     audio.getnchannels(),
@@ -1047,6 +1083,11 @@ def step3_finalize(
                 if actual_format != expected_format:
                     raise RuntimeError(f"批次 WAV 格式不一致: {path.name}")
                 output.writeframes(audio.readframes(audio.getnframes()))
+            pause = max(0.0, float(pause_values[index] if index < len(pause_values) else 0))
+            if pause > 0:
+                output.writeframes(silence_frame * round(params.framerate * pause))
+        if trailing_pause > 0:
+            output.writeframes(silence_frame * round(params.framerate * trailing_pause))
     print(f"  -> WAV written: {output_wav}", flush=True)
 
     output_srt = OUTPUT_DIR / "final_output.srt"
@@ -1054,7 +1095,12 @@ def step3_finalize(
     print(f"  -> SRT written: {output_srt}", flush=True)
     segment_archive = str(getattr(args, "segment_archive_dir", "") or "").strip() if args is not None else ""
     if segment_archive and chunks is not None:
-        export_tts_segments(Path(segment_archive).resolve(), chunks, wav_paths, args)
+        export_tts_segments(
+            Path(segment_archive).resolve(), chunks, wav_paths, args,
+            pauses_after=pauses_after,
+            leading_pause=leading_pause,
+            trailing_pause=trailing_pause,
+        )
 
 
 def step4_cleanup() -> None:
@@ -1089,6 +1135,9 @@ def main() -> None:
     print(f"  临时音频目录: {TEMP_DIR}", flush=True)
 
     try:
+        pauses_after: list[float] = []
+        leading_pause = 0.0
+        trailing_pause = 0.0
         if str(args.chunks_json or "").strip():
             raw_chunks = json.loads(Path(args.chunks_json).read_text(encoding="utf-8"))
             if not isinstance(raw_chunks, list) or not raw_chunks:
@@ -1097,22 +1146,48 @@ def main() -> None:
             if not chunks:
                 raise ValueError("chunks-json 中没有可配音文本")
             print(f"[Step 1] Using {len(chunks)} preserved TTS chunks...", flush=True)
-        elif args.tts_engine == "qwen":
-            chunks = step1_dynamic_chunk_slicing(
-                text_path,
-                min_len=QWEN_CHUNK_MIN_LEN,
-                max_len=QWEN_CHUNK_MAX_LEN,
-                measure=lambda value: len(value.encode("utf-8")),
-            )
-        elif args.tts_engine == "indextts25":
-            chunks = step1_indextts25_voice_agent_slicing(text_path)
+        elif args.tts_engine in {"qwen", "indextts25"}:
+            raw_text = text_path.read_text(encoding="utf-8")
+            if args.tts_engine == "qwen":
+                segmenter = lambda value: dynamic_chunk_text(
+                    value,
+                    min_len=QWEN_CHUNK_MIN_LEN,
+                    max_len=QWEN_CHUNK_MAX_LEN,
+                    measure=lambda item: len(item.encode("utf-8")),
+                )
+            else:
+                def segmenter(value: str) -> list[str]:
+                    result, _source, _tokens = segment_indextts25_text(value)
+                    return result
+            structural = segment_structural_script(raw_text, segmenter)
+            chunks = structural.chunks
+            pauses_after = structural.pauses_after
+            leading_pause = structural.leading_pause
+            trailing_pause = structural.trailing_pause
+            if any(pauses_after) or leading_pause or trailing_pause:
+                print(
+                    f"[TTS_STRUCTURAL_BLANK] 已应用 {sum(1 for value in pauses_after if value > 0) + int(leading_pause > 0) + int(trailing_pause > 0)} 个结构性留白",
+                    flush=True,
+                )
         else:
             raise ValueError(f"不支持的配音引擎: {args.tts_engine}")
         if args.tts_engine == "qwen":
             wav_paths, srt_entries = step2_qwen_synthesize(chunks, args)
         else:
             wav_paths, srt_entries = step2_indextts25_synthesize(chunks, args)
-        step3_finalize(wav_paths, srt_entries, chunks, args)
+        if pauses_after or leading_pause or trailing_pause:
+            current_time = leading_pause
+            srt_entries = []
+            for index, (chunk, wav_path) in enumerate(zip(chunks, wav_paths), 1):
+                duration = get_wav_duration(wav_path)
+                srt_entries.append(format_srt(index, current_time, current_time + duration, chunk))
+                current_time += duration + (pauses_after[index - 1] if index - 1 < len(pauses_after) else 0)
+        step3_finalize(
+            wav_paths, srt_entries, chunks, args,
+            pauses_after=pauses_after,
+            leading_pause=leading_pause,
+            trailing_pause=trailing_pause,
+        )
     except Exception as exc:
         clear_temp_chunks()
         sys.exit(f"【致命错误】{engine_label} 生成失败：{type(exc).__name__}: {exc}")

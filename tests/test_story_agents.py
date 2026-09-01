@@ -182,6 +182,48 @@ class StoryAgentsTest(unittest.TestCase):
         self.assertIn("红色围巾", plan["characters"][0]["appearance"])
         self.assertIn("知识", story_agents.SCIENCE_AGENT_SYSTEM_PROMPT)
 
+    def test_agent0_preserves_explicit_user_gender_identity(self) -> None:
+        raw = {
+            "story_type": "science_explainer",
+            "logline": "宠物医药科普",
+            "theme": "安全用药",
+            "narrative_tone": "亲切",
+            "characters": [{
+                "name": "老周",
+                "role": "讲解主角",
+                "appearance": "黑色短发，佩戴红色围巾",
+            }],
+            "locations": [],
+            "continuity_rules": [],
+        }
+        context = story_agents._normalize_story_context(
+            raw,
+            "我是老周，今天讲宠物医药。",
+            story_agents.CONTENT_MODE_SCIENCE,
+            "固定讲解主角：黑色短发、红色围巾的可爱少女",
+        )
+        self.assertIsNotNone(context)
+        self.assertIn("少女", context["characters"][0]["appearance"])
+        self.assertIn("用户明确设定", context["characters"][0]["appearance"])
+
+    def test_unnamed_identity_is_not_copied_to_unrelated_multicharacter_cards(self) -> None:
+        characters = [
+            {"name": "路人甲", "role": "顾客", "appearance": "短发"},
+            {"name": "路人乙", "role": "医生", "appearance": "戴眼镜"},
+        ]
+        result = story_agents._enforce_user_character_identity(
+            characters,
+            "固定讲解主角：黑色短发、红色围巾的可爱少女",
+        )
+        self.assertEqual(result[0]["appearance"], "短发")
+        self.assertEqual(result[1]["appearance"], "戴眼镜")
+
+    def test_identity_enforcement_never_creates_a_character(self) -> None:
+        self.assertEqual(
+            story_agents._enforce_user_character_identity([], "固定主角是少女"),
+            [],
+        )
+
     def test_pure_science_mode_has_no_fallback_host_and_uses_dedicated_contracts(self) -> None:
         scenes = sample_scenes()
         plan = story_agents._fallback_story_plan(

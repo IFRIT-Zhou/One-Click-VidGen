@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 import wave
 from pathlib import Path
@@ -147,6 +148,110 @@ class TtsSegmentEditorTest(unittest.TestCase):
             rewritten = subtitle.read_text(encoding="utf-8")
             self.assertIn("00:00:00,000 --> 00:00:02,000", rewritten)
             self.assertIn("00:00:02,000 --> 00:00:03,000", rewritten)
+
+    def test_pause_edit_inserts_silence_without_regeneration_and_can_undo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / "other" / "tts_segments"
+            segment_dir.mkdir(parents=True)
+            (project / "input").mkdir()
+            write_silent_wav(segment_dir / "segment_0001.wav", 1.0)
+            write_silent_wav(segment_dir / "segment_0002.wav", 1.0)
+            manifest = {
+                "engine": "indextts25",
+                "segments": [
+                    {"index": 1, "text": "前句。", "filename": "segment_0001.wav", "start": 0, "end": 1, "duration": 1},
+                    {"index": 2, "text": "后句。", "filename": "segment_0002.wav", "start": 1, "end": 2, "duration": 1},
+                ],
+            }
+            (segment_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            (project / "other" / "最终字幕.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n前句。\n\n"
+                "2\n00:00:01,000 --> 00:00:02,000\n后句。\n",
+                encoding="utf-8",
+            )
+            _concat_wavs(
+                [segment_dir / "segment_0001.wav", segment_dir / "segment_0002.wav"],
+                project / "input" / "配音.wav",
+            )
+            editor = TtsEditor()
+            job = SimpleNamespace(id="job", request={}, user_id=1)
+            with (
+                patch.object(editor, "_project_dir", return_value=project),
+                patch.object(editor, "_ensure_module1_layout"),
+                patch.object(editor, "_migrate_legacy_archive", return_value=True),
+                patch("backend.app.tts_editor.store.log"),
+            ):
+                result = editor.set_pause(job=job, user_id=1, left_index=1, seconds=0.6)
+                self.assertEqual(result["history_count"], 1)
+                changed = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(changed["segments"][0]["pause_after"], 0.6)
+                with wave.open(str(project / "input" / "配音.wav"), "rb") as audio:
+                    self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 2.6, places=2)
+                subtitle = (project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+                self.assertIn("00:00:01,600 --> 00:00:02,600", subtitle)
+                editor.undo(job=job, user_id=1)
+                restored = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(float(restored["segments"][0].get("pause_after") or 0), 0)
+                with wave.open(str(project / "input" / "配音.wav"), "rb") as audio:
+                    self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 2.0, places=2)
+
+    def test_structural_split_revoices_two_parts_and_is_undoable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / "other" / "tts_segments"
+            segment_dir.mkdir(parents=True)
+            (project / "input").mkdir()
+            original = segment_dir / "segment_0001.wav"
+            generated_left = project / "left.wav"
+            generated_right = project / "right.wav"
+            write_silent_wav(original, 2.0)
+            write_silent_wav(generated_left, 0.8)
+            write_silent_wav(generated_right, 1.1)
+            manifest = {
+                "engine": "qwen",
+                "segments": [{
+                    "index": 1, "text": "前半句后半句", "tts_text": "前半句后半句",
+                    "filename": original.name, "start": 0, "end": 2, "duration": 2,
+                }],
+            }
+            (segment_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            (project / "other" / "最终字幕.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:02,000\n前半句后半句\n", encoding="utf-8"
+            )
+            _concat_wavs([original], project / "input" / "配音.wav")
+            editor = TtsEditor()
+            job = SimpleNamespace(id="job", request={}, user_id=1)
+            with (
+                patch.object(editor, "_project_dir", return_value=project),
+                patch.object(editor, "_ensure_module1_layout"),
+                patch.object(editor, "_synthesize_parts", return_value=[generated_left, generated_right]),
+                patch("backend.app.tts_editor.store.log"),
+            ):
+                editor.resegment(
+                    job=job, user_id=1, start_index=1, replace_count=1,
+                    parts=[
+                        {"text": "前半句", "tts_text": "前半句", "pause_after": 0.6},
+                        {"text": "后半句", "tts_text": "后半句", "pause_after": 0},
+                    ],
+                    settings_override={"tts_speed": 1.15},
+                )
+                deadline = time.time() + 3
+                while editor.status("job")["status"] == "running" and time.time() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual(editor.status("job")["status"], "completed")
+                changed = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual([item["text"] for item in changed["segments"]], ["前半句", "后半句"])
+                self.assertEqual(changed["segments"][0]["pause_after"], 0.6)
+                self.assertEqual(changed["tts_speed"], 1.15)
+                with wave.open(str(project / "input" / "配音.wav"), "rb") as audio:
+                    self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 2.5, places=2)
+                subtitle = (project / "other" / "最终字幕.srt").read_text(encoding="utf-8")
+                self.assertIn("00:00:00,000 --> 00:00:00,800", subtitle)
+                self.assertIn("00:00:01,400 --> 00:00:02,500", subtitle)
+                editor.undo(job=job, user_id=1)
+                restored = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
+                self.assertEqual(len(restored["segments"]), 1)
 
 
 if __name__ == "__main__":
