@@ -7,7 +7,7 @@ from backend.app import gemini_client, html_generator
 
 
 class GeminiClientTest(unittest.TestCase):
-    def test_gemini_defaults_to_runninghub_flash_lite_preview(self) -> None:
+    def test_explicit_legacy_relay_configuration_remains_compatible(self) -> None:
         response = Mock()
         response.ok = True
         response.json.return_value = {
@@ -18,6 +18,7 @@ class GeminiClientTest(unittest.TestCase):
             patch.dict("os.environ", {
                 "LANGUAGE_PROVIDER": "gemini",
                 "GEMINI_API_KEY": "runninghub-key",
+                "GEMINI_API_BASE": "https://llm.runninghub.ai/v1",
             }, clear=True),
         ):
             text = gemini_client.generate_gemini_text(system_prompt="system", user_prompt="user")
@@ -340,6 +341,22 @@ class GeminiClientTest(unittest.TestCase):
             generate.call_args.kwargs["model"],
             "google/gemini-3.1-flash-lite-preview",
         )
+
+    def test_fresh_install_defaults_to_official_gemini(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(gemini_client._provider(), "gemini_official")
+            self.assertEqual(
+                gemini_client.language_base_url("gemini_official"),
+                "https://generativelanguage.googleapis.com/v1beta",
+            )
+
+    def test_relay_requires_an_explicit_base_url(self) -> None:
+        with patch.dict("os.environ", {
+            "LANGUAGE_PROVIDER": "gemini",
+            "GEMINI_API_KEY": "legacy-key",
+            "GEMINI_API_BASE": "",
+        }, clear=True):
+            self.assertFalse(gemini_client.language_provider_configured())
 
     def test_html_generation_keeps_explicit_model_overrides(self) -> None:
         with TemporaryDirectory() as directory:

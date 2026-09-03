@@ -2206,7 +2206,11 @@ def project_global_agent1_plan_to_segment(
         "visual_focus": unit.get("visual_focus") or "依据原文",
         "visual_pacing": unit.get("visual_pacing") or "normal",
     } for index, unit in enumerate(projected_units, 1)]
-    plan["source_fingerprint"] = story_fingerprint(normalized_scenes, content_mode)
+    plan["source_fingerprint"] = story_fingerprint(
+        normalized_scenes,
+        content_mode,
+        str(global_plan.get("director_strategy") or "stable"),
+    )
     plan["global_source_fingerprint"] = global_plan.get("source_fingerprint")
     plan["planning_scope"] = "global_agent1_projection"
     return plan
@@ -2305,6 +2309,7 @@ def render_semantic_visual_video(
     defer_render: bool = False,
 ) -> None:
     store.raise_if_cancelled(job)
+    director_strategy = str(request.get("director_strategy") or "stable")
     # Agent 1 must see the original subtitle timeline before Module 3 adds
     # visual summaries.  Its semantic units become the fixed membership that
     # Agent 2 later receives; Python still guards only hard duration limits.
@@ -2317,6 +2322,7 @@ def render_semantic_visual_video(
             path=story_plan_path,
             content_mode=str(request.get("content_mode") or "urban_suspense"),
             require_ai_success=True,
+            director_strategy=director_strategy,
         )
         store.log(job, "Agent 1：已按全文规划语义镜头单元")
     else:
@@ -2329,6 +2335,7 @@ def render_semantic_visual_video(
                 path=story_plan_path,
                 content_mode=str(request.get("content_mode") or "urban_suspense"),
                 require_ai_success=True,
+                director_strategy=director_strategy,
             )
     if not isinstance(story_plan, dict) or story_plan.get("generation_source") != "gemini":
         raise RuntimeError(
@@ -2382,6 +2389,7 @@ def render_semantic_visual_video(
         # language-model planning failed or silently fell back to raw subtitles.
         poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"
         poster_env["CONTENT_MODE"] = str(request.get("content_mode") or "urban_suspense")
+        poster_env["DIRECTOR_STRATEGY"] = director_strategy
         visual_pacing = visual_pacing_settings(request)
         poster_env.update({
             "VISUAL_PACING_PRESET": visual_pacing["preset"],
@@ -3891,6 +3899,13 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
     auto_split = bool(request.get("auto_split_long_text", True))
     scenes = load_scene_timeline()
     content_mode = str(request.get("content_mode") or "urban_suspense")
+    director_strategy = str(request.get("director_strategy") or "stable")
+    store.log(
+        job,
+        "导演策略：叙事增强 Beta（加强现实切片、克制隐喻、镜头去重与场景连续性）"
+        if director_strategy == "enhanced_beta"
+        else "导演策略：稳健还原",
+    )
     full_text = canonical_story_text(request, scenes)
     global_character_prompt = str(request.get("global_character_prompt") or "").strip()
     world_prompt = str(request.get("story_environment_prompt") or "").strip()
@@ -3927,6 +3942,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             content_mode=content_mode,
             story_context=story_context,
             require_ai_success=True,
+            director_strategy=director_strategy,
         )
         log_boundary_refinement(job, store, story_plan)
         store.log(job, f"Agent 自适应规划：短文模式（{total_chars} 字），仅执行一次全文规划")
@@ -3957,6 +3973,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         content_mode=content_mode,
         story_context=story_context,
         require_ai_success=True,
+        director_strategy=director_strategy,
     )
     log_boundary_refinement(job, store, story_plan)
     store.log(job, f"Agent 1：全文故事上下文已保存: {global_story_plan}")

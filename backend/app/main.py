@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import pymysql
 import requests
@@ -154,6 +155,7 @@ class GenerateRequest(BaseModel):
     subtitle_only: bool = False
     subtitle_use_correction: bool = True
     content_mode: Literal["urban_suspense", "science_explainer", "pure_science", "general"] = "urban_suspense"
+    director_strategy: Literal["stable", "enhanced_beta"] = "stable"
     skip_tts: bool = False
     source_audio_id: str | None = None
     skip_text_correction: bool = False
@@ -393,7 +395,11 @@ class ApiKeySettingsRequest(BaseModel):
         "glm", "glm_official", "custom"
     ] | None = None
     language_model: str | None = Field(default=None, max_length=256)
+    language_api_base_url: str | None = Field(default=None, max_length=2048)
     language_api_key: str | None = Field(default=None, max_length=2048)
+    image_api_base_url: str | None = Field(default=None, max_length=2048)
+    image_model: str | None = Field(default=None, max_length=256)
+    image_resolution: str | None = Field(default=None, max_length=64)
     image_api_key: str | None = Field(default=None, max_length=2048)
     image_api_keys: list[str] = Field(default_factory=list, max_length=10)
     image_concurrency_mode: Literal["auto", "manual"] | None = None
@@ -1063,21 +1069,40 @@ def _api_key_status() -> dict[str, Any]:
     image_keys = _runninghub_api_keys(values)
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
-        legacy = str(values.get("GEMINI_PROVIDER") or "google").strip().lower()
-        provider = "gemini" if legacy in {"", "google", "gemini"} else (
-            "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+        legacy = str(values.get("GEMINI_PROVIDER") or "").strip().lower()
+        provider = "gemini_official" if not legacy else (
+            "gemini" if legacy in {"google", "gemini"} else (
+                "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+            )
         )
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
-        provider = "gemini"
+        provider = "gemini_official"
     if provider == "runninghub":
         provider = "gemini"
     selected = LANGUAGE_PROVIDER_OPTIONS[provider]
+    legacy_relay_selected = selected.get("source") == "relay"
+    displayed_provider = "custom" if legacy_relay_selected else provider
+    displayed_selected = (
+        LANGUAGE_PROVIDER_OPTIONS["custom"] if legacy_relay_selected else selected
+    )
+    selected_key = str(values.get(selected["key_env"], "")).strip()
+    selected_model = str(values.get(selected["model_env"]) or selected["default_model"])
+    selected_base_url = str(values.get(selected["base_env"]) or selected["default_base"]).rstrip("/")
+    selected_configured = language_provider_configured(provider, values)
     provider_statuses = []
     for name, config in LANGUAGE_PROVIDER_OPTIONS.items():
-        if config.get("hidden"):
+        if config.get("hidden") or config.get("source") == "relay":
             continue
-        provider_key = str(values.get(config["key_env"], "")).strip()
-        provider_configured = language_provider_configured(name, values) and not bool(config.get("disabled"))
+        if name == "custom" and legacy_relay_selected:
+            provider_key = selected_key
+            provider_configured = selected_configured
+            provider_model = selected_model
+            provider_base_url = selected_base_url
+        else:
+            provider_key = str(values.get(config["key_env"], "")).strip()
+            provider_configured = language_provider_configured(name, values) and not bool(config.get("disabled"))
+            provider_model = str(values.get(config["model_env"]) or config["default_model"])
+            provider_base_url = str(values.get(config["base_env"]) or config["default_base"]).rstrip("/")
         provider_statuses.append({
             "value": name,
             "label": config["label"],
@@ -1087,14 +1112,16 @@ def _api_key_status() -> dict[str, Any]:
             "configured": provider_configured,
             "count": 1 if provider_key and provider_configured else 0,
             "key_hints": _masked_api_keys([provider_key]) if not config.get("disabled") else [],
-            "selected_model": str(values.get(config["model_env"]) or config["default_model"]),
+            "selected_model": "" if name == "custom" and provider_configured else provider_model,
             "models": language_provider_models(name),
             "allow_custom_model": bool(config.get("allow_custom_model")),
             "disabled": bool(config.get("disabled")),
             "disabled_reason": str(config.get("disabled_reason") or ""),
+            "base_url": (
+                "" if provider_configured else provider_base_url
+                if config.get("source") == "custom" else ""
+            ),
         })
-    selected_key = str(values.get(selected["key_env"], "")).strip()
-    selected_configured = language_provider_configured(provider, values)
     qwen_tts_key = str(values.get("DASHSCOPE_API_KEY", "")).strip()
     image_concurrency_mode = str(values.get("RUNNINGHUB_CONCURRENCY_MODE") or "auto").strip().lower()
     if image_concurrency_mode not in {"auto", "manual"}:
@@ -1113,22 +1140,50 @@ def _api_key_status() -> dict[str, Any]:
         if image_concurrency_mode == "auto"
         else min(image_capacity, image_total_concurrency)
     )
+    explicit_image_base_url = str(
+        values.get("IMAGE_API_BASE_URL") or values.get("RUNNINGHUB_BASE_URL") or ""
+    ).strip().rstrip("/")
+    # Old packages historically implied this endpoint when only a key existed.
+    # Keep those users working, but do not advertise a third-party URL in a
+    # fresh configuration that has no image account yet.
+    image_base_url = explicit_image_base_url or (
+        "https://www.runninghub.ai" if image_keys else ""
+    )
+    image_model = str(
+        values.get("IMAGE_MODEL_ID")
+        or values.get("RUNNINGHUB_IMAGE_MODEL")
+        or "rhart-image-g-2"
+    ).strip()
+    image_resolution = str(
+        values.get("IMAGE_RESOLUTION")
+        or values.get("RUNNINGHUB_RESOLUTION")
+        or "1k"
+    ).strip()
     return {
         "language": {
             "configured": selected_configured,
             "count": 1 if selected_key else 0,
             "key_hints": _masked_api_keys([selected_key]),
-            "provider": provider,
-            "provider_label": selected["label"],
-            "source": selected.get("source", "relay"),
-            "family": selected.get("family", provider),
-            "model": str(values.get(selected["model_env"]) or selected["default_model"]),
+            "provider": displayed_provider,
+            "provider_label": displayed_selected["label"],
+            "source": displayed_selected.get("source", "custom"),
+            "family": displayed_selected.get("family", displayed_provider),
+            "model": (
+                "" if selected_configured and (legacy_relay_selected or provider == "custom")
+                else selected_model
+            ),
+            "base_url": (
+                "" if selected_configured else selected_base_url
+            ) if legacy_relay_selected or provider == "custom" else "",
             "providers": provider_statuses,
         },
         "image": {
             "configured": bool(image_keys),
             "count": len(image_keys),
             "key_hints": _masked_api_keys(image_keys),
+            "base_url": "" if image_keys else image_base_url,
+            "model": "" if image_keys else image_model,
+            "resolution": image_resolution,
             "concurrency": {
                 "mode": image_concurrency_mode,
                 "per_key": image_per_key_concurrency,
@@ -1194,12 +1249,14 @@ def _cluster_health_error(payload: dict[str, Any]) -> str | None:
 def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
     provider = str(values.get("LANGUAGE_PROVIDER") or "").strip().lower()
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
-        legacy = str(values.get("GEMINI_PROVIDER") or "google").strip().lower()
-        provider = "gemini" if legacy in {"", "google", "gemini"} else (
-            "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+        legacy = str(values.get("GEMINI_PROVIDER") or "").strip().lower()
+        provider = "gemini_official" if not legacy else (
+            "gemini" if legacy in {"google", "gemini"} else (
+                "runninghub" if legacy in {"openai", "openai_compatible", "runninghub"} else legacy
+            )
         )
     if provider not in LANGUAGE_PROVIDER_OPTIONS:
-        provider = "gemini"
+        provider = "gemini_official"
     if provider == "runninghub":
         provider = "gemini"
     config = LANGUAGE_PROVIDER_OPTIONS[provider]
@@ -1256,14 +1313,23 @@ def _probe_language_api(values: dict[str, str]) -> tuple[str, str]:
 
 
 def _probe_one_image_key(api_key: str) -> tuple[str, str]:
-    base_url = os.getenv("RUNNINGHUB_BASE_URL", "https://www.runninghub.ai").strip().rstrip("/")
+    base_url = (
+        os.getenv("IMAGE_API_BASE_URL", "").strip()
+        or os.getenv("RUNNINGHUB_BASE_URL", "").strip()
+        or "https://www.runninghub.ai"
+    ).rstrip("/")
+    model = (
+        os.getenv("IMAGE_MODEL_ID", "").strip()
+        or os.getenv("RUNNINGHUB_IMAGE_MODEL", "").strip()
+        or "rhart-image-g-2"
+    ).strip("/")
     try:
         response = requests.post(
-            f"{base_url}/openapi/v2/rhart-image-g-2/text-to-image",
+            f"{base_url}/openapi/v2/{model}/text-to-image",
             headers={"Authorization": f"Bearer {api_key}"},
             # Missing prompt intentionally validates the key, account region,
             # and model entitlement without creating a billable task.
-            json={"aspectRatio": "1:1", "resolution": "1k"},
+            json={"model": model, "aspectRatio": "1:1", "resolution": "1k"},
             timeout=(3, 6),
         )
     except requests.RequestException as exc:
@@ -1531,6 +1597,10 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     require_user(request)
     language_provider = payload.language_provider
     language_model = str(payload.language_model or "").strip()
+    language_api_base_url = str(payload.language_api_base_url or "").strip().rstrip("/")
+    image_api_base_url = str(payload.image_api_base_url or "").strip().rstrip("/")
+    image_model = str(payload.image_model or "").strip()
+    image_resolution = str(payload.image_resolution or "").strip()
     language = str(payload.language_api_key or "").strip()
     image = str(payload.image_api_key or "").strip()
     image_additions = _unique_api_keys(payload.image_api_keys)
@@ -1541,14 +1611,70 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         payload.image_per_key_concurrency,
         payload.image_total_concurrency,
     ))
-    if not any(all_supplied) and not language_provider and not language_model and not concurrency_supplied:
+    if (
+        not any(all_supplied)
+        and not language_provider
+        and not language_model
+        and not image_api_base_url
+        and not image_model
+        and not image_resolution
+        and not concurrency_supplied
+    ):
         raise HTTPException(status_code=400, detail="请至少填写一个 API Key")
     if any("\n" in value or "\r" in value for value in all_supplied):
         raise HTTPException(status_code=400, detail="API Key 不能包含换行")
+    if any(
+        char in value
+        for value in (language_model, language_api_base_url, image_model, image_api_base_url, image_resolution)
+        for char in ("\n", "\r")
+    ):
+        raise HTTPException(status_code=400, detail="模型名称和 API Base URL 不能包含换行")
+    if language_api_base_url:
+        if language_provider != "custom":
+            raise HTTPException(status_code=400, detail="只有自定义兼容接口可以修改 API Base URL")
+        parsed_base_url = urlparse(language_api_base_url)
+        if (
+            parsed_base_url.scheme not in {"http", "https"}
+            or not parsed_base_url.hostname
+            or parsed_base_url.username
+            or parsed_base_url.password
+            or parsed_base_url.query
+            or parsed_base_url.fragment
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="API Base URL 必须是有效的 http(s) 地址，且不能包含账号、查询参数或锚点",
+            )
+    if image_api_base_url:
+        parsed_image_base_url = urlparse(image_api_base_url)
+        if (
+            parsed_image_base_url.scheme not in {"http", "https"}
+            or not parsed_image_base_url.hostname
+            or parsed_image_base_url.username
+            or parsed_image_base_url.password
+            or parsed_image_base_url.query
+            or parsed_image_base_url.fragment
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="图像 API Base URL 必须是有效的 http(s) 地址，且不能包含账号、查询参数或锚点",
+            )
+    if image_model and (
+        not re.fullmatch(r"[A-Za-z0-9._:/-]+", image_model)
+        or ".." in image_model
+    ):
+        raise HTTPException(status_code=400, detail="图像模型 ID 包含不支持的字符")
+    if image_resolution and not re.fullmatch(r"[A-Za-z0-9._:-]+", image_resolution):
+        raise HTTPException(status_code=400, detail="图像分辨率包含不支持的字符")
 
     existing = _parse_env_lines(PROJECT_ROOT / ".env")
     existing_image = _runninghub_api_keys(existing)
     supplied_image = _unique_api_keys([image, *image_additions])
+    existing_image_base_url = str(
+        existing.get("IMAGE_API_BASE_URL") or existing.get("RUNNINGHUB_BASE_URL") or ""
+    ).strip()
+    if supplied_image and not (image_api_base_url or existing_image_base_url or existing_image):
+        raise HTTPException(status_code=400, detail="请先填写图像 API Base URL")
     image_pool = _unique_api_keys([*existing_image, *supplied_image])
     image_primary = (
         image
@@ -1571,8 +1697,42 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         updates["LANGUAGE_PROVIDER"] = "gemini" if language_provider == "runninghub" else language_provider
         if language_model:
             updates[provider_config["model_env"]] = language_model
+        if language_api_base_url:
+            updates[provider_config["base_env"]] = language_api_base_url
         if language:
             updates[provider_config["key_env"]] = language
+        if language_provider == "custom":
+            # An old relay installation is displayed as the unified custom
+            # interface. On its first save, carry every hidden value across so
+            # placeholder-only fields never force the user to re-enter it.
+            legacy_name = str(existing.get("LANGUAGE_PROVIDER") or "").strip().lower()
+            if not legacy_name:
+                legacy_marker = str(existing.get("GEMINI_PROVIDER") or "").strip().lower()
+                legacy_name = (
+                    "gemini" if legacy_marker in {"google", "gemini", "openai", "openai_compatible", "runninghub"}
+                    else legacy_marker
+                )
+            if legacy_name == "runninghub":
+                legacy_name = "gemini"
+            legacy_config = LANGUAGE_PROVIDER_OPTIONS.get(legacy_name, {})
+            if legacy_config.get("source") == "relay":
+                legacy_key = str(existing.get(legacy_config.get("key_env", "")) or "").strip()
+                legacy_base = str(
+                    existing.get(legacy_config.get("base_env", ""))
+                    or legacy_config.get("default_base", "")
+                    or ""
+                ).strip().rstrip("/")
+                legacy_model = str(
+                    existing.get(legacy_config.get("model_env", ""))
+                    or legacy_config.get("default_model", "")
+                    or ""
+                ).strip()
+                if legacy_key and not str(existing.get("CUSTOM_LLM_API_KEY") or "").strip():
+                    updates["CUSTOM_LLM_API_KEY"] = legacy_key
+                if legacy_base and not language_api_base_url and not str(existing.get("CUSTOM_LLM_API_BASE") or "").strip():
+                    updates["CUSTOM_LLM_API_BASE"] = legacy_base
+                if legacy_model and not language_model and not str(existing.get("CUSTOM_LLM_MODEL") or "").strip():
+                    updates["CUSTOM_LLM_MODEL"] = legacy_model
     elif language:
         # Preserve the old behavior for callers which do not send a provider.
         updates["GEMINI_API_KEY"] = language
@@ -1582,6 +1742,19 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         for name in existing:
             if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name):
                 updates[name] = ""
+    if image_api_base_url:
+        # Keep the generic names for the UI while mirroring the legacy runtime
+        # variable so existing image generation code and old installations use
+        # the exact same endpoint after an update.
+        updates["IMAGE_API_BASE_URL"] = image_api_base_url
+        updates["RUNNINGHUB_BASE_URL"] = image_api_base_url
+    if image_model:
+        updates["IMAGE_MODEL_ID"] = image_model
+        updates["RUNNINGHUB_IMAGE_MODEL"] = image_model
+        updates["RUNNINGHUB_ENDPOINT"] = f"/{image_model.strip('/')}/text-to-image"
+    if image_resolution:
+        updates["IMAGE_RESOLUTION"] = image_resolution
+        updates["RUNNINGHUB_RESOLUTION"] = image_resolution
     if payload.image_concurrency_mode is not None:
         updates["RUNNINGHUB_CONCURRENCY_MODE"] = payload.image_concurrency_mode
     if payload.image_per_key_concurrency is not None:
@@ -1607,7 +1780,7 @@ def delete_api_key(kind: str, index: int, request: Request, provider: str | None
         raise HTTPException(status_code=400, detail="无效的 API Key 类型或序号")
     values = _parse_env_lines(PROJECT_ROOT / ".env")
     if kind == "language":
-        provider_name = str(provider or values.get("LANGUAGE_PROVIDER") or "gemini").strip().lower()
+        provider_name = str(provider or values.get("LANGUAGE_PROVIDER") or "gemini_official").strip().lower()
         provider_config = LANGUAGE_PROVIDER_OPTIONS.get(provider_name)
         if not provider_config or index != 0:
             raise HTTPException(status_code=404, detail="找不到要删除的语言模型 API Key")
@@ -2094,7 +2267,7 @@ def advance_step_workflow(
     allowed_by_action = {
         "confirm_audio": set(),
         "start_visual": {
-            "content_mode", "auto_split_long_text", "split_text_threshold",
+            "content_mode", "director_strategy", "auto_split_long_text", "split_text_threshold",
             "visual_backend", "use_cloud_image_pool", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
             "visual_max_duration", "visual_max_slides", "visual_style_prompt",

@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.02.1",
-  "release_order": 2026090201,
-  "display_version": "2026.09.02 音频精修与结构留白更新版",
+  "release_id": "2026.09.04.1",
+  "release_order": 2026090401,
+  "display_version": "2026.09.04 导演增强与接口完善版",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.02.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.02.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.04.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.04.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增配音断句、合并、停顿及局部试听精修；支持生成前结构性留白并锁定音画字幕边界；完善字幕隐藏删除、分步编辑布局与小屏幕界面；合并云端配音音质及重试保护。",
-  "content_fingerprint": "3b3c4ea5528d0ec5be2a80507937d6fad3f828c82524103d863e26c656a4a979"
+  "notes": "新增可选的导演增强测试策略，提升画面表达、转场变化与连续场景一致性；完善自定义语言及图像接口、出图分辨率设置；增强特殊字符配音兼容、模型截断兜底与云端图片失败处理。",
+  "content_fingerprint": "a569485ac3de2b99810f4c8ded9e50caf2a3a778831c90bfc403f94d1c104c5f"
 }

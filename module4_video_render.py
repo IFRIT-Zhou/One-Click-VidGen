@@ -291,6 +291,8 @@ CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
+DIRECTOR_STRATEGY_STABLE = "stable"
+DIRECTOR_STRATEGY_ENHANCED = "enhanced_beta"
 DEFAULT_GLOBAL_CHARACTER_PROMPT = (
     "主角：35岁憔悴中年女性，黑色长发；前期戴红色鸭舌帽、穿灰色旧衣服；"
     "后期骑行一段时间、购入装备后，精神焕发，穿白色骑行服并佩戴白色骑行头盔。"
@@ -307,6 +309,25 @@ def normalize_content_mode(value: str | None) -> str:
     if mode == CONTENT_MODE_GENERAL:
         return CONTENT_MODE_GENERAL
     return CONTENT_MODE_STORY
+
+
+def normalize_director_strategy(value: str | None) -> str:
+    return (
+        DIRECTOR_STRATEGY_ENHANCED
+        if str(value or "").strip().lower() == DIRECTOR_STRATEGY_ENHANCED
+        else DIRECTOR_STRATEGY_STABLE
+    )
+
+
+ENHANCED_DIRECTOR_AGENT2_CONTRACT = """【叙事增强 Beta：整组镜头设计硬约束】
+- 先在内部比较本批次全部固定分组，再逐组写提示词；目标是让整段视频的信息和情绪逐步推进，而不是给每句话寻找表面名词配图。
+- abstract/symbolic 单元要表达关系、压力、距离、选择等核心含义，可使用克制的负空间、光影、人物站位和环境意象；具体故事尚未开始时，禁止提前套用后文餐桌、办公室等主时间线地点。
+- illustrative_broll 必须从原文或 Agent 0 全文资料中选择一个最强、最清楚的现实依据，单张图只呈现一个地点、一个时刻和一个主要行动；不要把通勤、换衣、家务、育儿等多个阶段塞进一张图。
+- 相邻画面原则上必须更换“地点、主要行动、核心物件、人物组合、表达方式”中的至少一项；同一人物组合、地点、动作和核心道具不得连续复刻，确属同一不可中断事件时最多连续两张。
+- 回到同一个主时间线地点时，必须逐字复用 Agent 0 locations、continuity_rules 或 user_world_bible 中已有的稳定空间特征；桌椅形状、房间格局、主光源和标志道具不可临时改写。
+- 允许有限、可逆的视觉联想，但不得把担忧画成已经发生的事实：未来孩子只能表现为设想，医疗压力不得擅自增加病名、手术、危重设备或死亡。
+- 纯科普仍以知识准确为最高优先级，象征构图不能替代需要被看清的结构、数据、流程和因果关系。
+- 输出结构保持不变，只输出系统要求的 JSON；不要输出你的内部比较过程。"""
 
 
 def _reference_image_catalog() -> dict[str, str]:
@@ -820,7 +841,7 @@ def _load_runninghub_env_from_file() -> None:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if not key.startswith("RUNNINGHUB_"):
+        if not (key.startswith("RUNNINGHUB_") or key in {"IMAGE_API_BASE_URL", "IMAGE_MODEL_ID", "IMAGE_RESOLUTION"}):
             continue
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
@@ -828,7 +849,7 @@ def _load_runninghub_env_from_file() -> None:
         values[key] = value
 
     for key in list(os.environ):
-        if key.startswith("RUNNINGHUB_") and key not in values:
+        if (key.startswith("RUNNINGHUB_") or key in {"IMAGE_API_BASE_URL", "IMAGE_MODEL_ID", "IMAGE_RESOLUTION"}) and key not in values:
             os.environ.pop(key, None)
     os.environ.update(values)
 
@@ -845,7 +866,7 @@ def _provider_configs() -> list[dict[str, str]]:
             "query_url": f"{base_url}/image-pool/query",
             "upload_url": f"{base_url}/image-pool/media/upload",
             "account_url": f"{base_url}/image-pool/account-status",
-            "resolution": os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip(),
+            "resolution": os.getenv("CLOUD_IMAGE_POOL_RESOLUTION", "1k").strip(),
             "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
             "api_key": access_token,
             "refresh_token": os.getenv("CLOUD_IMAGE_POOL_REFRESH_TOKEN", "").strip(),
@@ -854,9 +875,19 @@ def _provider_configs() -> list[dict[str, str]]:
             "cloud_pool": "1",
         }]
     _load_runninghub_env_from_file()
+    image_model = (
+        os.getenv("IMAGE_MODEL_ID", "").strip()
+        or os.getenv("RUNNINGHUB_IMAGE_MODEL", "").strip()
+        or "rhart-image-g-2"
+    )
     base_config = {
-        "endpoint": os.getenv("RUNNINGHUB_ENDPOINT", "/rhart-image-g-2/text-to-image").strip(),
-        "resolution": os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip(),
+        "endpoint": os.getenv("RUNNINGHUB_ENDPOINT", "").strip()
+        or f"/{image_model.strip('/')}/text-to-image",
+        "model": image_model,
+        "resolution": (
+            os.getenv("IMAGE_RESOLUTION", "").strip()
+            or os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip()
+        ),
         "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
     }
     raw_keys = [os.getenv("RUNNINGHUB_API_KEY", "")]
@@ -1533,6 +1564,12 @@ def _plan_mapping_batch(
         [str(scene["slide_id"]) for scene in group]
         for group in (required_groups if required_groups is not None else _visual_groups(scenes, story_context))
     ]
+    director_strategy = normalize_director_strategy(os.getenv("DIRECTOR_STRATEGY"))
+    enhanced_contract = (
+        "\n\n" + ENHANCED_DIRECTOR_AGENT2_CONTRACT
+        if director_strategy == DIRECTOR_STRATEGY_ENHANCED
+        else ""
+    )
     runtime_prompt = (
         system_prompt
         + "\n\n"
@@ -1552,6 +1589,7 @@ def _plan_mapping_batch(
         + "- 相邻画面必须至少改变一项实质信息：地点、主要行动、核心物件、出镜人物组合或表达方式。只换景别、机位、人物朝向、手势或表情不算变化。\n"
         + "- 同一地点加同一核心道具最多连续使用两张；第三张必须改用原文支持的 B-roll、环境、行动、物件特写或象征表达，除非字幕仍在描述同一不可中断动作。\n"
         + "- 不得为了多样性编造具体病名、事故、既成的子女或确定结果。假设性未来要写明为设想感画面；医疗压力只能使用原文支持的通用陪诊、等候、病房或医疗物件，不擅自添加手术和危重设备。\n"
+        + enhanced_contract
         + "\n\n【Agent 1 提供的全文故事上下文】\n"
         + json.dumps(story_context or {}, ensure_ascii=False)
         + "\n必须把这份上下文视为跨批次共享的角色、地点、线索和连续性档案。"
@@ -1635,7 +1673,11 @@ def _plan_mapping_batch(
                     # The original mapping is already complete.  A cosmetic
                     # single-shot rewrite must never throw away valid planning.
                     print(f"Gemini {batch_label} 单镜头优化失败，保留原始完整规划: {exc}", flush=True)
-            repetition_runs = _repeated_visual_anchor_runs(mapping, story_context)
+            repetition_runs = _repeated_visual_anchor_runs(
+                mapping,
+                story_context,
+                minimum_run=2 if director_strategy == DIRECTOR_STRATEGY_ENHANCED else 3,
+            )
             if repetition_runs:
                 readable_runs = "、".join(
                     f"{anchor}连续{end - start + 1}张"
@@ -1658,7 +1700,12 @@ def _plan_mapping_batch(
                                 "严格读取对应 semantic_units 的 visual_mode、setting_hint、novelty_anchor；"
                                 "把原文明确提到的通勤、工作、家务、照料、医疗、住房压力或未来设想改成各自具体的说明性 B-roll。"
                                 "相邻画面至少改变地点、主要行动、核心物件、人物组合或表达方式之一；只换机位和表情不算变化。"
-                                "不得编造病名、事故、手术、危重设备、已经存在的子女或其他原文未确认事实。"
+                                + (
+                                    "叙事增强模式下，同一视觉锚点连续两张就必须判断第二张是否真的增加新信息；"
+                                    "若没有，优先改成原文支持的现实切片或克制象征构图。"
+                                    if director_strategy == DIRECTOR_STRATEGY_ENHANCED else ""
+                                )
+                                + "不得编造病名、事故、手术、危重设备、已经存在的子女或其他原文未确认事实。"
                             ),
                         }, ensure_ascii=False),
                         temperature=0.25,
@@ -2325,6 +2372,7 @@ def build_macro_mapping(
 
     global_character_bible = os.getenv("GLOBAL_CHARACTER_PROMPT", "").strip()
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE", CONTENT_MODE_STORY))
+    director_strategy = normalize_director_strategy(os.getenv("DIRECTOR_STRATEGY"))
     custom_prompt = os.getenv("VISUAL_PROMPT_SYSTEM", "").strip()
     system_prompt = _strip_dynamic_reference_image_instructions(custom_prompt) or build_visual_prompt_system(
         style=os.getenv("VISUAL_STYLE_PROMPT", ""),
@@ -2731,7 +2779,11 @@ def _runninghub_generate_url(config: dict[str, str], endpoint: str | None = None
 
 
 def _runninghub_url(path: str) -> str:
-    base_url = os.getenv("RUNNINGHUB_BASE_URL", "").strip() or DEFAULT_RUNNINGHUB_BASE_URL
+    base_url = (
+        os.getenv("IMAGE_API_BASE_URL", "").strip()
+        or os.getenv("RUNNINGHUB_BASE_URL", "").strip()
+        or DEFAULT_RUNNINGHUB_BASE_URL
+    )
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
@@ -2811,6 +2863,11 @@ def _submit_poster_request(
         "aspectRatio": config["ratio"],
         "resolution": config["resolution"],
     }
+    if config.get("model"):
+        # Image 2 selects its model through the endpoint, while compatible
+        # providers commonly inspect a model field. Supplying both is harmless
+        # for the current adapter and lets users try another compatible model ID.
+        payload["model"] = config["model"]
     endpoint: str | None = None
     selected_reference_paths = [
         str(path).strip() for path in macro.get("reference_image_paths", []) if str(path).strip()
@@ -2916,6 +2973,8 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
     print(f"等待海报结果: {progress_label}", flush=True)
     started_at = time.monotonic()
     deadline = started_at + _positive_env_int("RUNNINGHUB_IMAGE_MAX_WAIT_SECONDS", 1200)
+    max_query_failures = _positive_env_int("RUNNINGHUB_QUERY_MAX_CONSECUTIVE_FAILURES", 8)
+    consecutive_query_failures = 0
     next_notice_at = started_at
     while time.monotonic() < deadline:
         try:
@@ -2927,9 +2986,87 @@ def _wait_for_poster(task: PosterTask, config: dict[str, str]) -> Path:
                 config=config,
                 json={"taskId": task.task_id},
             )
+            consecutive_query_failures = 0
+        except requests.HTTPError as exc:
+            response = exc.response
+            status_code = response.status_code if response is not None else None
+            payload: dict[str, Any] = {}
+            response_text = ""
+            if response is not None:
+                try:
+                    parsed = response.json()
+                    if isinstance(parsed, dict):
+                        payload = parsed
+                except ValueError:
+                    response_text = str(response.text or "").strip()[:500]
+            message = _runninghub_error_message(payload) or response_text or type(exc).__name__
+            error_code = _runninghub_result_error_code(payload) or _runninghub_error_code(
+                payload, status_code
+            )
+            detail = (
+                f"HTTP {status_code if status_code is not None else '未知'}，"
+                f"错误码 {error_code if error_code is not None else '未提供'}，"
+                f"服务端消息 {message or '未提供'}"
+            )
+            if _looks_like_power_insufficient(error_code, message):
+                raise RunningHubPowerInsufficient(
+                    f"{poster_id} 查询云端任务时发现余额或算力不足：{detail}"
+                ) from exc
+            if status_code in {401, 403} or error_code in {1014, 40310}:
+                raise RunningHubAccessDenied(
+                    f"{poster_id} 查询云端任务被拒绝：{detail}"
+                ) from exc
+            if status_code == 404:
+                raise RunningHubResultRetryableError(
+                    f"{poster_id} 的云端任务不存在，将只重新提交该图片：{detail}",
+                    confirmed_terminal=True,
+                    status="NOT_FOUND",
+                    error_code=404,
+                    error_message=message,
+                ) from exc
+            if status_code is not None and 400 <= status_code < 500 and status_code not in {408, 429}:
+                raise RunningHubResultRetryableError(
+                    f"{poster_id} 查询云端任务收到不可恢复响应：{detail}",
+                    confirmed_terminal=True,
+                    status=f"HTTP_{status_code}",
+                    error_code=error_code,
+                    error_message=message,
+                ) from exc
+            consecutive_query_failures += 1
+            if consecutive_query_failures >= max_query_failures:
+                raise RunningHubResultRetryableError(
+                    f"{poster_id} 连续 {consecutive_query_failures} 次查询失败：{detail}；"
+                    "提交结果尚未确认，将复用原请求身份",
+                    confirmed_terminal=False,
+                    status="UNKNOWN",
+                    error_code=error_code,
+                    error_message=message,
+                ) from exc
+            delay = min(60.0, 5.0 * (2 ** min(consecutive_query_failures - 1, 3)))
+            print(
+                f"{poster_id} 查询暂时失败（{consecutive_query_failures}/{max_query_failures}）："
+                f"{detail}；{delay:.0f}s 后继续查询原任务",
+                flush=True,
+            )
+            time.sleep(delay)
+            continue
         except requests.RequestException as exc:
-            print(f"{poster_id} 查询网络异常，稍后重试: {type(exc).__name__}", flush=True)
-            time.sleep(5)
+            consecutive_query_failures += 1
+            if consecutive_query_failures >= max_query_failures:
+                raise RunningHubResultRetryableError(
+                    f"{poster_id} 连续 {consecutive_query_failures} 次查询网络异常："
+                    f"{type(exc).__name__}；提交结果尚未确认，将复用原请求身份",
+                    confirmed_terminal=False,
+                    status="UNKNOWN",
+                    error_message=str(exc),
+                ) from exc
+            delay = min(60.0, 5.0 * (2 ** min(consecutive_query_failures - 1, 3)))
+            print(
+                f"{poster_id} 查询网络异常（{consecutive_query_failures}/{max_query_failures}），"
+                f"{delay:.0f}s 后继续查询原任务: {type(exc).__name__}",
+                flush=True,
+            )
+            time.sleep(delay)
             continue
         status = str(_find_first_key(result, {"status", "state", "taskStatus"}) or "").upper()
         file_url = _find_image_url(
@@ -3317,6 +3454,7 @@ def run_online_poster_engine() -> None:
     if resume and _restore_visual_checkpoint():
         print("断点续跑：已恢复本任务的分镜规划与已完成海报检查点。", flush=True)
     content_mode = normalize_content_mode(os.getenv("CONTENT_MODE"))
+    director_strategy = normalize_director_strategy(os.getenv("DIRECTOR_STRATEGY"))
     configured_story_path = Path(os.getenv("STORY_AGENT_PLAN_PATH", str(STORY_PLAN_PATH))).resolve()
     global_story_plan = os.getenv("STORY_AGENT_PLAN_IS_GLOBAL", "").strip().lower() in {"1", "true", "yes"}
     story_plan = load_or_create_story_plan(
@@ -3325,6 +3463,7 @@ def run_online_poster_engine() -> None:
         path=configured_story_path,
         allow_source_mismatch=global_story_plan,
         content_mode=content_mode,
+        director_strategy=director_strategy,
         require_ai_success=os.getenv("REQUIRE_AI_AGENT_SUCCESS", "").strip().lower()
         in {"1", "true", "yes", "on"},
     )
@@ -3343,7 +3482,9 @@ def run_online_poster_engine() -> None:
                 if isinstance(previous_plan, dict)
                 else None
             )
-            if previous_scene_fingerprint and previous_scene_fingerprint != story_fingerprint(scenes, content_mode):
+            if previous_scene_fingerprint and previous_scene_fingerprint != story_fingerprint(
+                scenes, content_mode, director_strategy
+            ):
                 raise ValueError("断点续跑发现字幕场景已变化，旧海报规划与当前文案不匹配，已停止以防错图")
             prompt_agent_is_current = (
                 isinstance(previous_plan, dict)
@@ -3378,7 +3519,10 @@ def run_online_poster_engine() -> None:
         "story_agent_version": story_plan.get("agent_version"),
         "character_continuity_version": story_plan.get("character_continuity_version"),
         "content_mode": content_mode,
-        "scene_source_fingerprint": story_fingerprint(scenes, content_mode),
+        "director_strategy": director_strategy,
+        "scene_source_fingerprint": story_fingerprint(
+            scenes, content_mode, director_strategy
+        ),
         "mapping": mapping,
     }
     if not resume:

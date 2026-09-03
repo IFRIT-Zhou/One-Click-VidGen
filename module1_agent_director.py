@@ -29,6 +29,7 @@ from backend.app.tts_segmentation import (
     segment_indextts25_text,
 )
 from backend.app.structural_blanks import segment_structural_script
+from backend.app.tts_text_normalization import normalize_tts_text
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -521,7 +522,10 @@ def _watch_generated_wavs(
 
 def _write_manifest(path: Path, chunks: list[str]) -> None:
     path.write_text(
-        "\n".join(json.dumps({"text": chunk}, ensure_ascii=False) for chunk in chunks) + "\n",
+        "\n".join(
+            json.dumps({"text": normalize_tts_text(chunk)}, ensure_ascii=False)
+            for chunk in chunks
+        ) + "\n",
         encoding="utf-8",
     )
 

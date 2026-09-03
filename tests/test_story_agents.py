@@ -21,6 +21,81 @@ def sample_scenes() -> list[dict]:
 
 
 class StoryAgentsTest(unittest.TestCase):
+    def test_enhanced_director_uses_a_distinct_plan_fingerprint(self) -> None:
+        scenes = sample_scenes()[:2]
+        stable = story_agents.story_fingerprint(scenes)
+        self.assertEqual(
+            stable,
+            story_agents.story_fingerprint(
+                scenes, director_strategy=story_agents.DIRECTOR_STRATEGY_STABLE
+            ),
+        )
+        self.assertNotEqual(
+            stable,
+            story_agents.story_fingerprint(
+                scenes, director_strategy=story_agents.DIRECTOR_STRATEGY_ENHANCED
+            ),
+        )
+
+    def test_enhanced_director_contract_only_enters_enhanced_agent1(self) -> None:
+        scenes = sample_scenes()[:1]
+        context = story_agents._fallback_story_context("完整文案", story_agents.CONTENT_MODE_STORY)
+        response = json.dumps({
+            "story_beats": [{
+                "slide_ids": ["scene_001"], "purpose": "提出观点",
+                "emotion": "克制", "visual_focus": "关系距离", "visual_pacing": "hold",
+            }],
+            "semantic_units": [{
+                "unit_id": "u1", "start_slide_id": "scene_001", "end_slide_id": "scene_001",
+                "purpose": "抽象观点", "visual_focus": "背向而立的两个人",
+                "visual_mode": "symbolic", "setting_hint": "无具体剧情地点的暗色空间",
+                "novelty_anchor": "人物之间的负空间", "visual_pacing": "hold",
+                "boundary_after": "hard", "character_ids": [],
+            }],
+        }, ensure_ascii=False)
+        with (
+            patch.object(story_agents, "gemini_configured", return_value=True),
+            patch.object(story_agents, "generate_gemini_text", return_value=response) as generate,
+        ):
+            plan = story_agents.create_story_plan(
+                scenes,
+                story_context=context,
+                director_strategy=story_agents.DIRECTOR_STRATEGY_ENHANCED,
+            )
+        self.assertIn("叙事增强 Beta", generate.call_args.kwargs["system_prompt"])
+        self.assertEqual(plan["director_strategy"], story_agents.DIRECTOR_STRATEGY_ENHANCED)
+
+    def test_source_mismatch_override_never_crosses_director_strategies(self) -> None:
+        scenes = sample_scenes()[:2]
+        cached = story_agents._fallback_story_plan(scenes)
+        cached.update({
+            "source_fingerprint": "global-plan-for-another-segment",
+            "generation_source": "gemini",
+            "agent_version": story_agents.STORY_AGENT_VERSION,
+            "character_continuity_version": story_agents.CHARACTER_CONTINUITY_VERSION,
+        })
+        replacement = story_agents._fallback_story_plan(
+            scenes, director_strategy=story_agents.DIRECTOR_STRATEGY_ENHANCED
+        )
+        replacement["generation_source"] = "gemini"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "story_plan.json"
+            path.write_text(json.dumps(cached, ensure_ascii=False), encoding="utf-8")
+            with (
+                patch.object(story_agents, "gemini_configured", return_value=True),
+                patch.object(
+                    story_agents, "create_story_plan", return_value=replacement
+                ) as create,
+            ):
+                result = story_agents.load_or_create_story_plan(
+                    scenes,
+                    path=path,
+                    allow_source_mismatch=True,
+                    director_strategy=story_agents.DIRECTOR_STRATEGY_ENHANCED,
+                )
+        create.assert_called_once()
+        self.assertEqual(result["director_strategy"], story_agents.DIRECTOR_STRATEGY_ENHANCED)
+
     def test_strict_agent0_failure_stops_instead_of_returning_local_fallback(self) -> None:
         with (
             patch.object(story_agents, "gemini_configured", return_value=True),

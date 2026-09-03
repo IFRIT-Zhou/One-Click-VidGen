@@ -10,6 +10,35 @@ import module4_video_render as visual
 
 
 class VisualConstraintsTest(unittest.TestCase):
+    def test_enhanced_director_contract_is_injected_into_agent2_only_when_selected(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001",
+            "start": 0.0,
+            "end": 6.0,
+            "text_content": "两个人仍然在乎，却被现实推向两端。",
+            "visual_summary": "关系中的距离",
+        }]
+        mapping = json.dumps([{
+            "includes_slides": ["scene_001"],
+            "image_prompt": "暗色空间里背向而立的两个人",
+            "character_ids": [],
+            "reference_image_ids": [],
+        }], ensure_ascii=False)
+        with (
+            patch.dict(os.environ, {"DIRECTOR_STRATEGY": "enhanced_beta"}, clear=False),
+            patch.object(visual, "generate_gemini_text", return_value=mapping) as generate,
+        ):
+            result = visual._plan_mapping_batch(
+                scenes,
+                "基础提示词",
+                "测试批次",
+                {"semantic_units": []},
+                required_groups=[scenes],
+            )
+        self.assertIsNotNone(result)
+        self.assertIn("叙事增强 Beta", generate.call_args.kwargs["system_prompt"])
+        self.assertIn("具体故事尚未开始", generate.call_args.kwargs["system_prompt"])
+
     def test_repeated_visual_anchor_detector_finds_consecutive_table_shots(self) -> None:
         mapping = [
             {"image_prompt": "出租屋餐桌旁，两人隔着账单沉默"},
@@ -282,6 +311,58 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertEqual(raised.exception.error_code, 7301)
         self.assertIn("model workflow crashed", str(raised.exception))
 
+    def test_cloud_query_404_is_terminal_and_requests_a_new_image_identity(self) -> None:
+        task = visual.PosterTask(
+            {"macro_scene_id": "poster_002"},
+            Path("poster_002.jpg"),
+            "missing-cloud-task",
+        )
+
+        class Response:
+            status_code = 404
+            text = '{"message":"task not found"}'
+
+            @staticmethod
+            def json():
+                return {"message": "task not found"}
+
+        error = visual.requests.HTTPError("404", response=Response())
+        config = {"api_key": "cloud", "query_url": "https://cloud.test/query", "cloud_pool": "1"}
+        with (
+            patch.object(visual, "_new_session", return_value=object()),
+            patch.object(visual, "_request_json", side_effect=error),
+        ):
+            with self.assertRaises(visual.RunningHubResultRetryableError) as raised:
+                visual._wait_for_poster(task, config)
+
+        self.assertTrue(raised.exception.confirmed_terminal)
+        self.assertEqual(raised.exception.status, "NOT_FOUND")
+        self.assertEqual(raised.exception.error_code, 404)
+        self.assertIn("task not found", str(raised.exception))
+
+    def test_cloud_query_network_failures_stop_at_configured_limit(self) -> None:
+        task = visual.PosterTask(
+            {"macro_scene_id": "poster_003"},
+            Path("poster_003.jpg"),
+            "uncertain-cloud-task",
+        )
+        config = {"api_key": "cloud", "query_url": "https://cloud.test/query", "cloud_pool": "1"}
+        with (
+            patch.dict(os.environ, {"RUNNINGHUB_QUERY_MAX_CONSECUTIVE_FAILURES": "2"}),
+            patch.object(visual, "_new_session", return_value=object()),
+            patch.object(
+                visual,
+                "_request_json",
+                side_effect=visual.requests.ConnectionError("offline"),
+            ),
+            patch.object(visual.time, "sleep"),
+        ):
+            with self.assertRaises(visual.RunningHubResultRetryableError) as raised:
+                visual._wait_for_poster(task, config)
+
+        self.assertFalse(raised.exception.confirmed_terminal)
+        self.assertIn("连续 2 次", str(raised.exception))
+
     def test_cloud_reference_upload_replays_bytes_after_token_refresh(self) -> None:
         class Response:
             def __init__(self, status_code: int, payload: dict):
@@ -482,6 +563,7 @@ class VisualConstraintsTest(unittest.TestCase):
     def test_direct_runninghub_urls_use_global_configurable_base(self) -> None:
         config = {"endpoint": "/rhart-image-g-2/text-to-image"}
         with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("IMAGE_API_BASE_URL", None)
             os.environ.pop("RUNNINGHUB_BASE_URL", None)
             self.assertEqual(
                 visual._runninghub_generate_url(config),
@@ -509,8 +591,52 @@ class VisualConstraintsTest(unittest.TestCase):
                 "https://images.example.test/root/openapi/v2/media/upload/binary",
             )
 
+        with patch.dict(
+            os.environ,
+            {
+                "IMAGE_API_BASE_URL": "https://custom-images.example.test/v2/",
+                "RUNNINGHUB_BASE_URL": "https://legacy.example.test",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                visual._runninghub_generate_url(config),
+                "https://custom-images.example.test/v2/openapi/v2/rhart-image-g-2/text-to-image",
+            )
+
         cloud_url = "https://cloud.example.test/api/v1/image-pool/generate"
         self.assertEqual(visual._runninghub_generate_url({"endpoint": cloud_url}), cloud_url)
+
+    def test_direct_image_request_includes_configured_model_id(self) -> None:
+        captured_payload: dict[str, object] = {}
+
+        class Response:
+            ok = True
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, str]:
+                return {"taskId": "task-1"}
+
+        def request(*_args, **kwargs):
+            captured_payload.update(kwargs["json"])
+            return Response()
+
+        config = {
+            "api_key": "image-key",
+            "endpoint": "/vendor/image-model/text-to-image",
+            "model": "vendor/image-model",
+            "ratio": "16:9",
+            "resolution": "1k",
+        }
+        with patch.object(visual, "_request_with_cloud_refresh", side_effect=request):
+            visual._submit_poster_request(
+                {"macro_scene_id": "poster_001", "image_prompt": "城市街道"},
+                config,
+                object(),
+            )
+
+        self.assertEqual(captured_payload["model"], "vendor/image-model")
 
     def test_runninghub_documented_errors_use_bounded_categories(self) -> None:
         for code in (416, 812):

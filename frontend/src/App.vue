@@ -72,7 +72,6 @@
           <span>语言模型</span>
           <small class="api-model-field-label">接口来源</small>
           <select v-model="apiKeyForm.language_source" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageSourceChanged">
-            <option value="relay">第三方兼容接口</option>
             <option value="official">官方 API</option>
             <option value="custom">自定义兼容接口（高级）</option>
           </select>
@@ -86,16 +85,24 @@
           <select v-if="currentLanguageModels.length && !customLanguageProvider" v-model="apiKeyForm.language_model" class="language-provider-select language-model-select" :disabled="form.use_cloud_image_pool" @change="onLanguageModelChanged">
             <option v-for="model in currentLanguageModels" :key="model.value" :value="model.value">{{ model.label }}</option>
           </select>
-          <input v-else v-model="apiKeyForm.language_model" class="language-model-input" type="text" :disabled="form.use_cloud_image_pool" placeholder="填写服务商提供的模型 ID" @change="onLanguageModelChanged" />
+          <input v-else v-model="apiKeyForm.language_model" class="language-model-input" name="ocv-language-model-id" type="text" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的模型 ID'" @focus="unlockProtectedInput" @change="onLanguageModelChanged" />
           <div v-if="customLanguageProvider" class="api-custom-provider-guide">
             <strong>高级功能：仅支持 OpenAI 兼容接口</strong>
-            <span>请编辑项目根目录的 <code>.env</code>，填写以下配置并重启 OCV：</span>
-            <code>CUSTOM_LLM_API_BASE=http://127.0.0.1:端口/v1</code>
-            <code>CUSTOM_LLM_MODEL=你的模型ID</code>
-            <code>CUSTOM_LLM_API_KEY=可选，本地服务无鉴权时留空</code>
-            <small>本地模型需支持 /chat/completions、足够的上下文长度与稳定 JSON 输出；不保证所有模型都能完成 Agent 规划。</small>
+            <label>
+              <span>API Base URL</span>
+              <input v-model="apiKeyForm.language_api_base_url" name="ocv-language-api-base-url" type="url" inputmode="url" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '例如 https://api.example.com/v1'" @focus="unlockProtectedInput" />
+            </label>
+            <label>
+              <span>API Key（本地无鉴权可留空）</span>
+              <input v-model="apiKeyForm.language_api_key" name="ocv-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
+            </label>
+            <small>需兼容 <code>/chat/completions</code>、具备足够上下文长度并能稳定输出 JSON。</small>
+            <small class="api-custom-security-note">安全提示：API Key 会随请求发送到此网址，请只填写你信任的服务地址。</small>
+            <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
+              {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
+            </button>
           </div>
-          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" type="password" autocomplete="off" :placeholder="`${currentLanguageProviderLabel} API Key`" />
+          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" name="ocv-official-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="`${currentLanguageProviderLabel} API Key`" @focus="unlockProtectedInput" />
           <div v-else-if="!customLanguageProvider" class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
             <div class="api-key-pool-heading">
               <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · ${currentLanguageModelLabel}`) }}</strong>
@@ -112,11 +119,41 @@
             </details>
             <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加语言模型 API Key" aria-label="添加语言模型 API Key" @click="addApiKeyAccount('language')">＋</button>
           </div>
+          <button v-if="!customLanguageProvider && apiKeyFieldOpen('language')" class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys || form.use_cloud_image_pool" @click="saveApiKeySettings">
+            {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
+          </button>
         </div>
         <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
-          <span>图像模型 API Key</span>
+          <span>图像模型接口</span>
+          <div class="api-custom-provider-guide image-api-config">
+            <label>
+              <span>API Base URL</span>
+              <input v-model="apiKeyForm.image_api_base_url" name="ocv-image-api-base-url" type="url" inputmode="url" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；不修改可留空' : 'https://example.com'" @focus="unlockProtectedInput" />
+            </label>
+            <label>
+              <span>模型 ID</span>
+              <input v-model="apiKeyForm.image_model" name="ocv-image-model-id" type="text" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；不修改可留空' : 'rhart-image-g-2'" @focus="unlockProtectedInput" />
+            </label>
+            <label>
+              <span>出图分辨率</span>
+              <select v-model="apiKeyForm.image_resolution_preset" :disabled="form.use_cloud_image_pool">
+                <option value="1k">1K（推荐）</option>
+                <option value="2k">2K</option>
+                <option value="4k">4K</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <label v-if="apiKeyForm.image_resolution_preset === 'custom'">
+              <span>自定义分辨率参数</span>
+              <input v-model="apiKeyForm.image_resolution_custom" type="text" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="填写服务商支持的参数，例如 2048x2048" />
+            </label>
+            <small><strong>强烈推荐 Image 2（rhart-image-g-2）</strong>，这是当前完整验证的模型。其他模型 ID 不拦截，但服务商接口需兼容 OCV 当前的异步出图协议。</small>
+            <small v-if="form.use_cloud_image_pool">号池分辨率由云端统一决定。</small>
+            <small class="api-custom-security-note">安全提示：API Key 和图像提示词会发送到此网址，请只填写你信任的服务地址。</small>
+          </div>
+          <span class="api-model-field-label">API Key</span>
           <template v-if="apiKeyFieldOpen('image')">
-            <input v-model="apiKeyForm.image_api_key" type="password" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="第三方图像接口 API Key" />
+            <input v-model="apiKeyForm.image_api_key" name="ocv-image-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；新增账号时填写' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
           </template>
           <div v-else class="api-key-state-bar api-key-pool-state" :class="{ error: apiKeyRuntimeErrors.image }">
             <div class="api-key-pool-heading">
@@ -134,6 +171,9 @@
             </details>
             <button class="api-key-corner-add" type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" aria-label="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
           </div>
+          <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys || form.use_cloud_image_pool" @click="saveApiKeySettings">
+            {{ savingApiKeys ? '保存中…' : '保存图像接口设置' }}
+          </button>
           <div class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
             <div class="image-concurrency-summary">
               <div>
@@ -177,11 +217,8 @@
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
         </div>
-        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : 'Agent 0 / 1 / 2 共用同一枚三方语言 Key；切换模型不需要重新填写。' }}</div>
+        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : 'OCV 不指定或推荐第三方接口；请自行选择服务商，并只向可信地址发送 API Key。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
-        <button v-if="apiKeyEditorVisible" class="primary-btn full-btn" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
-          {{ savingApiKeys ? '保存中...' : '保存 API Key' }}
-        </button>
       </div>
 
       <div class="sidebar-card">
@@ -706,7 +743,7 @@
               </div>
               <div v-else class="qwen-tts-config">
                 <label v-if="apiKeyFieldOpen('qwen_tts')" class="qwen-key-field">
-                  <input v-model="apiKeyForm.qwen_tts_api_key" type="password" autocomplete="off" placeholder="DashScope API Key（sk-...）" />
+                  <input v-model="apiKeyForm.qwen_tts_api_key" name="ocv-qwen-tts-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly placeholder="DashScope API Key（sk-...）" @focus="unlockProtectedInput" />
                 </label>
           <div v-else class="api-key-state-bar qwen-key-state" :class="{ error: apiKeyRuntimeErrors.qwen_tts }">
             <span>
@@ -1010,6 +1047,34 @@
                   <span>{{ mode.label }}</span>
                   <small>{{ mode.description }}</small>
                 </button>
+              </div>
+              <div class="director-strategy-row">
+                <div class="director-strategy-copy">
+                  <span>导演策略</span>
+                  <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
+                </div>
+                <div class="director-strategy-options" role="group" aria-label="导演策略">
+                  <button
+                    type="button"
+                    :class="{ active: form.director_strategy === 'stable' }"
+                    @click="setDirectorStrategy('stable')"
+                  >
+                    稳健还原
+                  </button>
+                  <button
+                    type="button"
+                    class="enhanced"
+                    :class="{ active: form.director_strategy === 'enhanced_beta' }"
+                    @click="setDirectorStrategy('enhanced_beta')"
+                  >
+                    叙事增强 <em>Beta</em>
+                  </button>
+                </div>
+                <small class="director-strategy-hint">
+                  {{ form.director_strategy === 'enhanced_beta'
+                    ? '减少逐句字面配图，优先使用有依据的现实切片、克制隐喻和镜头变化；测试功能可能增加少量规划耗时。'
+                    : '忠实、克制地还原原文，保持当前已经验证的画面规划方式。' }}
+                </small>
               </div>
             </div>
 
@@ -2651,6 +2716,7 @@ const AGENT0_PROMPT_STORAGE_KEY = 'agent0_prompt_system_v1'
 const AGENT1_PROMPT_STORAGE_KEY = 'agent1_prompt_system_v1'
 const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
 const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
+const DIRECTOR_STRATEGY_STORAGE_KEY = 'director_strategy_v1'
 const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
 const VISUAL_PACING_DEFAULTS = {
   urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
@@ -3029,10 +3095,15 @@ const referenceImageNames = ref([])
 const protagonistReferenceImageError = ref('')
 const protagonistReferenceUploading = ref(false)
 const apiKeyForm = reactive({
-  language_source: 'relay',
-  language_provider: 'gemini',
-  language_model: 'google/gemini-3.1-flash-lite-preview',
+  language_source: 'official',
+  language_provider: 'gemini_official',
+  language_model: 'gemini-3.7-flash',
+  language_api_base_url: '',
   language_api_key: '',
+  image_api_base_url: '',
+  image_model: 'rhart-image-g-2',
+  image_resolution_preset: '1k',
+  image_resolution_custom: '',
   image_api_key: '',
   image_api_keys: [],
   image_concurrency_mode: 'auto',
@@ -3052,9 +3123,7 @@ const imageConcurrencyPreview = computed(() => {
   return `${keyCount} 个 Key × 每 Key ${perKey} 路，当前预计 ${effective} 路并发`
 })
 const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
-  { value: 'gemini', family: 'gemini', family_label: 'Google Gemini', source: 'relay', label: 'Google Gemini', configured: false },
   { value: 'gemini_official', family: 'gemini', family_label: 'Google Gemini', source: 'official', label: 'Google Gemini 官方 API', configured: false },
-  { value: 'deepseek', family: 'deepseek', family_label: 'DeepSeek', source: 'relay', label: 'DeepSeek（三方兼容节点）', configured: false },
   { value: 'deepseek_official', family: 'deepseek', family_label: 'DeepSeek', source: 'official', label: 'DeepSeek 官方 API', configured: false },
   { value: 'custom', family: 'custom', family_label: '自定义', source: 'custom', label: '自定义兼容接口（高级）', configured: false },
 ])
@@ -3064,7 +3133,7 @@ const visibleLanguageProviderOptions = computed(() => (
 const currentLanguageProvider = computed(() => (
   languageProviderOptions.value.find((item) => item.value === apiKeyForm.language_provider)
   || languageProviderOptions.value[0]
-  || { value: 'gemini', label: 'Google Gemini', configured: false }
+  || { value: 'gemini_official', label: 'Google Gemini 官方 API', configured: false }
 ))
 const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
 const customLanguageProvider = computed(() => apiKeyForm.language_provider === 'custom')
@@ -3080,10 +3149,6 @@ const currentLanguageModelLabel = computed(() => (
   currentLanguageModels.value.find((item) => item.value === apiKeyForm.language_model)?.label
   || apiKeyForm.language_model
   || '未选择模型'
-))
-const apiKeyEditorVisible = computed(() => (
-  !form.use_cloud_image_pool
-  && ['language', 'image'].some((kind) => apiKeyFieldOpen(kind))
 ))
 const parameterPresets = ref([])
 const selectedParameterPreset = ref('')
@@ -3103,6 +3168,7 @@ const form = reactive({
   project_name: randomProjectName(),
   script: '',
   content_mode: 'urban_suspense',
+  director_strategy: 'stable',
   tts_voice_id: 'voice_05.wav',
   tts_speed: 1,
   tts_volume: 1,
@@ -4484,6 +4550,10 @@ function apiKeyFieldOpen(kind) {
   return !apiKeyStatus.value[kind]?.configured || Boolean(apiKeyEditing[kind])
 }
 
+function unlockProtectedInput(event) {
+  event?.currentTarget?.removeAttribute('readonly')
+}
+
 function editApiKey(kind) {
   if (form.use_cloud_image_pool && kind !== 'qwen_tts') return
   apiKeyEditing[kind] = true
@@ -4498,7 +4568,10 @@ async function onLanguageProviderChanged() {
   apiKeyForm.language_model = currentLanguageProvider.value?.selected_model
     || currentLanguageModels.value[0]?.value
     || ''
-  if (currentLanguageProvider.value?.configured || customLanguageProvider.value) {
+  apiKeyForm.language_api_base_url = customLanguageProvider.value
+    ? (currentLanguageProvider.value?.base_url || '')
+    : ''
+  if (currentLanguageProvider.value?.configured) {
     await saveApiKeySettings()
   }
 }
@@ -4550,14 +4623,32 @@ async function loadApiKeySettings() {
   try {
     const payload = await api.apiKeySettings()
     apiKeyStatus.value = payload.keys || { language: {}, image: {}, qwen_tts: {} }
-    apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini'
+    apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini_official'
     apiKeyForm.language_source = apiKeyStatus.value.language?.source
       || currentLanguageProvider.value?.source
-      || 'relay'
+      || 'official'
     apiKeyForm.language_model = apiKeyStatus.value.language?.model
       || currentLanguageProvider.value?.selected_model
       || currentLanguageModels.value[0]?.value
       || ''
+    apiKeyForm.language_api_base_url = apiKeyStatus.value.language?.base_url
+      || currentLanguageProvider.value?.base_url
+      || ''
+    apiKeyForm.image_api_base_url = apiKeyStatus.value.image?.configured
+      ? ''
+      : (apiKeyStatus.value.image?.base_url || '')
+    apiKeyForm.image_model = apiKeyStatus.value.image?.configured
+      ? ''
+      : (apiKeyStatus.value.image?.model || 'rhart-image-g-2')
+    const imageResolution = String(apiKeyStatus.value.image?.resolution || '1k').trim()
+    const imageResolutionPreset = imageResolution.toLowerCase()
+    if (['1k', '2k', '4k'].includes(imageResolutionPreset)) {
+      apiKeyForm.image_resolution_preset = imageResolutionPreset
+      apiKeyForm.image_resolution_custom = ''
+    } else {
+      apiKeyForm.image_resolution_preset = 'custom'
+      apiKeyForm.image_resolution_custom = imageResolution
+    }
     const concurrency = apiKeyStatus.value.image?.concurrency || {}
     apiKeyForm.image_concurrency_mode = concurrency.mode === 'manual' ? 'manual' : 'auto'
     apiKeyForm.image_per_key_concurrency = Number(concurrency.per_key || 1)
@@ -4573,6 +4664,14 @@ async function saveApiKeySettings() {
     language_provider: apiKeyForm.language_provider,
     language_model: String(apiKeyForm.language_model || '').trim(),
   }
+  if (customLanguageProvider.value) {
+    payload.language_api_base_url = String(apiKeyForm.language_api_base_url || '').trim()
+  }
+  payload.image_api_base_url = String(apiKeyForm.image_api_base_url || '').trim()
+  payload.image_model = String(apiKeyForm.image_model || '').trim()
+  payload.image_resolution = apiKeyForm.image_resolution_preset === 'custom'
+    ? String(apiKeyForm.image_resolution_custom || '').trim()
+    : apiKeyForm.image_resolution_preset
   for (const key of ['language_api_key', 'image_api_key']) {
     const value = String(apiKeyForm[key] || '').trim()
     if (value) payload[key] = value
@@ -4594,7 +4693,7 @@ async function saveApiKeySettings() {
     apiKeyMessage.value = result.message || 'API Key 已保存。'
     const touched = new Set()
     if (payload.language_api_key || payload.language_provider) touched.add('language')
-    if (payload.image_api_key || payload.image_api_keys?.length) touched.add('image')
+    if (payload.image_api_key || payload.image_api_keys?.length || payload.image_api_base_url || payload.image_model) touched.add('image')
     for (const kind of touched) {
       apiKeyEditing[kind] = kind === 'language'
         ? !currentLanguageProvider.value?.configured
@@ -4666,6 +4765,9 @@ async function loadSettings() {
   form.content_mode = Object.prototype.hasOwnProperty.call(availableModes, savedContentMode)
     ? savedContentMode
     : 'urban_suspense'
+  form.director_strategy = window.localStorage.getItem(DIRECTOR_STRATEGY_STORAGE_KEY) === 'enhanced_beta'
+    ? 'enhanced_beta'
+    : 'stable'
   const savedMode = window.localStorage.getItem(VISUAL_PROMPT_MODE_STORAGE_KEY)
   form.visual_prompt_mode = savedMode === 'full' ? 'full' : 'simple'
   const modeDefaults = contentModeDefaults()
@@ -5193,6 +5295,11 @@ function setContentMode(mode) {
   rememberVisualPrompt()
 }
 
+function setDirectorStrategy(strategy) {
+  form.director_strategy = strategy === 'enhanced_beta' ? 'enhanced_beta' : 'stable'
+  window.localStorage.setItem(DIRECTOR_STRATEGY_STORAGE_KEY, form.director_strategy)
+}
+
 function setVisualPromptMode(mode) {
   form.visual_prompt_mode = mode
   if (mode === 'full' && !String(form.agent0_prompt_system || '').trim()) {
@@ -5207,6 +5314,7 @@ function setVisualPromptMode(mode) {
 
 function rememberVisualPrompt() {
   window.localStorage.setItem(CONTENT_MODE_STORAGE_KEY, form.content_mode)
+  window.localStorage.setItem(DIRECTOR_STRATEGY_STORAGE_KEY, form.director_strategy)
   window.localStorage.setItem(VISUAL_PROMPT_MODE_STORAGE_KEY, form.visual_prompt_mode)
   window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY), form.visual_style_prompt || '')
   window.localStorage.setItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY), form.global_character_prompt || '')
@@ -6718,6 +6826,7 @@ function generationRequestPayload() {
 function guidedVisualParameters() {
   return {
     content_mode: form.content_mode,
+    director_strategy: form.director_strategy,
     auto_split_long_text: form.auto_split_long_text,
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,

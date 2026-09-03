@@ -5,10 +5,115 @@ from backend.app import main
 
 
 class PreflightProbeTest(unittest.TestCase):
+    def test_legacy_relay_is_presented_as_the_unified_custom_interface(self) -> None:
+        values = {
+            "LANGUAGE_PROVIDER": "openai",
+            "GEMINI_API_KEY": "legacy-secret",
+            "GEMINI_API_BASE": "https://relay.example/v1",
+            "OPENAI_MODEL": "vendor/gpt-model",
+        }
+        with patch.object(main, "_project_config_values", return_value=values):
+            status = main._api_key_status()["language"]
+
+        self.assertEqual(status["provider"], "custom")
+        self.assertEqual(status["source"], "custom")
+        self.assertEqual(status["base_url"], "")
+        self.assertEqual(status["model"], "")
+        self.assertTrue(status["configured"])
+        self.assertEqual({item["source"] for item in status["providers"]}, {"official", "custom"})
+        custom_status = next(item for item in status["providers"] if item["value"] == "custom")
+        self.assertEqual(custom_status["base_url"], "")
+        self.assertEqual(custom_status["selected_model"], "")
+
+    def test_pre_provider_env_relay_is_also_presented_as_custom(self) -> None:
+        values = {
+            "GEMINI_PROVIDER": "runninghub",
+            "GEMINI_API_KEY": "legacy-secret",
+            "GEMINI_API_BASE": "https://relay.example/v1",
+            "GEMINI_MODEL": "google/gemini-model",
+        }
+        with patch.object(main, "_project_config_values", return_value=values):
+            status = main._api_key_status()["language"]
+
+        self.assertEqual(status["provider"], "custom")
+        self.assertEqual(status["source"], "custom")
+        self.assertEqual(status["base_url"], "")
+        self.assertTrue(status["configured"])
+
+    def test_saving_mapped_legacy_relay_migrates_hidden_key_to_custom_fields(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            language_provider="custom",
+        )
+        existing = {
+            "LANGUAGE_PROVIDER": "openai",
+            "GEMINI_API_KEY": "legacy-secret",
+            "GEMINI_API_BASE": "https://relay.example/v1",
+            "OPENAI_MODEL": "vendor/gpt-model",
+        }
+        with (
+            patch.object(main, "require_user"),
+            patch.object(main, "_parse_env_lines", return_value=existing),
+            patch.object(main, "save_project_env_values") as save_values,
+            patch.object(main, "_api_key_status", return_value={}),
+        ):
+            main.save_api_key_settings(payload, Mock())
+
+        updates = save_values.call_args.args[0]
+        self.assertEqual(updates["LANGUAGE_PROVIDER"], "custom")
+        self.assertEqual(updates["CUSTOM_LLM_API_KEY"], "legacy-secret")
+        self.assertEqual(updates["CUSTOM_LLM_API_BASE"], "https://relay.example/v1")
+        self.assertEqual(updates["CUSTOM_LLM_MODEL"], "vendor/gpt-model")
+
+    def test_custom_language_settings_save_base_url_model_and_optional_key(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            language_provider="custom",
+            language_model="local-model-v2",
+            language_api_base_url="http://127.0.0.1:1234/v1/",
+            language_api_key="optional-secret",
+        )
+        with (
+            patch.object(main, "require_user"),
+            patch.object(main, "_parse_env_lines", return_value={}),
+            patch.object(main, "save_project_env_values") as save_values,
+            patch.object(main, "_api_key_status", return_value={}),
+        ):
+            main.save_api_key_settings(payload, Mock())
+
+        updates = save_values.call_args.args[0]
+        self.assertEqual(updates["LANGUAGE_PROVIDER"], "custom")
+        self.assertEqual(updates["CUSTOM_LLM_API_BASE"], "http://127.0.0.1:1234/v1")
+        self.assertEqual(updates["CUSTOM_LLM_MODEL"], "local-model-v2")
+        self.assertEqual(updates["CUSTOM_LLM_API_KEY"], "optional-secret")
+
+    def test_non_custom_provider_cannot_override_base_url(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            language_provider="openai_official",
+            language_model="gpt-5.6-terra",
+            language_api_base_url="https://untrusted.example/v1",
+        )
+        with patch.object(main, "require_user"):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.save_api_key_settings(payload, Mock())
+        self.assertEqual(raised.exception.status_code, 400)
+
+    def test_custom_base_url_rejects_embedded_credentials(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            language_provider="custom",
+            language_model="local-model",
+            language_api_base_url="https://user:password@example.test/v1",
+        )
+        with patch.object(main, "require_user"):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.save_api_key_settings(payload, Mock())
+        self.assertEqual(raised.exception.status_code, 400)
+
     def test_api_key_status_reports_automatic_image_capacity(self) -> None:
         values = {
             "RUNNINGHUB_API_KEY": "image-key-1",
             "RUNNINGHUB_API_KEYS": "image-key-2,image-key-3",
+            "RUNNINGHUB_BASE_URL": "https://images.example.test",
+            "RUNNINGHUB_IMAGE_MODEL": "rhart-image-g-2",
+            "RUNNINGHUB_RESOLUTION": "2k",
             "RUNNINGHUB_CONCURRENCY_MODE": "auto",
             "RUNNINGHUB_PER_KEY_CONCURRENCY": "2",
             "RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "3",
@@ -16,7 +121,55 @@ class PreflightProbeTest(unittest.TestCase):
         with patch.object(main, "_project_config_values", return_value=values):
             status = main._api_key_status()
         self.assertEqual(status["image"]["count"], 3)
+        self.assertEqual(status["image"]["base_url"], "")
+        self.assertEqual(status["image"]["model"], "")
+        self.assertEqual(status["image"]["resolution"], "2k")
         self.assertEqual(status["image"]["concurrency"]["effective"], 6)
+
+    def test_fresh_image_settings_do_not_advertise_a_third_party_url(self) -> None:
+        with patch.object(main, "_project_config_values", return_value={}):
+            status = main._api_key_status()["image"]
+        self.assertEqual(status["base_url"], "")
+        self.assertEqual(status["model"], "rhart-image-g-2")
+
+    def test_image_settings_save_base_url_model_and_legacy_runtime_aliases(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            image_api_base_url="https://images.example.test/api/",
+            image_model="vendor/image-2",
+            image_resolution="4k",
+            image_api_key="image-secret",
+        )
+        with (
+            patch.object(main, "require_user"),
+            patch.object(main, "_parse_env_lines", return_value={}),
+            patch.object(main, "save_project_env_values") as save_values,
+            patch.object(main, "_api_key_status", return_value={}),
+        ):
+            main.save_api_key_settings(payload, Mock())
+
+        updates = save_values.call_args.args[0]
+        self.assertEqual(updates["IMAGE_API_BASE_URL"], "https://images.example.test/api")
+        self.assertEqual(updates["RUNNINGHUB_BASE_URL"], "https://images.example.test/api")
+        self.assertEqual(updates["IMAGE_MODEL_ID"], "vendor/image-2")
+        self.assertEqual(updates["RUNNINGHUB_IMAGE_MODEL"], "vendor/image-2")
+        self.assertEqual(updates["RUNNINGHUB_ENDPOINT"], "/vendor/image-2/text-to-image")
+        self.assertEqual(updates["IMAGE_RESOLUTION"], "4k")
+        self.assertEqual(updates["RUNNINGHUB_RESOLUTION"], "4k")
+        self.assertEqual(updates["RUNNINGHUB_API_KEY"], "image-secret")
+
+    def test_new_image_key_requires_an_explicit_base_url(self) -> None:
+        payload = main.ApiKeySettingsRequest(
+            image_model="rhart-image-g-2",
+            image_api_key="image-secret",
+        )
+        with (
+            patch.object(main, "require_user"),
+            patch.object(main, "_parse_env_lines", return_value={}),
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.save_api_key_settings(payload, Mock())
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertIn("Base URL", raised.exception.detail)
 
     def test_cluster_health_error_blocks_only_unhealthy_service(self) -> None:
         self.assertIsNone(main._cluster_health_error({"ok": True}))

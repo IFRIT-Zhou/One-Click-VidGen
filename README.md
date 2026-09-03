@@ -40,8 +40,13 @@ npm install
 cd frontend && npm install && cd ..
 ```
 
-本地版本默认使用 SQLite，无需安装 MySQL。在 `.env` 中填写 RunningHub 和 Gemini
-相关配置；不要把包含真实密钥的 `.env` 提交到 Git。
+本地版本默认使用 SQLite，无需安装 MySQL。新安装默认选择 Gemini 官方 API；也可在
+界面中选择其他官方 API，或自行填写兼容 OpenAI `/chat/completions` 的接口地址、模型
+ID 和 API Key。不要把包含真实密钥的 `.env` 提交到 Git。
+
+OCV 不指定或推荐任何第三方接口服务商。除非另有明确说明，OCV 与可兼容的第三方服务商
+不存在商业合作、赞助或背书关系；用户应自行比较价格、稳定性与隐私政策，并只向可信地址
+发送 API Key。旧版本中已经明确保存的兼容接口配置会继续保留，更新不会擅自覆盖。
 
 ## 集群 GPU 加速
 

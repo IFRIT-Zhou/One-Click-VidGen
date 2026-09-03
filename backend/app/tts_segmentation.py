@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from .gemini_client import (
     GeminiError,
+    GeminiOutputTruncated,
     generate_gemini_text,
     language_provider_configured,
     parse_json_response,
@@ -292,14 +293,34 @@ def group_with_voice_segmentation_agent(
         "只输出严格 JSON 数组，每项格式为 {\"includes_sentences\":[1,2]}。"
         "所有 sentence_id 必须从 1 开始连续覆盖一次，不能遗漏、重复或跨组乱序。"
     )
-    response = agent_call(
-        system_prompt=system_prompt,
-        user_prompt=json.dumps({"sentences": payload}, ensure_ascii=False),
-        temperature=0.05,
-        response_mime_type="application/json",
-        max_output_tokens=min(4096, max(512, len(units) * 12)),
-        json_root="array",
-    )
+    user_prompt = json.dumps({"sentences": payload}, ensure_ascii=False)
+    initial_budget = min(4096, max(512, len(units) * 12))
+
+    def call(budget: int) -> str:
+        return agent_call(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.05,
+            response_mime_type="application/json",
+            max_output_tokens=budget,
+            json_root="array",
+        )
+
+    try:
+        response = call(initial_budget)
+    except GeminiOutputTruncated:
+        # Reasoning models can consume the small completion budget before they
+        # emit any JSON. Retry only this explicit truncation case; all other
+        # providers and errors retain their existing single-call behaviour.
+        expanded_budget = min(4096, max(2048, initial_budget * 2, len(units) * 24))
+        if expanded_budget <= initial_budget:
+            raise
+        print(
+            f"[TTS25_SEGMENT] 断句 Agent 输出被截断，已将输出额度从 "
+            f"{initial_budget} 提高到 {expanded_budget} 并安全重试一次",
+            flush=True,
+        )
+        response = call(expanded_budget)
     return _validate_agent_groups(
         parse_json_response(response), units, max_tokens=max_tokens, token_count=token_count
     )

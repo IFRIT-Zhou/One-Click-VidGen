@@ -4,6 +4,8 @@ import tempfile
 import unittest
 
 from backend.app.main import GenerateRequest
+from backend.app.gemini_client import GeminiOutputTruncated
+from backend.app.tts_text_normalization import normalize_tts_text
 from module1_agent_director import (
     _build_indextts25_command,
     split_cluster_tts_text,
@@ -13,8 +15,23 @@ from backend.app.tts_segmentation import segment_indextts25_text
 
 
 class IndexTTS25IntegrationTests(unittest.TestCase):
+    def test_tts_reading_copy_normalizes_windows_hostile_typography(self):
+        original = "IndexTTS‑2.5\u00a0支持“特殊”字符\u200b。"
+        self.assertEqual(
+            normalize_tts_text(original),
+            'IndexTTS-2.5 支持"特殊"字符。',
+        )
+        self.assertIn("‑", original)
+
     def test_request_schema_accepts_test_engine(self):
         self.assertEqual(GenerateRequest(tts_engine="indextts25").tts_engine, "indextts25")
+
+    def test_request_schema_keeps_director_strategy_opt_in(self):
+        self.assertEqual(GenerateRequest().director_strategy, "stable")
+        self.assertEqual(
+            GenerateRequest(director_strategy="enhanced_beta").director_strategy,
+            "enhanced_beta",
+        )
 
     def test_25_command_uses_isolated_runner_and_native_speed(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -75,6 +92,28 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
         self.assertEqual(total, len(text))
         self.assertEqual(chunks, ["甲" * 40 + "。" + "乙" * 40 + "。", "丙" * 40 + "。"])
         self.assertEqual(len(calls), 1)
+
+    def test_25_agent_retries_once_with_larger_budget_only_when_truncated(self):
+        text = "甲" * 60 + "。" + "乙" * 60 + "。"
+        budgets = []
+
+        def truncated_once(**kwargs):
+            budgets.append(kwargs["max_output_tokens"])
+            if len(budgets) == 1:
+                raise GeminiOutputTruncated("reasoning tokens exhausted the output budget")
+            return '[{"includes_sentences":[1]},{"includes_sentences":[2]}]'
+
+        chunks, source, _ = segment_indextts25_text(
+            text,
+            max_tokens=110,
+            token_count=len,
+            agent_enabled=True,
+            agent_call=truncated_once,
+        )
+        self.assertEqual(source, "voice_segmentation_agent")
+        self.assertEqual(len(budgets), 2)
+        self.assertGreater(budgets[1], budgets[0])
+        self.assertEqual("".join(chunks), text)
 
     def test_25_invalid_agent_result_uses_python_fallback(self):
         text = "甲" * 60 + "。" + "乙" * 60 + "。"

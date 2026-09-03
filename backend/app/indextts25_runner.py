@@ -15,6 +15,21 @@ import time
 import wave
 from pathlib import Path
 
+try:  # package import in tests; direct import when launched as an isolated script
+    from .tts_text_normalization import normalize_tts_text
+except ImportError:  # pragma: no cover - exercised by the real child process
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from tts_text_normalization import normalize_tts_text
+
+
+def _force_utf8_stdio() -> None:
+    """Keep third-party diagnostic prints independent of the Windows code page."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
 
 def _bootstrap() -> tuple[Path, Path]:
     root = Path(os.environ["INDEXTTS25_ROOT"]).resolve()
@@ -42,6 +57,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    _force_utf8_stdio()
     _, model_dir = _bootstrap()
     args = _parse_args()
     from indextts.infer_v2_5 import IndexTTS2
@@ -51,7 +67,7 @@ def main() -> int:
         if not raw.strip():
             continue
         payload = json.loads(raw)
-        text = str(payload.get("text") or "").strip()
+        text = normalize_tts_text(str(payload.get("text") or ""))
         if not text:
             raise ValueError(f"batch file line {line_number} text is empty")
         tasks.append(text)

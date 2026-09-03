@@ -37,6 +37,8 @@ CONTENT_MODE_STORY = "urban_suspense"
 CONTENT_MODE_SCIENCE = "science_explainer"
 CONTENT_MODE_PURE_SCIENCE = "pure_science"
 CONTENT_MODE_GENERAL = "general"
+DIRECTOR_STRATEGY_STABLE = "stable"
+DIRECTOR_STRATEGY_ENHANCED = "enhanced_beta"
 STORY_AGENT_VERSION = 13
 CHARACTER_CONTINUITY_VERSION = 5
 STORY_CONTEXT_VERSION = 5
@@ -64,6 +66,14 @@ def normalize_content_mode(value: str | None) -> str:
     if mode == CONTENT_MODE_GENERAL:
         return CONTENT_MODE_GENERAL
     return CONTENT_MODE_STORY
+
+
+def normalize_director_strategy(value: str | None) -> str:
+    return (
+        DIRECTOR_STRATEGY_ENHANCED
+        if str(value or "").strip().lower() == DIRECTOR_STRATEGY_ENHANCED
+        else DIRECTOR_STRATEGY_STABLE
+    )
 
 
 STORY_AGENT_SYSTEM_PROMPT = """你是故事视频流水线的 Agent 1：故事策划与叙事编辑。
@@ -201,6 +211,7 @@ GENERAL_SEGMENT_AGENT_SYSTEM_PROMPT = SEGMENT_AGENT_SYSTEM_PROMPT.replace(
 def story_fingerprint(
     scenes: list[dict[str, Any]],
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> str:
     compact = [
         {
@@ -211,14 +222,19 @@ def story_fingerprint(
         }
         for scene in scenes
     ]
+    fingerprint_payload = {
+        "content_mode": normalize_content_mode(content_mode),
+        "agent1_prompt": hashlib.sha1(
+            os.getenv("AGENT1_PROMPT_SYSTEM", "").strip().encode("utf-8")
+        ).hexdigest(),
+        "scenes": compact,
+    }
+    # Preserve the historical stable fingerprint so existing tasks do not
+    # rebuild their plan after this optional Beta feature is installed.
+    if normalize_director_strategy(director_strategy) == DIRECTOR_STRATEGY_ENHANCED:
+        fingerprint_payload["director_strategy"] = DIRECTOR_STRATEGY_ENHANCED
     payload = json.dumps(
-        {
-            "content_mode": normalize_content_mode(content_mode),
-            "agent1_prompt": hashlib.sha1(
-                os.getenv("AGENT1_PROMPT_SYSTEM", "").strip().encode("utf-8")
-            ).hexdigest(),
-            "scenes": compact,
-        },
+        fingerprint_payload,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -1002,8 +1018,10 @@ def _backup_json(path: Path) -> Path | None:
 def _fallback_story_plan(
     scenes: list[dict[str, Any]],
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> dict[str, Any]:
     content_mode = normalize_content_mode(content_mode)
+    director_strategy = normalize_director_strategy(director_strategy)
     slide_ids = [str(scene.get("slide_id") or "") for scene in scenes]
     beats: list[dict[str, Any]] = []
     beat_size = max(1, (len(slide_ids) + 7) // 8)
@@ -1027,6 +1045,7 @@ def _fallback_story_plan(
     hosted_science_mode = content_mode == CONTENT_MODE_SCIENCE
     return {
         "content_mode": content_mode,
+        "director_strategy": director_strategy,
         "story_type": "science_explainer" if science_mode else "other",
         "logline": "依据原文结构讲清核心知识" if science_mode else "依据原文顺序讲述完整故事",
         "theme": "准确解释概念、原因、案例与结论" if science_mode else "忠于原文，不额外改写核心事实",
@@ -1182,6 +1201,7 @@ def _normalize_story_plan(
     raw: Any,
     scenes: list[dict[str, Any]],
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
@@ -1216,7 +1236,8 @@ def _normalize_story_plan(
         return None
 
     content_mode = normalize_content_mode(content_mode)
-    fallback = _fallback_story_plan(scenes, content_mode)
+    director_strategy = normalize_director_strategy(director_strategy)
+    fallback = _fallback_story_plan(scenes, content_mode, director_strategy)
     plan = dict(fallback)
     for key in fallback:
         value = raw.get(key)
@@ -1244,8 +1265,9 @@ def _normalize_story_plan(
         ]
         if unit.get("device_shot_mode") == "screen_insert":
             unit["character_ids"] = []
-    plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+    plan["source_fingerprint"] = story_fingerprint(scenes, content_mode, director_strategy)
     plan["content_mode"] = content_mode
+    plan["director_strategy"] = director_strategy
     plan["agent_version"] = STORY_AGENT_VERSION
     plan["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
     return plan
@@ -1274,6 +1296,17 @@ setting_hint 写一个具体地点，novelty_anchor 写本单元独有的动作�
 boundary_after 只能是 hard 或 soft：人物、地点、时间、事件、结论或话题明确切换时必须为 hard，后续程序绝不会跨过去合并画面；只有可有可无的补充、语气承接或画面主体不变的短过渡才可为 soft。
 例如“很难靠它翻身”与其后的“省流结束/点赞引导”是两个单元，且前者 boundary_after 必须是 hard。visual_pacing 只能是 hold、normal、fast。
 story_beats 仅用于概括较高层节奏，每项包含 beat_id、slide_ids、purpose、emotion、visual_focus、visual_pacing。"""
+
+
+ENHANCED_DIRECTOR_AGENT1_CONTRACT = """【叙事增强 Beta：先设计视觉意图，再划分画面】
+- 不要逐句寻找名词配图。先判断每个语义单元的叙事功能：抽象观点、具体事件、现实成因/经历、关系或情绪状态、转折、总结。
+- 抽象观点尚未进入具体故事时，优先使用克制的 symbolic 构图或不绑定具体剧情地点的环境意象；禁止提前把后文人物塞进餐桌、办公室等具体主时间线场景。
+- 原文明确提供通勤、工作、家务、照料、医疗、住房等现实依据时，优先选其中最有表现力且能被单张图片清楚表达的一项作为 illustrative_broll；不要继续重复当前谈话地点和道具。
+- 每个单元的 visual_focus 必须写“人物/主体 + 一个可见动作或状态 + 画面要表达的关系”，setting_hint 必须是唯一地点，novelty_anchor 必须是能与前后画面实质区分的视觉锚点。
+- 在输出前纵向检查全部 semantic_units：相邻单元不能只更换机位、景别、表情或纸张数量；同一“人物组合 + 地点 + 动作 + 核心道具”原则上只能连续一次，确属不可中断事件时最多连续两次。
+- 同一主时间线地点再次出现时，地点名称与稳定空间特征必须复用 Agent 0 locations/continuity_rules 中的同一表述，不得临时改换家具、房间格局、主光源或标志道具。
+- 只做有原文依据的有限联想：假设未来必须明确为设想，不得把尚未存在的孩子、尚未发生的手术或其他可能性画成当前事实。
+- 纯科普仍以事实准确和知识关系清晰为最高优先级；只有无法直接可视化的概念才使用象征表达，不得用隐喻替代关键结构、数据和因果关系。"""
 
 PURE_SCIENCE_TIMELINE_CONTRACT = """【纯科普模式硬约束】
 - 不建立、暗示或反复调用默认主持人；原文没有人物参与时，character_ids 必须为 []。
@@ -1305,9 +1338,11 @@ def _create_timeline_story_plan(
     story_context: dict[str, Any],
     content_mode: str,
     require_ai_success: bool = False,
+    director_strategy: str = DIRECTOR_STRATEGY_STABLE,
 ) -> dict[str, Any]:
     """Agent 1: a narrow timed segmentation pass built on Agent 0 context."""
-    fallback = _fallback_story_plan(scenes, content_mode)
+    director_strategy = normalize_director_strategy(director_strategy)
+    fallback = _fallback_story_plan(scenes, content_mode, director_strategy)
     if not gemini_configured():
         if require_ai_success:
             raise _planning_failure("Agent 1", "语言模型未配置")
@@ -1345,6 +1380,8 @@ def _create_timeline_story_plan(
             "只能使用 Agent 0 已存在的 character_id，禁止用职业、群体称呼或人名代替 ID。"
         )
         system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+        if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+            system_prompt += "\n\n" + ENHANCED_DIRECTOR_AGENT1_CONTRACT
         if content_mode == CONTENT_MODE_PURE_SCIENCE and PURE_SCIENCE_TIMELINE_CONTRACT not in system_prompt:
             system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
         response = generate_gemini_text(
@@ -1394,7 +1431,7 @@ def _create_timeline_story_plan(
         combined["story_beats"] = (
             raw_beats if has_valid_beats else _beats_from_semantic_units(units)
         )
-        plan = _normalize_story_plan(combined, scenes, content_mode)
+        plan = _normalize_story_plan(combined, scenes, content_mode, director_strategy)
         if plan is None:
             raise ValueError("Agent 1 plan normalization failed")
         plan["generation_source"] = "gemini"
@@ -1419,12 +1456,18 @@ def create_story_plan(
     *,
     story_context: dict[str, Any] | None = None,
     require_ai_success: bool = False,
+    director_strategy: str = DIRECTOR_STRATEGY_STABLE,
 ) -> dict[str, Any]:
     """Run Agent 1 once, with a deterministic local fallback."""
     content_mode = normalize_content_mode(content_mode)
+    director_strategy = normalize_director_strategy(director_strategy)
     if story_context is not None:
         return _create_timeline_story_plan(
-            scenes, story_context, content_mode, require_ai_success=require_ai_success
+            scenes,
+            story_context,
+            content_mode,
+            require_ai_success=require_ai_success,
+            director_strategy=director_strategy,
         )
     science_mode = content_mode in {CONTENT_MODE_SCIENCE, CONTENT_MODE_PURE_SCIENCE}
     general_mode = content_mode == CONTENT_MODE_GENERAL
@@ -1437,7 +1480,7 @@ def create_story_plan(
         if require_ai_success:
             raise _planning_failure("Agent 1", "语言模型未配置")
         print("Agent 1：Gemini 未配置，使用本地故事上下文。", flush=True)
-        plan = _fallback_story_plan(scenes, content_mode)
+        plan = _fallback_story_plan(scenes, content_mode, director_strategy)
     else:
         compact_scenes = [
             {
@@ -1477,6 +1520,8 @@ def create_story_plan(
             # presets that do not return the new field.
             system_prompt += SEMANTIC_UNIT_RULES
             system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+                system_prompt += "\n\n" + ENHANCED_DIRECTOR_AGENT1_CONTRACT
             if content_mode == CONTENT_MODE_PURE_SCIENCE:
                 system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
                 system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
@@ -1492,6 +1537,8 @@ def create_story_plan(
             )
             retry_prompt += SEMANTIC_UNIT_RULES
             retry_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+                retry_prompt += "\n\n" + ENHANCED_DIRECTOR_AGENT1_CONTRACT
             if content_mode == CONTENT_MODE_PURE_SCIENCE:
                 retry_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
                 retry_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
@@ -1512,7 +1559,9 @@ def create_story_plan(
                     response_mime_type="application/json",
                     max_output_tokens=12288,
                 )
-            plan = _normalize_story_plan(parse_json_response(response), scenes, content_mode)
+            plan = _normalize_story_plan(
+                parse_json_response(response), scenes, content_mode, director_strategy
+            )
             if plan is not None:
                 generation_source = "gemini"
         except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
@@ -1523,12 +1572,13 @@ def create_story_plan(
         if plan is None:
             if require_ai_success:
                 raise _planning_failure("Agent 1", "模型返回内容无法形成有效的时间轴规划")
-            plan = _fallback_story_plan(scenes, content_mode)
+            plan = _fallback_story_plan(scenes, content_mode, director_strategy)
 
-    plan["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+    plan["source_fingerprint"] = story_fingerprint(scenes, content_mode, director_strategy)
     if global_environment_prompt:
         plan["world_bible"] = global_environment_prompt
     plan["content_mode"] = content_mode
+    plan["director_strategy"] = director_strategy
     plan["generation_source"] = generation_source
     plan["agent_version"] = STORY_AGENT_VERSION
     plan["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
@@ -1544,10 +1594,12 @@ def load_or_create_story_plan(
     content_mode: str = CONTENT_MODE_STORY,
     story_context: dict[str, Any] | None = None,
     require_ai_success: bool = False,
+    director_strategy: str = DIRECTOR_STRATEGY_STABLE,
 ) -> dict[str, Any]:
     """Reuse a matching Agent 1 artifact or create and persist a new one."""
     content_mode = normalize_content_mode(content_mode)
-    fingerprint = story_fingerprint(scenes, content_mode)
+    director_strategy = normalize_director_strategy(director_strategy)
+    fingerprint = story_fingerprint(scenes, content_mode, director_strategy)
     if path.is_file():
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -1555,6 +1607,10 @@ def load_or_create_story_plan(
             existing = None
         source_matches = isinstance(existing, dict) and (
             existing.get("source_fingerprint") == fingerprint or allow_source_mismatch
+        )
+        strategy_matches = (
+            isinstance(existing, dict)
+            and normalize_director_strategy(existing.get("director_strategy")) == director_strategy
         )
         plan_is_current = (
             isinstance(existing, dict)
@@ -1567,7 +1623,7 @@ def load_or_create_story_plan(
             isinstance(existing, dict)
             and existing.get("agent0_source_fingerprint") == story_context.get("source_fingerprint")
         )
-        if source_matches and context_matches and plan_is_current and (
+        if source_matches and strategy_matches and context_matches and plan_is_current and (
             plan_is_ai or (may_reuse_fallback and not require_ai_success)
         ):
             reason = "断点续跑" if resume else "上下文未变化"
@@ -1582,11 +1638,17 @@ def load_or_create_story_plan(
             content_mode,
             story_context=story_context,
             require_ai_success=require_ai_success,
+            director_strategy=director_strategy,
         )
     else:
         # Preserve the public/default call shape for integrations that wrap the
         # legacy non-strict helper.
-        plan = create_story_plan(scenes, content_mode)
+        if director_strategy == DIRECTOR_STRATEGY_STABLE:
+            plan = create_story_plan(scenes, content_mode)
+        else:
+            plan = create_story_plan(
+                scenes, content_mode, director_strategy=director_strategy
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = _backup_json(path)
     if backup:
@@ -1650,9 +1712,13 @@ def merge_global_and_segment_plan(
     segment_plan: dict[str, Any],
     scenes: list[dict[str, Any]],
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> dict[str, Any]:
     """Build the Agent 2 context: global identity bible plus local story beats."""
     content_mode = normalize_content_mode(content_mode)
+    director_strategy = normalize_director_strategy(
+        director_strategy or global_plan.get("director_strategy")
+    )
     merged = dict(segment_plan)
     merged["story_type"] = global_plan.get("story_type") or segment_plan.get("story_type")
     global_logline = str(global_plan.get("logline") or "").strip()
@@ -1674,9 +1740,10 @@ def merge_global_and_segment_plan(
     merged["visual_safety"] = _unique_text_items(
         global_plan.get("visual_safety"), segment_plan.get("visual_safety"), limit=10
     )
-    merged["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+    merged["source_fingerprint"] = story_fingerprint(scenes, content_mode, director_strategy)
     merged["global_source_fingerprint"] = global_plan.get("source_fingerprint")
     merged["content_mode"] = content_mode
+    merged["director_strategy"] = director_strategy
     merged["planning_scope"] = "hierarchical_segment"
     merged["agent_version"] = STORY_AGENT_VERSION
     merged["character_continuity_version"] = CHARACTER_CONTINUITY_VERSION
@@ -1687,14 +1754,20 @@ def create_segment_story_plan(
     scenes: list[dict[str, Any]],
     global_plan: dict[str, Any],
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> dict[str, Any]:
     """Run Agent 1B for one long-text segment, constrained by the global plan."""
     content_mode = normalize_content_mode(content_mode)
+    director_strategy = normalize_director_strategy(
+        director_strategy or global_plan.get("director_strategy")
+    )
     # New two-agent pipeline: Agent 0 data is already embedded in the global
     # plan, so the local pass only needs the same narrow time-axis duty.
     if global_plan.get("agent0_source_fingerprint"):
-        result = _create_timeline_story_plan(scenes, global_plan, content_mode)
-        result["source_fingerprint"] = story_fingerprint(scenes, content_mode)
+        result = _create_timeline_story_plan(
+            scenes, global_plan, content_mode, director_strategy=director_strategy
+        )
+        result["source_fingerprint"] = story_fingerprint(scenes, content_mode, director_strategy)
         result["global_source_fingerprint"] = global_plan.get("source_fingerprint")
         result["planning_scope"] = "hierarchical_segment"
         return result
@@ -1723,6 +1796,8 @@ def create_segment_story_plan(
                 "它只表示叙事节奏，后续程序会以真实音频时间戳执行切图。"
             )
             segment_system_prompt += "\n\n" + DEVICE_SHOT_CONTRACT
+            if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+                segment_system_prompt += "\n\n" + ENHANCED_DIRECTOR_AGENT1_CONTRACT
             if content_mode == CONTENT_MODE_PURE_SCIENCE:
                 segment_system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
                 segment_system_prompt += "\n\n" + PURE_SCIENCE_TIMELINE_CONTRACT
@@ -1733,14 +1808,18 @@ def create_segment_story_plan(
                 response_mime_type="application/json",
                 max_output_tokens=8192,
             )
-            local_plan = _normalize_story_plan(parse_json_response(response), scenes, content_mode)
+            local_plan = _normalize_story_plan(
+                parse_json_response(response), scenes, content_mode, director_strategy
+            )
             if local_plan is not None:
                 generation_source = "gemini"
         except (GeminiError, ValueError, TypeError, json.JSONDecodeError) as exc:
             print(f"Agent 1B 局部规划失败，使用本地分段上下文: {exc}", flush=True)
     if local_plan is None:
-        local_plan = _fallback_story_plan(scenes, content_mode)
-    result = merge_global_and_segment_plan(global_plan, local_plan, scenes, content_mode)
+        local_plan = _fallback_story_plan(scenes, content_mode, director_strategy)
+    result = merge_global_and_segment_plan(
+        global_plan, local_plan, scenes, content_mode, director_strategy
+    )
     result["generation_source"] = generation_source
     return result
 
@@ -1752,10 +1831,14 @@ def load_or_create_segment_story_plan(
     resume: bool = False,
     path: Path,
     content_mode: str = CONTENT_MODE_STORY,
+    director_strategy: str | None = None,
 ) -> dict[str, Any]:
     """Persist and safely reuse an Agent 1B plan for one video segment."""
     content_mode = normalize_content_mode(content_mode)
-    fingerprint = story_fingerprint(scenes, content_mode)
+    director_strategy = normalize_director_strategy(
+        director_strategy or global_plan.get("director_strategy")
+    )
+    fingerprint = story_fingerprint(scenes, content_mode, director_strategy)
     global_fingerprint = global_plan.get("source_fingerprint")
     if path.is_file():
         try:
@@ -1779,7 +1862,9 @@ def load_or_create_segment_story_plan(
             return existing
 
     print(f"Agent 1B：细化当前长文分段（{len(scenes)} 个片段）...", flush=True)
-    plan = create_segment_story_plan(scenes, global_plan, content_mode)
+    plan = create_segment_story_plan(
+        scenes, global_plan, content_mode, director_strategy
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = _backup_json(path)
     if backup:
@@ -1805,5 +1890,6 @@ def story_context_for_prompt(plan: dict[str, Any]) -> dict[str, Any]:
         "continuity_rules",
         "visual_safety",
         "world_bible",
+        "director_strategy",
     )
     return {key: plan.get(key) for key in keys if key in plan}

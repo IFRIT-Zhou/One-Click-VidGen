@@ -17,11 +17,13 @@ load_project_env()
 
 DEFAULT_GEMINI_MODEL = "google/gemini-3.1-flash-lite-preview"
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://llm.runninghub.ai/v1"
+# No third-party relay is selected for a fresh installation. Existing users
+# keep their explicitly saved GEMINI_API_BASE unchanged.
+DEFAULT_OPENAI_COMPATIBLE_BASE_URL = ""
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 
-# Most provider names below are model families exposed by the configured
-# third-party relay, so they share one base URL and one language-model key.
+# Legacy provider names below are model families exposed by an already
+# configured OpenAI-compatible relay, so they share one base URL and key.
 # Providers explicitly suffixed with ``_official`` keep independent official
 # credentials. ``runninghub`` remains as a hidden legacy alias only.
 LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
@@ -44,7 +46,7 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         ],
     },
     "runninghub": {
-        "label": "第三方兼容接口",
+        "label": "自定义兼容接口",
         "key_env": "GEMINI_API_KEY",
         "base_env": "GEMINI_API_BASE",
         "model_env": "GEMINI_MODEL",
@@ -290,8 +292,8 @@ LANGUAGE_PROVIDER_OPTIONS: dict[str, dict[str, Any]] = {
         "key_env": "CUSTOM_LLM_API_KEY",
         "base_env": "CUSTOM_LLM_API_BASE",
         "model_env": "CUSTOM_LLM_MODEL",
-        "default_base": "http://127.0.0.1:1234/v1",
-        "default_model": "local-model",
+        "default_base": "",
+        "default_model": "",
         "protocol": "openai",
         "models": [],
         "allow_custom_model": True,
@@ -316,12 +318,14 @@ def _provider() -> str:
     selected = os.getenv("LANGUAGE_PROVIDER", "").strip().lower()
     if selected in LANGUAGE_PROVIDER_OPTIONS:
         return "gemini" if selected == "runninghub" else selected
-    legacy = os.getenv("GEMINI_PROVIDER", "google").strip().lower() or "google"
+    legacy = os.getenv("GEMINI_PROVIDER", "").strip().lower()
+    if not legacy:
+        return "gemini_official"
     if legacy in {"google", "gemini"}:
         return "gemini"
     if legacy in {"openai", "openai_compatible", "runninghub"}:
         return "gemini"
-    return legacy
+    return legacy if legacy in LANGUAGE_PROVIDER_OPTIONS else "gemini_official"
 
 
 def language_provider_config(provider: str | None = None) -> dict[str, Any]:
@@ -380,6 +384,11 @@ def language_provider_configured(provider: str | None = None, values: Any | None
         return bool(
             str(source.get(config["base_env"], "")).strip()
             and str(source.get(config["model_env"], "")).strip()
+        )
+    if config.get("source") == "relay":
+        return bool(
+            str(source.get(config["key_env"], "")).strip()
+            and str(source.get(config["base_env"], "")).strip()
         )
     return bool(str(source.get(config["key_env"], "")).strip())
 
