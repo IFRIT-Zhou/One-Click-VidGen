@@ -1249,13 +1249,18 @@ class VisualEditor:
         macro_id: str,
         reference_macro_ids: list[str] | None = None,
         reference_upload_paths: list[str] | None = None,
+        image_resolution: str | None = None,
     ) -> None:
         reference_macro_ids = list(dict.fromkeys(str(value) for value in (reference_macro_ids or []) if str(value)))[:1]
         reference_upload_paths = list(dict.fromkeys(str(value) for value in (reference_upload_paths or []) if str(value)))[:3]
-        self._start_image_task(job, macro_id, "redraw", "正在调用 Image2 重绘图片")
+        resolution = str(image_resolution or "").strip().lower() or None
+        if resolution not in {None, "1k", "2k", "4k"}:
+            raise ValueError("重绘分辨率仅支持 1K、2K 或 4K")
+        resolution_note = f"，分辨率 {resolution.upper()}" if resolution else "，跟随全局分辨率"
+        self._start_image_task(job, macro_id, "redraw", f"正在调用 Image2 重绘图片{resolution_note}")
         reference_count = len(reference_macro_ids) + len(reference_upload_paths)
         reference_note = f"，使用 {reference_count} 张参考图" if reference_count else ""
-        self._log(job, f"开始重绘 {macro_id}{reference_note}，请等待 Image2 返回图片。")
+        self._log(job, f"开始重绘 {macro_id}{reference_note}{resolution_note}，请等待 Image2 返回图片。")
 
         def work() -> None:
             redraw_output: Path | None = None
@@ -1327,6 +1332,10 @@ class VisualEditor:
                     self._log(job, f"{macro_id} 使用云端图像号池重绘，费用由账户积分结算。")
                 else:
                     provider_configs = visual._provider_configs()
+                if resolution:
+                    # Copy instead of mutating the provider configuration or
+                    # environment: this choice applies only to this redraw.
+                    provider_configs = [{**config, "resolution": resolution} for config in provider_configs]
                 account_pool = visual.shared_runninghub_account_pool(
                     provider_configs,
                     namespace="visual_editor_redraw",
@@ -1347,8 +1356,9 @@ class VisualEditor:
                 if not rendered.is_file() or rendered.stat().st_size <= 0:
                     raise FileNotFoundError(f"Image2 返回完成，但没有找到下载后的重绘图片: {rendered}")
                 shutil.copy2(rendered, image)
-                self._set_image_task(job.id, macro_id, status="completed", action="redraw", message="图片已重绘，请检查效果")
-                self._log(job, f"{macro_id} 重绘完成。")
+                completion_note = f"（{resolution.upper()}）" if resolution else ""
+                self._set_image_task(job.id, macro_id, status="completed", action="redraw", message=f"图片已重绘{completion_note}，请检查效果")
+                self._log(job, f"{macro_id} 重绘完成{completion_note}。")
             except Exception as exc:
                 self._set_image_task(job.id, macro_id, status="failed", action="redraw", message=str(exc))
                 self._log(job, f"{macro_id} 重绘失败：{exc}")

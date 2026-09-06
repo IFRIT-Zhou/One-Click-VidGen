@@ -3829,7 +3829,7 @@ async function toggleVisualEditor() {
   }
 }
 
-async function redrawVisualImage(item) {
+async function redrawVisualImage(item, imageResolution = null) {
   if (!visualEditorProjectId.value) {
     visualEditor.value.task = { status: 'failed', message: '请先选择要编辑的项目。' }
     return
@@ -3844,9 +3844,10 @@ async function redrawVisualImage(item) {
     ? (visualSelfReferenceMacroId.value ? 1 : 0) + visualReferenceUploads.value.length
     : 0
   const referenceNote = referenceCount ? `，使用 ${referenceCount} 张参考图` : ''
+  const resolutionNote = imageResolution ? `，分辨率 ${String(imageResolution).toUpperCase()}` : '，跟随全局分辨率'
   // Mark the card before the request completes. This gives immediate feedback
   // and prevents repeat clicks while the browser is waiting for the API.
-  item.task = { status: 'running', action: 'redraw', message: `正在提交重绘${referenceNote}` }
+  item.task = { status: 'running', action: 'redraw', message: `正在提交重绘${referenceNote}${resolutionNote}` }
   try {
     activeJob.value = await api.job(visualEditorProjectId.value)
     await api.redrawVisualImage(
@@ -3855,9 +3856,10 @@ async function redrawVisualImage(item) {
       item.prompt,
       usesCurrentReference && visualSelfReferenceMacroId.value ? [visualSelfReferenceMacroId.value] : [],
       usesCurrentReference ? visualReferenceUploads.value.map((asset) => asset.id) : [],
+      imageResolution,
     )
-    item.task = { status: 'running', action: 'redraw', message: `重绘中${referenceNote}` }
-    visualEditor.value.task = { status: 'running', action: 'redraw', message: `${item.id} 已开始重绘${referenceNote}。` }
+    item.task = { status: 'running', action: 'redraw', message: `重绘中${referenceNote}${resolutionNote}` }
+    visualEditor.value.task = { status: 'running', action: 'redraw', message: `${item.id} 已开始重绘${referenceNote}${resolutionNote}。` }
     startVisualEditorTaskPolling()
   } catch (error) {
     item.task = { status: 'failed', action: 'redraw', message: error.message || '图片重绘失败' }

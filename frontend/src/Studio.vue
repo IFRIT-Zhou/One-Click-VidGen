@@ -71,10 +71,33 @@
           <article class="panel plugins-hero">
             <div>
               <div class="eyebrow">OCV EXTENSIONS</div>
-              <h2>扩展与插件</h2>
-              <p class="muted large">为 ComfyUI、本地模型和社区工作流预留的安全扩展入口。</p>
+              <h2>扩展、设置与外观</h2>
+              <p class="muted large">管理插件，并按自己的习惯调整 OCV 的界面颜色。</p>
             </div>
             <span class="status-chip warning">框架预览</span>
+          </article>
+
+          <article class="panel appearance-panel">
+            <div class="panel-head appearance-head">
+              <div>
+                <div class="eyebrow">APPEARANCE</div>
+                <h2>外观与色彩</h2>
+                <p class="muted">选择一个预设，或自由调整颜色。设置只保存在这台电脑的浏览器中。</p>
+              </div>
+              <button class="ghost-btn" type="button" @click="restoreAppearanceDefault">恢复石墨薄荷</button>
+            </div>
+            <div class="appearance-presets" role="list" aria-label="内置界面主题">
+              <button v-for="theme in appearancePresets" :key="theme.id" type="button" :class="{ active: activeThemeId===theme.id }" @click="chooseTheme(theme)">
+                <span class="appearance-swatches"><i v-for="color in [theme.colors.background,theme.colors.panel,theme.colors.accent]" :key="color" :style="{background:color}"></i></span>
+                <b>{{theme.name}}</b><small>{{theme.note}}</small>
+              </button>
+            </div>
+            <div class="appearance-custom">
+              <div><strong>自定义色盘</strong><small>输入任何你喜欢的颜色。若对比度不足，文字可能看不清；这由当前自定义配色决定。</small></div>
+              <label v-for="[key,label] in [['background','页面背景'],['panel','卡片与侧栏'],['text','主要文字'],['muted','辅助文字'],['accent','强调色与按钮'],['danger','错误与删除'],['warning','提醒与警告']]" :key="key">
+                <span>{{label}}</span><input v-model="palette[key]" type="color" :aria-label="label" @input="activeThemeId='custom'"/><input v-model="palette[key]" class="appearance-hex" maxlength="7" :aria-label="label+'十六进制颜色'" @input="activeThemeId='custom'"/>
+              </label>
+            </div>
           </article>
 
           <article class="panel plugin-manager-panel">
@@ -393,6 +416,16 @@
                 <article v-for="item in studioSelectedImage ? [studioSelectedImage] : []" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
                   <div class="visual-image-actions">
                     <strong>{{ item.id }}</strong>
+                    <label class="visual-redraw-resolution" title="仅用于重绘本图，不改变接口服务中的全局分辨率">
+                      <span>分辨率</span>
+                      <select :value="item.redraw_resolution ?? ''" :disabled="item.task?.status === 'running'" :aria-label="item.id+' 重绘分辨率'" @change="item.redraw_resolution = $event.target.value">
+                        <option value="">跟随全局</option>
+                        <option value="1k">1K</option>
+                        <option value="2k">2K</option>
+                        <option value="4k">4K</option>
+                      </select>
+                    </label>
+                    <button type="button" class="icon-action" :title="'按当前提示词重绘'+(item.redraw_resolution ? '（'+item.redraw_resolution.toUpperCase()+'）' : '（跟随全局分辨率）')" aria-label="按当前提示词重绘" :disabled="item.task?.status === 'running'" @click="redrawVisualImage(item, item.redraw_resolution || null)">▶</button>
                     <button
                       type="button"
                       class="icon-action self-reference-action"
@@ -405,7 +438,6 @@
                     <label class="icon-action replace-action reference-image-action" title="上传本地重绘参考图（最多 3 张）" aria-label="上传本地重绘参考图">
                       ▣<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualReferenceImages($event, item.id)" />
                     </label>
-                    <button type="button" class="icon-action" title="按当前提示词重绘" aria-label="按当前提示词重绘" :disabled="item.task?.status === 'running'" @click="redrawVisualImage(item)">▶</button>
                     <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
                     <button type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
                     <label class="icon-action replace-action" title="替换本地 JPG 图片" aria-label="替换本地 JPG 图片">
@@ -1796,7 +1828,8 @@
 import { useWorkspace } from './useWorkspace'
 import { useStudio } from './useStudio'
 import { useStyleLibrary } from './useStyleLibrary'
+import { useAppearance } from './useAppearance'
 import TaskConsole from './components/TaskConsole.vue'
 import ParameterReview from './components/ParameterReview.vue'
-export default { components: { TaskConsole, ParameterReview }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace) } } }
+export default { components: { TaskConsole, ParameterReview }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance() } } }
 </script>

@@ -238,6 +238,9 @@ class AgentPromptPresetRequest(BaseModel):
 
 class VisualRedrawRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
+    # This override belongs only to the redraw request. It is deliberately
+    # separate from the saved image API settings and job-wide configuration.
+    image_resolution: Literal["1k", "2k", "4k"] | None = None
     # One existing project frame can be locked as reference image 1.  Local
     # uploads follow it as images 2-4.
     reference_macro_ids: list[str] = Field(default_factory=list, max_length=1)
@@ -2803,6 +2806,7 @@ def redraw_visual_editor_image(
         macro_id=macro_id,
         reference_macro_ids=payload.reference_macro_ids,
         reference_upload_paths=reference_upload_paths,
+        image_resolution=payload.image_resolution,
     )
     return {"ok": True, "message": "image redraw started"}
 

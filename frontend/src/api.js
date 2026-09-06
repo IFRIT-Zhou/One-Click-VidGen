@@ -182,8 +182,8 @@ export const api = {
   visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
   visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
   visualEditorProjects: () => requestJSON('/api/visual-editor/projects'),
-  redrawVisualImage: (id, imageId, prompt, referenceMacroIds = [], referenceUploadIds = []) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, reference_macro_ids: referenceMacroIds, reference_upload_ids: referenceUploadIds }),
+  redrawVisualImage: (id, imageId, prompt, referenceMacroIds = [], referenceUploadIds = [], imageResolution = null) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, reference_macro_ids: referenceMacroIds, reference_upload_ids: referenceUploadIds, image_resolution: imageResolution }),
   }),
   uploadVisualImage: (id, imageId, file) => {
     const data = new FormData()
