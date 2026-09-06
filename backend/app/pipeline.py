@@ -4425,7 +4425,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
                     "--tts-pitch",
                     str(request.get("tts_pitch", 0)),
                     "--tts-parallelism",
-                    str(request.get("tts_parallelism", 2)),
+                    str(request.get("tts_parallelism", 1)),
                     "--tts-english-normalization",
                     "true" if request.get("tts_english_normalization", False) else "false",
                 ]

@@ -2094,6 +2094,22 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   opacity: .55;
   cursor: not-allowed;
 }
+
+.local-tts-hardware-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(251, 191, 36, .38);
+  border-radius: 10px;
+  background: rgba(120, 83, 17, .16);
+  color: #f2ddb0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.local-tts-hardware-note strong { flex: 0 0 auto; color: #ffd987; }
+.module1-hardware-note { margin: 14px 22px 0; }
 .launch-generation-btn {
   min-width: 156px;
   border-color: rgba(186, 230, 253, .86);
@@ -3037,3 +3053,4 @@ input:focus, select:focus, textarea:focus { border-color: rgba(124, 219, 255, 0.
   .guided-tts-grid,
   .guided-subtitle-list { grid-template-columns: 1fr; }
 }
+.tts-emotion-strength:has(input:disabled){opacity:.55;color:#929a98}.tts-emotion-strength input:disabled{cursor:not-allowed;accent-color:#737b78;filter:grayscale(1)}.tts-emotion-strength:has(input:disabled)::after{content:'参考原音频时，情绪强度不生效';display:block;font-size:12px;margin-top:4px}

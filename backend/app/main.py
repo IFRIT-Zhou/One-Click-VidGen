@@ -165,7 +165,7 @@ class GenerateRequest(BaseModel):
     tts_speed: float = Field(default=1, ge=0.5, le=2)
     tts_volume: float = Field(default=1, ge=0.1, le=10)
     tts_pitch: int = Field(default=0, ge=-12, le=12)
-    tts_parallelism: int = Field(default=2, ge=1, le=3)
+    tts_parallelism: int = Field(default=1, ge=1, le=3)
     # ``indextts2`` remains accepted only to migrate historical presets and
     # archived requests. New local work always runs IndexTTS-2.5.
     tts_engine: Literal["indextts2", "indextts25", "cluster", "qwen"] = "indextts25"
@@ -963,7 +963,7 @@ def settings() -> dict[str, Any]:
                 "speed": 1,
                 "volume": 1,
                 "pitch": 0,
-                "parallelism": 2,
+                "parallelism": 1,
                 "emotion": None,
                 "emotion_weight": indextts25.emotion_weight,
                 "english_normalization": False,
@@ -1469,7 +1469,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                 first = [part.strip() for part in gpu.stdout.splitlines()[0].split(",")]
                 free_mb = int(float(first[1]))
                 status = "warning" if int(data.get("tts_parallelism") or 1) > 1 and free_mb < 9000 else "passed"
-                add("gpu", "GPU 显存", status, f"{first[0]}，当前可用 {free_mb / 1024:.1f} GB；并行数 {data.get('tts_parallelism', 2)}")
+                add("gpu", "GPU 显存", status, f"{first[0]}，当前可用 {free_mb / 1024:.1f} GB；并行数 {data.get('tts_parallelism', 1)}")
             else:
                 add("gpu", "GPU 显存", "warning", f"无法读取 NVIDIA 显存；{engine_label} 仍可尝试启动")
         except (OSError, subprocess.SubprocessError, ValueError):

@@ -1,0 +1,4974 @@
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { api } from './api'
+
+// Shared task state: each mounted workspace owns one polling lifecycle.
+export function useWorkspace() {
+
+
+
+
+const VISUAL_PROMPT_FULL_STORAGE_KEY = 'visual_prompt_system_story_v3'
+const LOCKED_GENERAL_AGENT2_PROTOCOL = `你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。
+
+`
+const LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL = `你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格使用系统给出的固定 slide 分组；每组生成一张 2:1 横版视频画面，覆盖全部 slide_id，不遗漏、重复或合并分组。`
+const EDITABLE_GENERAL_AGENT2_PREFIX = '【分镜规则】'
+const AGENT2_DIRECTOR_THEME_STORAGE_KEY = 'agent2_director_theme_v1'
+const AGENT2_DIRECTOR_THEME_DEFAULTS = {
+  urban_suspense: '惊悚漫画',
+  science_explainer: '科普科技口播视频',
+  pure_science: '跨学科严肃科普与知识可视化视频',
+  general: '通用视频',
+}
+const VISUAL_PROMPT_STYLE_STORAGE_KEY = 'visual_prompt_style_story_v3'
+const GLOBAL_CHARACTER_STORAGE_KEY = 'global_character_prompt_v1'
+const STORY_ENVIRONMENT_STORAGE_KEY = 'story_environment_prompt_v1'
+const AGENT0_PROMPT_STORAGE_KEY = 'agent0_prompt_system_v1'
+const AGENT1_PROMPT_STORAGE_KEY = 'agent1_prompt_system_v1'
+const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
+const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
+const DIRECTOR_STRATEGY_STORAGE_KEY = 'director_strategy_v1'
+const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
+const VISUAL_PACING_DEFAULTS = {
+  urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
+  science_explainer: { min: 7, target: 9, max: 14, slides: 6 },
+  pure_science: { min: 7, target: 10, max: 16, slides: 8 },
+  general: { min: 6, target: 8, max: 12, slides: 6 },
+}
+const FALLBACK_CONTENT_MODES = {
+  urban_suspense: {
+    label: '都市惊悚',
+    description: '人物、线索与悬念连续的阴森漫画故事',
+  },
+  science_explainer: {
+    label: '口播科普',
+    description: '红围巾短发少女的清晰科教漫画',
+  },
+  pure_science: {
+    label: '纯科普',
+    description: '无固定人物的跨学科严肃知识可视化',
+    default_style: '跨学科严肃科普与现代教材级知识可视化，准确、克制、清晰；允许必要术语、公式、坐标、地图、时间轴、结构标签和流程示意。',
+    default_character: '',
+    default_system: '',
+  },
+  general: {
+    label: '通用自定义',
+    description: '自由定义画风与人物的通用视频模式',
+    default_style: '通用横版叙事画面：请填写希望的画风、色彩、质感与镜头气质。',
+    default_character: '',
+    default_system: '',
+  },
+}
+
+function randomProjectName() {
+  const now = new Date()
+  const pad = (value) => String(value).padStart(2, '0')
+  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const code = Math.random().toString(36).slice(2, 6).toUpperCase()
+  return `项目_${date}_${time}_${code}`
+}
+
+const sidebarOpen = ref(false)
+const activePage = ref('workspace')
+const plugins = ref([])
+const pluginsLoading = ref(false)
+const pluginToggling = ref('')
+const pluginNotice = ref('')
+const pluginMessage = ref('')
+const scriptUploadName = ref('')
+const scriptUploadError = ref('')
+const workspaceScriptTextarea = ref(null)
+const module1ScriptTextarea = ref(null)
+const structuralBlankSeconds = ref(3.0)
+const sourceAudioName = ref('')
+const sourceAudioError = ref('')
+const sourceAudioUploading = ref(false)
+const ttsVoiceUploadName = ref('')
+const ttsVoiceUploadError = ref('')
+const ttsVoiceUploading = ref(false)
+const ttsVoicePreviewUrl = ref('')
+const ttsVoicePreviewPlaying = ref(false)
+let ttsVoicePreviewAudio = null
+const stepAudioPlayer = ref(null)
+const stepAudioPlaying = ref(false)
+const stepAudioCurrentTime = ref(0)
+const stepAudioDuration = ref(0)
+const savingStepAudio = ref(false)
+const stepAudioSaveMessage = ref('')
+const retryingTts = ref(false)
+const guidedAdvancing = ref(false)
+const guidedCreatingNew = ref(false)
+const guidedCancelling = ref(false)
+const guidedStageMessage = ref('')
+const guidedStageError = ref(false)
+const guidedSubtitles = ref([])
+const guidedSubtitleDrafts = reactive({})
+const guidedSubtitleLoading = ref(false)
+const guidedSubtitleSaving = ref(false)
+const folderOpenMessage = ref('')
+const visualEditorOpen = ref(false)
+const visualEditorLoading = ref(false)
+const visualEditor = ref({ items: [], task: { status: 'idle', message: '' }, version: 0 })
+const visualEditorProjects = ref([])
+const visualEditorProjectId = ref('')
+const visualEditorPage = ref(1)
+const visualTimingSelectedId = ref('')
+const selectedVisualTimingHistory = ref('')
+const visualTimingAdjusting = ref(false)
+const selectedVisualSubtitleHistory = ref('')
+const visualSubtitleEditingId = ref('')
+const visualSubtitleDrafts = reactive({})
+const visualSubtitleOriginals = reactive({})
+const visualSubtitleSaving = ref(false)
+let visualSubtitleProjectKey = ''
+const visualSubtitleRemoveDialog = ref({ open: false, sentence: null })
+const visualBoundaryAlign = ref({ open: false, status: 'idle', message: '', boundary: 0 })
+const visualBoundaryApplying = ref(false)
+let visualBoundaryAudio = null
+let visualBoundaryAudioEnd = 0
+const ttsEditor = ref({ available: false, message: '', segments: [], task: { status: 'idle', message: '' } })
+const ttsEditorLoading = ref(false)
+const selectedTtsSegmentIndices = ref([])
+const ttsReadingDrafts = reactive({})
+const ttsPronunciationOpenIndices = ref([])
+const ttsBoundary = reactive({
+  open: false, startIndex: 0, replaceCount: 1, sourceText: '', sourceReading: '', caret: 0,
+  merge: false, pause: 0.6, leftText: '', rightText: '',
+  leftReading: '', rightReading: '', counts: [], limit: null, checking: false,
+})
+const ttsBoundaryBusy = ref(false)
+const ttsPauseDrafts = reactive({})
+let ttsBoundaryPreviewAudio = null
+let ttsBoundaryPreviewTimer = null
+const ttsRefineForm = reactive({
+  tts_voice_id: '',
+  tts_speed: 1,
+  tts_volume: 1,
+  tts_pitch: 0,
+  tts_parallelism: 1,
+  tts_emotion: '',
+  tts_emotion_weight: 0.65,
+  cluster_voice_key: '',
+  qwen_voice: 'Elias',
+  qwen_instructions: '',
+})
+const ttsRefineVoiceName = ref('')
+const ttsRefineVoiceUploading = ref(false)
+const ttsRefineVoiceError = ref('')
+const ttsRefineEngineLabel = computed(() => ({
+  indextts25: '本地 GPU · IndexTTS-2.5',
+  cluster: '集群 GPU',
+  qwen: 'Qwen-TTS',
+}[ttsEditor.value.engine] || '配音引擎'))
+const ttsRefinementActive = computed(() => visualEditorOpen.value && Boolean(ttsEditor.value.available))
+const ttsSegmentPlayingIndex = ref(0)
+const ttsSegmentIsPlaying = ref(false)
+const ttsSegmentCurrentTime = ref(0)
+const ttsSegmentDuration = ref(0)
+let ttsSegmentAudio = null
+const visualSelfReferenceMacroId = ref('')
+const visualReferenceUploads = ref([])
+const visualReferenceUploading = ref(false)
+const visualReferenceOwnerMacroId = ref('')
+const VISUAL_EDITOR_PAGE_SIZE = 24
+const visualPreviewItem = ref(null)
+const visualRenderMode = ref('both')
+const visualBgmUploading = ref(false)
+const visualBgmError = ref('')
+const visualBgm = reactive({
+  enabled: false,
+  tracks: [],
+  fade_enabled: false,
+  fade_duration: 1,
+})
+const submitting = ref(false)
+const preflightRunning = ref(false)
+const preflightOpen = ref(false)
+const preflightResult = ref(null)
+const submittingModule1 = ref(false)
+const submittingSubtitle = ref(false)
+const cancellingGeneration = ref(false)
+const resumingGeneration = ref(false)
+const health = ref({ ok: false, tts_online: false, tts25_online: false })
+const settings = ref({ scripts: [], tts: { voices: [], emotions: [], defaults: {} } })
+const session = ref({ user: null, auth_mode: 'account', mysql: {} })
+const authError = ref('')
+const activeJob = ref(null)
+const followLiveJob = ref(true)
+const module1Job = ref(null)
+const subtitleJob = ref(null)
+const jobs = ref([])
+const jobPage = ref(1)
+const jobTotal = ref(0)
+const jobTotalPages = ref(1)
+const JOB_PAGE_SIZE = 5
+const editorAssets = ref([])
+const editorJobs = ref([])
+const editorJob = ref(null)
+const uploading = ref(false)
+const editing = ref(false)
+const startingTts = ref(false)
+const ttsStartMessage = ref('')
+const showFullLogs = ref(false)
+const diagnosticExporting = ref(false)
+const diagnosticMessage = ref('')
+const generationSubmitMessage = ref('')
+const apiKeyStatus = ref({ language: {}, image: {}, common: {}, qwen_tts: {} })
+const apiKeyMessage = ref('')
+const apiKeyEditing = reactive({ language: false, image: false, qwen_tts: false })
+const apiKeyRuntimeErrors = reactive({ language: '', image: '', qwen_tts: '' })
+const savingApiKeys = ref(false)
+const deletingApiKey = ref(false)
+const savingQwenTtsKey = ref(false)
+const qwenTtsKeyMessage = ref('')
+const ttsEngine = ref('indextts25')
+const cloudSession = ref({ configured: false, authenticated: false, user: null, base_url: '' })
+const cloudAccount = ref({ credits: {}, quota: {} })
+const cloudVoices = ref([])
+const cloudVoiceLimits = ref({})
+const cloudQuote = ref({})
+const cloudBusy = ref(false)
+const cloudQuoteLoading = ref(false)
+const cloudVoiceUploading = ref(false)
+const cloudVoiceDisplayName = ref('')
+const cloudVoiceApiAvailable = ref(true)
+const cloudVoicePreviewLoading = ref(false)
+const cloudVoicePreviewPlayingId = ref('')
+const cloudError = ref('')
+const cloudMessage = ref('')
+const cloudRechargeOpen = ref(false)
+const cloudRechargeProducts = ref([])
+const cloudRechargeSelectedId = ref('')
+const cloudRechargeOrder = ref(null)
+const cloudRechargePaymentUrl = ref('')
+const cloudRechargeLoadingProducts = ref(false)
+const cloudRechargeBusy = ref(false)
+const cloudRechargeChecking = ref(false)
+const cloudRechargeError = ref('')
+const cloudRechargeMessage = ref('')
+const cloudRechargeSuccess = ref(null)
+const cloudLoginForm = reactive({ email: '', password: '' })
+const cloudLoginOpen = ref(false)
+let cloudVoicePreviewAudio = null
+let cloudRechargePollTimer = null
+let cloudRechargePollDeadline = 0
+let cloudRechargeCheckoutWindow = null
+let cloudRechargePreviousBodyOverflow = ''
+const CLOUD_RECHARGE_STORAGE_KEY = 'one_click_vidgen_pending_recharge_v1'
+// Qwen 官方非实时 TTS 系统音色。原生 select 在选项较多时会自动提供滚动，
+// 分组同时明确哪些声音可搭配 qwen3-tts-instruct-flash 的“配音描述”。
+const qwenVoiceGroups = [
+  {
+    label: '推荐叙述 · 支持配音描述',
+    voices: [
+      { value: 'Elias', label: '墨讲师 · 女性讲述感（默认）', supportsInstructions: true },
+      { value: 'Eldric Sage', label: '沧明子 · 沉稳睿智老者', supportsInstructions: true },
+      { value: 'Vincent', label: '田叔 · 沙哑烟嗓男声', supportsInstructions: true },
+      { value: 'Neil', label: '阿闻 · 新闻主持男声', supportsInstructions: true },
+      { value: 'Arthur', label: '徐大爷 · 沧桑老者', supportsInstructions: true },
+      { value: 'Seren', label: '小婉 · 舒缓女声', supportsInstructions: true },
+      { value: 'Maia', label: '四月 · 知性温柔女声', supportsInstructions: true },
+      { value: 'Serena', label: '苏瑶 · 温柔自然女声', supportsInstructions: true },
+    ],
+  },
+  {
+    label: '其他普通话 · 支持配音描述',
+    voices: [
+      { value: 'Cherry', label: '芊悦 · 阳光亲切女声', supportsInstructions: true },
+      { value: 'Ethan', label: '晨煦 · 温暖活力男声', supportsInstructions: true },
+      { value: 'Chelsie', label: '千雪 · 二次元女友', supportsInstructions: true },
+      { value: 'Momo', label: '茉兔 · 撒娇搞怪女声', supportsInstructions: true },
+      { value: 'Vivian', label: '十三 · 可爱小暴躁女声', supportsInstructions: true },
+      { value: 'Moon', label: '月白 · 率性帅气男声', supportsInstructions: true },
+      { value: 'Kai', label: '凯 · 温柔耳语男声', supportsInstructions: true },
+      { value: 'Nofish', label: '不吃鱼 · 设计师男声', supportsInstructions: true },
+      { value: 'Bella', label: '萌宝 · 萝莉女声', supportsInstructions: true },
+      { value: 'Mia', label: '乖小妹 · 温顺女声', supportsInstructions: true },
+      { value: 'Mochi', label: '沙小弥 · 小大人男声', supportsInstructions: true },
+      { value: 'Bellona', label: '燕铮莺 · 洪亮鲜活女声', supportsInstructions: true },
+      { value: 'Bunny', label: '萌小姬 · 小萝莉女声', supportsInstructions: true },
+      { value: 'Nini', label: '邻家妹妹 · 亲切女声', supportsInstructions: true },
+      { value: 'Pip', label: '顽屁小孩 · 男童声', supportsInstructions: true },
+      { value: 'Stella', label: '少女阿月 · 少女声', supportsInstructions: true },
+    ],
+  },
+  {
+    label: '国际音色 · 仅基础合成（不填配音描述）',
+    voices: [
+      { value: 'Jennifer', label: '詹妮弗 · 电影感美语女声', supportsInstructions: false },
+      { value: 'Ryan', label: '甜茶 · 戏感美语男声', supportsInstructions: false },
+      { value: 'Katerina', label: '卡捷琳娜 · 成熟御姐', supportsInstructions: false },
+      { value: 'Aiden', label: '艾登 · 美语大男孩', supportsInstructions: false },
+      { value: 'Bodega', label: '博德加 · 西班牙语男声', supportsInstructions: false },
+      { value: 'Sonrisa', label: '索尼莎 · 拉美女声', supportsInstructions: false },
+      { value: 'Alek', label: '阿列克 · 俄语男声', supportsInstructions: false },
+      { value: 'Dolce', label: '多尔切 · 意大利语男声', supportsInstructions: false },
+      { value: 'Sohee', label: '素熙 · 韩语女声', supportsInstructions: false },
+      { value: 'Ono Anna', label: '小野杏 · 日语女声', supportsInstructions: false },
+      { value: 'Lenn', label: '莱恩 · 德语男声', supportsInstructions: false },
+      { value: 'Emilien', label: '埃米尔安 · 法语男声', supportsInstructions: false },
+      { value: 'Andre', label: '安德雷 · 磁性沉稳男声', supportsInstructions: false },
+      { value: 'Radio Gol', label: '拉迪奥·戈尔 · 男声', supportsInstructions: false },
+    ],
+  },
+  {
+    label: '方言音色 · 仅基础合成（不填配音描述）',
+    voices: [
+      { value: 'Jada', label: '上海-阿珍 · 上海女声', supportsInstructions: false },
+      { value: 'Dylan', label: '北京-晓东 · 北京男声', supportsInstructions: false },
+      { value: 'Li', label: '南京-老李 · 南京男声', supportsInstructions: false },
+      { value: 'Marcus', label: '陕西-秦川 · 陕西男声', supportsInstructions: false },
+      { value: 'Roy', label: '闽南-阿杰 · 闽南男声', supportsInstructions: false },
+      { value: 'Peter', label: '天津-李彼得 · 天津男声', supportsInstructions: false },
+      { value: 'Sunny', label: '四川-晴儿 · 四川女声', supportsInstructions: false },
+      { value: 'Eric', label: '四川-程川 · 四川男声', supportsInstructions: false },
+      { value: 'Rocky', label: '粤语-阿强 · 粤语男声', supportsInstructions: false },
+      { value: 'Kiki', label: '粤语-阿清 · 粤语女声', supportsInstructions: false },
+    ],
+  },
+]
+let apiKeyStatusLoaded = false
+let timer = null
+let visualEditorTaskTimer = null
+let ttsEditorTaskTimer = null
+let completionAudioContext = null
+let completionFlashTimer = null
+let completionFlashState = false
+let completionFaviconLink = null
+let completionFaviconCreated = false
+let originalFaviconHref = ''
+let originalDocumentTitle = ''
+let lastCompletionAlertAt = 0
+const MAX_SCRIPT_FILE_SIZE = 2 * 1024 * 1024
+const MAX_SCRIPT_CHARACTERS = 12_000
+
+function insertStructuralBlank(textareaRef) {
+  const seconds = Number(structuralBlankSeconds.value)
+  if (!Number.isFinite(seconds) || seconds < 0.2 || seconds > 30) {
+    window.alert('留白时长请填写 0.2–30 秒。')
+    return
+  }
+  structuralBlankSeconds.value = Math.round(seconds * 10) / 10
+  const marker = `【OCV留白：${structuralBlankSeconds.value.toFixed(1)}秒】`
+  const element = textareaRef || null
+  const start = Number.isInteger(element?.selectionStart) ? element.selectionStart : form.script.length
+  const end = Number.isInteger(element?.selectionEnd) ? element.selectionEnd : start
+  form.script = `${form.script.slice(0, start)}${marker}${form.script.slice(end)}`
+  window.requestAnimationFrame(() => {
+    element?.focus()
+    element?.setSelectionRange(start + marker.length, start + marker.length)
+  })
+}
+
+const loginForm = reactive({
+  email: '',
+  password: '',
+})
+const registerForm = reactive({
+  name: '',
+  email: '',
+  password: '',
+})
+const subtitleForm = reactive({
+  project_name: '字幕识别任务',
+  source_audio_id: '',
+  use_correction: true,
+  reference_text: '',
+})
+const subtitleAudioName = ref('')
+const subtitleAudioError = ref('')
+const subtitleAudioUploading = ref(false)
+const subtitleReferenceName = ref('')
+const subtitleReferenceError = ref('')
+const subtitleAddEnabled = ref(false)
+const subtitleFonts = ref([])
+const subtitleFontsLoading = ref(false)
+const subtitleRenderMessage = ref('')
+const subtitleBgmUploading = ref(false)
+const subtitleBgmError = ref('')
+const subtitleRenderForm = reactive({
+  style: 'navy_bg_white',
+  font_name: 'Microsoft YaHei',
+  bgm_enabled: false,
+  bgm_tracks: [],
+  bgm_fade_enabled: false,
+  bgm_fade_duration: 1,
+})
+const subtitleStyleOptions = [
+  { key: 'black_white_outline', label: '黑字白描边' },
+  { key: 'white_black_outline', label: '白字黑描边' },
+  { key: 'yellow_bg_black', label: '黄底黑字' },
+  { key: 'white_bg_black', label: '白底黑字' },
+  { key: 'navy_bg_white', label: '默认成片样式' },
+]
+const referenceImageNames = ref([])
+const protagonistReferenceImageError = ref('')
+const protagonistReferenceUploading = ref(false)
+const apiKeyForm = reactive({
+  language_source: 'official',
+  language_provider: 'gemini_official',
+  language_model: 'gemini-3.7-flash',
+  language_api_base_url: '',
+  language_api_key: '',
+  image_api_base_url: '',
+  image_model: 'rhart-image-g-2',
+  image_resolution_preset: '1k',
+  image_resolution_custom: '',
+  image_api_key: '',
+  image_api_keys: [],
+  image_concurrency_mode: 'auto',
+  image_per_key_concurrency: 1,
+  image_total_concurrency: 3,
+  qwen_tts_api_key: '',
+})
+const savingImageConcurrency = ref(false)
+const imageConcurrencyPreview = computed(() => {
+  const keyCount = Number(apiKeyStatus.value.image?.count || 0)
+  const perKey = Math.max(1, Number(apiKeyForm.image_per_key_concurrency || 1))
+  const capacity = keyCount * perKey
+  const effective = apiKeyForm.image_concurrency_mode === 'manual'
+    ? Math.min(capacity, Math.max(1, Number(apiKeyForm.image_total_concurrency || 1)))
+    : capacity
+  if (!keyCount) return '保存 Key 后自动计算'
+  return `${keyCount} 个 Key × 每 Key ${perKey} 路，当前预计 ${effective} 路并发`
+})
+const languageProviderOptions = computed(() => apiKeyStatus.value.language?.providers || [
+  { value: 'gemini_official', family: 'gemini', family_label: 'Google Gemini', source: 'official', label: 'Google Gemini 官方 API', configured: false },
+  { value: 'deepseek_official', family: 'deepseek', family_label: 'DeepSeek', source: 'official', label: 'DeepSeek 官方 API', configured: false },
+  { value: 'custom', family: 'custom', family_label: '自定义', source: 'custom', label: '自定义兼容接口（高级）', configured: false },
+])
+const visibleLanguageProviderOptions = computed(() => (
+  languageProviderOptions.value.filter((item) => item.source === apiKeyForm.language_source)
+))
+const currentLanguageProvider = computed(() => (
+  languageProviderOptions.value.find((item) => item.value === apiKeyForm.language_provider)
+  || languageProviderOptions.value[0]
+  || { value: 'gemini_official', label: 'Google Gemini 官方 API', configured: false }
+))
+const currentLanguageProviderLabel = computed(() => currentLanguageProvider.value.label || '语言模型')
+const customLanguageProvider = computed(() => apiKeyForm.language_provider === 'custom')
+const currentLanguageModels = computed(() => {
+  const models = [...(currentLanguageProvider.value?.models || [])]
+  const selected = String(currentLanguageProvider.value?.selected_model || '').trim()
+  if (selected && !models.some((item) => item.value === selected)) {
+    models.unshift({ value: selected, label: `${selected}（当前配置）` })
+  }
+  return models
+})
+const currentLanguageModelLabel = computed(() => (
+  currentLanguageModels.value.find((item) => item.value === apiKeyForm.language_model)?.label
+  || apiKeyForm.language_model
+  || '未选择模型'
+))
+const parameterPresets = ref([])
+const selectedParameterPreset = ref('')
+const loadingParameterPresets = ref(false)
+const savingParameterPreset = ref(false)
+const deletingParameterPreset = ref(false)
+const parameterPresetMessage = ref('')
+const agentPromptPresets = ref([])
+const selectedAgentPromptPreset = ref('')
+const loadingAgentPromptPresets = ref(false)
+const savingAgentPromptPreset = ref(false)
+const bgmUploading = ref(false)
+const bgmError = ref('')
+const bgmPreviewTrack = ref(null)
+let bgmPreviewAudio = null
+const form = reactive({
+  project_name: randomProjectName(),
+  script: '',
+  content_mode: 'urban_suspense',
+  director_strategy: 'stable',
+  tts_voice_id: 'voice_05.wav',
+  tts_speed: 1,
+  tts_volume: 1,
+  tts_pitch: 0,
+  tts_parallelism: 1,
+  tts_emotion: '',
+  tts_emotion_weight: 0.65,
+  tts_english_normalization: false,
+  tts_pronunciation: '',
+  cluster_voice_type: 'preset',
+  // Empty is an intentional UI state: submission resolves it to the first
+  // displayed preset instead of forcing the user to make a selection.
+  cluster_voice_id: '',
+  qwen_tts_instructions: '',
+  qwen_tts_voice: 'Elias',
+  visual_backend: 'poster',
+  use_cloud_image_pool: false,
+  video_render_variant: 'both',
+  bgm_enabled: false,
+  bgm_tracks: [],
+  bgm_fade_enabled: false,
+  bgm_fade_duration: 1,
+  step_mode: false,
+  visual_prompt_mode: 'simple',
+  visual_pacing_preset: 'auto',
+  visual_min_duration: 6,
+  visual_target_duration: 8,
+  visual_max_duration: 12,
+  visual_max_slides: 6,
+  visual_style_prompt: '',
+  global_character_prompt: '',
+  protagonist_reference_image_id: '',
+  reference_image_ids: [],
+  story_environment_prompt: '',
+  visual_prompt_system: '',
+  agent0_prompt_system: '',
+  agent1_prompt_system: '',
+  agent2_director_theme: '',
+  auto_split_long_text: true,
+  split_text_threshold: 3000,
+  skip_tts: false,
+  source_audio_id: '',
+  skip_text_correction: false,
+})
+
+const contentModeOptions = computed(() => {
+  const modes = settings.value.visual_prompt?.modes || FALLBACK_CONTENT_MODES
+  return Object.entries(modes).map(([key, value]) => ({ key, ...value }))
+})
+const visualMediumWarning = computed(() => {
+  if (form.visual_prompt_mode === 'full') return ''
+  const style = String(form.visual_style_prompt || '').trim()
+  if (!style) return ''
+  const mediumMarkers = [
+    '插画', '漫画', '绘本', '手绘', '条漫', '平涂', '厚涂', '水彩', '国画', '水墨', '油画', '素描', '版画',
+    '二维', '2D', '动画', '三维', '3D', 'CG', '渲染',
+    '摄影', '真人', '实拍', '照片级', '纪实', '剧照',
+  ]
+  if (mediumMarkers.some((marker) => style.toLowerCase().includes(marker.toLowerCase()))) return ''
+  return '当前画风只描述了氛围，没有指定插画、漫画、真人摄影等视觉媒介，长视频可能出现风格漂移。建议补充一种明确媒介。'
+})
+const defaultAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind === 'default'))
+const userAgentPromptPresets = computed(() => agentPromptPresets.value.filter((preset) => preset.kind !== 'default'))
+const activeAgent2LockedProtocol = computed(() => {
+  if (form.content_mode === 'urban_suspense') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.urban_suspense).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.urban_suspense
+    return `你是鬼故事与都市小说视频的${theme}分镜导演。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统为本次任务提供的固定 slide 分组，每组生成一张 2:1 横版电影感漫画分镜。`
+  }
+  if (form.content_mode === 'science_explainer') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.science_explainer).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.science_explainer
+    return `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版解说漫画。`
+  }
+  if (form.content_mode === 'pure_science') {
+    const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.pure_science).trim()
+      || AGENT2_DIRECTOR_THEME_DEFAULTS.pure_science
+    return `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。
+
+【输出格式】
+- 只输出严格 JSON 数组，不要 Markdown，不要解释。
+- 每项必须包含 includes_slides（slide_id 数组）和 image_prompt（中文生图提示词）。
+
+【分镜规则】
+- 严格按照系统提供的固定 slide 分组，每组生成一张 2:1 横版科学画面，不遗漏、重复、合并或人为限制海报数量。`
+  }
+  const theme = String(form.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS.general).trim()
+    || AGENT2_DIRECTOR_THEME_DEFAULTS.general
+  return LOCKED_GENERAL_AGENT2_PROTOCOL.replace(
+    '你是通用视频的分镜视觉导演，也是本流水线的 Agent 2。',
+    `你是${theme}的分镜视觉导演，也是本流水线的 Agent 2。`,
+  )
+})
+const editableVisualPromptSystem = computed({
+  get() {
+    const prompt = String(form.visual_prompt_system || '')
+    const locked = activeAgent2LockedProtocol.value
+    let editable = prompt.startsWith(locked)
+      ? prompt.slice(locked.length).replace(/^\s+/, '')
+      : prompt
+    if (form.content_mode === 'general' && prompt.startsWith(LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL)) {
+      editable = prompt.slice(LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL.length).replace(/^\s+/, '')
+    }
+    if (form.content_mode !== 'general') return editable
+    return editable.startsWith(EDITABLE_GENERAL_AGENT2_PREFIX)
+      ? editable
+      : `${EDITABLE_GENERAL_AGENT2_PREFIX}\n${editable}`.trimEnd()
+  },
+  set(value) {
+    let editable = String(value || '').trim()
+    if (form.content_mode === 'general' && !editable.startsWith(EDITABLE_GENERAL_AGENT2_PREFIX)) {
+      editable = `${EDITABLE_GENERAL_AGENT2_PREFIX}${editable ? `\n${editable}` : ''}`
+    }
+    form.visual_prompt_system = `${activeAgent2LockedProtocol.value}${editable ? `\n\n${editable}` : ''}`
+  },
+})
+const agent2DirectorThemeModel = computed({
+  get: () => String(form.agent2_director_theme || ''),
+  set(value) {
+    const editable = editableVisualPromptSystem.value
+    form.agent2_director_theme = String(value || '').trim()
+    editableVisualPromptSystem.value = editable
+    rememberVisualPrompt()
+  },
+})
+const agent2DirectorThemePlaceholder = computed(() => `例如：${AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode] || '电影叙事视频'}`)
+
+const visualEditorPageCount = computed(() => Math.max(1, Math.ceil(visualEditor.value.items.length / VISUAL_EDITOR_PAGE_SIZE)))
+const visibleVisualEditorItems = computed(() => {
+  const start = (visualEditorPage.value - 1) * VISUAL_EDITOR_PAGE_SIZE
+  return visualEditor.value.items.slice(start, start + VISUAL_EDITOR_PAGE_SIZE)
+})
+const selectedVisualTimingItem = computed(() => (
+  visualEditor.value.items.find((item) => item.id === visualTimingSelectedId.value)
+  || visualEditor.value.items.find((item) => item.timing)
+  || null
+))
+const visualSubtitleDirtyIds = computed(() => Object.keys(visualSubtitleDrafts).filter((slideId) => (
+  String(visualSubtitleDrafts[slideId] ?? '').trim() !== String(visualSubtitleOriginals[slideId] ?? '').trim()
+)))
+const visualSubtitleDirtyCount = computed(() => visualSubtitleDirtyIds.value.length)
+const visualReferenceSummary = computed(() => {
+  const parts = []
+  if (visualSelfReferenceMacroId.value) parts.push(`图1 ${visualSelfReferenceMacroId.value}`)
+  const offset = visualSelfReferenceMacroId.value ? 2 : 1
+  visualReferenceUploads.value.forEach((asset, index) => parts.push(`图${offset + index} ${asset.name}`))
+  if (!parts.length) return ''
+  return `${visualReferenceOwnerMacroId.value || '当前卡片'}：${parts.join(' · ')}`
+})
+
+function contentModeDefaults(mode = form.content_mode) {
+  return settings.value.visual_prompt?.modes?.[mode]
+    || (mode === 'urban_suspense' ? settings.value.visual_prompt : null)
+    || FALLBACK_CONTENT_MODES[mode]
+    || FALLBACK_CONTENT_MODES.urban_suspense
+}
+
+function modeStorageKey(baseKey, mode = form.content_mode) {
+  return `${baseKey}_${mode}`
+}
+
+function visualPacingDefaults(mode = form.content_mode) {
+  return VISUAL_PACING_DEFAULTS[mode] || VISUAL_PACING_DEFAULTS.urban_suspense
+}
+
+function applyVisualPacing(mode = form.content_mode) {
+  const defaults = visualPacingDefaults(mode)
+  let saved = null
+  try {
+    saved = JSON.parse(window.localStorage.getItem(modeStorageKey(VISUAL_PACING_STORAGE_KEY, mode)) || 'null')
+  } catch {
+    saved = null
+  }
+  form.visual_pacing_preset = ['auto', 'slow', 'standard', 'fast', 'custom'].includes(saved?.preset)
+    ? saved.preset
+    : 'auto'
+  form.visual_min_duration = Number(saved?.min) || defaults.min
+  form.visual_target_duration = Number(saved?.target) || defaults.target
+  form.visual_max_duration = Number(saved?.max) || defaults.max
+  form.visual_max_slides = Number(saved?.slides) || defaults.slides
+}
+
+const visualPacingSummary = computed(() => {
+  const defaults = visualPacingDefaults()
+  const labels = {
+    auto: '自动', slow: '舒缓', standard: '标准', fast: '紧凑', custom: '自定义',
+  }
+  let min = defaults.min
+  let target = defaults.target
+  if (form.visual_pacing_preset === 'slow') target += 2
+  if (form.visual_pacing_preset === 'fast') target = Math.max(min, target - 2)
+  if (form.visual_pacing_preset === 'custom') {
+    return `自定义：至少 ${form.visual_min_duration} 秒，目标 ${form.visual_target_duration} 秒`
+  }
+  return `${labels[form.visual_pacing_preset] || '自动'}：至少 ${min} 秒，目标 ${target} 秒`
+})
+const editorForm = reactive({
+  video_id: '',
+  audio_id: '',
+  subtitle_id: '',
+  trim_start: 0,
+  trim_end: 0,
+  video_volume: 1,
+  audio_volume: 0.8,
+  audio_offset: 0,
+  burn_subtitles: true,
+})
+
+const steps = [
+  { key: 'tts', label: '断句配音' },
+  { key: 'scene', label: 'ASR 分镜' },
+  { key: 'correct', label: '文本校准' },
+  { key: 'semantic', label: 'Agent 1 规划' },
+  { key: 'visual', label: 'Agent 2 / 海报' },
+  { key: 'render', label: '视频合成' },
+  { key: 'archive', label: '项目归档' },
+]
+
+const importantLogPattern = /(失败|错误|异常|Traceback|Error|error|HTTP \d+|退出码|找不到|缺少|拒绝|超时|开始:|完成:|配音进度|TTS_HEARTBEAT|正在生成|开始配音|句配音|提交|等待|返图|云端状态|模块|海报|队列|分段|拼接|Streaming frame|Capturing frame|Encoding video|Assembling final video|Render complete|已停止|全部完成|输出:)/
+const streamingFramePattern = /Streaming frame \d+\/\d+/
+
+function compactStreamingFrameLogs(logs) {
+  const compacted = []
+  let latestStreamingLine = ''
+  for (const line of logs) {
+    if (streamingFramePattern.test(line)) {
+      latestStreamingLine = line
+      continue
+    }
+    if (latestStreamingLine) {
+      compacted.push(latestStreamingLine)
+      latestStreamingLine = ''
+    }
+    compacted.push(line)
+  }
+  if (latestStreamingLine) compacted.push(latestStreamingLine)
+  return compacted
+}
+
+const visibleJobLogs = computed(() => {
+  const logs = activeJob.value?.logs || []
+  const compacted = compactStreamingFrameLogs(logs)
+  if (showFullLogs.value) return compacted
+  const filtered = compacted.filter((line) => importantLogPattern.test(line))
+  return filtered.length ? filtered : logs.slice(-40)
+})
+const logText = computed(() => visibleJobLogs.value.join('\n') || '暂无日志。')
+const editorLogText = computed(() => editorJob.value?.logs?.join('\n') || '暂无剪辑日志。')
+const videoAssets = computed(() => editorAssets.value.filter((asset) => asset.kind === 'video'))
+const audioAssets = computed(() => editorAssets.value.filter((asset) => asset.kind === 'audio'))
+const subtitleAssets = computed(() => editorAssets.value.filter((asset) => asset.kind === 'subtitle'))
+const selectedVideoAsset = computed(() => videoAssets.value.find((asset) => asset.id === editorForm.video_id))
+const qwenSelectedVoice = computed(() => qwenVoiceGroups
+  .flatMap((group) => group.voices)
+  .find((voice) => voice.value === form.qwen_tts_voice))
+const qwenSelectedVoiceSupportsInstructions = computed(() => qwenSelectedVoice.value?.supportsInstructions !== false)
+const ttsEngineLabel = computed(() => ({
+  indextts25: 'IndexTTS-2.5 · 本地 GPU',
+  cluster: '集群 GPU',
+  qwen: 'Qwen-TTS · 云端 API',
+}[ttsEngine.value] || '配音引擎'))
+const ttsEngineProviderLabel = computed(() => ({
+  indextts25: settings.value.tts?.model || 'official IndexTTS-2.5 · local BF16',
+  cluster: cloudSession.value.base_url || 'cloud-api / Ray 集群',
+  qwen: 'DashScope / 百炼',
+}[ttsEngine.value] || ''))
+const activeRemoteCloudVoices = computed(() => cloudVoices.value.filter((voice) => voice?.status === 'active'))
+const cloudPresetVoiceOptions = computed(() => activeRemoteCloudVoices.value.filter((voice) => voice.type === 'preset'))
+const cloudUploadedVoiceOptions = computed(() => activeRemoteCloudVoices.value.filter((voice) => (
+  voice.type === 'uploaded' || voice.type === 'custom'
+)))
+const activeCloudVoices = computed(() => [
+  ...cloudPresetVoiceOptions.value,
+  ...cloudUploadedVoiceOptions.value,
+])
+const firstDefaultCloudVoice = computed(() => cloudPresetVoiceOptions.value[0] || null)
+const selectedCloudVoice = computed(() => {
+  if (!form.cluster_voice_id) return null
+  const expectedType = form.cluster_voice_type === 'preset' ? 'preset' : 'uploaded'
+  return activeCloudVoices.value.find((voice) => (
+    (voice.type === 'preset' ? 'preset' : 'uploaded') === expectedType && voice.id === form.cluster_voice_id
+  )) || null
+})
+const effectiveCloudVoice = computed(() => selectedCloudVoice.value || firstDefaultCloudVoice.value)
+const previewableCloudPresetVoice = computed(() => (
+  effectiveCloudVoice.value?.type === 'preset' ? effectiveCloudVoice.value : null
+))
+const cloudVoicePreviewPlaying = computed(() => Boolean(
+  previewableCloudPresetVoice.value?.id
+  && cloudVoicePreviewPlayingId.value === previewableCloudPresetVoice.value.id
+  && cloudVoicePreviewAudio
+  && !cloudVoicePreviewAudio.paused
+))
+const cloudReady = computed(() => Boolean(
+  cloudSession.value.configured
+  && cloudSession.value.authenticated
+  && effectiveCloudVoice.value?.id
+))
+const cloudDisplayName = computed(() => {
+  const user = cloudSession.value.user || {}
+  return String(user.name || user.display_name || user.username || user.email?.split('@')[0] || '云端用户')
+})
+const cloudAvailableCredits = computed(() => cloudAccount.value.credits?.available ?? '-')
+const cloudRechargeSelectedProduct = computed(() => (
+  cloudRechargeProducts.value.find((product) => product.product_id === cloudRechargeSelectedId.value) || null
+))
+const cloudRechargeStatusLabel = computed(() => ({
+  pending: '等待支付宝付款',
+  paid: '支付成功，积分已到账',
+  cancelled: '订单已取消',
+  expired: '订单已过期',
+  refunded: '订单已退款',
+}[cloudRechargeOrder.value?.status] || '正在确认订单状态'))
+const cloudRechargeStatusDescription = computed(() => ({
+  pending: '收银台会在新窗口打开；付款后客户端将自动刷新积分。',
+  paid: `本次已增加 ${Number(cloudRechargeOrder.value?.credits || 0).toLocaleString('zh-CN')} 积分。`,
+  cancelled: '本次没有扣款，也不会增加积分。',
+  expired: '订单已失效，请重新选择套餐发起支付。',
+  refunded: '退款状态已同步，最终余额以云端账本为准。',
+}[cloudRechargeOrder.value?.status] || '正在向云端查询支付结果。'))
+const cloudVoiceModel = computed({
+  get: () => {
+    if (!selectedCloudVoice.value) return ''
+    return `${selectedCloudVoice.value.type === 'preset' ? 'preset' : 'uploaded'}:${selectedCloudVoice.value.id}`
+  },
+  set(value) {
+    if (!value) {
+      form.cluster_voice_type = 'preset'
+      form.cluster_voice_id = ''
+      cloudQuote.value = {}
+      return
+    }
+    const [type, ...idParts] = String(value || '').split(':')
+    form.cluster_voice_type = type === 'preset' ? 'preset' : 'uploaded'
+    form.cluster_voice_id = idParts.join(':')
+    cloudQuote.value = {}
+  },
+})
+function isGuidedWorkflowJob(job) {
+  return Boolean(job?.request?.step_mode && Number(job?.request?._step_workflow_version || 0) >= 2)
+}
+
+const guidedStage = computed(() => {
+  if (!form.step_mode) return 'inactive'
+  if (guidedCreatingNew.value) return 'audio_setup'
+  if (!isGuidedWorkflowJob(activeJob.value)) return 'audio_setup'
+  return String(activeJob.value?.request?._step_mode_stage || 'audio_running')
+})
+const guidedRunning = computed(() => ['queued', 'running'].includes(activeJob.value?.status) && isGuidedWorkflowJob(activeJob.value))
+const guidedCanStop = computed(() => guidedRunning.value)
+const guidedCanResume = computed(() => isGuidedWorkflowJob(activeJob.value) && ['failed', 'cancelled'].includes(activeJob.value?.status))
+const guidedHasExistingWorkflow = computed(() => !guidedCreatingNew.value && isGuidedWorkflowJob(activeJob.value))
+const guidedStageSteps = [
+  { key: 'audio', index: '01', label: '配音与字幕', description: '生成、试听、校对' },
+  { key: 'visual', index: '02', label: '画面设计', description: '设定、作图、验图' },
+  { key: 'render', index: '03', label: '成片渲染', description: '配乐、版本、导出' },
+]
+const guidedStageGroup = computed(() => {
+  if (['audio_setup', 'audio_running', 'audio_review'].includes(guidedStage.value)) return 'audio'
+  if (['visual_setup', 'visual_running', 'visual_review'].includes(guidedStage.value)) return 'visual'
+  return 'render'
+})
+const guidedStageOrder = { audio: 1, visual: 2, render: 3 }
+function guidedStageChipClass(key) {
+  const current = guidedStageOrder[guidedStageGroup.value] || 1
+  const value = guidedStageOrder[key]
+  return { active: value === current, completed: value < current || guidedStage.value === 'completed' }
+}
+const guidedStageEyebrow = computed(() => ({ audio: '阶段 1 / 3', visual: '阶段 2 / 3', render: '阶段 3 / 3' }[guidedStageGroup.value]))
+const guidedStageTitle = computed(() => ({
+  audio_setup: '先完成配音与字幕', audio_running: '正在生成配音与字幕', audio_review: '试听配音并校对字幕',
+  visual_setup: '设置作品画面', visual_running: '正在规划并生成图片', visual_review: '检查图片与画面时序',
+  render_setup: '设置 BGM 与成片版本', render_running: '正在渲染最终视频', completed: '分步制作已完成',
+}[guidedStage.value] || '分步制作'))
+const guidedStageDescription = computed(() => ({
+  audio_setup: '这一阶段只读取文案、配音方式和长文分段参数；完成后会自动暂停。',
+  audio_running: '可以切换到其他页面，完成后会停在试听与字幕校对。',
+  audio_review: '可试听整段和逐句配音、重配选中句，并直接修正字幕文字。',
+  visual_setup: '现在再填写画风、人物、环境、参考图、节奏和 Agent 参数。',
+  visual_running: 'Agent 正在理解全文、规划镜头并生成图片，完成后会再次暂停。',
+  visual_review: '请在下方画面修改区重绘、替换或调整画面时序，确认后进入渲染设置。',
+  render_setup: '最后选择 BGM 和字幕/无字幕版本；点击后只运行最终渲染。',
+  render_running: '渲染完成后会归档为普通项目，并保留全部后期编辑能力。',
+  completed: '视频已归档，可播放、打开输出目录或进入普通成片精修。',
+}[guidedStage.value] || ''))
+const guidedWorkspaceClass = computed(() => ({
+  'guided-mode': form.step_mode,
+  [`guided-stage-${guidedStage.value}`]: form.step_mode,
+}))
+const guidedSubtitleDirtyCount = computed(() => guidedSubtitles.value.filter((item) => (
+  String(guidedSubtitleDrafts[item.slide_id] ?? '').trim() !== String(item.text ?? '').trim()
+)).length)
+const guidedVisualEstimate = computed(() => {
+  const duration = Number(guidedSubtitles.value.at(-1)?.end || stepAudioDuration.value || 0)
+  const defaults = VISUAL_PACING_DEFAULTS[form.content_mode] || VISUAL_PACING_DEFAULTS.general
+  const target = Number(form.visual_pacing_preset === 'custom' ? form.visual_target_duration : defaults.target) || 8
+  return { images: Math.max(1, Math.ceil(duration / Math.max(4, target))) }
+})
+const pendingGenerationJob = computed(() => (
+  [activeJob.value, ...jobs.value].filter(Boolean).find((job) => (
+    ['queued', 'running'].includes(job.status)
+    || (job.status === 'waiting_confirmation' && !isGuidedWorkflowJob(job))
+  )) || null
+))
+const hasPendingGeneration = computed(() => Boolean(pendingGenerationJob.value))
+const generationBlockReason = computed(() => {
+  const block = (code, message) => ({ code: `[${code}]`, message })
+  if (submitting.value) return block('SUBMITTING', '任务正在提交，请稍候。')
+  if (!session.value.user) return block('LOGIN_REQUIRED', '请先登录本地工作台。')
+  if (hasPendingGeneration.value) {
+    const status = pendingGenerationJob.value?.status
+    if (status === 'queued') return block('JOB_QUEUED', '已有任务正在排队，完成或停止后才能开始新任务。')
+    if (status === 'waiting_confirmation') return block('STEP_CONFIRMATION_REQUIRED', '分步任务正在等待确认，请点击“继续生成”。')
+    return block('JOB_RUNNING', '任务运行中，请等待或先停止。')
+  }
+  if (!form.project_name.trim()) return block('PROJECT_NAME_REQUIRED', '请先填写项目名称。')
+  if (String(form.script || '').length > MAX_SCRIPT_CHARACTERS) {
+    return block('SCRIPT_TOO_LONG', `文案超过 ${MAX_SCRIPT_CHARACTERS.toLocaleString('zh-CN')} 字，请缩短后再生成。`)
+  }
+  if (!form.step_mode && form.bgm_enabled && !form.bgm_tracks.length) return block('BGM_REQUIRED', '你已开启添加 BGM，但还没有选择音乐。')
+  if (!form.step_mode && form.use_cloud_image_pool && !cloudSession.value.authenticated) return block('CLOUD_LOGIN_REQUIRED', '使用云端号池前，请先登录云端账户。')
+  if (form.skip_tts) {
+    if (!form.source_audio_id) return block('AUDIO_REQUIRED', '已选择跳过配音，请先上传已有配音。')
+    if (!form.skip_text_correction && !form.script.trim()) return block('SCRIPT_REQUIRED', '请填写与已有配音对应的文案，或选择“没有文案”。')
+    return null
+  }
+  if (ttsEngine.value === 'indextts25' && !health.value.tts25_online) {
+    return block('INDEXTTS25_NOT_READY', '本地 IndexTTS-2.5 环境尚未就绪。')
+  }
+  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) {
+    return block('QWEN_API_KEY_REQUIRED', '请先保存 Qwen-TTS API Key。')
+  }
+  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) {
+    return block('QWEN_INSTRUCTIONS_UNSUPPORTED', '当前 Qwen 音色不支持配音描述，请清空描述或更换音色。')
+  }
+  if (ttsEngine.value === 'cluster' && !cloudSession.value.authenticated) {
+    return block('CLUSTER_LOGIN_REQUIRED', '使用集群配音前，请先登录云端账户。')
+  }
+  if (ttsEngine.value === 'cluster' && !cloudReady.value) {
+    return block('CLUSTER_VOICE_REQUIRED', '请选择一个可用的集群音色。')
+  }
+  if (!form.script.trim()) return block('SCRIPT_REQUIRED', '请上传或填写口播文案。')
+  return null
+})
+const canSubmitGeneration = computed(() => !generationBlockReason.value)
+const canSubmitModule1 = computed(() => Boolean(
+  session.value.user
+  && (
+    (ttsEngine.value === 'indextts25' && health.value.tts25_online)
+    || (ttsEngine.value === 'cluster' && cloudReady.value)
+    || (ttsEngine.value === 'qwen' && apiKeyStatus.value.qwen_tts?.configured)
+  )
+  && form.project_name.trim()
+  && form.script.trim().length >= 1
+  && !scriptTooLong.value
+  && !module1JobRunning.value
+))
+const scriptCharacterCount = computed(() => String(form.script || '').length)
+const scriptTooLong = computed(() => scriptCharacterCount.value > MAX_SCRIPT_CHARACTERS)
+const module1JobRunning = computed(() => ['queued', 'running'].includes(module1Job.value?.status))
+const module1ArtifactEntries = computed(() => Object.entries(module1Job.value?.artifacts || {})
+  .filter(([key]) => ['audio', 'module1_subtitle'].includes(key))
+  .map(([key, url]) => ({ key, url })))
+const module1AudioPreviewUrl = computed(() => {
+  const url = String(module1Job.value?.artifacts?.audio || '')
+  if (!url) return ''
+  const revision = Number(ttsEditor.value?.revision || 0)
+  return `${url}${url.includes('?') ? '&' : '?'}tts_revision=${revision}`
+})
+const module1LogText = computed(() => (module1Job.value?.logs || []).join('\n') || '模块 1 日志会显示在这里。')
+const subtitleJobRunning = computed(() => ['queued', 'running'].includes(subtitleJob.value?.status))
+const canSubmitSubtitle = computed(() => Boolean(
+  session.value.user
+  && subtitleForm.project_name.trim()
+  && subtitleForm.source_audio_id
+  && !subtitleJobRunning.value
+  && (!subtitleForm.use_correction || subtitleForm.reference_text || apiKeyStatus.value.language?.configured),
+))
+const canRenderSubtitleVideo = computed(() => Boolean(
+  subtitleJob.value?.id
+  && subtitleJob.value?.artifacts?.subtitle
+  && !subtitleJobRunning.value
+  && (!subtitleRenderForm.bgm_enabled || subtitleRenderForm.bgm_tracks.length > 0)
+))
+const subtitleLogText = computed(() => (subtitleJob.value?.logs || []).join('\n') || '字幕识别日志会显示在这里。')
+const submitButtonText = computed(() => {
+  if (!session.value.user) return '请先登录'
+  if (submitting.value) return '任务已提交'
+  if (hasPendingGeneration.value) return '当前任务进行中'
+  if (form.step_mode) return '开始分步生成'
+  if (form.skip_tts && !form.source_audio_id) return '请先上传配音'
+  if (form.skip_tts) return '从已有配音生成视频'
+  if (ttsEngine.value === 'qwen' && !apiKeyStatus.value.qwen_tts?.configured) return '请先保存 Qwen-TTS API Key'
+  if (ttsEngine.value === 'qwen' && !qwenSelectedVoiceSupportsInstructions.value && form.qwen_tts_instructions.trim()) return '该音色不支持配音描述'
+  if (ttsEngine.value === 'cluster' && !cloudSession.value.authenticated) return '请先登录集群云端账户'
+  if (ttsEngine.value === 'cluster' && !cloudReady.value) return '请选择可用的集群音色'
+  return '一键生成视频'
+})
+const preflightPassedCount = computed(() => (
+  preflightResult.value?.items || []
+).filter((item) => item.status === 'passed').length)
+const scriptPlaceholder = computed(() => {
+  if (form.skip_text_correction) return '已选择“没有文案”，系统会用 ASR 识别结果继续生成画面和字幕。'
+  if (form.skip_tts) return '粘贴与已有配音对应的文案，系统会跳过配音并进行字幕校对。'
+  return '粘贴完整文案，系统会自动断句、配音、生成字幕和视频页面。'
+})
+const canCancelGeneration = computed(() => (
+  session.value.user
+  && ['queued', 'running'].includes(activeJob.value?.status)
+))
+const canResumeGeneration = computed(() => (
+  session.value.user
+  && ['failed', 'cancelled'].includes(activeJob.value?.status)
+))
+const canContinueStepMode = computed(() => Boolean(
+  session.value.user
+  && activeJob.value?.status === 'waiting_confirmation'
+  && !isGuidedWorkflowJob(activeJob.value)
+))
+const stepModeContinueLabel = computed(() => {
+  const stage = activeJob.value?.request?._step_mode_stage
+  return stage === 'visual' ? '确认画面，开始渲染' : '确认配音，开始配图'
+})
+const stepModeAudioUrl = computed(() => {
+  if (isGuidedWorkflowJob(activeJob.value) && activeJob.value?.id && guidedStage.value !== 'audio_running') {
+    return `/api/jobs/${encodeURIComponent(activeJob.value.id)}/visual-editor/audio?v=${Number(ttsEditor.value?.revision || 0)}`
+  }
+  return activeJob.value?.artifacts?.audio || ''
+})
+const canRetryTts = computed(() => Boolean(
+  session.value.user
+  && activeJob.value?.status === 'waiting_confirmation'
+  && ['audio', 'audio_review'].includes(activeJob.value?.request?._step_mode_stage)
+  && !activeJob.value?.request?.skip_tts
+))
+const ttsStatusText = computed(() => {
+  if (ttsEngine.value === 'indextts25' && health.value.tts25_online) return 'IndexTTS-2.5 在线'
+  if (ttsEngine.value === 'cluster' && cloudReady.value) return '集群在线'
+  if (ttsEngine.value === 'qwen' && apiKeyStatus.value.qwen_tts?.configured) return 'Qwen 已配置'
+  if (startingTts.value) return '检测中'
+  if (ttsStartMessage.value) return ttsStartMessage.value
+  return '未连接'
+})
+
+const COMPLETION_FAVICON_BLUE = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#62c8ff"/><path d="M17 33l10 10 21-24" fill="none" stroke="#0b1728" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`
+const COMPLETION_FAVICON_GREEN = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#55e6bd"/><path d="M17 33l10 10 21-24" fill="none" stroke="#0b1728" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`
+
+function prepareCompletionAlerts(requestNotificationPermission = false) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+  if (AudioContextClass && !completionAudioContext) {
+    try {
+      completionAudioContext = new AudioContextClass()
+    } catch {
+      completionAudioContext = null
+    }
+  }
+  if (completionAudioContext?.state === 'suspended') {
+    completionAudioContext.resume().catch(() => {})
+  }
+  if (requestNotificationPermission && 'Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().catch(() => {})
+  }
+}
+
+function playCompletionSound() {
+  prepareCompletionAlerts(false)
+  const context = completionAudioContext
+  if (!context || context.state === 'closed') return
+  context.resume().then(() => {
+    const start = context.currentTime + 0.03
+    ;[659.25, 783.99, 1046.5].forEach((frequency, index) => {
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const noteStart = start + index * 0.16
+      oscillator.type = 'sine'
+      oscillator.frequency.value = frequency
+      gain.gain.setValueAtTime(0.0001, noteStart)
+      gain.gain.exponentialRampToValueAtTime(0.16, noteStart + 0.025)
+      gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + 0.34)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(noteStart)
+      oscillator.stop(noteStart + 0.36)
+    })
+  }).catch(() => {})
+}
+
+function stopCompletionFlash() {
+  if (completionFlashTimer) window.clearInterval(completionFlashTimer)
+  completionFlashTimer = null
+  completionFlashState = false
+  if (originalDocumentTitle) document.title = originalDocumentTitle
+  if (completionFaviconLink) {
+    if (completionFaviconCreated) completionFaviconLink.remove()
+    else completionFaviconLink.href = originalFaviconHref
+  }
+  completionFaviconLink = null
+  completionFaviconCreated = false
+  originalFaviconHref = ''
+}
+
+function startCompletionFlash() {
+  if (!document.hidden) return
+  stopCompletionFlash()
+  originalDocumentTitle = document.title || '一键生成视频 / One-Click VidGen'
+  completionFaviconLink = document.querySelector('link[rel~="icon"]')
+  if (!completionFaviconLink) {
+    completionFaviconLink = document.createElement('link')
+    completionFaviconLink.rel = 'icon'
+    document.head.appendChild(completionFaviconLink)
+    completionFaviconCreated = true
+  } else {
+    originalFaviconHref = completionFaviconLink.href
+  }
+  const flash = () => {
+    completionFlashState = !completionFlashState
+    document.title = completionFlashState ? '✅ 视频生成完成！' : originalDocumentTitle
+    completionFaviconLink.href = completionFlashState ? COMPLETION_FAVICON_GREEN : COMPLETION_FAVICON_BLUE
+  }
+  flash()
+  completionFlashTimer = window.setInterval(flash, 700)
+}
+
+function notifyVideoCompleted(job, message = '视频已经生成完成，可以回来检查成片了。') {
+  const now = Date.now()
+  if (now - lastCompletionAlertAt < 5000) return
+  lastCompletionAlertAt = now
+  playCompletionSound()
+  startCompletionFlash()
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const projectName = job?.project_name || job?.request?.project_name || 'One-Click VidGen'
+    const notification = new Notification('一键成片 · 视频生成完成', {
+      body: `${projectName}\n${message}`,
+      tag: `vidgen-completed-${job?.id || 'current'}`,
+    })
+    notification.onclick = () => {
+      window.focus()
+      stopCompletionFlash()
+      notification.close()
+    }
+  }
+}
+
+function handleActiveJobCompletion(previous, current) {
+  if (!previous || !current || previous.id !== current.id) return
+  if (!['queued', 'running', 'waiting_confirmation'].includes(previous.status)) return
+  if (!['completed', 'failed', 'cancelled'].includes(current.status)) return
+  if (current.request?.use_cloud_image_pool) void refreshCloudState()
+  if (current.status !== 'completed') return
+  if (current.request?.module1_only || current.request?.subtitle_only) return
+  notifyVideoCompleted(current)
+}
+
+function apiFailureReason(text) {
+  const value = String(text || '')
+  if (/积分不足|余额不足|insufficient\s*(credit|balance)|quota|额度不足|HTTP\s*402/i.test(value)) return '积分或额度不足'
+  if (/timed?\s*out|timeout|超时/i.test(value)) return '请求超时'
+  if (/HTTP\s*429|rate\s*limit|限流|too many requests/i.test(value)) return '请求限流'
+  if (/HTTP\s*(401|403)|unauthorized|forbidden|API\s*Key.*(无效|错误)|invalid.*key/i.test(value)) return 'Key 无效或无权限'
+  return ''
+}
+
+function apiJobKinds(job) {
+  const request = job?.request || {}
+  const kinds = []
+  if (request.subtitle_only) {
+    if (request.subtitle_use_correction && !request.reference_text) kinds.push('language')
+    return kinds
+  }
+  if (!request.module1_only) kinds.push('language', 'image')
+  if (!request.skip_tts && request.tts_engine === 'qwen') kinds.push('qwen_tts')
+  return kinds
+}
+
+function syncApiRuntimeErrors(jobCandidates) {
+  const unique = new Map()
+  for (const job of jobCandidates.filter(Boolean)) unique.set(job.id, job)
+  const ordered = [...unique.values()].sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0))
+  const contexts = {
+    language: /gemini|openai|语言模型|chat\.completion|\bllm\b|agent\s*[012]/i,
+    image: /image2|runninghub|海报|poster_|生图|返图|图像模型|工作流/i,
+    qwen_tts: /qwen|dashscope|百炼|云端\s*tts/i,
+  }
+  for (const kind of ['language', 'image', 'qwen_tts']) {
+    const latest = ordered.find((job) => ['completed', 'failed', 'cancelled'].includes(job.status) && apiJobKinds(job).includes(kind))
+    if (!latest || latest.status !== 'failed') {
+      apiKeyRuntimeErrors[kind] = ''
+      continue
+    }
+    const text = [latest.error, latest.message, ...(latest.logs || []).slice(-80)].filter(Boolean).join('\n')
+    const reason = apiFailureReason(text)
+    apiKeyRuntimeErrors[kind] = reason && contexts[kind].test(text) ? reason : ''
+  }
+}
+
+async function refresh() {
+  const previousActiveJob = activeJob.value
+    ? { id: activeJob.value.id, status: activeJob.value.status }
+    : null
+  try {
+    health.value = await api.health()
+  } catch {
+    health.value = { ok: false, tts_online: false, tts25_online: false }
+  }
+  try {
+    session.value = await api.session()
+  } catch {
+    session.value = { user: null, auth_mode: 'account', mysql: {} }
+  }
+  try {
+    if (!session.value.user) {
+      apiKeyStatusLoaded = false
+      apiKeyStatus.value = { language: {}, image: {}, common: {}, qwen_tts: {} }
+      jobs.value = []
+      jobPage.value = 1
+      jobTotal.value = 0
+      jobTotalPages.value = 1
+      activeJob.value = null
+      return
+    }
+    if (!apiKeyStatusLoaded) await loadApiKeySettings()
+    const payload = await api.jobs(jobPage.value, JOB_PAGE_SIZE)
+    jobs.value = payload.jobs || []
+    jobPage.value = payload.page || 1
+    jobTotal.value = payload.total || 0
+    jobTotalPages.value = payload.total_pages || 1
+    const runningJob = jobs.value.find((job) => job.status === 'running')
+    const queuedJob = jobs.value.find((job) => job.status === 'queued')
+    const liveJob = runningJob || queuedJob
+    if (followLiveJob.value && liveJob?.id) {
+      activeJob.value = await api.job(liveJob.id)
+    } else if (activeJob.value?.id) {
+      await selectJob(activeJob.value.id, false)
+    } else if (jobs.value.length) {
+      activeJob.value = jobs.value[0]
+    }
+    if (module1Job.value?.id) {
+      module1Job.value = await api.job(module1Job.value.id)
+      if (activePage.value === 'module1' && module1Job.value.status === 'completed') {
+        visualEditorProjectId.value = module1Job.value.id
+        if (!ttsEditor.value.available || ttsEditor.value.project_id !== module1Job.value.id) await loadTtsEditor()
+      }
+    }
+    if (subtitleJob.value?.id) {
+      subtitleJob.value = await api.job(subtitleJob.value.id)
+    }
+    syncApiRuntimeErrors([...jobs.value, activeJob.value, module1Job.value, subtitleJob.value])
+    await refreshEditor()
+    handleActiveJobCompletion(previousActiveJob, activeJob.value)
+  } catch {
+    jobs.value = []
+    jobTotal.value = 0
+    jobTotalPages.value = 1
+  }
+}
+
+async function refreshEditor() {
+  if (!session.value.user) {
+    editorAssets.value = []
+    editorJobs.value = []
+    editorJob.value = null
+    return
+  }
+  const [uploadsPayload, jobsPayload] = await Promise.all([api.editorUploads(), api.editorJobs()])
+  editorAssets.value = uploadsPayload.assets || []
+  editorJobs.value = jobsPayload.jobs || []
+  if (!editorForm.video_id && videoAssets.value[0]) editorForm.video_id = videoAssets.value[0].id
+  if (editorJob.value?.id) {
+    await selectEditorJob(editorJob.value.id, false)
+  } else if (editorJobs.value.length) {
+    editorJob.value = editorJobs.value[0]
+  }
+}
+
+async function login() {
+  authError.value = ''
+  try {
+    session.value = await api.login({ ...loginForm })
+    loginForm.password = ''
+    await refresh()
+    await refreshParameterPresets()
+    await refreshAgentPromptPresets()
+  } catch (error) {
+    authError.value = error.message || '登录失败'
+  }
+}
+
+async function register() {
+  authError.value = ''
+  try {
+    session.value = await api.register({ ...registerForm })
+    registerForm.password = ''
+    await refresh()
+    await refreshParameterPresets()
+    await refreshAgentPromptPresets()
+  } catch (error) {
+    authError.value = error.message || '注册失败'
+  }
+}
+
+async function logout() {
+  if (cloudSession.value.authenticated) {
+    try { await api.cloudLogout() } catch { /* local logout must still proceed */ }
+  }
+  await api.logout()
+  session.value = { user: null, auth_mode: 'account', mysql: {} }
+  parameterPresets.value = []
+  selectedParameterPreset.value = ''
+  agentPromptPresets.value = []
+  selectedAgentPromptPreset.value = ''
+  jobs.value = []
+  jobPage.value = 1
+  jobTotal.value = 0
+  jobTotalPages.value = 1
+  activeJob.value = null
+  editorAssets.value = []
+  editorJobs.value = []
+  editorJob.value = null
+  apiKeyStatusLoaded = false
+  apiKeyStatus.value = { language: {}, image: {}, common: {}, qwen_tts: {} }
+  apiKeyMessage.value = ''
+  for (const kind of Object.keys(apiKeyEditing)) apiKeyEditing[kind] = false
+  for (const kind of Object.keys(apiKeyRuntimeErrors)) apiKeyRuntimeErrors[kind] = ''
+  cloudSession.value = { configured: false, authenticated: false, user: null, base_url: '' }
+  cloudAccount.value = { credits: {}, quota: {} }
+  cloudVoices.value = []
+  cloudVoiceLimits.value = {}
+  cloudVoiceApiAvailable.value = true
+  cloudQuote.value = {}
+  cloudRechargeOpen.value = false
+  cloudRechargeSuccess.value = null
+  stopCloudRechargePolling()
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
+}
+
+async function refreshCloudState() {
+  if (!session.value.user) return
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    cloudSession.value = await api.cloudSession()
+    if (!cloudSession.value.authenticated) {
+      cloudAccount.value = { credits: {}, quota: {} }
+      cloudVoices.value = []
+      cloudVoiceLimits.value = {}
+      cloudRechargeOpen.value = false
+      stopCloudRechargePolling()
+      return
+    }
+    cloudAccount.value = await api.cloudAccount() || { credits: {}, quota: {} }
+    try {
+      const voices = await api.cloudVoices()
+      cloudVoices.value = voices.items || []
+      cloudVoiceLimits.value = voices.limits || {}
+      cloudVoiceApiAvailable.value = voices.capabilities?.upload !== false
+      if (!cloudPresetVoiceOptions.value.length) {
+        cloudError.value = '集群当前没有返回可用的默认音色，请检查 PRESET_VOICE_IDS 配置。'
+      }
+    } catch (voiceError) {
+      cloudVoices.value = []
+      cloudVoiceLimits.value = {}
+      cloudVoiceApiAvailable.value = voiceError?.status !== 404
+      cloudError.value = voiceError?.status === 404
+        ? '当前云端版本尚未部署音色查询接口，请先更新 cloud-api。'
+        : (voiceError.message || '无法查询集群当前支持的默认音色。')
+    }
+    if (form.cluster_voice_id && !selectedCloudVoice.value) {
+      form.cluster_voice_type = 'preset'
+      form.cluster_voice_id = ''
+    }
+  } catch (error) {
+    cloudError.value = error.message || '无法读取集群云端状态。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function openCloudLogin() {
+  cloudLoginOpen.value = true
+  await refreshCloudState()
+}
+
+async function loginCloud() {
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!cloudLoginForm.email || !cloudLoginForm.password) {
+    cloudError.value = '请输入云端邮箱和密码。'
+    return
+  }
+  cloudBusy.value = true
+  try {
+    cloudSession.value = await api.cloudLogin({ ...cloudLoginForm })
+    cloudLoginForm.password = ''
+    cloudMessage.value = '集群云端登录成功。'
+    await refreshCloudState()
+    cloudLoginOpen.value = false
+  } catch (error) {
+    cloudError.value = error.message || '集群云端登录失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function registerCloud() {
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!cloudLoginForm.email || cloudLoginForm.password.length < 10) {
+    cloudError.value = '注册密码至少需要 10 位。'
+    return
+  }
+  cloudBusy.value = true
+  try {
+    const payload = await api.cloudRegister({ ...cloudLoginForm })
+    cloudMessage.value = payload.verification_required
+      ? '注册成功，请先完成邮箱验证后再登录。'
+      : '注册成功，现在可以登录集群。'
+  } catch (error) {
+    cloudError.value = error.message || '集群云端注册失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function logoutCloud() {
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    await api.cloudLogout()
+    cloudSession.value = await api.cloudSession()
+    cloudAccount.value = { credits: {}, quota: {} }
+    cloudVoices.value = []
+    cloudVoiceLimits.value = {}
+    cloudVoiceApiAvailable.value = true
+    cloudQuote.value = {}
+    cloudRechargeOpen.value = false
+    cloudRechargeSuccess.value = null
+    stopCloudRechargePolling()
+    cloudRechargeOrder.value = null
+    cloudRechargePaymentUrl.value = ''
+    cloudMessage.value = '已退出集群云端账户。'
+  } catch (error) {
+    cloudError.value = error.message || '退出集群失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+function formatCloudRechargeAmount(amountFen) {
+  const amount = Number(amountFen)
+  return Number.isFinite(amount) ? (amount / 100).toFixed(2) : '0.00'
+}
+
+function cloudRechargeProductLabel(product) {
+  return {
+    credits_1: '轻量体验',
+    credits_5: '入门包',
+    credits_10: '基础包',
+    credits_20: '标准包',
+    credits_30: '进阶包',
+    credits_50: '创作包',
+    credits_100: '专业包',
+  }[product?.product_id] || '云端积分包'
+}
+
+function stopCloudRechargePolling() {
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  cloudRechargePollTimer = null
+  cloudRechargePollDeadline = 0
+}
+
+function clearStoredCloudRecharge() {
+  try { window.localStorage.removeItem(CLOUD_RECHARGE_STORAGE_KEY) } catch { /* storage is optional */ }
+}
+
+function storePendingCloudRecharge(order, paymentUrl) {
+  try {
+    window.localStorage.setItem(CLOUD_RECHARGE_STORAGE_KEY, JSON.stringify({
+      order_id: order.order_id,
+      amount_fen: order.amount_fen,
+      credits: order.credits,
+      expires_at: order.expires_at,
+      payment_url: paymentUrl,
+      cloud_user_id: cloudSession.value.user?.id || '',
+      saved_at: Date.now(),
+    }))
+  } catch { /* storage is optional */ }
+}
+
+function restorePendingCloudRecharge() {
+  if (cloudRechargeOrder.value?.order_id) return
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(CLOUD_RECHARGE_STORAGE_KEY) || 'null')
+    if (!saved?.order_id || Date.now() - Number(saved.saved_at || 0) > 35 * 60 * 1000) {
+      clearStoredCloudRecharge()
+      return
+    }
+    const currentUserId = String(cloudSession.value.user?.id || '')
+    if (saved.cloud_user_id && currentUserId && String(saved.cloud_user_id) !== currentUserId) return
+    cloudRechargeOrder.value = {
+      order_id: saved.order_id,
+      status: 'pending',
+      amount_fen: saved.amount_fen,
+      credits: saved.credits,
+      expires_at: saved.expires_at,
+    }
+    cloudRechargePaymentUrl.value = saved.payment_url || ''
+    beginCloudRechargePolling()
+  } catch {
+    clearStoredCloudRecharge()
+  }
+}
+
+async function loadCloudRechargeProducts() {
+  cloudRechargeLoadingProducts.value = true
+  cloudRechargeError.value = ''
+  try {
+    const catalog = await api.cloudRechargeProducts()
+    const products = (Array.isArray(catalog.items) ? catalog.items : [])
+      .filter((product) => (
+        product?.product_id
+        && Number.isInteger(Number(product.amount_fen))
+        && Number(product.amount_fen) > 0
+        && Number(product.credits) > 0
+      ))
+      .sort((left, right) => Number(left.amount_fen) - Number(right.amount_fen))
+    if (!products.length) throw new Error('云端当前没有可购买的积分套餐。')
+    cloudRechargeProducts.value = products
+    if (!products.some((product) => product.product_id === cloudRechargeSelectedId.value)) {
+      const preferred = products.find((product) => product.product_id === 'credits_20')
+        || products[0]
+      cloudRechargeSelectedId.value = preferred.product_id
+    }
+  } catch (error) {
+    cloudRechargeProducts.value = []
+    cloudRechargeSelectedId.value = ''
+    cloudRechargeError.value = error.message || '无法读取云端充值套餐。'
+  } finally {
+    cloudRechargeLoadingProducts.value = false
+  }
+}
+
+async function openCloudRecharge() {
+  if (!cloudSession.value.authenticated) {
+    cloudError.value = '请先登录集群云端账户再充值。'
+    openCloudLogin()
+    return
+  }
+  cloudRechargeOpen.value = true
+  cloudRechargeError.value = ''
+  cloudRechargeMessage.value = ''
+  await loadCloudRechargeProducts()
+  restorePendingCloudRecharge()
+}
+
+function closeCloudRecharge() {
+  cloudRechargeOpen.value = false
+}
+
+function continueCloudRecharge() {
+  cloudRechargeSuccess.value = null
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
+  cloudRechargeMessage.value = ''
+}
+
+function finishCloudRecharge() {
+  cloudRechargeSuccess.value = null
+  closeCloudRecharge()
+}
+
+function openCloudPaymentPage() {
+  if (!cloudRechargePaymentUrl.value) return
+  let popup = null
+  try {
+    popup = window.open('about:blank', '_blank')
+    if (popup) {
+      popup.opener = null
+      popup.location.replace(cloudRechargePaymentUrl.value)
+      cloudRechargeCheckoutWindow = popup
+    }
+  } catch { popup = null }
+  if (!popup) cloudRechargeMessage.value = '浏览器阻止了新窗口，请允许弹窗后重试。'
+}
+
+function closeCloudRechargeCheckoutWindow() {
+  try {
+    if (cloudRechargeCheckoutWindow && !cloudRechargeCheckoutWindow.closed) {
+      cloudRechargeCheckoutWindow.close()
+    }
+  } catch { /* cross-origin checkout windows may reject inspection */ }
+  cloudRechargeCheckoutWindow = null
+}
+
+function handleCloudRechargeReturnFocus() {
+  stopCompletionFlash()
+  if (document.visibilityState === 'hidden') return
+  if (cloudRechargeOrder.value?.status === 'pending' && !cloudRechargeChecking.value) {
+    void checkCloudRechargeOrder(false)
+  }
+}
+
+function scheduleCloudRechargePoll() {
+  if (!cloudRechargeOrder.value?.order_id || cloudRechargeOrder.value.status !== 'pending') return
+  if (cloudRechargePollDeadline && Date.now() >= cloudRechargePollDeadline) {
+    cloudRechargeMessage.value = '自动查询已暂停，可点击“我已完成支付”继续确认。'
+    return
+  }
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  cloudRechargePollTimer = window.setTimeout(() => void checkCloudRechargeOrder(false), 2200)
+}
+
+function beginCloudRechargePolling() {
+  if (cloudRechargePollTimer) window.clearTimeout(cloudRechargePollTimer)
+  const expiresAt = Date.parse(cloudRechargeOrder.value?.expires_at || '')
+  cloudRechargePollDeadline = Number.isFinite(expiresAt)
+    ? Math.min(expiresAt + 60_000, Date.now() + 35 * 60 * 1000)
+    : Date.now() + 35 * 60 * 1000
+  scheduleCloudRechargePoll()
+}
+
+async function checkCloudRechargeOrder(manual = false) {
+  const orderId = cloudRechargeOrder.value?.order_id
+  if (!orderId || cloudRechargeChecking.value) return
+  if (manual && cloudRechargePollTimer) {
+    window.clearTimeout(cloudRechargePollTimer)
+    cloudRechargePollTimer = null
+  }
+  cloudRechargeChecking.value = true
+  if (manual) {
+    cloudRechargeError.value = ''
+    cloudRechargeMessage.value = '正在向云端确认支付宝支付结果…'
+  }
+  try {
+    const order = await api.cloudRechargeOrder(orderId)
+    cloudRechargeOrder.value = order
+    if (order.status === 'paid') {
+      stopCloudRechargePolling()
+      clearStoredCloudRecharge()
+      closeCloudRechargeCheckoutWindow()
+      cloudRechargeMessage.value = `支付成功，${Number(order.credits || 0).toLocaleString('zh-CN')} 积分已到账。`
+      cloudMessage.value = cloudRechargeMessage.value
+      window.focus()
+      cloudRechargeSuccess.value = {
+        order_id: order.order_id,
+        amount_fen: Number(order.amount_fen || 0),
+        credits: Number(order.credits || 0),
+      }
+      await refreshCloudState()
+    } else if (['cancelled', 'expired', 'refunded'].includes(order.status)) {
+      stopCloudRechargePolling()
+      clearStoredCloudRecharge()
+      cloudRechargeMessage.value = cloudRechargeStatusDescription.value
+    } else {
+      if (manual) cloudRechargeMessage.value = '订单仍在等待付款，客户端会继续自动查询。'
+      scheduleCloudRechargePoll()
+    }
+  } catch (error) {
+    if (manual) cloudRechargeError.value = error.message || '查询支付结果失败。'
+    scheduleCloudRechargePoll()
+  } finally {
+    cloudRechargeChecking.value = false
+  }
+}
+
+async function startCloudRecharge() {
+  const product = cloudRechargeSelectedProduct.value
+  if (!product || cloudRechargeBusy.value) return
+  cloudRechargeError.value = ''
+  cloudRechargeMessage.value = ''
+  cloudRechargeSuccess.value = null
+  cloudRechargeOrder.value = null
+  cloudRechargePaymentUrl.value = ''
+  stopCloudRechargePolling()
+
+  let checkoutWindow = null
+  try {
+    checkoutWindow = window.open('about:blank', '_blank')
+    if (checkoutWindow) {
+      checkoutWindow.opener = null
+      cloudRechargeCheckoutWindow = checkoutWindow
+      checkoutWindow.document.title = '正在打开支付宝'
+      checkoutWindow.document.body.innerHTML = '<p style="font:16px system-ui;padding:32px;color:#334155">正在创建安全支付订单，请稍候…</p>'
+    }
+  } catch { checkoutWindow = null }
+
+  cloudRechargeBusy.value = true
+  try {
+    const randomPart = globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)
+    const order = await api.createCloudRechargeOrder({
+      product_id: product.product_id,
+      payment_provider: 'alipay',
+    }, `desktop-alipay-${Date.now()}-${randomPart}`)
+    const paymentUrl = String(order.payment?.payment_url || '').trim()
+    if (!paymentUrl) throw new Error('云端没有返回支付宝收银台地址。')
+    const target = new URL(paymentUrl)
+    const allowedHosts = new Set(['openapi.alipay.com', 'openapi-sandbox.dl.alipaydev.com', 'openapi.alipaydev.com'])
+    if (target.protocol !== 'https:' || !allowedHosts.has(target.hostname)) {
+      throw new Error('支付宝收银台地址校验失败。')
+    }
+    cloudRechargeOrder.value = order
+    cloudRechargePaymentUrl.value = paymentUrl
+    cloudRechargeMessage.value = '订单已创建，正在打开支付宝官方收银台。'
+    storePendingCloudRecharge(order, paymentUrl)
+    beginCloudRechargePolling()
+    if (checkoutWindow && !checkoutWindow.closed) checkoutWindow.location.replace(paymentUrl)
+    else openCloudPaymentPage()
+  } catch (error) {
+    try { checkoutWindow?.close() } catch { /* ignore */ }
+    if (cloudRechargeCheckoutWindow === checkoutWindow) cloudRechargeCheckoutWindow = null
+    cloudRechargeError.value = error.message || '创建支付宝订单失败。'
+  } finally {
+    cloudRechargeBusy.value = false
+  }
+}
+
+function selectCloudVoice(voice) {
+  if (!voice?.id) return
+  form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
+  form.cluster_voice_id = voice.id
+  cloudQuote.value = {}
+}
+
+function stopCloudVoicePreview() {
+  if (cloudVoicePreviewAudio) {
+    cloudVoicePreviewAudio.pause()
+    cloudVoicePreviewAudio.removeAttribute('src')
+    cloudVoicePreviewAudio.load()
+    cloudVoicePreviewAudio = null
+  }
+  cloudVoicePreviewLoading.value = false
+  cloudVoicePreviewPlayingId.value = ''
+}
+
+async function toggleCloudVoicePreview() {
+  const voice = previewableCloudPresetVoice.value
+  if (!voice?.id) return
+  if (cloudVoicePreviewAudio && cloudVoicePreviewPlayingId.value === voice.id) {
+    if (!cloudVoicePreviewAudio.paused) {
+      cloudVoicePreviewAudio.pause()
+      cloudVoicePreviewPlayingId.value = ''
+      return
+    }
+    try {
+      await cloudVoicePreviewAudio.play()
+      cloudVoicePreviewPlayingId.value = voice.id
+    } catch (error) {
+      cloudError.value = error.message || '云端默认音色无法播放。'
+    }
+    return
+  }
+
+  stopCloudVoicePreview()
+  cloudError.value = ''
+  cloudVoicePreviewLoading.value = true
+  const audio = new Audio(api.cloudVoiceAudioUrl(voice.id))
+  cloudVoicePreviewAudio = audio
+  audio.preload = 'auto'
+  audio.addEventListener('playing', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewLoading.value = false
+      cloudVoicePreviewPlayingId.value = voice.id
+    }
+  })
+  audio.addEventListener('pause', () => {
+    if (cloudVoicePreviewAudio === audio && !audio.ended) {
+      cloudVoicePreviewPlayingId.value = ''
+    }
+  })
+  audio.addEventListener('ended', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewPlayingId.value = ''
+      audio.currentTime = 0
+    }
+  })
+  audio.addEventListener('error', () => {
+    if (cloudVoicePreviewAudio === audio) {
+      cloudVoicePreviewLoading.value = false
+      cloudVoicePreviewPlayingId.value = ''
+      cloudError.value = '云端默认音色加载失败，请刷新后重试。'
+    }
+  })
+  try {
+    await audio.play()
+  } catch (error) {
+    cloudVoicePreviewLoading.value = false
+    cloudVoicePreviewPlayingId.value = ''
+    cloudError.value = error.message || '云端默认音色无法播放。'
+  }
+}
+
+async function uploadCloudVoice(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  cloudError.value = ''
+  cloudMessage.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['wav', 'mp3', 'flac'].includes(suffix)) {
+    cloudError.value = '云端参考音色只支持 WAV、MP3 或 FLAC。'
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    cloudError.value = '云端参考音色不能超过 20 MiB。'
+    return
+  }
+  const automaticName = file.name.replace(/\.[^.]+$/, '').trim() || '我的云端音色'
+  const displayName = cloudVoiceDisplayName.value.trim() || automaticName
+  cloudVoiceUploading.value = true
+  try {
+    const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const payload = await api.uploadCloudVoice(file, displayName, `voice-upload-${randomId}`)
+    const voice = payload.voice
+    if (!voice?.id) throw new Error('云端上传响应缺少 voice_id。')
+    form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
+    form.cluster_voice_id = voice.id
+    cloudMessage.value = payload.deduplicated ? '音色已存在，已直接选中。' : '参考音色上传成功。'
+    cloudVoiceDisplayName.value = ''
+    await refreshCloudState()
+  } catch (error) {
+    cloudError.value = error.message || '上传云端参考音色失败。'
+  } finally {
+    cloudVoiceUploading.value = false
+  }
+}
+
+async function deleteSelectedCloudVoice() {
+  const voice = selectedCloudVoice.value
+  if (!voice || voice.type === 'preset') return
+  if (!window.confirm(`确定删除云端音色“${voice.display_name || voice.id}”？`)) return
+  cloudBusy.value = true
+  cloudError.value = ''
+  try {
+    await api.deleteCloudVoice(voice.id)
+    cloudMessage.value = '云端自定义音色已删除。'
+    await refreshCloudState()
+  } catch (error) {
+    cloudError.value = error.message || '删除云端音色失败。'
+  } finally {
+    cloudBusy.value = false
+  }
+}
+
+async function refreshCloudQuote() {
+  if (!cloudReady.value || form.script.trim().length < 5) return
+  cloudQuoteLoading.value = true
+  cloudError.value = ''
+  try {
+    cloudQuote.value = await api.cloudQuote(generationRequestPayload())
+  } catch (error) {
+    cloudQuote.value = {}
+    cloudError.value = error.message || '获取集群报价失败。'
+  } finally {
+    cloudQuoteLoading.value = false
+  }
+}
+
+function apiKeyFieldOpen(kind) {
+  if (form.use_cloud_image_pool && ['language', 'image'].includes(kind)) return false
+  if (kind === 'language') {
+    if (customLanguageProvider.value) return false
+    return !currentLanguageProvider.value?.configured || Boolean(apiKeyEditing.language)
+  }
+  return !apiKeyStatus.value[kind]?.configured || Boolean(apiKeyEditing[kind])
+}
+
+function unlockProtectedInput(event) {
+  event?.currentTarget?.removeAttribute('readonly')
+}
+
+function editApiKey(kind) {
+  if (form.use_cloud_image_pool && kind !== 'qwen_tts') return
+  apiKeyEditing[kind] = true
+  apiKeyMessage.value = ''
+  if (kind === 'qwen_tts') qwenTtsKeyMessage.value = ''
+}
+
+async function onLanguageProviderChanged() {
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+  apiKeyEditing.language = !currentLanguageProvider.value?.configured
+  apiKeyForm.language_model = currentLanguageProvider.value?.selected_model
+    || currentLanguageModels.value[0]?.value
+    || ''
+  apiKeyForm.language_api_base_url = customLanguageProvider.value
+    ? (currentLanguageProvider.value?.base_url || '')
+    : ''
+  if (currentLanguageProvider.value?.configured) {
+    await saveApiKeySettings()
+  }
+}
+
+async function onLanguageSourceChanged() {
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+  const previousFamily = currentLanguageProvider.value?.family
+  const candidates = visibleLanguageProviderOptions.value
+  const matched = candidates.find((item) => item.family === previousFamily) || candidates[0]
+  if (!matched) return
+  apiKeyForm.language_provider = matched.value
+  await onLanguageProviderChanged()
+}
+
+async function onLanguageModelChanged() {
+  apiKeyRuntimeErrors.language = ''
+  apiKeyMessage.value = ''
+  if (!String(apiKeyForm.language_model || '').trim()) return
+  await saveApiKeySettings()
+}
+
+function addApiKeyAccount(kind) {
+  if (form.use_cloud_image_pool) return
+  editApiKey(kind)
+}
+
+async function deleteConfiguredApiKey(kind, index) {
+  if (form.use_cloud_image_pool || deletingApiKey.value) return
+  const targetLabel = kind === 'language' ? '这个语言模型 API Key' : '这个已保存的 API Key'
+  if (!window.confirm(`确定删除${targetLabel}吗？`)) return
+  deletingApiKey.value = true
+  try {
+    const provider = kind === 'language' ? apiKeyForm.language_provider : ''
+    const result = await api.deleteApiKey(kind, index, provider)
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    if (kind === 'language') apiKeyEditing.language = true
+    if (kind === 'image' && !apiKeyStatus.value.image?.configured) apiKeyEditing.image = true
+    apiKeyMessage.value = result.message || 'API Key 已删除。'
+  } catch (error) {
+    apiKeyMessage.value = error.message || '删除 API Key 失败。'
+  } finally {
+    deletingApiKey.value = false
+  }
+}
+
+async function loadApiKeySettings() {
+  if (!session.value.user) return
+  try {
+    const payload = await api.apiKeySettings()
+    apiKeyStatus.value = payload.keys || { language: {}, image: {}, qwen_tts: {} }
+    apiKeyForm.language_provider = apiKeyStatus.value.language?.provider || 'gemini_official'
+    apiKeyForm.language_source = apiKeyStatus.value.language?.source
+      || currentLanguageProvider.value?.source
+      || 'official'
+    apiKeyForm.language_model = apiKeyStatus.value.language?.model
+      || currentLanguageProvider.value?.selected_model
+      || currentLanguageModels.value[0]?.value
+      || ''
+    apiKeyForm.language_api_base_url = apiKeyStatus.value.language?.base_url
+      || currentLanguageProvider.value?.base_url
+      || ''
+    apiKeyForm.image_api_base_url = apiKeyStatus.value.image?.configured
+      ? ''
+      : (apiKeyStatus.value.image?.base_url || '')
+    apiKeyForm.image_model = apiKeyStatus.value.image?.configured
+      ? ''
+      : (apiKeyStatus.value.image?.model || 'rhart-image-g-2')
+    const imageResolution = String(apiKeyStatus.value.image?.resolution || '1k').trim()
+    const imageResolutionPreset = imageResolution.toLowerCase()
+    if (['1k', '2k', '4k'].includes(imageResolutionPreset)) {
+      apiKeyForm.image_resolution_preset = imageResolutionPreset
+      apiKeyForm.image_resolution_custom = ''
+    } else {
+      apiKeyForm.image_resolution_preset = 'custom'
+      apiKeyForm.image_resolution_custom = imageResolution
+    }
+    const concurrency = apiKeyStatus.value.image?.concurrency || {}
+    apiKeyForm.image_concurrency_mode = concurrency.mode === 'manual' ? 'manual' : 'auto'
+    apiKeyForm.image_per_key_concurrency = Number(concurrency.per_key || 1)
+    apiKeyForm.image_total_concurrency = Number(concurrency.total_limit || 3)
+    apiKeyStatusLoaded = true
+  } catch (error) {
+    apiKeyMessage.value = error.message || '无法读取 API Key 配置状态'
+  }
+}
+
+async function saveApiKeySettings() {
+  const payload = {
+    language_provider: apiKeyForm.language_provider,
+    language_model: String(apiKeyForm.language_model || '').trim(),
+  }
+  if (customLanguageProvider.value) {
+    payload.language_api_base_url = String(apiKeyForm.language_api_base_url || '').trim()
+  }
+  payload.image_api_base_url = String(apiKeyForm.image_api_base_url || '').trim()
+  payload.image_model = String(apiKeyForm.image_model || '').trim()
+  payload.image_resolution = apiKeyForm.image_resolution_preset === 'custom'
+    ? String(apiKeyForm.image_resolution_custom || '').trim()
+    : apiKeyForm.image_resolution_preset
+  for (const key of ['language_api_key', 'image_api_key']) {
+    const value = String(apiKeyForm[key] || '').trim()
+    if (value) payload[key] = value
+  }
+  for (const key of ['image_api_keys']) {
+    const values = apiKeyForm[key].map((value) => String(value || '').trim()).filter(Boolean)
+    if (values.length) payload[key] = values
+  }
+  if (!apiKeyForm.language_provider && Object.keys(payload).length === 0) {
+    apiKeyMessage.value = '请至少填写一个 API Key。'
+    return
+  }
+  savingApiKeys.value = true
+  apiKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings(payload)
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    apiKeyStatusLoaded = true
+    apiKeyMessage.value = result.message || 'API Key 已保存。'
+    const touched = new Set()
+    if (payload.language_api_key || payload.language_provider) touched.add('language')
+    if (payload.image_api_key || payload.image_api_keys?.length || payload.image_api_base_url || payload.image_model) touched.add('image')
+    for (const kind of touched) {
+      apiKeyEditing[kind] = kind === 'language'
+        ? !currentLanguageProvider.value?.configured
+        : false
+      apiKeyRuntimeErrors[kind] = ''
+    }
+    apiKeyForm.language_api_key = ''
+    apiKeyForm.image_api_key = ''
+    apiKeyForm.image_api_keys = []
+  } catch (error) {
+    apiKeyMessage.value = error.message || '保存 API Key 失败。'
+  } finally {
+    savingApiKeys.value = false
+  }
+}
+
+async function saveQwenTtsKey() {
+  const key = String(apiKeyForm.qwen_tts_api_key || '').trim()
+  if (!key) {
+    qwenTtsKeyMessage.value = '请填写 DashScope API Key。'
+    return
+  }
+  savingQwenTtsKey.value = true
+  qwenTtsKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings({ qwen_tts_api_key: key })
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    apiKeyStatusLoaded = true
+    apiKeyForm.qwen_tts_api_key = ''
+    apiKeyEditing.qwen_tts = false
+    apiKeyRuntimeErrors.qwen_tts = ''
+    qwenTtsKeyMessage.value = 'Qwen-TTS API Key 已保存到本机 .env。'
+  } catch (error) {
+    qwenTtsKeyMessage.value = error.message || '保存 Qwen-TTS API Key 失败。'
+  } finally {
+    savingQwenTtsKey.value = false
+  }
+}
+
+async function startTts() {
+  if (!session.value.user || health.value.tts_online) return
+  startingTts.value = true
+  ttsStartMessage.value = ''
+  try {
+    const payload = await api.startTts()
+    ttsStartMessage.value = payload.message || '已发送启动指令'
+    await refresh()
+  } catch (error) {
+    ttsStartMessage.value = error.message || '启动失败'
+  } finally {
+    startingTts.value = false
+  }
+}
+
+async function loadSettings() {
+  settings.value = await api.settings()
+  const defaults = settings.value.tts?.defaults || {}
+  form.tts_voice_id = defaults.voice_id || 'voice_05.wav'
+  form.tts_speed = defaults.speed ?? 1
+  form.tts_volume = defaults.volume ?? 1
+  form.tts_pitch = defaults.pitch ?? 0
+  form.tts_parallelism = defaults.parallelism ?? 1
+  form.tts_emotion = defaults.emotion || ''
+  form.tts_emotion_weight = defaults.emotion_weight ?? 0.65
+  form.tts_english_normalization = defaults.english_normalization ?? false
+  form.tts_pronunciation = defaults.pronunciation || ''
+  const availableModes = settings.value.visual_prompt?.modes || FALLBACK_CONTENT_MODES
+  const savedContentMode = window.localStorage.getItem(CONTENT_MODE_STORAGE_KEY)
+  form.content_mode = Object.prototype.hasOwnProperty.call(availableModes, savedContentMode)
+    ? savedContentMode
+    : 'urban_suspense'
+  form.director_strategy = window.localStorage.getItem(DIRECTOR_STRATEGY_STORAGE_KEY) === 'enhanced_beta'
+    ? 'enhanced_beta'
+    : 'stable'
+  const savedMode = window.localStorage.getItem(VISUAL_PROMPT_MODE_STORAGE_KEY)
+  form.visual_prompt_mode = savedMode === 'full' ? 'full' : 'simple'
+  const modeDefaults = contentModeDefaults()
+  form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY))
+    || modeDefaults.default_style
+  form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY))
+    || modeDefaults.default_character
+    || ''
+  form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY)) || ''
+  form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY))
+    || modeDefaults.default_system
+    || ''
+  form.agent0_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY))
+    || modeDefaults.default_agent0_system
+    || ''
+  form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY))
+    || modeDefaults.default_agent1_system
+    || ''
+  form.agent2_director_theme = window.localStorage.getItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY))
+    || AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode]
+    || ''
+  applyVisualPacing()
+  rememberVisualPrompt()
+}
+
+async function openPluginsPage() {
+  activePage.value = 'plugins'
+  await loadPlugins()
+}
+
+async function loadPlugins() {
+  if (!session.value.user || pluginsLoading.value) return
+  pluginsLoading.value = true
+  pluginMessage.value = ''
+  try {
+    const payload = await api.plugins()
+    plugins.value = payload.plugins || []
+    pluginNotice.value = payload.notice || ''
+  } catch (error) {
+    pluginMessage.value = error.message || '无法扫描插件目录'
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+async function togglePlugin(plugin) {
+  if (!plugin?.valid || pluginToggling.value) return
+  pluginToggling.value = plugin.folder
+  pluginMessage.value = ''
+  try {
+    const payload = await api.togglePlugin(plugin.folder)
+    plugin.enabled = Boolean(payload.enabled)
+    pluginMessage.value = plugin.enabled
+      ? `${plugin.name} 已标记为启用；当前预览框架仍不会执行插件代码。`
+      : `${plugin.name} 已停用。`
+  } catch (error) {
+    pluginMessage.value = error.message || '无法修改插件状态'
+    await loadPlugins()
+  } finally {
+    pluginToggling.value = ''
+  }
+}
+
+async function openPluginsFolder() {
+  pluginMessage.value = ''
+  try {
+    const payload = await api.openPluginsFolder()
+    pluginMessage.value = `已打开插件目录：${payload.path || ''}`
+  } catch (error) {
+    pluginMessage.value = error.message || '无法打开插件目录'
+  }
+}
+
+async function refreshParameterPresets() {
+  if (!session.value.user) {
+    parameterPresets.value = []
+    selectedParameterPreset.value = ''
+    return
+  }
+  loadingParameterPresets.value = true
+  try {
+    const payload = await api.parameterPresets()
+    parameterPresets.value = payload.presets || []
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '无法读取已保存参数'
+  } finally {
+    loadingParameterPresets.value = false
+  }
+}
+
+async function refreshAgentPromptPresets() {
+  if (!session.value.user) {
+    agentPromptPresets.value = []
+    selectedAgentPromptPreset.value = ''
+    return
+  }
+  loadingAgentPromptPresets.value = true
+  try {
+    const payload = await api.agentPromptPresets()
+    agentPromptPresets.value = payload.presets || []
+  } finally {
+    loadingAgentPromptPresets.value = false
+  }
+}
+
+async function loadSelectedAgentPromptPreset() {
+  if (!selectedAgentPromptPreset.value) return
+  try {
+    const presetKey = selectedAgentPromptPreset.value
+    const payload = await api.agentPromptPreset(presetKey)
+    if (contentModeOptions.value.some((item) => item.key === payload.content_mode)) {
+      setContentMode(payload.content_mode)
+    }
+    form.visual_prompt_system = payload.visual_prompt_system || ''
+    form.agent0_prompt_system = payload.agent0_prompt_system || contentModeDefaults().default_agent0_system || ''
+    form.agent1_prompt_system = payload.agent1_prompt_system || contentModeDefaults().default_agent1_system || ''
+    form.agent2_director_theme = payload.agent2_director_theme || AGENT2_DIRECTOR_THEME_DEFAULTS[form.content_mode] || ''
+    form.visual_prompt_mode = 'full'
+    selectedAgentPromptPreset.value = presetKey
+    rememberVisualPrompt()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '读取 Agent 提示词失败'
+  }
+}
+
+async function saveCurrentAgentPromptPreset() {
+  const prompt = String(form.visual_prompt_system || '').trim()
+  if (!prompt) {
+    parameterPresetMessage.value = '请先填写完整 Agent 2 画面指令。'
+    return
+  }
+  const name = window.prompt('请输入 Agent 提示词保存名：', selectedAgentPromptPreset.value || form.project_name || '')
+  if (!name?.trim()) return
+  savingAgentPromptPreset.value = true
+  try {
+    const payload = await api.saveAgentPromptPreset({
+      name: name.trim(),
+      visual_prompt_system: prompt,
+      agent0_prompt_system: form.agent0_prompt_system,
+      agent1_prompt_system: form.agent1_prompt_system,
+      agent2_director_theme: form.agent2_director_theme,
+      content_mode: form.content_mode,
+    })
+    selectedAgentPromptPreset.value = payload.key || `user:${payload.name || name.trim()}`
+    parameterPresetMessage.value = payload.message || 'Agent 提示词已保存。'
+    await refreshAgentPromptPresets()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '保存 Agent 提示词失败'
+  } finally {
+    savingAgentPromptPreset.value = false
+  }
+}
+
+async function saveCurrentParameterPreset() {
+  const name = String(form.project_name || '').trim()
+  if (!name) {
+    parameterPresetMessage.value = '请先填写项目名称，再保存参数。'
+    return
+  }
+  savingParameterPreset.value = true
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.saveParameterPreset({
+      name,
+      parameters: {
+        ...form,
+        manual_script: String(form.script || ''),
+        tts_engine: ttsEngine.value,
+      },
+    })
+    selectedParameterPreset.value = payload.name || name
+    parameterPresetMessage.value = payload.message || '参数已保存。'
+    await refreshParameterPresets()
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '保存参数失败'
+  } finally {
+    savingParameterPreset.value = false
+  }
+}
+
+async function loadSelectedParameterPreset() {
+  if (!selectedParameterPreset.value) return
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.parameterPreset(selectedParameterPreset.value)
+    const parameters = payload.parameters || {}
+    Object.assign(form, parameters)
+    form.bgm_enabled = Boolean(parameters.bgm_enabled)
+    form.bgm_tracks = Array.isArray(parameters.bgm_tracks)
+      ? parameters.bgm_tracks.map((track) => ({
+          asset_id: String(track.asset_id || ''),
+          name: String(track.name || editorAssets.value.find((asset) => asset.id === track.asset_id)?.name || track.asset_id || ''),
+          volume_db: Number.isFinite(Number(track.volume_db)) ? Number(track.volume_db) : -10,
+          duration_seconds: Number.isFinite(Number(track.duration_seconds)) ? Number(track.duration_seconds) : null,
+          url: String(editorAssets.value.find((asset) => asset.id === track.asset_id)?.url || ''),
+        })).filter((track) => track.asset_id)
+      : []
+    form.bgm_fade_enabled = Boolean(parameters.bgm_fade_enabled)
+    form.bgm_fade_duration = Number.isFinite(Number(parameters.bgm_fade_duration))
+      ? Number(parameters.bgm_fade_duration)
+      : 1
+    form.script = typeof parameters.script === 'string' ? parameters.script : ''
+    const savedTtsEngine = parameters.tts_engine === 'indextts2' ? 'indextts25' : parameters.tts_engine
+    ttsEngine.value = ['indextts25', 'cluster', 'qwen'].includes(savedTtsEngine)
+      ? savedTtsEngine
+      : 'indextts25'
+    form.visual_prompt_mode = parameters.visual_prompt_mode === 'full' ? 'full' : 'simple'
+    await restoreSavedTtsVoiceLabel()
+    await restoreSavedProtagonistReferenceImageLabel()
+    void hydrateBgmTrackDurations(form.bgm_tracks)
+    rememberVisualPrompt()
+    rememberVisualPacing()
+    parameterPresetMessage.value = `已读取参数：${payload.name || selectedParameterPreset.value}`
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '读取参数失败'
+  }
+}
+
+async function deleteSelectedParameterPreset() {
+  const name = String(selectedParameterPreset.value || '').trim()
+  if (!name) return
+  if (!window.confirm(`确定删除已保存参数“${name}”？此操作无法撤销。`)) return
+  deletingParameterPreset.value = true
+  parameterPresetMessage.value = ''
+  try {
+    const payload = await api.deleteParameterPreset(name)
+    selectedParameterPreset.value = ''
+    await refreshParameterPresets()
+    parameterPresetMessage.value = payload.message || `已删除参数：${name}`
+  } catch (error) {
+    parameterPresetMessage.value = error.message || '删除参数失败'
+  } finally {
+    deletingParameterPreset.value = false
+  }
+}
+
+function formatBgmDuration(value) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return '时长读取中'
+  const total = Math.max(0, Math.round(seconds))
+  const minutes = Math.floor(total / 60)
+  return `${minutes}:${String(total % 60).padStart(2, '0')}`
+}
+
+function readAudioDuration(file) {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file)
+    const audio = new Audio()
+    const finish = (value) => {
+      URL.revokeObjectURL(objectUrl)
+      audio.removeAttribute('src')
+      audio.load()
+      resolve(Number.isFinite(value) && value > 0 ? Number(value.toFixed(2)) : null)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => finish(audio.duration)
+    audio.onerror = () => finish(null)
+    audio.src = objectUrl
+  })
+}
+
+function readAudioUrlDuration(url) {
+  return new Promise((resolve) => {
+    const audio = new Audio()
+    const finish = (value) => {
+      audio.removeAttribute('src')
+      audio.load()
+      resolve(Number.isFinite(value) && value > 0 ? Number(value.toFixed(2)) : null)
+    }
+    audio.preload = 'metadata'
+    audio.onloadedmetadata = () => finish(audio.duration)
+    audio.onerror = () => finish(null)
+    audio.src = url
+  })
+}
+
+async function hydrateBgmTrackDurations(tracks) {
+  await Promise.all((tracks || []).map(async (track) => {
+    if (Number.isFinite(Number(track.duration_seconds)) && Number(track.duration_seconds) > 0) return
+    const url = bgmTrackUrl(track)
+    if (url) track.duration_seconds = await readAudioUrlDuration(url)
+  }))
+}
+
+function bgmTrackUrl(track) {
+  if (track?.url) return track.url
+  return editorAssets.value.find((asset) => String(asset.id) === String(track?.asset_id))?.url || ''
+}
+
+function isBgmPreviewing(track) {
+  return bgmPreviewTrack.value === track && Boolean(bgmPreviewAudio && !bgmPreviewAudio.paused)
+}
+
+function stopBgmPreview() {
+  if (bgmPreviewAudio) {
+    bgmPreviewAudio.pause()
+    bgmPreviewAudio.currentTime = 0
+  }
+  bgmPreviewAudio = null
+  bgmPreviewTrack.value = null
+}
+
+async function toggleBgmPreview(track) {
+  const url = bgmTrackUrl(track)
+  if (!url) return
+  if (bgmPreviewTrack.value === track && bgmPreviewAudio) {
+    if (bgmPreviewAudio.paused) {
+      try {
+        await bgmPreviewAudio.play()
+      } catch (error) {
+        bgmError.value = error.message || 'BGM 试听无法播放。'
+      }
+    } else {
+      bgmPreviewAudio.pause()
+    }
+    return
+  }
+  if (bgmPreviewAudio) bgmPreviewAudio.pause()
+  const audio = new Audio(url)
+  bgmPreviewAudio = audio
+  bgmPreviewTrack.value = track
+  audio.addEventListener('ended', () => {
+    if (bgmPreviewAudio === audio) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+  })
+  audio.addEventListener('pause', () => {
+    if (bgmPreviewAudio === audio && audio.currentTime >= audio.duration) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+  })
+  try {
+    await audio.play()
+  } catch (error) {
+    if (bgmPreviewAudio === audio) {
+      bgmPreviewAudio = null
+      bgmPreviewTrack.value = null
+    }
+    bgmError.value = error.message || 'BGM 试听无法播放。'
+  }
+}
+
+function moveBgmTrack(tracks, index, direction) {
+  const target = index + direction
+  if (!Array.isArray(tracks) || target < 0 || target >= tracks.length) return
+  const [track] = tracks.splice(index, 1)
+  tracks.splice(target, 0, track)
+}
+
+function clearBgmTracks(scope) {
+  const tracks = scope === 'subtitle'
+    ? subtitleRenderForm.bgm_tracks
+    : scope === 'visual'
+      ? visualBgm.tracks
+      : form.bgm_tracks
+  if (!tracks.length) return
+  if (!window.confirm('确定清空当前 BGM 播放列表吗？')) return
+  if (bgmPreviewTrack.value && tracks.includes(bgmPreviewTrack.value)) stopBgmPreview()
+  tracks.splice(0, tracks.length)
+}
+
+async function uploadVisualBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  visualBgmUploading.value = true
+  visualBgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    visualBgm.tracks.push({
+      asset_id: payload.asset.id,
+      archived_filename: '',
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) editorAssets.value.push(payload.asset)
+  } catch (error) {
+    visualBgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    visualBgmUploading.value = false
+  }
+}
+
+function removeVisualBgmTrack(index) {
+  const [track] = visualBgm.tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
+}
+
+async function uploadBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  bgmUploading.value = true
+  bgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    form.bgm_tracks.push({
+      asset_id: payload.asset.id,
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) {
+      editorAssets.value.push(payload.asset)
+    }
+  } catch (error) {
+    bgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    bgmUploading.value = false
+  }
+}
+
+function removeBgmTrack(index) {
+  const [track] = form.bgm_tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
+}
+
+async function uploadLocalScript(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  scriptUploadError.value = ''
+  if (!file) return
+
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['txt', 'md'].includes(suffix)) {
+    scriptUploadName.value = ''
+    scriptUploadError.value = '仅支持 .txt 或 .md 文案文件。'
+    return
+  }
+  if (file.size > MAX_SCRIPT_FILE_SIZE) {
+    scriptUploadName.value = ''
+    scriptUploadError.value = '文案文件不能超过 2 MB。'
+    return
+  }
+
+  try {
+    const buffer = await file.arrayBuffer()
+    let content
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+    } catch {
+      content = new TextDecoder('gb18030', { fatal: true }).decode(buffer)
+    }
+    content = content.replace(/^\uFEFF/, '')
+    if (!content.trim()) {
+      throw new Error('文案文件内容为空。')
+    }
+    if (content.length > MAX_SCRIPT_CHARACTERS) {
+      throw new Error(`单次文案最多 ${MAX_SCRIPT_CHARACTERS.toLocaleString()} 个字符，当前 ${content.length.toLocaleString()}。请按完整章节拆分后分批生成。`)
+    }
+    form.script = content
+    scriptUploadName.value = file.name
+  } catch (error) {
+    scriptUploadName.value = ''
+    scriptUploadError.value = error.message || '读取文案失败，请检查文件编码。'
+  }
+}
+
+function handleSkipTtsChange() {
+  if (!form.skip_tts) {
+    form.source_audio_id = ''
+    form.skip_text_correction = false
+    sourceAudioName.value = ''
+    sourceAudioError.value = ''
+  }
+}
+
+function resetVisualPrompt() {
+  const modeDefaults = contentModeDefaults()
+  if (form.visual_prompt_mode === 'simple') {
+    form.visual_style_prompt = modeDefaults.default_style || ''
+    form.global_character_prompt = modeDefaults.default_character || ''
+  } else {
+    form.visual_prompt_system = modeDefaults.default_system || ''
+  }
+  rememberVisualPrompt()
+}
+
+function resetSimpleVisualPrompt() {
+  form.visual_prompt_mode = 'simple'
+  form.visual_style_prompt = contentModeDefaults().default_style || ''
+  form.global_character_prompt = contentModeDefaults().default_character || ''
+  form.story_environment_prompt = ''
+  rememberVisualPrompt()
+}
+
+function setContentMode(mode) {
+  if (mode === form.content_mode) return
+  rememberVisualPrompt()
+  form.content_mode = mode
+  form.visual_prompt_mode = 'simple'
+  selectedAgentPromptPreset.value = ''
+  const modeDefaults = contentModeDefaults(mode)
+  form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY, mode))
+    || modeDefaults.default_style
+  form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY, mode))
+    || modeDefaults.default_character
+    || ''
+  form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY, mode)) || ''
+  form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY, mode))
+    || modeDefaults.default_system
+    || ''
+  form.agent0_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY, mode))
+    || modeDefaults.default_agent0_system
+    || ''
+  form.agent1_prompt_system = window.localStorage.getItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY, mode))
+    || modeDefaults.default_agent1_system
+    || ''
+  form.agent2_director_theme = window.localStorage.getItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY, mode))
+    || AGENT2_DIRECTOR_THEME_DEFAULTS[mode]
+    || ''
+  applyVisualPacing(mode)
+  rememberVisualPrompt()
+}
+
+function setDirectorStrategy(strategy) {
+  form.director_strategy = strategy === 'enhanced_beta' ? 'enhanced_beta' : 'stable'
+  window.localStorage.setItem(DIRECTOR_STRATEGY_STORAGE_KEY, form.director_strategy)
+}
+
+function setVisualPromptMode(mode) {
+  form.visual_prompt_mode = mode
+  if (mode === 'full' && !String(form.agent0_prompt_system || '').trim()) {
+    form.agent0_prompt_system = contentModeDefaults().default_agent0_system || ''
+  }
+  if (mode === 'full' && !String(form.agent1_prompt_system || '').trim()) {
+    form.agent1_prompt_system = contentModeDefaults().default_agent1_system || ''
+  }
+  if (mode !== 'full') selectedAgentPromptPreset.value = ''
+  rememberVisualPrompt()
+}
+
+function rememberVisualPrompt() {
+  window.localStorage.setItem(CONTENT_MODE_STORAGE_KEY, form.content_mode)
+  window.localStorage.setItem(DIRECTOR_STRATEGY_STORAGE_KEY, form.director_strategy)
+  window.localStorage.setItem(VISUAL_PROMPT_MODE_STORAGE_KEY, form.visual_prompt_mode)
+  window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY), form.visual_style_prompt || '')
+  window.localStorage.setItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY), form.global_character_prompt || '')
+  window.localStorage.setItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY), form.story_environment_prompt || '')
+  window.localStorage.setItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY), form.visual_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT0_PROMPT_STORAGE_KEY), form.agent0_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT1_PROMPT_STORAGE_KEY), form.agent1_prompt_system || '')
+  window.localStorage.setItem(modeStorageKey(AGENT2_DIRECTOR_THEME_STORAGE_KEY), form.agent2_director_theme || '')
+}
+
+function rememberVisualPacing() {
+  window.localStorage.setItem(modeStorageKey(VISUAL_PACING_STORAGE_KEY), JSON.stringify({
+    preset: form.visual_pacing_preset,
+    min: form.visual_min_duration,
+    target: form.visual_target_duration,
+    max: form.visual_max_duration,
+    slides: form.visual_max_slides,
+  }))
+}
+
+async function uploadTtsVoice(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  stopTtsVoicePreview()
+  ttsVoiceUploadError.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['wav', 'mp3', 'flac'].includes(suffix)) {
+    ttsVoiceUploadName.value = ''
+    ttsVoiceUploadError.value = '参考音色只支持 WAV、MP3 或 FLAC。'
+    return
+  }
+  ttsVoiceUploading.value = true
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    form.tts_voice_id = `upload:${payload.asset.id}`
+    ttsVoiceUploadName.value = payload.asset.name || file.name
+    ttsVoicePreviewUrl.value = payload.asset.url || ''
+  } catch (error) {
+    ttsVoiceUploadName.value = ''
+    ttsVoicePreviewUrl.value = ''
+    ttsVoiceUploadError.value = error.message || '上传参考音色失败'
+  } finally {
+    ttsVoiceUploading.value = false
+  }
+}
+
+async function restoreSavedTtsVoiceLabel() {
+  const savedVoiceId = String(form.tts_voice_id || '')
+  ttsVoiceUploadError.value = ''
+  if (!savedVoiceId.startsWith('upload:')) {
+    ttsVoiceUploadName.value = ''
+    ttsVoicePreviewUrl.value = ''
+    return
+  }
+
+  const assetId = savedVoiceId.slice('upload:'.length)
+  try {
+    if (!editorAssets.value.length) {
+      const payload = await api.editorUploads()
+      editorAssets.value = payload.assets || []
+    }
+    const asset = editorAssets.value.find((item) => String(item.id) === assetId)
+    if (asset) {
+      ttsVoiceUploadName.value = asset.name || '已恢复本地参考音色'
+      ttsVoicePreviewUrl.value = asset.url || ''
+      return
+    }
+    ttsVoiceUploadName.value = '已保存的参考音色'
+    ttsVoicePreviewUrl.value = ''
+    ttsVoiceUploadError.value = '该参考音色文件当前不存在，请重新上传后再运行。'
+  } catch {
+    ttsVoiceUploadName.value = '已保存的参考音色'
+    ttsVoicePreviewUrl.value = ''
+  }
+}
+
+function stopTtsVoicePreview() {
+  if (ttsVoicePreviewAudio) {
+    ttsVoicePreviewAudio.pause()
+    ttsVoicePreviewAudio.currentTime = 0
+  }
+  ttsVoicePreviewPlaying.value = false
+}
+
+async function toggleTtsVoicePreview() {
+  const source = ttsVoicePreviewUrl.value
+  if (!source) return
+  if (ttsVoicePreviewAudio && ttsVoicePreviewAudio.src.endsWith(source)) {
+    if (ttsVoicePreviewAudio.paused) {
+      await ttsVoicePreviewAudio.play()
+      ttsVoicePreviewPlaying.value = true
+    } else {
+      ttsVoicePreviewAudio.pause()
+      ttsVoicePreviewPlaying.value = false
+    }
+    return
+  }
+  stopTtsVoicePreview()
+  const player = new Audio(source)
+  ttsVoicePreviewAudio = player
+  player.addEventListener('ended', () => {
+    if (ttsVoicePreviewAudio === player) ttsVoicePreviewPlaying.value = false
+  })
+  player.addEventListener('pause', () => {
+    if (ttsVoicePreviewAudio === player && player.currentTime < player.duration) ttsVoicePreviewPlaying.value = false
+  })
+  try {
+    await player.play()
+    ttsVoicePreviewPlaying.value = true
+  } catch (error) {
+    ttsVoicePreviewPlaying.value = false
+    ttsVoiceUploadError.value = error.message || '音色试听无法播放。'
+  }
+}
+
+async function restoreSavedProtagonistReferenceImageLabel() {
+  let assetIds = Array.isArray(form.reference_image_ids)
+    ? form.reference_image_ids.map((value) => String(value || '')).filter(Boolean).slice(0, 3)
+    : []
+  if (!assetIds.length && form.protagonist_reference_image_id) {
+    assetIds = [String(form.protagonist_reference_image_id)]
+  }
+  form.reference_image_ids = assetIds
+  form.protagonist_reference_image_id = assetIds[0] || ''
+  protagonistReferenceImageError.value = ''
+  if (!assetIds.length) {
+    referenceImageNames.value = []
+    return
+  }
+  try {
+    if (!editorAssets.value.length) {
+      const payload = await api.editorUploads()
+      editorAssets.value = payload.assets || []
+    }
+    const assets = assetIds.map((assetId) => editorAssets.value.find(
+      (item) => String(item.id) === assetId && item.kind === 'image',
+    ))
+    if (assets.some((asset) => !asset)) throw new Error('保存的角色参考图当前不存在，请重新上传后再运行。')
+    referenceImageNames.value = assets.map((asset, index) => asset.name || `角色参考图 ${index + 1}`)
+  } catch (error) {
+    referenceImageNames.value = assetIds.map((_, index) => `已保存的参考图 ${index + 1}`)
+    protagonistReferenceImageError.value = error.message || '无法恢复主角参考图。'
+  }
+}
+
+async function exportDiagnosticPackage(job) {
+  if (!job?.id || diagnosticExporting.value) return
+  diagnosticExporting.value = true
+  diagnosticMessage.value = ''
+  try {
+    const { blob, filename } = await api.downloadDiagnosticPackage(job.id)
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename || '问题诊断包.zip'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)
+    diagnosticMessage.value = '问题诊断包已下载：不含 API Key、文案原文、提示词、媒体和模型文件。'
+  } catch (error) {
+    diagnosticMessage.value = error.message || '问题诊断包导出失败。'
+  } finally {
+    diagnosticExporting.value = false
+  }
+}
+
+async function openArtifactFolder(url) {
+  folderOpenMessage.value = ''
+  try {
+    await api.openArtifactFolder(url)
+    folderOpenMessage.value = '已在资源管理器中定位该文件。'
+  } catch (error) {
+    folderOpenMessage.value = error.message || '无法打开文件所在文件夹'
+  }
+}
+
+async function openSubtitleOutputFolder() {
+  folderOpenMessage.value = ''
+  if (!subtitleJob.value?.id) return
+  try {
+    const payload = await api.openJobOutputFolder(subtitleJob.value.id)
+    folderOpenMessage.value = `已打开字幕任务输出：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '暂时找不到字幕任务输出文件夹'
+  }
+}
+
+async function openProjectOutputFolder() {
+  folderOpenMessage.value = ''
+  if (!activeJob.value?.id) return
+  try {
+    const payload = await api.openJobOutputFolder(activeJob.value.id)
+    folderOpenMessage.value = `已打开项目输出：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '暂时找不到项目输出文件夹'
+  }
+}
+
+async function openStepModeVisualPreviewFolder() {
+  if (!activeJob.value?.id) return
+  folderOpenMessage.value = ''
+  try {
+    const payload = await api.openStepModeVisualPreviewFolder(activeJob.value.id)
+    folderOpenMessage.value = `已打开画面检查文件夹：${payload.path || ''}`
+  } catch (error) {
+    folderOpenMessage.value = error.message || '画面检查文件夹暂不可用'
+  }
+}
+
+function hydrateVisualBgm(settings = {}) {
+  visualBgm.enabled = Boolean(settings.enabled)
+  visualBgm.tracks = Array.isArray(settings.tracks) ? settings.tracks.map((track) => ({ ...track })) : []
+  visualBgm.fade_enabled = Boolean(settings.fade_enabled)
+  visualBgm.fade_duration = Number(settings.fade_duration || 1)
+  visualBgmError.value = ''
+}
+
+async function loadVisualEditor({ preservePage = false, hydrateBgm = false } = {}) {
+  if (!visualEditorProjectId.value) return
+  visualEditorLoading.value = true
+  try {
+    visualEditor.value = await api.visualEditor(visualEditorProjectId.value)
+    if (hydrateBgm) hydrateVisualBgm(visualEditor.value.bgm)
+    if (!preservePage) visualEditorPage.value = 1
+    if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
+    if (!visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
+      visualTimingSelectedId.value = visualEditor.value.items.find((item) => item.timing)?.id || ''
+    }
+    if (!visualEditor.value.timing_history?.some((item) => item.id === selectedVisualTimingHistory.value)) {
+      selectedVisualTimingHistory.value = ''
+    }
+    if (!visualEditor.value.subtitle_history?.some((item) => item.id === selectedVisualSubtitleHistory.value)) {
+      selectedVisualSubtitleHistory.value = ''
+    }
+    hydrateVisualSubtitleDrafts()
+  } catch (error) {
+    visualEditor.value = { items: [], task: { status: 'failed', message: error.message || '无法读取画面修改资料' }, version: 0 }
+  } finally {
+    visualEditorLoading.value = false
+  }
+}
+
+function visualSubtitleSentences() {
+  const result = []
+  const seen = new Set()
+  for (const item of visualEditor.value.items || []) {
+    for (const sentence of item.timing?.sentences || []) {
+      const slideId = String(sentence.slide_id || '').trim()
+      if (!slideId || seen.has(slideId)) continue
+      seen.add(slideId)
+      result.push(sentence)
+    }
+  }
+  return result.sort((left, right) => Number(left.start || 0) - Number(right.start || 0))
+}
+
+function hydrateVisualSubtitleDrafts({ preserveDirty = true } = {}) {
+  const projectChanged = visualSubtitleProjectKey !== visualEditorProjectId.value
+  const dirtyBefore = new Set(projectChanged || !preserveDirty ? [] : visualSubtitleDirtyIds.value)
+  const sentences = visualSubtitleSentences()
+  const validIds = new Set(sentences.map((item) => String(item.slide_id)))
+  for (const key of Object.keys(visualSubtitleDrafts)) {
+    if (!validIds.has(key) || projectChanged) delete visualSubtitleDrafts[key]
+  }
+  for (const key of Object.keys(visualSubtitleOriginals)) {
+    if (!validIds.has(key) || projectChanged) delete visualSubtitleOriginals[key]
+  }
+  for (const sentence of sentences) {
+    const slideId = String(sentence.slide_id)
+    const serverText = String(sentence.text || '')
+    visualSubtitleOriginals[slideId] = serverText
+    if (!dirtyBefore.has(slideId)) visualSubtitleDrafts[slideId] = serverText
+  }
+  if (projectChanged) {
+    visualSubtitleEditingId.value = ''
+    selectedVisualSubtitleHistory.value = ''
+    closeVisualSubtitleRemove()
+    closeVisualBoundaryAlign()
+  }
+  visualSubtitleProjectKey = visualEditorProjectId.value
+}
+
+async function loadTtsEditor() {
+  if (!visualEditorProjectId.value) return
+  ttsEditorLoading.value = true
+  try {
+    ttsEditor.value = await api.ttsEditor(visualEditorProjectId.value)
+    hydrateTtsRefineSettings(ttsEditor.value)
+    const valid = new Set((ttsEditor.value.segments || []).map((item) => item.index))
+    selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter((value) => valid.has(value))
+    ttsPronunciationOpenIndices.value = ttsPronunciationOpenIndices.value.filter((value) => valid.has(value))
+    for (const key of Object.keys(ttsReadingDrafts)) delete ttsReadingDrafts[key]
+    for (const item of ttsEditor.value.segments || []) {
+      ttsReadingDrafts[item.index] = String(item.tts_text || item.text || '')
+      ttsPauseDrafts[item.index] = Number(item.pause_after || 0)
+    }
+  } catch (error) {
+    ttsEditor.value = { available: false, message: error.message || '无法读取逐句配音', segments: [], task: { status: 'failed', message: '' } }
+  } finally {
+    ttsEditorLoading.value = false
+  }
+}
+
+async function saveImageConcurrencySettings() {
+  if (form.use_cloud_image_pool || savingImageConcurrency.value) return
+  savingImageConcurrency.value = true
+  apiKeyMessage.value = ''
+  try {
+    const result = await api.saveApiKeySettings({
+      image_concurrency_mode: apiKeyForm.image_concurrency_mode === 'manual' ? 'manual' : 'auto',
+      image_per_key_concurrency: Math.max(1, Math.min(16, Number(apiKeyForm.image_per_key_concurrency || 1))),
+      image_total_concurrency: Math.max(1, Math.min(64, Number(apiKeyForm.image_total_concurrency || 1))),
+    })
+    apiKeyStatus.value = result.keys || apiKeyStatus.value
+    const concurrency = apiKeyStatus.value.image?.concurrency || {}
+    apiKeyForm.image_concurrency_mode = concurrency.mode === 'manual' ? 'manual' : 'auto'
+    apiKeyForm.image_per_key_concurrency = Number(concurrency.per_key || 1)
+    apiKeyForm.image_total_concurrency = Number(concurrency.total_limit || 3)
+    apiKeyMessage.value = `出图并发已保存：${imageConcurrencyPreview.value}`
+  } catch (error) {
+    apiKeyMessage.value = error.message || '保存出图并发设置失败。'
+  } finally {
+    savingImageConcurrency.value = false
+  }
+}
+
+function hydrateTtsRefineSettings(payload) {
+  const values = payload?.settings || {}
+  ttsRefineForm.tts_voice_id = ''
+  ttsRefineForm.tts_speed = Number(values.tts_speed ?? 1)
+  ttsRefineForm.tts_volume = Number(values.tts_volume ?? 1)
+  ttsRefineForm.tts_pitch = Number(values.tts_pitch ?? 0)
+  ttsRefineForm.tts_parallelism = Number(values.tts_parallelism ?? 1)
+  ttsRefineForm.tts_emotion = String(values.tts_emotion || '')
+  ttsRefineForm.tts_emotion_weight = Number(values.tts_emotion_weight ?? 0.65)
+  const clusterType = String(values.cluster_voice_type || 'preset')
+  const clusterId = String(values.cluster_voice_id || '')
+  ttsRefineForm.cluster_voice_key = clusterId ? `${clusterType === 'custom' ? 'uploaded' : clusterType}:${clusterId}` : ''
+  ttsRefineForm.qwen_voice = String(values.qwen_voice || 'Elias')
+  ttsRefineForm.qwen_instructions = String(values.qwen_instructions || '')
+  ttsRefineVoiceName.value = ''
+  ttsRefineVoiceError.value = ''
+}
+
+async function uploadTtsRefineVoice(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['wav', 'mp3', 'flac'].includes(suffix)) {
+    ttsRefineVoiceError.value = '参考音色只支持 WAV、MP3 或 FLAC。'
+    return
+  }
+  ttsRefineVoiceUploading.value = true
+  ttsRefineVoiceError.value = ''
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    ttsRefineForm.tts_voice_id = `upload:${payload.asset.id}`
+    ttsRefineVoiceName.value = payload.asset.name || file.name
+  } catch (error) {
+    ttsRefineVoiceError.value = error.message || '精修参考音色上传失败'
+  } finally {
+    ttsRefineVoiceUploading.value = false
+  }
+}
+
+function resetTtsSegmentAudio({ clearSource = true } = {}) {
+  if (ttsSegmentAudio) {
+    ttsSegmentAudio.pause()
+    if (clearSource) {
+      ttsSegmentAudio.removeAttribute('src')
+      ttsSegmentAudio.load()
+    }
+  }
+  ttsSegmentPlayingIndex.value = 0
+  ttsSegmentIsPlaying.value = false
+  ttsSegmentCurrentTime.value = 0
+  ttsSegmentDuration.value = 0
+}
+
+function prepareTtsSegmentAudio(item) {
+  if (!ttsSegmentAudio) {
+    ttsSegmentAudio = new Audio()
+    ttsSegmentAudio.preload = 'metadata'
+    ttsSegmentAudio.addEventListener('timeupdate', () => {
+      ttsSegmentCurrentTime.value = Number(ttsSegmentAudio?.currentTime || 0)
+    })
+    ttsSegmentAudio.addEventListener('loadedmetadata', () => {
+      ttsSegmentDuration.value = Number.isFinite(ttsSegmentAudio?.duration)
+        ? Number(ttsSegmentAudio.duration)
+        : Number(item.duration || 0)
+    })
+    ttsSegmentAudio.addEventListener('play', () => { ttsSegmentIsPlaying.value = true })
+    ttsSegmentAudio.addEventListener('pause', () => { ttsSegmentIsPlaying.value = false })
+    ttsSegmentAudio.addEventListener('ended', () => {
+      ttsSegmentIsPlaying.value = false
+      ttsSegmentCurrentTime.value = 0
+    })
+  }
+  if (ttsSegmentPlayingIndex.value !== item.index || ttsSegmentAudio.dataset.source !== item.audio_url) {
+    ttsSegmentAudio.pause()
+    ttsSegmentPlayingIndex.value = item.index
+    ttsSegmentCurrentTime.value = 0
+    ttsSegmentDuration.value = Number(item.duration || 0)
+    ttsSegmentAudio.dataset.source = item.audio_url
+    const separator = item.audio_url.includes('?') ? '&' : '?'
+    ttsSegmentAudio.src = `${item.audio_url}${separator}play=${Date.now()}`
+    ttsSegmentAudio.load()
+  }
+  return ttsSegmentAudio
+}
+
+async function toggleTtsSegmentAudio(item) {
+  const audio = prepareTtsSegmentAudio(item)
+  if (!audio.paused) {
+    audio.pause()
+    return
+  }
+  try {
+    await audio.play()
+  } catch {
+    ttsSegmentIsPlaying.value = false
+  }
+}
+
+function seekTtsSegmentAudio(item, event) {
+  const audio = prepareTtsSegmentAudio(item)
+  const value = Math.max(0, Number(event?.target?.value || 0))
+  audio.currentTime = Math.min(value, Number.isFinite(audio.duration) ? audio.duration : value)
+  ttsSegmentCurrentTime.value = value
+}
+
+function isTtsPronunciationOpen(index) {
+  return ttsPronunciationOpenIndices.value.includes(index)
+}
+
+function toggleTtsPronunciationEditor(item) {
+  if (!(item.index in ttsReadingDrafts)) {
+    ttsReadingDrafts[item.index] = String(item.tts_text || item.text || '')
+  }
+  if (isTtsPronunciationOpen(item.index)) {
+    ttsPronunciationOpenIndices.value = ttsPronunciationOpenIndices.value.filter((value) => value !== item.index)
+  } else {
+    ttsPronunciationOpenIndices.value = [...ttsPronunciationOpenIndices.value, item.index]
+  }
+}
+
+function updateTtsReadingDraft(item, event) {
+  ttsReadingDrafts[item.index] = String(event?.target?.value ?? '')
+  if (!selectedTtsSegmentIndices.value.includes(item.index)) {
+    selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
+  }
+}
+
+function resetTtsReadingDraft(item) {
+  ttsReadingDrafts[item.index] = String(item.text || '')
+  if (!selectedTtsSegmentIndices.value.includes(item.index)) {
+    selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
+  }
+}
+
+function isTtsReadingModified(item) {
+  return String(ttsReadingDrafts[item.index] ?? item.tts_text ?? item.text ?? '').trim() !== String(item.text || '').trim()
+}
+
+function closeTtsBoundaryEditor() {
+  ttsBoundary.open = false
+  ttsBoundary.counts = []
+  ttsBoundary.limit = null
+}
+
+function openTtsBoundaryEditor(item, adjustExisting = false) {
+  const segments = ttsEditor.value.segments || []
+  const next = segments.find((entry) => entry.index === item.index + 1)
+  if (adjustExisting && !next) return
+  const sourceText = adjustExisting ? `${item.text || ''}${next.text || ''}` : String(item.text || '')
+  const sourceReading = adjustExisting
+    ? `${item.tts_text || item.text || ''}${next.tts_text || next.text || ''}`
+    : String(item.tts_text || item.text || '')
+  const firstLength = String(item.text || '').length
+  Object.assign(ttsBoundary, {
+    open: true,
+    startIndex: item.index,
+    replaceCount: adjustExisting ? 2 : 1,
+    sourceText,
+    sourceReading,
+    caret: adjustExisting ? firstLength : Math.max(1, Math.floor(sourceText.length / 2)),
+    merge: false,
+    pause: Number(item.pause_after || 0.6),
+    leftText: '', rightText: '',
+    leftReading: '', rightReading: '', counts: [], limit: null,
+  })
+  updateTtsBoundaryParts()
+}
+
+function updateTtsBoundaryParts(selection) {
+  if (Number.isInteger(selection)) ttsBoundary.caret = selection
+  const text = ttsBoundary.sourceText
+  const caret = Math.max(1, Math.min(text.length - 1, Number(ttsBoundary.caret || 1)))
+  ttsBoundary.caret = caret
+  ttsBoundary.leftText = text.slice(0, caret)
+  ttsBoundary.rightText = text.slice(caret)
+  // Reading text can contain pinyin corrections and therefore need not have
+  // the same length as the subtitle text. Preserve it and choose a nearby
+  // split; both fields remain editable when that approximation needs tuning.
+  const reading = String(ttsBoundary.sourceReading || text)
+  const readingCaret = Math.max(1, Math.min(
+    Math.max(1, reading.length - 1),
+    Math.round((caret / Math.max(1, text.length)) * reading.length),
+  ))
+  ttsBoundary.leftReading = reading.slice(0, readingCaret)
+  ttsBoundary.rightReading = reading.slice(readingCaret)
+  refreshTtsBoundaryTokenCounts()
+}
+
+function confirmTtsHistoryCapacity() {
+  const count = Number(ttsEditor.value.history_count || 0)
+  const limit = Number(ttsEditor.value.history_limit || 20)
+  if (count < limit || window.localStorage.getItem('ocv_skip_tts_history_limit_warning') === '1') return true
+  if (!window.confirm(`音频编辑历史已达到 ${limit} 次。继续后会自动删除最早的一次记录，仍要继续吗？`)) return false
+  if (window.confirm('以后不再提醒音频历史上限？\n（仍会始终保留最近 20 次。）')) {
+    window.localStorage.setItem('ocv_skip_tts_history_limit_warning', '1')
+  }
+  return true
+}
+
+async function refreshTtsBoundaryTokenCounts() {
+  if (!visualEditorProjectId.value || !ttsBoundary.open) return
+  const texts = ttsBoundary.merge
+    ? [ttsBoundary.leftReading + ttsBoundary.rightReading]
+    : [ttsBoundary.leftReading, ttsBoundary.rightReading]
+  ttsBoundary.checking = true
+  try {
+    const payload = await api.countTtsTokens(visualEditorProjectId.value, texts)
+    ttsBoundary.counts = payload.counts || []
+    ttsBoundary.limit = payload.limit
+  } catch {
+    ttsBoundary.counts = []
+    ttsBoundary.limit = null
+  } finally {
+    ttsBoundary.checking = false
+  }
+}
+
+function ttsBoundaryOverLimit() {
+  return Number(ttsBoundary.limit) > 0 && ttsBoundary.counts.some((value) => Number(value) > Number(ttsBoundary.limit))
+}
+
+async function submitTtsBoundary() {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsBoundaryOverLimit()) return
+  if (!confirmTtsHistoryCapacity()) return
+  const parts = ttsBoundary.merge
+    ? [{ text: ttsBoundary.sourceText, tts_text: `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`, pause_after: 0 }]
+    : [
+        { text: ttsBoundary.leftText, tts_text: ttsBoundary.leftReading, pause_after: Number(ttsBoundary.pause || 0) },
+        { text: ttsBoundary.rightText, tts_text: ttsBoundary.rightReading, pause_after: 0 },
+      ]
+  if (parts.some((part) => !String(part.text).trim() || !String(part.tts_text).trim())) return
+  if (['cluster', 'qwen'].includes(ttsEditor.value.engine)) {
+    if (!window.confirm('这次操作会重配调整后的句子，可能产生配音费用。是否继续？')) return
+  }
+  ttsBoundaryBusy.value = true
+  try {
+    const refineSettings = {
+      tts_speed: ttsRefineForm.tts_speed, tts_volume: ttsRefineForm.tts_volume,
+      tts_pitch: ttsRefineForm.tts_pitch, tts_parallelism: ttsRefineForm.tts_parallelism,
+      tts_emotion: ttsRefineForm.tts_emotion, tts_emotion_weight: ttsRefineForm.tts_emotion_weight,
+      qwen_voice: ttsRefineForm.qwen_voice, qwen_instructions: ttsRefineForm.qwen_instructions,
+    }
+    if (ttsRefineForm.tts_voice_id) refineSettings.tts_voice_id = ttsRefineForm.tts_voice_id
+    if (ttsRefineForm.cluster_voice_key) {
+      const [voiceType, ...voiceIdParts] = ttsRefineForm.cluster_voice_key.split(':')
+      refineSettings.cluster_voice_type = voiceType
+      refineSettings.cluster_voice_id = voiceIdParts.join(':')
+    }
+    await api.resegmentTts(visualEditorProjectId.value, {
+      start_index: ttsBoundary.startIndex,
+      replace_count: ttsBoundary.replaceCount,
+      parts,
+      ...refineSettings,
+    })
+    closeTtsBoundaryEditor()
+    ttsEditor.value.task = { status: 'running', progress: 0, message: '正在重配断句前后的内容…' }
+    startTtsEditorPolling()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法调整断句' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function saveTtsPause(item) {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value) return
+  if (!confirmTtsHistoryCapacity()) return
+  ttsBoundaryBusy.value = true
+  try {
+    const result = await api.saveTtsPause(
+      visualEditorProjectId.value, item.index,
+      Math.max(0, Math.min(30, Number(ttsPauseDrafts[item.index] || 0))),
+    )
+    ttsEditor.value.task = { status: 'completed', message: result.message }
+    await loadTtsEditor()
+    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法保存停顿' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function undoLastTtsEdit() {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || !ttsEditor.value.history_count) return
+  if (!window.confirm('撤销上一次音频编辑并恢复当时的配音、字幕和时间轴？')) return
+  ttsBoundaryBusy.value = true
+  try {
+    await api.undoTtsEdit(visualEditorProjectId.value)
+    resetTtsSegmentAudio()
+    await loadTtsEditor()
+    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法撤销音频编辑' }
+  } finally {
+    ttsBoundaryBusy.value = false
+  }
+}
+
+async function previewTtsBoundary(item) {
+  const next = (ttsEditor.value.segments || []).find((entry) => entry.index === item.index + 1)
+  if (!next) return
+  if (ttsBoundaryPreviewTimer) window.clearTimeout(ttsBoundaryPreviewTimer)
+  if (ttsBoundaryPreviewAudio) {
+    ttsBoundaryPreviewAudio.pause()
+    ttsBoundaryPreviewAudio = null
+  }
+  const waitForMetadata = (audio) => new Promise((resolve, reject) => {
+    if (Number.isFinite(audio.duration)) return resolve()
+    audio.addEventListener('loadedmetadata', resolve, { once: true })
+    audio.addEventListener('error', reject, { once: true })
+    audio.load()
+  })
+  try {
+    const first = new Audio(item.audio_url)
+    const second = new Audio(next.audio_url)
+    await Promise.all([waitForMetadata(first), waitForMetadata(second)])
+    first.currentTime = Math.max(0, first.duration - 3)
+    ttsBoundaryPreviewAudio = first
+    first.onended = () => {
+      const delay = Math.round(Math.max(0, Number(ttsPauseDrafts[item.index] || 0)) * 1000)
+      ttsBoundaryPreviewTimer = window.setTimeout(() => {
+        ttsBoundaryPreviewAudio = second
+        second.currentTime = 0
+        second.play().catch(() => {})
+        window.setTimeout(() => {
+          if (ttsBoundaryPreviewAudio === second) second.pause()
+        }, 3000)
+      }, delay)
+    }
+    await first.play()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error?.message || '局部试听失败' }
+  }
+}
+
+function stopTtsEditorPolling() {
+  if (ttsEditorTaskTimer) window.clearInterval(ttsEditorTaskTimer)
+  ttsEditorTaskTimer = null
+}
+
+async function pollTtsEditorStatus() {
+  const guidedAudioReview = form.step_mode && guidedStage.value === 'audio_review'
+  const module1Review = activePage.value === 'module1' && module1Job.value?.status === 'completed'
+  if ((!visualEditorOpen.value && !guidedAudioReview && !module1Review) || !visualEditorProjectId.value) return
+  try {
+    const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
+    const previous = ttsEditor.value.task?.status
+    ttsEditor.value.task = payload.task || ttsEditor.value.task
+    if (previous === 'running' && payload.task?.status !== 'running') {
+      stopTtsEditorPolling()
+      if (payload.task?.status === 'completed') {
+        resetTtsSegmentAudio()
+        selectedTtsSegmentIndices.value = []
+        if (guidedAudioReview) {
+          await Promise.all([loadTtsEditor(), loadGuidedSubtitles()])
+        } else if (module1Review) {
+          await loadTtsEditor()
+          module1Job.value = await api.job(module1Job.value.id)
+        } else {
+          await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
+        }
+      }
+    }
+  } catch {
+    // Main job log remains visible if one polling request fails.
+  }
+}
+
+function startTtsEditorPolling() {
+  if (ttsEditorTaskTimer) return
+  ttsEditorTaskTimer = window.setInterval(pollTtsEditorStatus, 1600)
+}
+
+async function regenerateSelectedTtsSegments() {
+  if (!visualEditorProjectId.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
+  if (!confirmTtsHistoryCapacity()) return
+  const count = selectedTtsSegmentIndices.value.length
+  const textOverrides = {}
+  for (const index of selectedTtsSegmentIndices.value) {
+    const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
+    const readingText = String(ttsReadingDrafts[index] ?? item?.tts_text ?? item?.text ?? '').trim()
+    if (!readingText) {
+      ttsEditor.value.task = { status: 'failed', message: `第 ${index} 句朗读文本不能为空。` }
+      return
+    }
+    textOverrides[index] = readingText
+  }
+  const pronunciationCount = selectedTtsSegmentIndices.value.filter((index) => {
+    const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
+    return item && String(textOverrides[index]).trim() !== String(item.text || '').trim()
+  }).length
+  const pronunciationNotice = pronunciationCount
+    ? `\n其中 ${pronunciationCount} 句包含发音修正；拼音提示只参与配音，成片字幕仍显示原文字。`
+    : ''
+  if (!window.confirm(`重新生成选中的 ${count} 句配音？${pronunciationNotice}\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
+  try {
+    const refineSettings = {
+      tts_speed: ttsRefineForm.tts_speed,
+      tts_volume: ttsRefineForm.tts_volume,
+      tts_pitch: ttsRefineForm.tts_pitch,
+      tts_parallelism: ttsRefineForm.tts_parallelism,
+      tts_emotion: ttsRefineForm.tts_emotion,
+      tts_emotion_weight: ttsRefineForm.tts_emotion_weight,
+      qwen_voice: ttsRefineForm.qwen_voice,
+      qwen_instructions: ttsRefineForm.qwen_instructions,
+    }
+    if (ttsRefineForm.tts_voice_id) refineSettings.tts_voice_id = ttsRefineForm.tts_voice_id
+    if (ttsRefineForm.cluster_voice_key) {
+      const [voiceType, ...voiceIdParts] = ttsRefineForm.cluster_voice_key.split(':')
+      refineSettings.cluster_voice_type = voiceType
+      refineSettings.cluster_voice_id = voiceIdParts.join(':')
+    }
+    await api.regenerateTtsSegments(
+      visualEditorProjectId.value,
+      selectedTtsSegmentIndices.value,
+      refineSettings,
+      textOverrides,
+    )
+    ttsEditor.value.task = { status: 'running', progress: 0, message: `正在重配 ${count} 句，请留意上方任务日志。` }
+    startTtsEditorPolling()
+  } catch (error) {
+    ttsEditor.value.task = { status: 'failed', message: error.message || '无法启动单句重配音' }
+  }
+}
+
+function formatTimingRange(timing) {
+  if (!timing || !Number.isFinite(Number(timing.start)) || !Number.isFinite(Number(timing.end))) return '暂无时间'
+  const asClock = (seconds) => {
+    const value = Math.max(0, Number(seconds) || 0)
+    const minutes = Math.floor(value / 60)
+    const remainder = value - minutes * 60
+    return `${String(minutes).padStart(2, '0')}:${remainder.toFixed(1).padStart(4, '0')}`
+  }
+  return `${asClock(timing.start)} – ${asClock(timing.end)}`
+}
+
+function formatSubtitleTiming(sentence) {
+  return formatTimingRange({ start: sentence?.start, end: sentence?.end })
+}
+
+function isVisualSubtitleModified(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  return String(visualSubtitleDrafts[slideId] ?? '').trim() !== String(visualSubtitleOriginals[slideId] ?? '').trim()
+}
+
+function visualSubtitlePaceWarning(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  const text = String(visualSubtitleDrafts[slideId] ?? sentence?.text ?? '').replace(/\s+/g, '')
+  const duration = Number(sentence?.end || 0) - Number(sentence?.start || 0)
+  if (duration <= 0 || text.length / duration <= 9) return ''
+  return `${text.length} 字 / ${duration.toFixed(1)} 秒，字幕可能显示过快`
+}
+
+function toggleVisualSubtitleEdit(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  if (!slideId || ttsEditor.value.task?.status === 'running') return
+  if (!(slideId in visualSubtitleDrafts)) visualSubtitleDrafts[slideId] = String(sentence?.text || '')
+  visualSubtitleEditingId.value = visualSubtitleEditingId.value === slideId ? '' : slideId
+}
+
+function finishVisualSubtitleEdit(sentence) {
+  if (visualSubtitleEditingId.value === String(sentence?.slide_id || '')) visualSubtitleEditingId.value = ''
+}
+
+function resetVisualSubtitleDraft(sentence) {
+  const slideId = String(sentence?.slide_id || '')
+  if (!slideId) return
+  visualSubtitleDrafts[slideId] = String(visualSubtitleOriginals[slideId] ?? sentence?.text ?? '')
+  if (visualSubtitleEditingId.value === slideId) visualSubtitleEditingId.value = ''
+}
+
+function visualSubtitleHiddenModeLabel(mode) {
+  return ({ blank: '该时段留空', merge_previous: '时间并入前句', merge_next: '时间并入后句' })[String(mode || '')] || '已从成片隐藏'
+}
+
+function canMergeHiddenSubtitle(sentence, direction) {
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  if (index < 0) return false
+  const candidates = direction === 'previous' ? sentences.slice(0, index) : sentences.slice(index + 1)
+  return candidates.some((item) => !item.subtitle_hidden)
+}
+
+function openVisualSubtitleRemove(sentence) {
+  if (!sentence?.slide_id || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_hide', message: '请先保存当前字幕文字修改，再隐藏字幕。' }
+    return
+  }
+  closeVisualBoundaryAlign()
+  visualSubtitleRemoveDialog.value = { open: true, sentence }
+}
+
+function closeVisualSubtitleRemove() {
+  visualSubtitleRemoveDialog.value = { open: false, sentence: null }
+}
+
+async function hideVisualSubtitle(mode) {
+  const sentence = visualSubtitleRemoveDialog.value.sentence
+  if (!visualEditorProjectId.value || !sentence?.slide_id || visualSubtitleSaving.value) return
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.hideVisualSubtitle(visualEditorProjectId.value, sentence.slide_id, mode)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    closeVisualSubtitleRemove()
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_hide', message: `${sentence.slide_id} 已从成片字幕中隐藏；配音、图片与画面时序未改变。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_hide', message: error.message || '隐藏字幕失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+async function restoreHiddenVisualSubtitle(sentence, force = false) {
+  if (!visualEditorProjectId.value || !sentence?.slide_id || visualSubtitleSaving.value) return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_restore', message: '请先保存当前字幕文字修改，再恢复隐藏字幕。' }
+    return
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.restoreHiddenVisualSubtitle(visualEditorProjectId.value, sentence.slide_id, force)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_restore', message: `${sentence.slide_id} 已恢复到成片字幕。` }
+  } catch (error) {
+    const message = String(error.message || '')
+    if (!force && message.includes('RESTORE_CONFLICT:')) {
+      visualSubtitleSaving.value = false
+      const confirmed = window.confirm('这条字幕隐藏后，相关时间边界又被调整过。继续恢复会还原删除前的时间范围，可能覆盖后续调整。是否继续？')
+      if (confirmed) await restoreHiddenVisualSubtitle(sentence, true)
+      return
+    }
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_restore', message: message || '恢复字幕失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+async function saveVisualSubtitles() {
+  if (!visualEditorProjectId.value || !visualSubtitleDirtyCount.value || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  const updates = {}
+  for (const slideId of visualSubtitleDirtyIds.value) {
+    const text = String(visualSubtitleDrafts[slideId] ?? '').trim()
+    if (!text) {
+      visualEditor.value.task = { status: 'failed', action: 'subtitle', message: `${slideId} 的字幕不能为空。` }
+      return
+    }
+    updates[slideId] = text
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.saveVisualSubtitles(visualEditorProjectId.value, updates)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualSubtitleEditingId.value = ''
+    visualEditor.value.task = { status: 'completed', action: 'subtitle', message: `已保存 ${Object.keys(updates).length} 条字幕修改；重新渲染后进入成片。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle', message: error.message || '保存字幕修改失败' }
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+async function restoreSelectedVisualSubtitleHistory() {
+  if (!visualEditorProjectId.value || !selectedVisualSubtitleHistory.value || visualSubtitleSaving.value || ttsEditor.value.task?.status === 'running') return
+  const selected = visualEditor.value.subtitle_history?.find((item) => item.id === selectedVisualSubtitleHistory.value)
+  if (!window.confirm(`恢复字幕历史“${selected?.label || selectedVisualSubtitleHistory.value}”？\n\n当前字幕会先自动备份，配音和画面时序不会改变。`)) {
+    selectedVisualSubtitleHistory.value = ''
+    return
+  }
+  visualSubtitleSaving.value = true
+  try {
+    const payload = await api.restoreVisualSubtitleHistory(visualEditorProjectId.value, selectedVisualSubtitleHistory.value)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    visualSubtitleEditingId.value = ''
+    selectedVisualSubtitleHistory.value = ''
+    visualEditor.value.task = { status: 'completed', action: 'subtitle', message: '已恢复所选字幕历史；重新渲染后进入成片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle', message: error.message || '恢复字幕历史失败' }
+    selectedVisualSubtitleHistory.value = ''
+  } finally {
+    visualSubtitleSaving.value = false
+  }
+}
+
+function hasNextVisualSubtitle(sentence) {
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  return index >= 0 && index < sentences.length - 1 && !sentences[index + 1]?.subtitle_hidden
+}
+
+function closeVisualBoundaryAlign() {
+  if (visualBoundaryAudio) {
+    visualBoundaryAudio.pause()
+    visualBoundaryAudio.removeAttribute('src')
+    visualBoundaryAudio.load()
+    visualBoundaryAudio = null
+  }
+  visualBoundaryAudioEnd = 0
+  visualBoundaryAlign.value = { open: false, status: 'idle', message: '', boundary: 0 }
+}
+
+async function previewVisualSubtitleBoundary(sentence) {
+  if (!visualEditorProjectId.value || visualBoundaryAlign.value.status === 'loading') return
+  if (visualSubtitleDirtyCount.value) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_boundary', message: '请先保存当前字幕文字修改，再校准相邻两句的时间边界。' }
+    return
+  }
+  const sentences = visualSubtitleSentences()
+  const index = sentences.findIndex((item) => String(item.slide_id) === String(sentence?.slide_id || ''))
+  const next = sentences[index + 1]
+  if (index < 0 || !next) return
+  closeVisualBoundaryAlign()
+  visualBoundaryAlign.value = {
+    open: true,
+    status: 'loading',
+    message: '',
+    boundary: 0,
+    left_slide_id: String(sentence.slide_id),
+    right_slide_id: String(next.slide_id),
+  }
+  try {
+    const payload = await api.previewVisualSubtitleBoundary(visualEditorProjectId.value, sentence.slide_id)
+    visualBoundaryAlign.value = {
+      ...payload,
+      open: true,
+      status: 'ready',
+      boundary: Number(payload.suggested_boundary ?? payload.current_boundary ?? 0),
+    }
+  } catch (error) {
+    visualBoundaryAlign.value = {
+      ...visualBoundaryAlign.value,
+      open: true,
+      status: 'failed',
+      message: error.message || '读取字幕边界失败',
+    }
+  }
+}
+
+function formatBoundaryOffset(boundary, pairStart) {
+  const offset = Math.max(0, Number(boundary || 0) - Number(pairStart || 0))
+  return `前句开始后 ${offset.toFixed(2)} 秒`
+}
+
+function formatBoundaryDelta(boundary, original) {
+  const delta = Number(boundary || 0) - Number(original || 0)
+  if (Math.abs(delta) < 0.005) return '未改变'
+  return `${delta > 0 ? '延后' : '提前'} ${Math.abs(delta).toFixed(2)} 秒`
+}
+
+async function playVisualBoundaryRange(start, end) {
+  const payload = visualBoundaryAlign.value
+  if (!payload.audio_url || Number(end) <= Number(start)) return
+  if (visualBoundaryAudio) visualBoundaryAudio.pause()
+  const audio = visualBoundaryAudio || new Audio()
+  visualBoundaryAudio = audio
+  visualBoundaryAudioEnd = Number(end)
+  const onTimeUpdate = () => {
+    if (audio.currentTime >= visualBoundaryAudioEnd - 0.015) audio.pause()
+  }
+  if (!audio.dataset.boundaryListener) {
+    audio.addEventListener('timeupdate', onTimeUpdate)
+    audio.dataset.boundaryListener = '1'
+  }
+  if (audio.dataset.source !== payload.audio_url) {
+    audio.src = payload.audio_url
+    audio.dataset.source = payload.audio_url
+    audio.load()
+  }
+  const begin = Math.max(0, Number(start) || 0)
+  const startPlayback = async () => {
+    audio.currentTime = begin
+    try { await audio.play() } catch { /* Browser keeps the panel usable if playback is blocked. */ }
+  }
+  if (audio.readyState >= 1) await startPlayback()
+  else audio.addEventListener('loadedmetadata', startPlayback, { once: true })
+}
+
+async function applyVisualSubtitleBoundary() {
+  const payload = visualBoundaryAlign.value
+  if (!visualEditorProjectId.value || payload.status !== 'ready' || visualBoundaryApplying.value) return
+  visualBoundaryApplying.value = true
+  try {
+    const result = await api.applyVisualSubtitleBoundary(
+      visualEditorProjectId.value,
+      payload.left_slide_id,
+      Number(payload.boundary),
+    )
+    visualEditor.value = result
+    hydrateVisualSubtitleDrafts({ preserveDirty: false })
+    closeVisualBoundaryAlign()
+    visualEditor.value.task = { status: 'completed', action: 'subtitle_boundary', message: '字幕共同边界已更新；重新渲染后进入成片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'subtitle_boundary', message: error.message || '应用字幕边界失败' }
+  } finally {
+    visualBoundaryApplying.value = false
+  }
+}
+
+async function adjustEditedTiming(action) {
+  const item = selectedVisualTimingItem.value
+  if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
+  const originalIndex = visualEditor.value.items.findIndex((entry) => entry.id === item.id)
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.adjustVisualTiming(visualEditorProjectId.value, item.id, action)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
+    visualTimingSelectedId.value = item.id
+    visualEditor.value.task = { status: 'completed', action: 'timing', message: '画面时序已调整；确认后点击下方“重新渲染”生成新视频。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing', message: error.message || '画面时序调整失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function resetEditedTiming() {
+  if (!visualEditorProjectId.value || visualTimingAdjusting.value) return
+  if (!window.confirm('恢复所有画面到首次调整前的字幕时序？重绘后的图片和提示词不会受影响。')) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.resetVisualTiming(visualEditorProjectId.value)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
+    visualEditor.value.task = { status: 'completed', action: 'timing', message: '已恢复初始画面时序；确认后可重新渲染视频。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing', message: error.message || '恢复初始时序失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function commitEditedTiming() {
+  if (!visualEditorProjectId.value || visualTimingAdjusting.value) return
+  if (!window.confirm('将当前所有画面与字幕的分配保存为新的初始时序？\n\n以后点击“恢复初始时序”将恢复到这次保存的状态；旧基准仍会归档保留。')) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.commitVisualTiming(visualEditorProjectId.value)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
+    visualEditor.value.task = { status: 'completed', action: 'commit_timing_baseline', message: '当前画面时序已保存为新的初始时序。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'commit_timing_baseline', message: error.message || '保存当前时序失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function restoreSelectedVisualTimingHistory() {
+  if (!visualEditorProjectId.value || !selectedVisualTimingHistory.value || visualTimingAdjusting.value) return
+  const selected = visualEditor.value.timing_history?.find((item) => item.id === selectedVisualTimingHistory.value)
+  if (!window.confirm(`切换到历史时序“${selected?.label || selectedVisualTimingHistory.value}”？\n\n当前保存的初始时序不会被覆盖，仍可点击“恢复初始时序”返回。`)) {
+    selectedVisualTimingHistory.value = ''
+    return
+  }
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.restoreVisualTimingHistory(visualEditorProjectId.value, selectedVisualTimingHistory.value)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
+    visualEditor.value.task = { status: 'completed', action: 'restore_timing_history', message: '已切换到所选历史时序；满意后可保存为新的初始时序。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'restore_timing_history', message: error.message || '读取历史时序失败' }
+    selectedVisualTimingHistory.value = ''
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+async function removeEditedTimingPicture() {
+  const item = selectedVisualTimingItem.value
+  if (!visualEditorProjectId.value || !item || visualTimingAdjusting.value) return
+  const originalIndex = visualEditor.value.items.findIndex((entry) => entry.id === item.id)
+  const sentenceCount = item.timing?.sentences?.length || 0
+  if (!window.confirm(`移除 ${item.id} 这张画面？它本身不会从磁盘删除，但覆盖的 ${sentenceCount} 句字幕会按顺序尽量平均分给相邻画面。可使用“恢复初始时序”撤销。`)) return
+  visualTimingAdjusting.value = true
+  try {
+    const payload = await api.removeVisualTimingPicture(visualEditorProjectId.value, item.id)
+    visualEditor.value = payload
+    hydrateVisualSubtitleDrafts()
+    visualTimingSelectedId.value = visualEditor.value.items[Math.max(0, originalIndex - 1)]?.id
+      || visualEditor.value.items[0]?.id || ''
+    visualEditor.value.task = { status: 'completed', action: 'timing_remove', message: `${item.id} 已从时序移除；确认后点击下方“重新渲染”生成新视频。` }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'timing_remove', message: error.message || '移除画面失败' }
+  } finally {
+    visualTimingAdjusting.value = false
+  }
+}
+
+function stopVisualEditorTaskPolling() {
+  if (visualEditorTaskTimer) window.clearInterval(visualEditorTaskTimer)
+  visualEditorTaskTimer = null
+}
+
+async function pollVisualEditorTaskStatus() {
+  if (!visualEditorOpen.value || !visualEditorProjectId.value) return
+  try {
+    const status = await api.visualEditorStatus(visualEditorProjectId.value)
+    visualEditor.value.task = status.task || visualEditor.value.task
+    let changedImage = false
+    for (const item of visualEditor.value.items) {
+      const previousStatus = item.task?.status
+      const nextTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
+      item.task = nextTask
+      if (previousStatus === 'running' && nextTask.status === 'completed') {
+        item.image_url = `${item.image_url.split('?')[0]}?v=${Date.now()}`
+        changedImage = true
+      }
+    }
+    if (!status.has_active_image_tasks && status.task?.status !== 'running') stopVisualEditorTaskPolling()
+  } catch {
+    // The main log remains the source of truth if a short status request fails.
+  }
+}
+
+function startVisualEditorTaskPolling() {
+  if (visualEditorTaskTimer) return
+  visualEditorTaskTimer = window.setInterval(pollVisualEditorTaskStatus, 1800)
+}
+
+async function selectVisualEditorProject() {
+  if (!visualEditorProjectId.value) return
+  resetTtsSegmentAudio()
+  clearVisualReferenceImages()
+  try {
+    activeJob.value = await api.job(visualEditorProjectId.value)
+  } catch {
+    // The editor can still be loaded even if the task list has just refreshed.
+  }
+  selectedTtsSegmentIndices.value = []
+  await Promise.all([loadVisualEditor({ hydrateBgm: true }), loadTtsEditor()])
+}
+
+async function toggleVisualEditor() {
+  visualEditorOpen.value = !visualEditorOpen.value
+  if (visualEditorOpen.value) {
+    const payload = await api.visualEditorProjects()
+    visualEditorProjects.value = payload.projects || []
+    if (!visualEditorProjectId.value || !visualEditorProjects.value.some((item) => item.id === visualEditorProjectId.value)) {
+      const activeMatch = visualEditorProjects.value.find((item) => item.id === activeJob.value?.id)
+      visualEditorProjectId.value = activeMatch?.id || visualEditorProjects.value[0]?.id || ''
+    }
+    await selectVisualEditorProject()
+  }
+  else {
+    stopVisualEditorTaskPolling()
+    stopTtsEditorPolling()
+    visualPreviewItem.value = null
+    closeVisualBoundaryAlign()
+  }
+}
+
+async function redrawVisualImage(item) {
+  if (!visualEditorProjectId.value) {
+    visualEditor.value.task = { status: 'failed', message: '请先选择要编辑的项目。' }
+    return
+  }
+  if (!item.prompt.trim()) {
+    item.task = { status: 'failed', action: 'redraw', message: '提示词为空，无法重绘。' }
+    visualEditor.value.task = { status: 'failed', message: `${item.id} 的提示词为空，无法重绘。` }
+    return
+  }
+  const usesCurrentReference = visualReferenceOwnerMacroId.value === item.id
+  const referenceCount = usesCurrentReference
+    ? (visualSelfReferenceMacroId.value ? 1 : 0) + visualReferenceUploads.value.length
+    : 0
+  const referenceNote = referenceCount ? `，使用 ${referenceCount} 张参考图` : ''
+  // Mark the card before the request completes. This gives immediate feedback
+  // and prevents repeat clicks while the browser is waiting for the API.
+  item.task = { status: 'running', action: 'redraw', message: `正在提交重绘${referenceNote}` }
+  try {
+    activeJob.value = await api.job(visualEditorProjectId.value)
+    await api.redrawVisualImage(
+      visualEditorProjectId.value,
+      item.id,
+      item.prompt,
+      usesCurrentReference && visualSelfReferenceMacroId.value ? [visualSelfReferenceMacroId.value] : [],
+      usesCurrentReference ? visualReferenceUploads.value.map((asset) => asset.id) : [],
+    )
+    item.task = { status: 'running', action: 'redraw', message: `重绘中${referenceNote}` }
+    visualEditor.value.task = { status: 'running', action: 'redraw', message: `${item.id} 已开始重绘${referenceNote}。` }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    item.task = { status: 'failed', action: 'redraw', message: error.message || '图片重绘失败' }
+    visualEditor.value.task = { status: 'failed', action: 'redraw', message: `${item.id} 重绘未启动：${error.message || '未知错误'}` }
+  }
+}
+
+function beginVisualReferenceSelection(itemId) {
+  if (visualReferenceOwnerMacroId.value && visualReferenceOwnerMacroId.value !== itemId) {
+    clearVisualReferenceImages()
+  }
+  visualReferenceOwnerMacroId.value = itemId
+}
+
+function toggleVisualSelfReferenceImage(itemId) {
+  beginVisualReferenceSelection(itemId)
+  visualSelfReferenceMacroId.value = visualSelfReferenceMacroId.value === itemId ? '' : itemId
+}
+
+function clearVisualReferenceImages() {
+  visualSelfReferenceMacroId.value = ''
+  visualReferenceUploads.value = []
+  visualReferenceOwnerMacroId.value = ''
+}
+
+async function uploadVisualReferenceImages(event, itemId) {
+  const input = event.target
+  const files = Array.from(input.files || [])
+  input.value = ''
+  if (!files.length) return
+  beginVisualReferenceSelection(itemId)
+  const slots = 3 - visualReferenceUploads.value.length
+  if (slots <= 0) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'idle', message: '本地重绘参考图最多上传 3 张。' }
+    return
+  }
+  const selected = files.slice(0, slots)
+  if (selected.some((file) => !['jpg', 'jpeg', 'png', 'webp'].includes(file.name.split('.').pop()?.toLowerCase()))) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'failed', message: '重绘参考图仅支持 JPG、JPEG、PNG 或 WebP。' }
+    return
+  }
+  visualReferenceUploading.value = true
+  try {
+    const uploaded = await Promise.all(selected.map((file) => api.uploadEditorAsset(file)))
+    if (uploaded.some((payload) => payload.asset?.kind !== 'image')) throw new Error('上传文件不是可用图片。')
+    visualReferenceUploads.value = [
+      ...visualReferenceUploads.value,
+      ...uploaded.map((payload, index) => ({ id: payload.asset.id, name: payload.asset.name || selected[index].name })),
+    ].slice(0, 3)
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'idle', message: `已添加 ${selected.length} 张本地重绘参考图。` }
+  } catch (error) {
+    visualEditor.value.task = { ...visualEditor.value.task, status: 'failed', message: error.message || '重绘参考图上传失败。' }
+  } finally {
+    visualReferenceUploading.value = false
+  }
+}
+
+async function uploadVisualImage(event, item) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || !visualEditorProjectId.value) return
+  try {
+    await api.uploadVisualImage(visualEditorProjectId.value, item.id, file)
+    item.task = { status: 'running', action: 'upload', message: '替换中' }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '图片替换失败' }
+  }
+}
+
+async function undoVisualImage(item) {
+  if (!visualEditorProjectId.value) return
+  try {
+    await api.undoVisualImage(visualEditorProjectId.value, item.id)
+    await loadVisualEditor()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '没有可撤回的图片版本' }
+  }
+}
+
+async function resetVisualImagePrompt(item) {
+  if (!visualEditorProjectId.value) return
+  try {
+    const payload = await api.resetVisualPrompt(visualEditorProjectId.value, item.id)
+    item.prompt = payload.prompt || item.prompt
+    await loadVisualEditor()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', message: error.message || '没有可重置的初始提示词' }
+  }
+}
+
+async function commitVisualBaseline(item) {
+  if (!visualEditorProjectId.value) return
+  if (!window.confirm(`将 ${item.id} 当前显示的图片和提示词确认为新的原图？\n\n以后重置提示词会回到此版本，撤回也不会越过此版本；旧版本仍会归档保留。`)) return
+  try {
+    item.task = { status: 'running', action: 'commit_baseline', message: '正在确认新原图' }
+    const payload = await api.commitVisualBaseline(visualEditorProjectId.value, item.id, item.prompt)
+    visualEditor.value.task = { status: 'completed', action: 'commit_baseline', message: payload.message || `${item.id} 已确认为新的原图。` }
+    await loadVisualEditor({ preservePage: true })
+  } catch (error) {
+    item.task = { status: 'failed', action: 'commit_baseline', message: error.message || '确认新原图失败' }
+    visualEditor.value.task = { status: 'failed', action: 'commit_baseline', message: error.message || '确认新原图失败' }
+  }
+}
+
+async function commitAllVisualBaselines() {
+  if (!visualEditorProjectId.value) return
+  if (!window.confirm('将该项目当前全部图片及其提示词确认为新的原图？\n\n适合在全部重绘满意后使用。旧原图和撤回记录仍会归档保留。')) return
+  try {
+    visualEditorLoading.value = true
+    const payload = await api.commitAllVisualBaselines(visualEditorProjectId.value)
+    await loadVisualEditor({ preservePage: true })
+    visualEditor.value.task = { status: 'completed', action: 'commit_all_baselines', message: payload.message || '已确认全部当前图片。' }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'commit_all_baselines', message: error.message || '确认全部新原图失败' }
+  } finally {
+    visualEditorLoading.value = false
+  }
+}
+
+async function renderEditedVideo() {
+  if (!visualEditorProjectId.value) return
+  prepareCompletionAlerts(true)
+  try {
+    if (visualBgm.enabled && !visualBgm.tracks.length) {
+      visualBgmError.value = '已开启 BGM，请先上传至少一首音乐。'
+      return
+    }
+    const renderPayload = {
+      mode: visualRenderMode.value,
+      bgm_enabled: Boolean(visualBgm.enabled),
+      bgm_tracks: visualBgm.tracks.map((track) => ({
+        asset_id: track.asset_id || null,
+        archived_filename: track.archived_filename || null,
+        volume_db: Number(track.volume_db ?? -10),
+        duration_seconds: Number.isFinite(Number(track.duration_seconds)) ? Number(track.duration_seconds) : null,
+      })),
+      bgm_fade_enabled: Boolean(visualBgm.fade_enabled),
+      bgm_fade_duration: Number(visualBgm.fade_duration || 1),
+    }
+    await api.renderVisualEditor(visualEditorProjectId.value, renderPayload)
+    activeJob.value = await api.job(visualEditorProjectId.value)
+    visualEditor.value.task = {
+      status: 'running',
+      action: 'render',
+      message: visualBgm.enabled && visualBgm.tracks.length
+        ? `已开始重新渲染，并应用当前项目设置的 ${visualBgm.tracks.length} 首 BGM。`
+        : '已开始重新渲染，进度显示在上方主进度条。',
+    }
+    startVisualEditorTaskPolling()
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'render', message: error.message || '重新渲染启动失败' }
+  }
+}
+
+async function cancelVisualRender() {
+  if (!visualEditorProjectId.value) return
+  try {
+    const payload = await api.cancelVisualRender(visualEditorProjectId.value)
+    visualEditor.value.task = {
+      status: payload.ok ? 'cancelled' : 'failed',
+      action: 'render',
+      message: payload.message || '已请求停止重新渲染。',
+    }
+  } catch (error) {
+    visualEditor.value.task = { status: 'failed', action: 'render', message: error.message || '停止渲染失败' }
+  }
+}
+
+async function uploadSourceAudio(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  sourceAudioError.value = ''
+  if (!file) return
+
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(suffix)) {
+    sourceAudioName.value = ''
+    form.source_audio_id = ''
+    sourceAudioError.value = '仅支持 mp3、wav、m4a、aac、flac、ogg 音频。'
+    return
+  }
+
+  sourceAudioUploading.value = true
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') {
+      throw new Error('上传文件不是可识别的音频。')
+    }
+    form.source_audio_id = payload.asset.id
+    sourceAudioName.value = payload.asset.name || file.name
+    await refreshEditor()
+  } catch (error) {
+    form.source_audio_id = ''
+    sourceAudioName.value = ''
+    sourceAudioError.value = error.message || '上传配音失败'
+  } finally {
+    sourceAudioUploading.value = false
+  }
+}
+
+async function uploadReferenceImages(event) {
+  const input = event.target
+  const files = Array.from(input.files || [])
+  input.value = ''
+  protagonistReferenceImageError.value = ''
+  if (!files.length) return
+  const availableSlots = 3 - form.reference_image_ids.length
+  if (availableSlots <= 0) {
+    protagonistReferenceImageError.value = '最多只能保留 3 张角色参考图。'
+    return
+  }
+  const selectedFiles = files.slice(0, availableSlots)
+  if (files.length > availableSlots) {
+    protagonistReferenceImageError.value = `最多只能保留 3 张，本次仅添加前 ${availableSlots} 张。`
+  }
+  if (selectedFiles.some((file) => !['jpg', 'jpeg', 'png', 'webp'].includes(file.name.split('.').pop()?.toLowerCase()))) {
+    protagonistReferenceImageError.value = '参考图仅支持 JPG、JPEG、PNG 或 WebP。'
+    return
+  }
+  if (selectedFiles.some((file) => file.size > 30 * 1024 * 1024)) {
+    protagonistReferenceImageError.value = '参考图不能超过 30 MB。'
+    return
+  }
+  protagonistReferenceUploading.value = true
+  try {
+    // Upload each file independently. Promise.all used to discard every
+    // successful result when one file failed, leaving orphaned server assets
+    // and making the next retry look like a mysterious duplicate/max-3 error.
+    const results = await Promise.allSettled(selectedFiles.map((file) => api.uploadEditorAsset(file)))
+    const uploaded = []
+    const failures = []
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value?.asset?.kind === 'image' && result.value.asset.id) {
+        uploaded.push({ payload: result.value, file: selectedFiles[index] })
+        return
+      }
+      const reason = result.status === 'rejected'
+        ? String(result.reason?.message || '上传请求失败')
+        : '上传文件不是可用的图片。'
+      failures.push(`${selectedFiles[index].name}：${reason}`)
+    })
+    if (!uploaded.length) throw new Error(failures[0] || '参考图上传失败。')
+    form.reference_image_ids = [
+      ...form.reference_image_ids,
+      ...uploaded.map(({ payload }) => payload.asset.id),
+    ].slice(0, 3)
+    form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
+    referenceImageNames.value = [
+      ...referenceImageNames.value,
+      ...uploaded.map(({ payload, file }) => payload.asset.name || file.name),
+    ].slice(0, 3)
+    protagonistReferenceImageError.value = failures.length
+      ? `部分参考图上传失败：${failures.join('；')}`
+      : ''
+  } catch (error) {
+    protagonistReferenceImageError.value = error.message || '角色参考图上传失败。'
+  } finally {
+    protagonistReferenceUploading.value = false
+  }
+}
+
+function removeReferenceImage(index) {
+  form.reference_image_ids = form.reference_image_ids.filter((_, currentIndex) => currentIndex !== index)
+  form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
+  referenceImageNames.value = referenceImageNames.value.filter((_, currentIndex) => currentIndex !== index)
+  protagonistReferenceImageError.value = ''
+}
+
+function generationRequestPayload() {
+  const resolvedCloudVoice = effectiveCloudVoice.value
+  const payload = {
+    ...form,
+    tts_engine: ttsEngine.value,
+    tts_emotion: form.tts_emotion || null,
+    tts_pronunciation: form.tts_pronunciation || null,
+    ...(ttsEngine.value === 'cluster' && resolvedCloudVoice ? {
+      cluster_voice_type: resolvedCloudVoice.type === 'preset' ? 'preset' : 'uploaded',
+      cluster_voice_id: resolvedCloudVoice.id,
+    } : {}),
+  }
+  // An empty cluster voice is a valid idle UI state, but it must not be sent
+  // to non-cluster jobs where the backend correctly enforces a real voice ID.
+  if (ttsEngine.value !== 'cluster') delete payload.cluster_voice_id
+  return payload
+}
+
+function guidedVisualParameters() {
+  return {
+    content_mode: form.content_mode,
+    director_strategy: form.director_strategy,
+    auto_split_long_text: form.auto_split_long_text,
+    split_text_threshold: form.split_text_threshold,
+    visual_backend: form.visual_backend,
+    use_cloud_image_pool: form.use_cloud_image_pool,
+    visual_prompt_mode: form.visual_prompt_mode,
+    visual_pacing_preset: form.visual_pacing_preset,
+    visual_min_duration: form.visual_min_duration,
+    visual_target_duration: form.visual_target_duration,
+    visual_max_duration: form.visual_max_duration,
+    visual_max_slides: form.visual_max_slides,
+    visual_style_prompt: form.visual_style_prompt,
+    global_character_prompt: form.global_character_prompt,
+    reference_image_ids: [...form.reference_image_ids],
+    story_environment_prompt: form.story_environment_prompt,
+    visual_prompt_system: form.visual_prompt_system,
+    agent0_prompt_system: form.agent0_prompt_system,
+    agent1_prompt_system: form.agent1_prompt_system,
+  }
+}
+
+function guidedRenderParameters() {
+  return {
+    video_render_variant: form.video_render_variant,
+    bgm_enabled: form.bgm_enabled,
+    bgm_tracks: form.bgm_tracks.map((track) => ({ ...track })),
+    bgm_fade_enabled: form.bgm_fade_enabled,
+    bgm_fade_duration: form.bgm_fade_duration,
+  }
+}
+
+function hydrateGuidedForm(job) {
+  if (!job?.request) return
+  for (const [key, value] of Object.entries(job.request)) {
+    if (!(key in form) || key.startsWith('_')) continue
+    form[key] = Array.isArray(value) ? value.map((item) => (typeof item === 'object' ? { ...item } : item)) : value
+  }
+  ttsEngine.value = job.request.tts_engine === 'indextts2' ? 'indextts25' : (job.request.tts_engine || ttsEngine.value)
+}
+
+async function loadGuidedAudioReview() {
+  if (!activeJob.value?.id) return
+  visualEditorProjectId.value = activeJob.value.id
+  await Promise.all([loadTtsEditor(), loadGuidedSubtitles()])
+}
+
+async function loadGuidedSubtitles() {
+  if (!activeJob.value?.id) return
+  guidedSubtitleLoading.value = true
+  try {
+    const payload = await api.stepWorkflowSubtitles(activeJob.value.id)
+    guidedSubtitles.value = payload.items || []
+    for (const key of Object.keys(guidedSubtitleDrafts)) delete guidedSubtitleDrafts[key]
+    for (const item of guidedSubtitles.value) guidedSubtitleDrafts[item.slide_id] = item.text || ''
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '无法读取字幕校对资料'
+  } finally {
+    guidedSubtitleLoading.value = false
+  }
+}
+
+async function saveGuidedSubtitles() {
+  if (!activeJob.value?.id || !guidedSubtitleDirtyCount.value) return
+  const updates = {}
+  for (const item of guidedSubtitles.value) {
+    const text = String(guidedSubtitleDrafts[item.slide_id] ?? '').trim()
+    if (text !== String(item.text || '').trim()) updates[item.slide_id] = text
+  }
+  guidedSubtitleSaving.value = true
+  try {
+    const payload = await api.saveStepWorkflowSubtitles(activeJob.value.id, updates)
+    guidedSubtitles.value = payload.items || []
+    for (const item of guidedSubtitles.value) guidedSubtitleDrafts[item.slide_id] = item.text || ''
+    guidedStageError.value = false
+    guidedStageMessage.value = `已保存 ${Object.keys(updates).length} 句字幕修改。`
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '字幕修改保存失败'
+  } finally {
+    guidedSubtitleSaving.value = false
+  }
+}
+
+function formatGuidedTimestamp(seconds) {
+  const value = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(value / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}.${String(Math.floor((value % 1) * 10))}`
+}
+
+async function openGuidedVisualEditor() {
+  if (!activeJob.value?.id) return
+  visualEditorOpen.value = true
+  visualEditorProjectId.value = activeJob.value.id
+  const current = {
+    id: activeJob.value.id,
+    name: activeJob.value.request?.project_name || activeJob.value.id,
+  }
+  if (!visualEditorProjects.value.some((item) => item.id === current.id)) {
+    visualEditorProjects.value = [current, ...visualEditorProjects.value]
+  }
+  await Promise.all([loadVisualEditor({ preservePage: true, hydrateBgm: true }), loadTtsEditor()])
+}
+
+async function advanceGuidedWorkflow(action) {
+  if (!activeJob.value?.id || guidedAdvancing.value) return
+  guidedAdvancing.value = true
+  guidedStageMessage.value = ''
+  guidedStageError.value = false
+  try {
+    if (action === 'confirm_audio' && guidedSubtitleDirtyCount.value) {
+      await saveGuidedSubtitles()
+      if (guidedSubtitleDirtyCount.value) throw new Error('字幕修改尚未保存，请处理后再确认配音与字幕')
+    }
+    const parameters = action === 'start_visual'
+      ? guidedVisualParameters()
+      : action === 'start_render' ? guidedRenderParameters() : {}
+    activeJob.value = await api.advanceStepWorkflow(activeJob.value.id, action, parameters)
+    followLiveJob.value = true
+    await refresh()
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '无法进入下一阶段'
+  } finally {
+    guidedAdvancing.value = false
+  }
+}
+
+async function continueGuidedJob(job) {
+  guidedCreatingNew.value = false
+  await selectJob(job.id)
+  form.step_mode = true
+  hydrateGuidedForm(activeJob.value)
+  activePage.value = 'workspace'
+  if (guidedStage.value === 'audio_review') await loadGuidedAudioReview()
+  if (guidedStage.value === 'visual_review') await openGuidedVisualEditor()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function clearGuidedEditingState() {
+  guidedSubtitles.value = []
+  for (const key of Object.keys(guidedSubtitleDrafts)) delete guidedSubtitleDrafts[key]
+  selectedTtsSegmentIndices.value = []
+  ttsEditor.value = { available: false, message: '', segments: [], task: { status: 'idle', message: '' } }
+  visualEditorOpen.value = false
+  visualEditorProjectId.value = ''
+  stepAudioPlaying.value = false
+  stepAudioCurrentTime.value = 0
+  stepAudioDuration.value = 0
+}
+
+function returnToFreshGuidedSetup(message = '') {
+  followLiveJob.value = false
+  activeJob.value = null
+  form.step_mode = true
+  guidedCreatingNew.value = true
+  guidedStageError.value = false
+  guidedStageMessage.value = message
+  clearGuidedEditingState()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+async function finishGuidedCancellation(jobId) {
+  // GPU TTS may need to finish its current inference point before the backend
+  // can safely remove files. Keep retrying quietly without trapping the user
+  // in the old workflow screen.
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    try {
+      await api.deleteJob(jobId)
+      await refresh()
+      return true
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    }
+  }
+  return false
+}
+
+async function cancelGuidedWorkflow() {
+  const job = activeJob.value
+  if (!isGuidedWorkflowJob(job) || guidedCancelling.value) return
+  const name = job.request?.project_name || job.id
+  if (!window.confirm(`确定取消分步任务“${name}”？\n\n该任务的临时文件和已归档阶段资产会被删除，此操作不可撤销。`)) return
+  guidedCancelling.value = true
+  const wasRunning = ['queued', 'running'].includes(job.status)
+  try {
+    if (wasRunning) await api.cancelJob(job.id)
+    returnToFreshGuidedSetup(
+      wasRunning
+        ? '旧任务正在安全停止并清理；现在可以重新填写新任务，提交后会在资源释放完成后自动开始。'
+        : '上一条分步任务已取消，可以从头创建新任务。',
+    )
+    const removed = await finishGuidedCancellation(job.id)
+    if (!removed) {
+      guidedStageError.value = true
+      guidedStageMessage.value = '已退出旧任务，但后台未能自动删除其记录；稍后可在任务列表中再次点击删除。'
+    }
+  } catch (error) {
+    guidedStageError.value = true
+    guidedStageMessage.value = error.message || '取消分步任务失败'
+  } finally {
+    guidedCancelling.value = false
+  }
+}
+
+function handleStepModeToggle() {
+  activePage.value = 'workspace'
+  guidedStageMessage.value = ''
+  guidedStageError.value = false
+  if (form.step_mode) {
+    const resumable = isGuidedWorkflowJob(activeJob.value) && activeJob.value?.status !== 'completed'
+    guidedCreatingNew.value = !resumable
+  } else {
+    guidedCreatingNew.value = false
+  }
+}
+
+async function enterGuidedPostProduction() {
+  await openGuidedVisualEditor()
+  document.getElementById('visual-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+async function runManualPreflight() {
+  if (!session.value.user || preflightRunning.value) return
+  preflightResult.value = null
+  preflightOpen.value = true
+  preflightRunning.value = true
+  try {
+    preflightResult.value = await api.preflightJob(generationRequestPayload())
+  } catch (error) {
+    const errorMessage = String(error?.message || '')
+    const staleBackend = /method not allowed|\b405\b/i.test(errorMessage)
+    preflightResult.value = {
+      ok: false,
+      error_count: 1,
+      warning_count: 0,
+      message: staleBackend ? '后台服务尚未更新' : '启动前体检未完成',
+      items: [{
+        id: 'preflight_api',
+        label: '体检服务',
+        status: 'error',
+        message: staleBackend
+          ? '当前仍是修改前启动的旧后台进程。请关闭程序并重新启动一次，任务和产物不会受影响。'
+          : (errorMessage || '无法连接后端体检接口'),
+      }],
+    }
+  } finally {
+    preflightRunning.value = false
+  }
+}
+
+function closePreflight() {
+  if (preflightRunning.value) return
+  preflightOpen.value = false
+  preflightResult.value = null
+}
+
+async function submit() {
+  if (!session.value.user) {
+    authError.value = '请先登录后再生成视频'
+    return
+  }
+  if (!canSubmitGeneration.value) return
+  generationSubmitMessage.value = ''
+  prepareCompletionAlerts(true)
+  followLiveJob.value = true
+  submitting.value = true
+  try {
+    activeJob.value = await api.createJob(generationRequestPayload())
+    if (form.step_mode) guidedCreatingNew.value = false
+    jobPage.value = 1
+    await refresh()
+  } catch (error) {
+    generationSubmitMessage.value = error.message || '无法创建任务，请稍后重试。'
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function selectJob(id, replace = true) {
+  const payload = await api.job(id)
+  if (replace) followLiveJob.value = false
+  if (replace) activeJob.value = payload
+  else activeJob.value = payload
+  // Background refreshes also call selectJob(..., false). They must not close
+  // the post-production editor the user is currently working in.
+  if (replace) {
+    if (payload.request?.module1_only) {
+      module1Job.value = payload
+      activePage.value = 'module1'
+      visualEditorProjectId.value = payload.id
+      await loadTtsEditor()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      return
+    }
+    visualEditorOpen.value = false
+    if (isGuidedWorkflowJob(payload) && payload.status !== 'completed') {
+      form.step_mode = true
+      hydrateGuidedForm(payload)
+      if (String(payload.request?._step_mode_stage || '') === 'audio_review') await loadGuidedAudioReview()
+      if (String(payload.request?._step_mode_stage || '') === 'visual_review') await openGuidedVisualEditor()
+    }
+  }
+}
+
+async function cancelGeneration() {
+  if (!canCancelGeneration.value || !activeJob.value?.id) return
+  cancellingGeneration.value = true
+  try {
+    activeJob.value = await api.cancelJob(activeJob.value.id)
+    await refresh()
+  } finally {
+    cancellingGeneration.value = false
+  }
+}
+
+async function deleteGenerationJob(job) {
+  if (!job?.id) return
+  const name = job.request?.project_name || job.id
+  if (!window.confirm(`确定删除任务“${name}”？\n将同时删除它的专属 workspace、output/TTS_Output 归档和日志，此操作不可撤销。`)) return
+  const deletedActiveGuided = activeJob.value?.id === job.id && isGuidedWorkflowJob(job)
+  try {
+    await api.deleteJob(job.id)
+    if (activeJob.value?.id === job.id) activeJob.value = null
+    if (module1Job.value?.id === job.id) module1Job.value = null
+    if (subtitleJob.value?.id === job.id) subtitleJob.value = null
+    await refresh()
+    if (deletedActiveGuided) returnToFreshGuidedSetup('上一条分步任务已删除，可以从头创建新任务。')
+    if (!jobs.value.length && jobPage.value > 1) await changeJobPage(jobPage.value - 1)
+  } catch (error) {
+    window.alert(error.message || '删除任务失败')
+  }
+}
+
+async function submitModule1() {
+  if (!canSubmitModule1.value) return
+  submittingModule1.value = true
+  try {
+    module1Job.value = await api.createJob({
+      ...form,
+      tts_engine: ttsEngine.value,
+      module1_only: true,
+      skip_tts: false,
+      source_audio_id: null,
+      skip_text_correction: false,
+      tts_emotion: form.tts_emotion || null,
+      tts_pronunciation: form.tts_pronunciation || null,
+    })
+    jobPage.value = 1
+    await refresh()
+  } finally {
+    submittingModule1.value = false
+  }
+}
+
+async function cancelModule1() {
+  if (!module1JobRunning.value || !module1Job.value?.id) return
+  module1Job.value = await api.cancelJob(module1Job.value.id)
+  await refresh()
+}
+
+async function uploadSubtitleAudio(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  subtitleAudioError.value = ''
+  if (!file) return
+  const suffix = file.name.split('.').pop()?.toLowerCase()
+  if (!['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'].includes(suffix)) {
+    subtitleAudioName.value = ''
+    subtitleForm.source_audio_id = ''
+    subtitleAudioError.value = '仅支持 MP3、WAV、M4A、AAC、FLAC、OGG 音频，或 MP4、MOV、MKV、WebM、AVI、M4V 视频。'
+    return
+  }
+  subtitleAudioUploading.value = true
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    if (!['audio', 'video'].includes(payload.asset?.kind)) throw new Error('上传文件不是可识别的音频或视频。')
+    subtitleForm.source_audio_id = payload.asset.id
+    subtitleAudioName.value = payload.asset.name || file.name
+    await refreshEditor()
+  } catch (error) {
+    subtitleForm.source_audio_id = ''
+    subtitleAudioName.value = ''
+    subtitleAudioError.value = error.message || '音频或视频上传失败。'
+  } finally {
+    subtitleAudioUploading.value = false
+  }
+}
+
+async function loadSubtitleReference(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  subtitleReferenceError.value = ''
+  if (!file) return
+  if (!['txt', 'md'].includes(file.name.split('.').pop()?.toLowerCase())) {
+    subtitleReferenceName.value = ''
+    subtitleForm.reference_text = ''
+    subtitleReferenceError.value = '参考文案仅支持 TXT 或 Markdown 文件。'
+    return
+  }
+  if (file.size > MAX_SCRIPT_FILE_SIZE) {
+    subtitleReferenceError.value = '参考文案不能超过 2 MB。'
+    return
+  }
+  try {
+    const content = (await file.text()).trim()
+    if (!content) throw new Error('参考文案为空。')
+    subtitleForm.reference_text = content
+    subtitleReferenceName.value = file.name
+  } catch (error) {
+    subtitleReferenceName.value = ''
+    subtitleForm.reference_text = ''
+    subtitleReferenceError.value = error.message || '读取参考文案失败。'
+  }
+}
+
+async function loadSubtitleFonts() {
+  if (subtitleFontsLoading.value || subtitleFonts.value.length) return
+  subtitleFontsLoading.value = true
+  try {
+    const payload = await api.subtitleFonts()
+    subtitleFonts.value = Array.isArray(payload.fonts) ? payload.fonts : []
+    if (subtitleFonts.value.length && !subtitleFonts.value.includes(subtitleRenderForm.font_name)) {
+      subtitleRenderForm.font_name = subtitleFonts.value.includes('Microsoft YaHei')
+        ? 'Microsoft YaHei'
+        : subtitleFonts.value[0]
+    }
+  } catch (error) {
+    subtitleRenderMessage.value = error.message || '读取本机字体失败，将使用默认字体。'
+  } finally {
+    subtitleFontsLoading.value = false
+  }
+}
+
+async function uploadSubtitleBgmTrack(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  subtitleBgmUploading.value = true
+  subtitleBgmError.value = ''
+  try {
+    const durationSeconds = await readAudioDuration(file)
+    const payload = await api.uploadEditorAsset(file)
+    if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
+    subtitleRenderForm.bgm_tracks.push({
+      asset_id: payload.asset.id,
+      name: payload.asset.name || file.name,
+      volume_db: -10,
+      duration_seconds: durationSeconds,
+      url: payload.asset.url || '',
+    })
+    if (!editorAssets.value.some((asset) => asset.id === payload.asset.id)) {
+      editorAssets.value.push(payload.asset)
+    }
+  } catch (error) {
+    subtitleBgmError.value = error.message || 'BGM 上传失败'
+  } finally {
+    subtitleBgmUploading.value = false
+  }
+}
+
+function removeSubtitleBgmTrack(index) {
+  const [track] = subtitleRenderForm.bgm_tracks.splice(index, 1)
+  if (track && bgmPreviewTrack.value === track) stopBgmPreview()
+}
+
+async function renderSubtitleVideo() {
+  if (!canRenderSubtitleVideo.value || !subtitleJob.value?.id) return
+  subtitleRenderMessage.value = ''
+  try {
+    subtitleJob.value = await api.renderSubtitleVideo(subtitleJob.value.id, { ...subtitleRenderForm })
+    subtitleRenderMessage.value = '已开始渲染，进度会显示在下方字幕任务日志中。'
+    await refresh()
+  } catch (error) {
+    subtitleRenderMessage.value = error.message || '字幕渲染启动失败。'
+  }
+}
+
+async function submitSubtitleJob() {
+  if (!canSubmitSubtitle.value) return
+  submittingSubtitle.value = true
+  try {
+    subtitleJob.value = await api.createJob({
+      project_name: subtitleForm.project_name,
+      script: subtitleForm.reference_text,
+      subtitle_only: true,
+      subtitle_use_correction: subtitleForm.use_correction,
+      skip_tts: true,
+      source_audio_id: subtitleForm.source_audio_id,
+      skip_text_correction: !subtitleForm.use_correction,
+    })
+    jobPage.value = 1
+    await refresh()
+  } finally {
+    submittingSubtitle.value = false
+  }
+}
+
+async function cancelSubtitleJob() {
+  if (!subtitleJobRunning.value || !subtitleJob.value?.id) return
+  subtitleJob.value = await api.cancelJob(subtitleJob.value.id)
+  await refresh()
+}
+
+function syncStepAudioMetadata() {
+  const player = stepAudioPlayer.value
+  stepAudioDuration.value = Number.isFinite(player?.duration) ? player.duration : 0
+  stepAudioCurrentTime.value = Number(player?.currentTime || 0)
+}
+
+function syncStepAudioProgress() {
+  const player = stepAudioPlayer.value
+  stepAudioCurrentTime.value = Number(player?.currentTime || 0)
+}
+
+async function toggleStepAudioPlayback() {
+  const player = stepAudioPlayer.value
+  if (!player) return
+  if (player.paused) {
+    try {
+      await player.play()
+      stepAudioPlaying.value = true
+    } catch {
+      stepAudioPlaying.value = false
+    }
+  } else {
+    player.pause()
+    stepAudioPlaying.value = false
+  }
+}
+
+function seekStepAudio(event) {
+  const player = stepAudioPlayer.value
+  const target = Number(event.target.value)
+  if (!player || !Number.isFinite(target)) return
+  player.currentTime = target
+  stepAudioCurrentTime.value = target
+}
+
+async function saveStepAudioAs() {
+  if (!stepModeAudioUrl.value || savingStepAudio.value) return
+  savingStepAudio.value = true
+  stepAudioSaveMessage.value = ''
+  try {
+    const response = await fetch(stepModeAudioUrl.value, { credentials: 'include' })
+    if (!response.ok) throw new Error(`下载配音失败（HTTP ${response.status}）`)
+    const blob = await response.blob()
+    const safeProjectName = String(activeJob.value?.request?.project_name || form.project_name || '本次任务')
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .slice(0, 80)
+    const suggestedName = `${safeProjectName}_配音.wav`
+    if (typeof window.showSaveFilePicker === 'function') {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description: 'WAV 音频', accept: { 'audio/wav': ['.wav'] } }],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      stepAudioSaveMessage.value = `配音已另存为：${handle.name || suggestedName}`
+    } else {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = suggestedName
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      stepAudioSaveMessage.value = '浏览器不支持选择保存目录，已转为普通下载。'
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      stepAudioSaveMessage.value = error.message || '配音保存失败'
+    }
+  } finally {
+    savingStepAudio.value = false
+  }
+}
+
+function formatStepAudioTime(value) {
+  const seconds = Math.max(0, Number(value) || 0)
+  const minutes = Math.floor(seconds / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+}
+
+async function retryTts() {
+  if (!canRetryTts.value || !activeJob.value?.id || retryingTts.value) return
+  if (!window.confirm('重新配音会清理本次任务当前的中间产物，并从模块 1 重新开始。是否继续？')) return
+  stepAudioPlayer.value?.pause()
+  stepAudioPlaying.value = false
+  stepAudioCurrentTime.value = 0
+  retryingTts.value = true
+  try {
+    const requestPayload = generationRequestPayload()
+    const ttsParameters = {
+      tts_voice_id: requestPayload.tts_voice_id,
+      tts_speed: requestPayload.tts_speed,
+      tts_volume: requestPayload.tts_volume,
+      tts_pitch: requestPayload.tts_pitch,
+      tts_parallelism: requestPayload.tts_parallelism,
+      tts_emotion: requestPayload.tts_emotion,
+      tts_emotion_weight: requestPayload.tts_emotion_weight,
+      tts_pronunciation: requestPayload.tts_pronunciation,
+      qwen_tts_voice: requestPayload.qwen_tts_voice,
+      qwen_tts_instructions: requestPayload.qwen_tts_instructions,
+      qwen_tts_optimize_instructions: requestPayload.qwen_tts_optimize_instructions,
+      cluster_voice_type: requestPayload.cluster_voice_type,
+      cluster_voice_id: requestPayload.cluster_voice_id,
+    }
+    activeJob.value = await api.retryJobTts(activeJob.value.id, ttsParameters)
+    await refresh()
+  } finally {
+    retryingTts.value = false
+  }
+}
+
+async function resumeGeneration() {
+  if ((!canResumeGeneration.value && !canContinueStepMode.value) || !activeJob.value?.id) return
+  prepareCompletionAlerts(true)
+  resumingGeneration.value = true
+  try {
+    activeJob.value = await api.resumeJob(activeJob.value.id)
+    await refresh()
+  } finally {
+    resumingGeneration.value = false
+  }
+}
+
+async function changeJobPage(page) {
+  const target = Math.min(Math.max(1, page), jobTotalPages.value)
+  if (target === jobPage.value) return
+  jobPage.value = target
+  const payload = await api.jobs(jobPage.value, JOB_PAGE_SIZE)
+  jobs.value = payload.jobs || []
+  jobPage.value = payload.page || 1
+  jobTotal.value = payload.total || 0
+  jobTotalPages.value = payload.total_pages || 1
+  activeJob.value = jobs.value[0] || null
+}
+
+async function uploadAsset(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || !session.value.user) return
+  uploading.value = true
+  try {
+    const payload = await api.uploadEditorAsset(file)
+    await refreshEditor()
+    const asset = payload.asset
+    if (asset?.kind === 'video') editorForm.video_id = asset.id
+    if (asset?.kind === 'audio') editorForm.audio_id = asset.id
+    if (asset?.kind === 'subtitle') editorForm.subtitle_id = asset.id
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function renderEdit() {
+  if (!session.value.user || !editorForm.video_id) return
+  editing.value = true
+  try {
+    editorJob.value = await api.createEditorJob({ ...editorForm })
+    await refreshEditor()
+  } finally {
+    editing.value = false
+  }
+}
+
+async function selectEditorJob(id, replace = true) {
+  const payload = await api.editorJob(id)
+  if (replace) editorJob.value = payload
+  else editorJob.value = payload
+}
+
+function stepClass(key) {
+  const order = steps.map((item) => item.key)
+  const current = activeJob.value?.step
+  if (activeJob.value?.status === 'completed') return 'done'
+  if (current === key) return 'active'
+  if (order.indexOf(key) < order.indexOf(current)) return 'done'
+  return ''
+}
+
+function statusLabel(status) {
+  return {
+    queued: '排队中',
+    running: '生成中',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已停止',
+    waiting_confirmation: '等待确认',
+  }[status] || '未开始'
+}
+
+function statusClass(status) {
+  return {
+    completed: 'success',
+    failed: 'danger',
+    cancelled: 'danger',
+    running: 'warning',
+  }[status] || ''
+}
+
+function voiceLabel(voice) {
+  return {
+    'voice_01.wav': '官方示例音色 01',
+    'voice_02.wav': '官方示例音色 02',
+    'voice_03.wav': '官方示例音色 03',
+    'voice_04.wav': '官方示例音色 04',
+    'voice_05.wav': '官方示例音色 05 · 默认叙事',
+    'voice_06.wav': '官方示例音色 06',
+    'voice_07.wav': '官方示例音色 07',
+    'voice_08.wav': '官方示例音色 08',
+    'voice_09.wav': '官方示例音色 09',
+    'voice_11.wav': '官方示例音色 11',
+    'voice_12.wav': '官方示例音色 12',
+  }[voice] || voice
+}
+
+function emotionLabel(emotion) {
+  return {
+      happy: '开心',
+      angry: '愤怒',
+      sad: '悲伤',
+      afraid: '恐惧',
+      disgusted: '厌恶',
+      melancholic: '低落',
+      surprised: '惊讶',
+      calm: '平静',
+  }[emotion] || emotion
+}
+
+function artifactLabel(key) {
+  return {
+    video_with_subtitles: '字幕版视频',
+    video_raw: '纯净版视频',
+    audio: '配音音频',
+    subtitle: '短字幕',
+    scene_timeline: '分镜 JSON',
+    fine_grained_timeline: '语义剧本',
+    module1_subtitle: '模块 1 原始字幕',
+    story_context: 'Agent 0 全文资料',
+    story_plan: 'Agent 1 时间轴分镜',
+    visual_prompt_plan: 'Agent 2 分镜提示词',
+    poster_mapping: '海报映射',
+    html: 'HTML 模板',
+    archive_manifest: '归档清单',
+  }[key] || key
+}
+
+function kindLabel(kind) {
+  return {
+    video: '视频',
+    audio: '音频',
+    subtitle: '字幕',
+  }[kind] || '文件'
+}
+
+onMounted(async () => {
+  originalDocumentTitle = document.title || '一键生成视频 / One-Click VidGen'
+  window.addEventListener('focus', handleCloudRechargeReturnFocus)
+  document.addEventListener('visibilitychange', handleCloudRechargeReturnFocus)
+  try { await loadSettings() } catch { /* The launcher may still be starting. */ }
+  await refresh()
+  await Promise.allSettled([refreshParameterPresets(), refreshAgentPromptPresets(), refreshCloudState()])
+  timer = window.setInterval(refresh, 2500)
+})
+
+watch(ttsEngine, (engine) => {
+  if (engine !== 'cluster') stopCloudVoicePreview()
+  if (engine === 'cluster') void refreshCloudState()
+})
+
+watch(() => `${form.cluster_voice_type}:${form.cluster_voice_id}`, () => {
+  if (cloudVoicePreviewAudio) stopCloudVoicePreview()
+})
+
+watch(() => cloudRechargeOpen.value || Boolean(cloudRechargeSuccess.value), (open) => {
+  if (open) {
+    cloudRechargePreviousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = cloudRechargePreviousBodyOverflow
+  }
+})
+
+watch(
+  () => `${activeJob.value?.id || ''}:${activeJob.value?.request?._step_mode_stage || ''}:${activeJob.value?.status || ''}`,
+  async () => {
+    if (!isGuidedWorkflowJob(activeJob.value) || !form.step_mode) return
+    hydrateGuidedForm(activeJob.value)
+    if (guidedStage.value === 'audio_review' && activeJob.value?.status === 'waiting_confirmation') {
+      await loadGuidedAudioReview()
+    } else if (guidedStage.value === 'visual_review' && activeJob.value?.status === 'waiting_confirmation') {
+      await openGuidedVisualEditor()
+    }
+  },
+)
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
+  stopVisualEditorTaskPolling()
+  closeVisualBoundaryAlign()
+  stopTtsVoicePreview()
+  stopCloudVoicePreview()
+  stopCloudRechargePolling()
+  document.body.style.overflow = cloudRechargePreviousBodyOverflow
+  resetTtsSegmentAudio()
+  stopBgmPreview()
+  stopCompletionFlash()
+  window.removeEventListener('focus', handleCloudRechargeReturnFocus)
+  document.removeEventListener('visibilitychange', handleCloudRechargeReturnFocus)
+  if (completionAudioContext && completionAudioContext.state !== 'closed') {
+    completionAudioContext.close().catch(() => {})
+  }
+})
+
+return { computed, onMounted, onUnmounted, reactive, ref, watch, api, VISUAL_PROMPT_FULL_STORAGE_KEY, LOCKED_GENERAL_AGENT2_PROTOCOL, LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL, EDITABLE_GENERAL_AGENT2_PREFIX, AGENT2_DIRECTOR_THEME_STORAGE_KEY, AGENT2_DIRECTOR_THEME_DEFAULTS, VISUAL_PROMPT_STYLE_STORAGE_KEY, GLOBAL_CHARACTER_STORAGE_KEY, STORY_ENVIRONMENT_STORAGE_KEY, AGENT0_PROMPT_STORAGE_KEY, AGENT1_PROMPT_STORAGE_KEY, VISUAL_PROMPT_MODE_STORAGE_KEY, CONTENT_MODE_STORAGE_KEY, DIRECTOR_STRATEGY_STORAGE_KEY, VISUAL_PACING_STORAGE_KEY, VISUAL_PACING_DEFAULTS, FALLBACK_CONTENT_MODES, randomProjectName, sidebarOpen, activePage, plugins, pluginsLoading, pluginToggling, pluginNotice, pluginMessage, scriptUploadName, scriptUploadError, workspaceScriptTextarea, module1ScriptTextarea, structuralBlankSeconds, sourceAudioName, sourceAudioError, sourceAudioUploading, ttsVoiceUploadName, ttsVoiceUploadError, ttsVoiceUploading, ttsVoicePreviewUrl, ttsVoicePreviewPlaying, ttsVoicePreviewAudio, stepAudioPlayer, stepAudioPlaying, stepAudioCurrentTime, stepAudioDuration, savingStepAudio, stepAudioSaveMessage, retryingTts, guidedAdvancing, guidedCreatingNew, guidedCancelling, guidedStageMessage, guidedStageError, guidedSubtitles, guidedSubtitleDrafts, guidedSubtitleLoading, guidedSubtitleSaving, folderOpenMessage, visualEditorOpen, visualEditorLoading, visualEditor, visualEditorProjects, visualEditorProjectId, visualEditorPage, visualTimingSelectedId, selectedVisualTimingHistory, visualTimingAdjusting, selectedVisualSubtitleHistory, visualSubtitleEditingId, visualSubtitleDrafts, visualSubtitleOriginals, visualSubtitleSaving, visualSubtitleProjectKey, visualSubtitleRemoveDialog, visualBoundaryAlign, visualBoundaryApplying, visualBoundaryAudio, visualBoundaryAudioEnd, ttsEditor, ttsEditorLoading, selectedTtsSegmentIndices, ttsReadingDrafts, ttsPronunciationOpenIndices, ttsBoundary, ttsBoundaryBusy, ttsPauseDrafts, ttsBoundaryPreviewAudio, ttsBoundaryPreviewTimer, ttsRefineForm, ttsRefineVoiceName, ttsRefineVoiceUploading, ttsRefineVoiceError, ttsRefineEngineLabel, ttsRefinementActive, ttsSegmentPlayingIndex, ttsSegmentIsPlaying, ttsSegmentCurrentTime, ttsSegmentDuration, ttsSegmentAudio, visualSelfReferenceMacroId, visualReferenceUploads, visualReferenceUploading, visualReferenceOwnerMacroId, VISUAL_EDITOR_PAGE_SIZE, visualPreviewItem, visualRenderMode, visualBgmUploading, visualBgmError, visualBgm, submitting, preflightRunning, preflightOpen, preflightResult, submittingModule1, submittingSubtitle, cancellingGeneration, resumingGeneration, health, settings, session, authError, activeJob, followLiveJob, module1Job, subtitleJob, jobs, jobPage, jobTotal, jobTotalPages, JOB_PAGE_SIZE, editorAssets, editorJobs, editorJob, uploading, editing, startingTts, ttsStartMessage, showFullLogs, diagnosticExporting, diagnosticMessage, generationSubmitMessage, apiKeyStatus, apiKeyMessage, apiKeyEditing, apiKeyRuntimeErrors, savingApiKeys, deletingApiKey, savingQwenTtsKey, qwenTtsKeyMessage, ttsEngine, cloudSession, cloudAccount, cloudVoices, cloudVoiceLimits, cloudQuote, cloudBusy, cloudQuoteLoading, cloudVoiceUploading, cloudVoiceDisplayName, cloudVoiceApiAvailable, cloudVoicePreviewLoading, cloudVoicePreviewPlayingId, cloudError, cloudMessage, cloudRechargeOpen, cloudRechargeProducts, cloudRechargeSelectedId, cloudRechargeOrder, cloudRechargePaymentUrl, cloudRechargeLoadingProducts, cloudRechargeBusy, cloudRechargeChecking, cloudRechargeError, cloudRechargeMessage, cloudRechargeSuccess, cloudLoginForm, cloudLoginOpen, cloudVoicePreviewAudio, cloudRechargePollTimer, cloudRechargePollDeadline, cloudRechargeCheckoutWindow, cloudRechargePreviousBodyOverflow, CLOUD_RECHARGE_STORAGE_KEY, qwenVoiceGroups, apiKeyStatusLoaded, timer, visualEditorTaskTimer, ttsEditorTaskTimer, completionAudioContext, completionFlashTimer, completionFlashState, completionFaviconLink, completionFaviconCreated, originalFaviconHref, originalDocumentTitle, lastCompletionAlertAt, MAX_SCRIPT_FILE_SIZE, MAX_SCRIPT_CHARACTERS, insertStructuralBlank, loginForm, registerForm, subtitleForm, subtitleAudioName, subtitleAudioError, subtitleAudioUploading, subtitleReferenceName, subtitleReferenceError, subtitleAddEnabled, subtitleFonts, subtitleFontsLoading, subtitleRenderMessage, subtitleBgmUploading, subtitleBgmError, subtitleRenderForm, subtitleStyleOptions, referenceImageNames, protagonistReferenceImageError, protagonistReferenceUploading, apiKeyForm, savingImageConcurrency, imageConcurrencyPreview, languageProviderOptions, visibleLanguageProviderOptions, currentLanguageProvider, currentLanguageProviderLabel, customLanguageProvider, currentLanguageModels, currentLanguageModelLabel, parameterPresets, selectedParameterPreset, loadingParameterPresets, savingParameterPreset, deletingParameterPreset, parameterPresetMessage, agentPromptPresets, selectedAgentPromptPreset, loadingAgentPromptPresets, savingAgentPromptPreset, bgmUploading, bgmError, bgmPreviewTrack, bgmPreviewAudio, form, contentModeOptions, visualMediumWarning, defaultAgentPromptPresets, userAgentPromptPresets, activeAgent2LockedProtocol, editableVisualPromptSystem, agent2DirectorThemeModel, agent2DirectorThemePlaceholder, visualEditorPageCount, visibleVisualEditorItems, selectedVisualTimingItem, visualSubtitleDirtyIds, visualSubtitleDirtyCount, visualReferenceSummary, contentModeDefaults, modeStorageKey, visualPacingDefaults, applyVisualPacing, visualPacingSummary, editorForm, steps, importantLogPattern, streamingFramePattern, compactStreamingFrameLogs, visibleJobLogs, logText, editorLogText, videoAssets, audioAssets, subtitleAssets, selectedVideoAsset, qwenSelectedVoice, qwenSelectedVoiceSupportsInstructions, ttsEngineLabel, ttsEngineProviderLabel, activeRemoteCloudVoices, cloudPresetVoiceOptions, cloudUploadedVoiceOptions, activeCloudVoices, firstDefaultCloudVoice, selectedCloudVoice, effectiveCloudVoice, previewableCloudPresetVoice, cloudVoicePreviewPlaying, cloudReady, cloudDisplayName, cloudAvailableCredits, cloudRechargeSelectedProduct, cloudRechargeStatusLabel, cloudRechargeStatusDescription, cloudVoiceModel, isGuidedWorkflowJob, guidedStage, guidedRunning, guidedCanStop, guidedCanResume, guidedHasExistingWorkflow, guidedStageSteps, guidedStageGroup, guidedStageOrder, guidedStageChipClass, guidedStageEyebrow, guidedStageTitle, guidedStageDescription, guidedWorkspaceClass, guidedSubtitleDirtyCount, guidedVisualEstimate, pendingGenerationJob, hasPendingGeneration, generationBlockReason, canSubmitGeneration, canSubmitModule1, scriptCharacterCount, scriptTooLong, module1JobRunning, module1ArtifactEntries, module1AudioPreviewUrl, module1LogText, subtitleJobRunning, canSubmitSubtitle, canRenderSubtitleVideo, subtitleLogText, submitButtonText, preflightPassedCount, scriptPlaceholder, canCancelGeneration, canResumeGeneration, canContinueStepMode, stepModeContinueLabel, stepModeAudioUrl, canRetryTts, ttsStatusText, COMPLETION_FAVICON_BLUE, COMPLETION_FAVICON_GREEN, prepareCompletionAlerts, playCompletionSound, stopCompletionFlash, startCompletionFlash, notifyVideoCompleted, handleActiveJobCompletion, apiFailureReason, apiJobKinds, syncApiRuntimeErrors, refresh, refreshEditor, login, register, logout, refreshCloudState, openCloudLogin, loginCloud, registerCloud, logoutCloud, formatCloudRechargeAmount, cloudRechargeProductLabel, stopCloudRechargePolling, clearStoredCloudRecharge, storePendingCloudRecharge, restorePendingCloudRecharge, loadCloudRechargeProducts, openCloudRecharge, closeCloudRecharge, continueCloudRecharge, finishCloudRecharge, openCloudPaymentPage, closeCloudRechargeCheckoutWindow, handleCloudRechargeReturnFocus, scheduleCloudRechargePoll, beginCloudRechargePolling, checkCloudRechargeOrder, startCloudRecharge, selectCloudVoice, stopCloudVoicePreview, toggleCloudVoicePreview, uploadCloudVoice, deleteSelectedCloudVoice, refreshCloudQuote, apiKeyFieldOpen, unlockProtectedInput, editApiKey, onLanguageProviderChanged, onLanguageSourceChanged, onLanguageModelChanged, addApiKeyAccount, deleteConfiguredApiKey, loadApiKeySettings, saveApiKeySettings, saveQwenTtsKey, startTts, loadSettings, openPluginsPage, loadPlugins, togglePlugin, openPluginsFolder, refreshParameterPresets, refreshAgentPromptPresets, loadSelectedAgentPromptPreset, saveCurrentAgentPromptPreset, saveCurrentParameterPreset, loadSelectedParameterPreset, deleteSelectedParameterPreset, formatBgmDuration, readAudioDuration, readAudioUrlDuration, hydrateBgmTrackDurations, bgmTrackUrl, isBgmPreviewing, stopBgmPreview, toggleBgmPreview, moveBgmTrack, clearBgmTracks, uploadVisualBgmTrack, removeVisualBgmTrack, uploadBgmTrack, removeBgmTrack, uploadLocalScript, handleSkipTtsChange, resetVisualPrompt, resetSimpleVisualPrompt, setContentMode, setDirectorStrategy, setVisualPromptMode, rememberVisualPrompt, rememberVisualPacing, uploadTtsVoice, restoreSavedTtsVoiceLabel, stopTtsVoicePreview, toggleTtsVoicePreview, restoreSavedProtagonistReferenceImageLabel, exportDiagnosticPackage, openArtifactFolder, openSubtitleOutputFolder, openProjectOutputFolder, openStepModeVisualPreviewFolder, hydrateVisualBgm, loadVisualEditor, visualSubtitleSentences, hydrateVisualSubtitleDrafts, loadTtsEditor, saveImageConcurrencySettings, hydrateTtsRefineSettings, uploadTtsRefineVoice, resetTtsSegmentAudio, prepareTtsSegmentAudio, toggleTtsSegmentAudio, seekTtsSegmentAudio, isTtsPronunciationOpen, toggleTtsPronunciationEditor, updateTtsReadingDraft, resetTtsReadingDraft, isTtsReadingModified, closeTtsBoundaryEditor, openTtsBoundaryEditor, updateTtsBoundaryParts, confirmTtsHistoryCapacity, refreshTtsBoundaryTokenCounts, ttsBoundaryOverLimit, submitTtsBoundary, saveTtsPause, undoLastTtsEdit, previewTtsBoundary, stopTtsEditorPolling, pollTtsEditorStatus, startTtsEditorPolling, regenerateSelectedTtsSegments, formatTimingRange, formatSubtitleTiming, isVisualSubtitleModified, visualSubtitlePaceWarning, toggleVisualSubtitleEdit, finishVisualSubtitleEdit, resetVisualSubtitleDraft, visualSubtitleHiddenModeLabel, canMergeHiddenSubtitle, openVisualSubtitleRemove, closeVisualSubtitleRemove, hideVisualSubtitle, restoreHiddenVisualSubtitle, saveVisualSubtitles, restoreSelectedVisualSubtitleHistory, hasNextVisualSubtitle, closeVisualBoundaryAlign, previewVisualSubtitleBoundary, formatBoundaryOffset, formatBoundaryDelta, playVisualBoundaryRange, applyVisualSubtitleBoundary, adjustEditedTiming, resetEditedTiming, commitEditedTiming, restoreSelectedVisualTimingHistory, removeEditedTimingPicture, stopVisualEditorTaskPolling, pollVisualEditorTaskStatus, startVisualEditorTaskPolling, selectVisualEditorProject, toggleVisualEditor, redrawVisualImage, beginVisualReferenceSelection, toggleVisualSelfReferenceImage, clearVisualReferenceImages, uploadVisualReferenceImages, uploadVisualImage, undoVisualImage, resetVisualImagePrompt, commitVisualBaseline, commitAllVisualBaselines, renderEditedVideo, cancelVisualRender, uploadSourceAudio, uploadReferenceImages, removeReferenceImage, generationRequestPayload, guidedVisualParameters, guidedRenderParameters, hydrateGuidedForm, loadGuidedAudioReview, loadGuidedSubtitles, saveGuidedSubtitles, formatGuidedTimestamp, openGuidedVisualEditor, advanceGuidedWorkflow, continueGuidedJob, clearGuidedEditingState, returnToFreshGuidedSetup, finishGuidedCancellation, cancelGuidedWorkflow, handleStepModeToggle, enterGuidedPostProduction, runManualPreflight, closePreflight, submit, selectJob, cancelGeneration, deleteGenerationJob, submitModule1, cancelModule1, uploadSubtitleAudio, loadSubtitleReference, loadSubtitleFonts, uploadSubtitleBgmTrack, removeSubtitleBgmTrack, renderSubtitleVideo, submitSubtitleJob, cancelSubtitleJob, syncStepAudioMetadata, syncStepAudioProgress, toggleStepAudioPlayback, seekStepAudio, saveStepAudioAs, formatStepAudioTime, retryTts, resumeGeneration, changeJobPage, uploadAsset, renderEdit, selectEditorJob, stepClass, statusLabel, statusClass, voiceLabel, emotionLabel, artifactLabel, kindLabel }
+}

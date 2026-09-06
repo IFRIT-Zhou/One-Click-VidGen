@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -12,17 +13,16 @@ namespace OcvLauncher
 {
     internal sealed class MainForm : Form
     {
-        private static readonly Color Bg = Color.FromArgb(7, 17, 31);
-        private static readonly Color Panel = Color.FromArgb(14, 29, 49);
-        private static readonly Color PanelSoft = Color.FromArgb(19, 39, 63);
-        private static readonly Color Border = Color.FromArgb(37, 69, 96);
-        private static readonly Color TextMain = Color.FromArgb(232, 243, 255);
-        private static readonly Color TextMuted = Color.FromArgb(145, 169, 194);
-        private static readonly Color Cyan = Color.FromArgb(83, 211, 242);
-        private static readonly Color Purple = Color.FromArgb(133, 105, 255);
-        private static readonly Color Green = Color.FromArgb(45, 212, 191);
-        private static readonly Color Amber = Color.FromArgb(251, 191, 36);
-        private static readonly Color Red = Color.FromArgb(248, 113, 113);
+        private static readonly Color Bg = Color.FromArgb(21, 23, 25);
+        private static readonly Color Panel = Color.FromArgb(30, 35, 36);
+        private static readonly Color PanelSoft = Color.FromArgb(38, 44, 45);
+        private static readonly Color Border = Color.FromArgb(57, 67, 64);
+        private static readonly Color TextMain = Color.FromArgb(231, 233, 235);
+        private static readonly Color TextMuted = Color.FromArgb(160, 170, 168);
+        private static readonly Color Cyan = Color.FromArgb(131, 222, 197);
+        private static readonly Color Green = Color.FromArgb(131, 222, 197);
+        private static readonly Color Amber = Color.FromArgb(214, 188, 135);
+        private static readonly Color Red = Color.FromArgb(237, 146, 146);
 
         private readonly LauncherRuntime runtime;
         private readonly Timer statusTimer;
@@ -129,8 +129,8 @@ namespace OcvLauncher
             titlePanel.RowCount = 2;
             titlePanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
             titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            titlePanel.Controls.Add(NewLabel("一键成片 · OCV Launcher", 15F, FontStyle.Bold, TextMain), 0, 0);
-            titlePanel.Controls.Add(NewLabel("启动、体检与管理 One-Click VidGen", 8.5F, FontStyle.Regular, TextMuted), 0, 1);
+            titlePanel.Controls.Add(NewLabel("OCV · 创作启动台", 15F, FontStyle.Bold, TextMain), 0, 0);
+            titlePanel.Controls.Add(NewLabel("One-Click VidGen  /  本地服务与更新", 8.5F, FontStyle.Regular, TextMuted), 0, 1);
             table.Controls.Add(titlePanel, 1, 0);
 
             var versionPanel = new TableLayoutPanel();
@@ -199,7 +199,7 @@ namespace OcvLauncher
             var controls = new FlowLayoutPanel();
             controls.Dock = DockStyle.Fill;
             controls.FlowDirection = FlowDirection.LeftToRight;
-            controls.WrapContents = false;
+            controls.WrapContents = true;
             controls.Padding = new Padding(0, 5, 0, 0);
             stopButton = SecondaryButton("■  停止服务");
             restartButton = SecondaryButton("↻  重新启动");
@@ -208,7 +208,7 @@ namespace OcvLauncher
             {
                 button.AutoSize = false;
                 button.AutoEllipsis = true;
-                button.Size = new Size(126, 36);
+                button.Size = new Size(132, 38);
                 button.Padding = new Padding(4, 2, 4, 2);
             }
             stopButton.Click += StopButtonClick;
@@ -237,9 +237,9 @@ namespace OcvLauncher
             var table = new TableLayoutPanel();
             table.Dock = DockStyle.Fill;
             table.ColumnCount = 3;
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140F));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 390F));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 360F));
             card.Controls.Add(table);
 
             var title = new TableLayoutPanel();
@@ -248,7 +248,7 @@ namespace OcvLauncher
             title.RowStyles.Add(new RowStyle(SizeType.Percent, 58F));
             title.RowStyles.Add(new RowStyle(SizeType.Percent, 42F));
             title.Controls.Add(NewLabel("安全更新", 11F, FontStyle.Bold, Cyan), 0, 0);
-            title.Controls.Add(NewLabel("默认通道 · main（Git / 便携版）", 8F, FontStyle.Regular, TextMuted), 0, 1);
+            title.Controls.Add(NewLabel("正式更新通道 · main", 8F, FontStyle.Regular, TextMuted), 0, 1);
             table.Controls.Add(title, 0, 0);
 
             var state = new TableLayoutPanel();
@@ -270,7 +270,7 @@ namespace OcvLauncher
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
             actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
-            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            actions.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             actions.Padding = new Padding(2, 8, 0, 8);
             checkUpdateButton = SecondaryButton("检查更新");
             applyUpdateButton = AccentButton("安全更新", Green, Color.FromArgb(4, 25, 25));
@@ -327,7 +327,7 @@ namespace OcvLauncher
             frontendValue = AddStatusRow(layout, 2, "网页前端", "检测中");
             environmentValue = AddStatusRow(layout, 3, "便携环境", "尚未体检");
 
-            checkButton = AccentButton("⚡  运行环境体检", Purple, Color.White);
+            checkButton = AccentButton("运行环境体检", PanelSoft, TextMain);
             checkButton.Click += CheckButtonClick;
             checkButton.Margin = new Padding(0, 6, 0, 6);
             layout.Controls.Add(checkButton, 0, 4);
@@ -407,8 +407,8 @@ namespace OcvLauncher
             logBox.Dock = DockStyle.Fill;
             logBox.ReadOnly = true;
             logBox.BorderStyle = BorderStyle.None;
-            logBox.BackColor = Color.FromArgb(5, 13, 25);
-            logBox.ForeColor = Color.FromArgb(178, 207, 228);
+            logBox.BackColor = Color.FromArgb(16, 19, 20);
+            logBox.ForeColor = Color.FromArgb(184, 200, 193);
             logBox.Font = new Font("Consolas", 9F, FontStyle.Regular);
             logBox.DetectUrls = false;
             logBox.WordWrap = false;
@@ -892,10 +892,10 @@ namespace OcvLauncher
 
         private static Panel CardPanel()
         {
-            var panel = new Panel();
+            var panel = new SurfacePanel();
             panel.Dock = DockStyle.Fill;
             panel.BackColor = Panel;
-            panel.BorderStyle = BorderStyle.FixedSingle;
+            panel.BorderStyle = BorderStyle.None;
             return panel;
         }
 
@@ -911,9 +911,51 @@ namespace OcvLauncher
             return label;
         }
 
+        private sealed class SurfacePanel : Panel
+        {
+            public SurfacePanel() { DoubleBuffered = true; ResizeRedraw = true; }
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                float radius = 12F * e.Graphics.DpiX / 96F;
+                float d = Math.Min(radius * 2, Math.Min(Width - 2, Height - 2));
+                if (d <= 0) return;
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using (var path = new GraphicsPath())
+                using (var pen = new Pen(Border))
+                {
+                    path.AddArc(0.5F, 0.5F, d, d, 180, 90);
+                    path.AddArc(Width - d - 1.5F, 0.5F, d, d, 270, 90);
+                    path.AddArc(Width - d - 1.5F, Height - d - 1.5F, d, d, 0, 90);
+                    path.AddArc(0.5F, Height - d - 1.5F, d, d, 90, 90);
+                    path.CloseFigure();
+                    e.Graphics.DrawPath(pen, path);
+                }
+            }
+        }
+
+        private sealed class StudioButton : Button
+        {
+            public StudioButton() { SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true); }
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                Color fill = Enabled ? BackColor : Color.FromArgb(33, 38, 39);
+                Color ink = Enabled ? ForeColor : Color.FromArgb(132, 143, 140);
+                e.Graphics.Clear(fill);
+                if (FlatAppearance.BorderSize > 0)
+                {
+                    using (var pen = new Pen(Enabled ? FlatAppearance.BorderColor : Color.FromArgb(49, 57, 55), FlatAppearance.BorderSize))
+                        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+                }
+                TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, ink,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
+        }
+
         private static Button AccentButton(string text, Color background, Color foreground)
         {
-            var button = new Button();
+            var button = new StudioButton();
             button.Text = text;
             button.Height = 46;
             button.Dock = DockStyle.Fill;
@@ -928,7 +970,7 @@ namespace OcvLauncher
 
         private static Button SecondaryButton(string text)
         {
-            var button = new Button();
+            var button = new StudioButton();
             button.Text = text;
             button.AutoSize = true;
             button.Height = 38;

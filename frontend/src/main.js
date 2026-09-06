@@ -4,6 +4,9 @@
 
 import { createApp } from 'vue'
 import App from './App.vue'
+import Studio from './Studio.vue'
 import './style.css'
 
-createApp(App).mount('#app')
+const legacy = location.pathname === '/legacy.html'
+if (legacy) createApp(App).mount('#app')
+else import('./prototype/prototype.css').then(() => import('./studio.css')).then(() => createApp(Studio).mount('#app'))
