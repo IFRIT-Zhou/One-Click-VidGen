@@ -2929,6 +2929,7 @@ async function loadTtsEditor() {
   ttsEditorLoading.value = true
   try {
     ttsEditor.value = await api.ttsEditor(visualEditorProjectId.value)
+    ttsEditor.value.subtitle_sync_indices = []
     hydrateTtsRefineSettings(ttsEditor.value)
     const valid = new Set((ttsEditor.value.segments || []).map((item) => item.index))
     selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter((value) => valid.has(value))
@@ -3350,6 +3351,8 @@ async function regenerateSelectedTtsSegments() {
   if (!confirmTtsHistoryCapacity()) return
   const count = selectedTtsSegmentIndices.value.length
   const textOverrides = {}
+  const subtitleTextOverrides = {}
+  const subtitleSyncIndices = new Set((ttsEditor.value.subtitle_sync_indices || []).map(Number))
   for (const index of selectedTtsSegmentIndices.value) {
     const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
     const readingText = String(ttsReadingDrafts[index] ?? item?.tts_text ?? item?.text ?? '').trim()
@@ -3358,15 +3361,20 @@ async function regenerateSelectedTtsSegments() {
       return
     }
     textOverrides[index] = readingText
+    if (subtitleSyncIndices.has(Number(index))) subtitleTextOverrides[index] = readingText
   }
   const pronunciationCount = selectedTtsSegmentIndices.value.filter((index) => {
     const item = (ttsEditor.value.segments || []).find((entry) => entry.index === index)
     return item && String(textOverrides[index]).trim() !== String(item.text || '').trim()
   }).length
   const pronunciationNotice = pronunciationCount
-    ? `\n其中 ${pronunciationCount} 句包含发音修正；拼音提示只参与配音，成片字幕仍显示原文字。`
+    ? `\n其中 ${pronunciationCount} 句包含发音修正；未勾选“同时修改字幕”的句子会保持原字幕。`
     : ''
-  if (!window.confirm(`重新生成选中的 ${count} 句配音？${pronunciationNotice}\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
+  const subtitleSyncCount = Object.keys(subtitleTextOverrides).length
+  const subtitleSyncNotice = subtitleSyncCount
+    ? `\n其中 ${subtitleSyncCount} 句会在重配成功后同步修改并保存字幕。`
+    : ''
+  if (!window.confirm(`重新生成选中的 ${count} 句配音？${pronunciationNotice}${subtitleSyncNotice}\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
   try {
     const refineSettings = {
       tts_speed: ttsRefineForm.tts_speed,
@@ -3389,6 +3397,7 @@ async function regenerateSelectedTtsSegments() {
       selectedTtsSegmentIndices.value,
       refineSettings,
       textOverrides,
+      subtitleTextOverrides,
     )
     ttsEditor.value.task = { status: 'running', progress: 0, message: `正在重配 ${count} 句，请留意上方任务日志。` }
     startTtsEditorPolling()
@@ -3776,17 +3785,17 @@ async function pollVisualEditorTaskStatus() {
   try {
     const status = await api.visualEditorStatus(visualEditorProjectId.value)
     visualEditor.value.task = status.task || visualEditor.value.task
-    let changedImage = false
     for (const item of visualEditor.value.items) {
       const previousStatus = item.task?.status
       const nextTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
       item.task = nextTask
       if (previousStatus === 'running' && nextTask.status === 'completed') {
         item.image_url = `${item.image_url.split('?')[0]}?v=${Date.now()}`
-        changedImage = true
       }
     }
-    if (!status.has_active_image_tasks && status.task?.status !== 'running') stopVisualEditorTaskPolling()
+    if (!status.has_active_image_tasks && status.task?.status !== 'running') {
+      stopVisualEditorTaskPolling()
+    }
   } catch {
     // The main log remains the source of truth if a short status request fails.
   }
@@ -3794,6 +3803,7 @@ async function pollVisualEditorTaskStatus() {
 
 function startVisualEditorTaskPolling() {
   if (visualEditorTaskTimer) return
+  void pollVisualEditorTaskStatus()
   visualEditorTaskTimer = window.setInterval(pollVisualEditorTaskStatus, 1800)
 }
 
@@ -3876,10 +3886,22 @@ function beginVisualReferenceSelection(itemId) {
 
 function toggleVisualSelfReferenceImage(itemId) {
   beginVisualReferenceSelection(itemId)
-  visualSelfReferenceMacroId.value = visualSelfReferenceMacroId.value === itemId ? '' : itemId
+  if (visualSelfReferenceMacroId.value === itemId) {
+    visualSelfReferenceMacroId.value = ''
+    if (!visualReferenceUploads.value.length) visualReferenceOwnerMacroId.value = ''
+    return
+  }
+  visualSelfReferenceMacroId.value = itemId
 }
 
-function clearVisualReferenceImages() {
+function clearVisualReferenceImages(uploadIndex = null) {
+  if (Number.isInteger(uploadIndex)) {
+    visualReferenceUploads.value.splice(uploadIndex, 1)
+    if (!visualSelfReferenceMacroId.value && !visualReferenceUploads.value.length) {
+      visualReferenceOwnerMacroId.value = ''
+    }
+    return
+  }
   visualSelfReferenceMacroId.value = ''
   visualReferenceUploads.value = []
   visualReferenceOwnerMacroId.value = ''
@@ -3907,7 +3929,7 @@ async function uploadVisualReferenceImages(event, itemId) {
     if (uploaded.some((payload) => payload.asset?.kind !== 'image')) throw new Error('上传文件不是可用图片。')
     visualReferenceUploads.value = [
       ...visualReferenceUploads.value,
-      ...uploaded.map((payload, index) => ({ id: payload.asset.id, name: payload.asset.name || selected[index].name })),
+      ...uploaded.map((payload, index) => ({ id: payload.asset.id, name: payload.asset.name || selected[index].name, url: payload.asset.url || '' })),
     ].slice(0, 3)
     visualEditor.value.task = { ...visualEditor.value.task, status: 'idle', message: `已添加 ${selected.length} 张本地重绘参考图。` }
   } catch (error) {

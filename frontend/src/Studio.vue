@@ -291,8 +291,8 @@
 <div class="editor-heading"><div><h1>{{studioTitle}}</h1><span class="muted">{{typeLabel(studioKind)}} · {{statusLabel(studioJob?.status)}}</span></div><button v-if="studioTab!=='参数回顾'" @click="studioDrawer='我的预设'">我的预设⌄</button></div>
     <div class="editor-tabs"><button v-for="t in studioTabs" :key="t" :class="{active:studioTab===t}" @click="chooseTab(t)">{{t}}</button><span class="tab-spacer"/><button @click="refreshEditorData">刷新资产 ↻</button></div>
     <div v-if="studioBusy" class="empty">正在读取项目…</div>
-    <div v-if="studioJob?.status==='failed'" class="studio-notice error"><span>{{studioJob.message}}</span><button @click="openLogs()">查看日志</button><button :disabled="resumingGeneration" @click="resumeGeneration">断点续跑</button></div>
-    <ParameterReview v-if="studioTab==='参数回顾'" :request="studioJob?.request||{}" :busy="studioBusy" @duplicate="duplicateStudioProject"/>
+    <div v-if="['failed','cancelled','completed'].includes(studioJob?.status)" class="studio-notice" :class="{error:studioJob?.status==='failed'}"><span>{{studioJob.message}}</span><button v-if="studioJob?.status==='failed'" :disabled="resumingGeneration" @click="resumeGeneration">断点续跑</button></div>
+    <ParameterReview v-if="studioTab==='参数回顾'" :request="studioJob?.request||{}" :reference-assets="studioReferenceAssets" :status="studioJob?.status" :busy="studioBusy" @duplicate="duplicateStudioProject" @reset="resetStudioProject"/>
     <template v-else-if="studioTab==='文案'"><div class="studio-original-script"><h2>本次任务文案</h2><p class="muted">原始文案用于核对。发音修正请在“配音”里操作，显示文字请在“画面与字幕”里修改。</p><textarea :value="studioJob?.request?.script||''" readonly rows="14"/></div></template>
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
@@ -362,15 +362,15 @@
                       </div>
                       <div class="tts-pronunciation-tools">
                         <button
-                          class="tts-pronunciation-toggle"
+                          class="tts-pronunciation-toggle tts-pronunciation-main-toggle"
                           type="button"
                           :disabled="ttsEditor.task?.status === 'running'"
                           @click="toggleTtsPronunciationEditor(item)"
-                        >{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
+                        ><span>发音与文案修正</span><i aria-hidden="true">{{ isTtsPronunciationOpen(item.index) ? '⌃' : '⌄' }}</i></button>
                         <template v-if="isTtsPronunciationOpen(item.index)">
                           <div class="tts-pronunciation-editor">
                             <label>
-                              <span>朗读文本 <small>只发送给配音引擎，不会写进字幕</small></span>
+                              <span>朗读文本 <small>可单独修正发音；如需同步显示文字，请勾选下方选项</small></span>
                               <textarea
                                 :value="ttsReadingDrafts[item.index]"
                                 rows="2"
@@ -387,6 +387,11 @@
                               @click="resetTtsReadingDraft(item)"
                             >恢复原文</button>
                           </div>
+                          <label v-if="visualEditor.timing_available" class="tts-subtitle-sync-toggle" :class="{ disabled: !isTtsReadingModified(item) }">
+                            <input v-model="ttsEditor.subtitle_sync_indices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" />
+                            <span>同时修改字幕</span>
+                            <small>重配成功后自动同步并保存这句显示文字</small>
+                          </label>
                           <small class="tts-subtitle-preview">成片字幕保持：{{ item.text }}</small>
                         </template>
                       </div>
@@ -444,6 +449,12 @@
                       ↕<input type="file" accept="image/jpeg" @change="uploadVisualImage($event, item)" />
                     </label>
                     <button type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
+                  </div>
+                  <div v-if="visualReferenceOwnerMacroId === item.id && (visualSelfReferenceMacroId || visualReferenceUploads.length)" class="visual-reference-summary">
+                    <span class="visual-reference-title">本次重绘参考</span>
+                    <span v-if="visualSelfReferenceMacroId === item.id" class="visual-reference-chip">图 1 · 当前画面<button type="button" title="取消当前画面参考" @click="toggleVisualSelfReferenceImage(item.id)">×</button></span>
+                    <span v-for="(asset,index) in visualReferenceUploads" :key="asset.id" class="visual-reference-chip" :title="asset.name">{{ visualSelfReferenceMacroId === item.id ? `图 ${index + 2}` : `图 ${index + 1}` }} · {{ asset.name }}<button type="button" :title="`移除 ${asset.name}`" @click="clearVisualReferenceImages(index)">×</button></span>
+                    <button type="button" class="visual-reference-clear" @click="clearVisualReferenceImages()">清空全部</button>
                   </div>
                   <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
                     <img :src="item.image_url" :alt="item.id" />
@@ -1236,7 +1247,66 @@
                 <small class="muted">系统会严格、原样执行配音描述：整篇文案固定音色、模型、语言与描述，并采用长分段合成后统一响度。</small>
                 <small v-if="qwenTtsKeyMessage" class="api-key-message">{{ qwenTtsKeyMessage }}</small>
               </div>
-            </div><div class="tts-parameter-panel split-panel">
+            </div>
+            <section class="bgm-panel bgm-full-row creation-bgm-panel" :class="{ expanded: form.bgm_enabled }">
+              <div class="bgm-panel-head">
+                <div>
+                  <div class="sidebar-label">背景音乐（可选）</div>
+                  <strong>为最终成片添加 BGM</strong>
+                  <small class="muted">不影响配音、字幕或画面生成；最终渲染时按列表顺序循环播放。</small>
+                </div>
+                <label class="switch-row bgm-switch">
+                  <input v-model="form.bgm_enabled" type="checkbox" />
+                  <span class="switch-track"><i></i></span>
+                  <strong>添加 BGM</strong>
+                </label>
+              </div>
+              <div v-if="form.bgm_enabled" class="bgm-panel-body">
+                <div class="bgm-track-list">
+                  <div v-if="form.bgm_tracks.length" class="bgm-track-list-head">
+                    <span>播放列表（按此顺序循环）</span>
+                    <button class="ghost-btn compact-btn" type="button" @click="clearBgmTracks('main')">清空列表</button>
+                  </div>
+                  <div v-for="(track, index) in form.bgm_tracks" :key="`${track.asset_id}-${index}`" class="bgm-track-row">
+                    <div class="bgm-track-file">
+                      <span class="bgm-order">{{ index + 1 }}</span>
+                      <div>
+                        <strong>{{ track.name || track.asset_id }}</strong>
+                        <small class="muted">第 {{ index + 1 }} 首 · {{ formatBgmDuration(track.duration_seconds) }}</small>
+                      </div>
+                    </div>
+                    <label class="bgm-volume-field">
+                      <span>音量（dB）</span>
+                      <input v-model.number="track.volume_db" type="number" min="-60" max="6" step="1" />
+                    </label>
+                    <div class="bgm-track-actions">
+                      <button class="ghost-btn compact-btn" type="button" :disabled="!bgmTrackUrl(track)" :title="isBgmPreviewing(track) ? '暂停试听' : '播放试听'" @click="toggleBgmPreview(track)">{{ isBgmPreviewing(track) ? 'Ⅱ' : '▶' }}</button>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="index === 0" title="上移" @click="moveBgmTrack(form.bgm_tracks, index, -1)">↑</button>
+                      <button class="ghost-btn compact-btn" type="button" :disabled="index === form.bgm_tracks.length - 1" title="下移" @click="moveBgmTrack(form.bgm_tracks, index, 1)">↓</button>
+                      <button class="ghost-btn compact-btn" type="button" title="移除" @click="removeBgmTrack(index)">×</button>
+                    </div>
+                  </div>
+                  <label class="script-file-picker bgm-upload-picker" :class="{ disabled: bgmUploading }">
+                    <input type="file" accept=".mp3,.wav,.m4a,.aac,.flac,.ogg,audio/*" :disabled="bgmUploading" @change="uploadBgmTrack" />
+                    <span>{{ bgmUploading ? '上传中…' : (form.bgm_tracks.length ? '添加下一首' : '上传 BGM') }}</span>
+                    <strong>MP3 / WAV / M4A / AAC / FLAC / OGG</strong>
+                  </label>
+                  <small v-if="bgmError" class="script-upload-error">{{ bgmError }}</small>
+                </div>
+                <div class="bgm-fade-card">
+                  <label class="check-row">
+                    <input v-model="form.bgm_fade_enabled" type="checkbox" />
+                    <span>切换音乐及视频结束时开启渐弱</span>
+                  </label>
+                  <label>
+                    <span>渐弱时长（秒）</span>
+                    <input v-model.number="form.bgm_fade_duration" type="number" min="0.1" max="30" step="0.1" :disabled="!form.bgm_fade_enabled" />
+                  </label>
+                  <small class="muted">默认 1 秒；关闭后音乐会按顺序直接衔接。</small>
+                </div>
+              </div>
+            </section>
+            <div class="tts-parameter-panel split-panel">
               <div class="tts-parameter-head">
                 <div>
                   <div class="sidebar-label">长文处理</div>
@@ -1265,7 +1335,7 @@
                 系统会先让大模型通读全文，按主题完整性分段；该数值只是上限，不会为了凑字数硬切。分段视频完成后会按顺序自动拼接。
               </small>
             </div></template>
-   <template v-else-if="studioDrawer==='参数回顾'"><ParameterReview :request="studioJob?.request||{}" :busy="studioBusy" @duplicate="duplicateStudioProject"/></template>
+   <template v-else-if="studioDrawer==='参数回顾'"><ParameterReview :request="studioJob?.request||{}" :reference-assets="studioReferenceAssets" :status="studioJob?.status" :busy="studioBusy" @duplicate="duplicateStudioProject" @reset="resetStudioProject"/></template>
    <template v-else-if="studioDrawer==='作品风格'">
     <div class="style-library">
      <p class="muted">风格只改变内容与画面表现，不修改配音、节奏、导演策略、API 或出图分辨率。当前任务的修改不会自动覆盖风格库。</p>
@@ -1494,8 +1564,25 @@
                     <span>单图最多字幕片段</span>
                     <input v-model.number="form.visual_max_slides" type="number" min="1" max="12" step="1" @input="rememberVisualPacing" />
                   </label>
-                </div>
               </div>
+            </div>
+            <div class="tts-parameter-panel render-subtitle-panel">
+              <div class="tts-parameter-head">
+                <div>
+                  <div class="sidebar-label">最终渲染</div>
+                  <h3>成片版本</h3>
+                  <small class="muted">始终保留 SRT 字幕文件；此处决定最终输出哪些视频版本。</small>
+                </div>
+                <label class="visual-pacing-select render-variant-select">
+                  <span>输出版本</span>
+                  <select v-model="form.video_render_variant">
+                    <option value="both">双版本（字幕版 + 无字幕版）</option>
+                    <option value="subtitles">仅字幕版</option>
+                    <option value="raw">仅无字幕版</option>
+                  </select>
+                </label>
+              </div>
+            </div>
             </div></template>
    <template v-else-if="studioDrawer==='背景音乐' && !(isGuidedWorkflowJob(studioJob) && guidedStage === 'render_setup')"><section class="bgm-panel visual-editor-bgm" :class="{ expanded: visualBgm.enabled }">
                 <div class="bgm-panel-head">

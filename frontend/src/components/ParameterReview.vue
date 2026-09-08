@@ -1,8 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
-const props = defineProps({ request: { type: Object, default: () => ({}) }, busy:Boolean })
-defineEmits(['duplicate'])
+const props = defineProps({ request: { type: Object, default: () => ({}) }, referenceAssets: { type: Array, default: () => [] }, status: { type: String, default: '' }, busy:Boolean })
+defineEmits(['duplicate','reset'])
 const panel = ref('')
+const referencePreview = ref(null)
 const kind = computed(()=>props.request.subtitle_only?'subtitle':props.request.module1_only?'audio':'video')
 const labels={indextts25:'本地 GPU · IndexTTS-2.5',indextts2:'本地 IndexTTS（历史记录）',cluster:'集群 GPU · IndexTTS-2.5',qwen:'Qwen TTS',urban_suspense:'都市惊悚',science_explainer:'口播科普',pure_science:'纯科普',general:'通用自定义',stable:'稳健还原',enhanced_beta:'叙事增强',auto:'按作品风格自动',slow:'舒缓',standard:'标准',fast:'紧凑',custom:'自定义',both:'双版本',raw:'无字幕',subtitles:'带字幕',preset:'预设音色',uploaded:'上传音色',happy:'开心',sad:'悲伤',angry:'生气',fear:'害怕',disgust:'厌恶',surprise:'惊讶',calm:'平静'}
 function value(key, empty='未单独指定（沿用任务默认处理）'){
@@ -18,10 +19,18 @@ const soundFields=computed(()=>[
  ['tts_emotion','情绪'],['tts_emotion_weight','情绪强度'],['tts_speed','语速'],['tts_volume','音量'],['tts_pitch','音调'],['tts_parallelism','并行数']
 ])
 function rows(key){return Math.min(8,Math.max(2,Math.ceil(String(props.request[key]||'').length/65)))}
+const referenceIds = computed(()=>{
+ const ids=Array.isArray(props.request.reference_image_ids)?props.request.reference_image_ids.map(v=>String(v||'').trim()).filter(Boolean):[]
+ const legacy=String(props.request.protagonist_reference_image_id||'').trim()
+ if(!ids.length&&legacy)ids.push(legacy)
+ return [...new Set(ids)].slice(0,3)
+})
+const referenceItems = computed(()=>referenceIds.value.map((id,index)=>props.referenceAssets.find(asset=>asset.id===id)||{id,name:`参考图 ${index+1}`,url:''}))
+const canReset = computed(()=>['failed','cancelled','completed'].includes(props.status))
 </script>
 <template>
  <div class="parameter-review creation review-creation">
-  <div class="page-heading"><div><p class="eyebrow">项目参数回顾 · 只读</p><h1>{{request.project_name||'项目执行配置'}}</h1><p class="muted">查看本项目保存的执行配置，不会修改任务或当前新建页设置。</p></div><button :disabled="busy" @click="$emit('duplicate')">{{busy?'正在检查…':'以此配置新建'}}</button></div>
+  <div class="page-heading"><div><p class="eyebrow">项目参数回顾 · 只读</p><h1>{{request.project_name||'项目执行配置'}}</h1><p class="muted">查看本项目保存的执行配置，不会修改任务或当前新建页设置。</p></div><div class="review-page-actions"><button v-if="canReset" :disabled="busy" @click="$emit('reset')">重置此任务</button><button :disabled="busy" @click="$emit('duplicate')">{{busy?'正在检查…':'以此配置新建'}}</button></div></div>
   <div class="create-copy-column">
    <div class="form-grid">
     <label class="project-name-field"><span>项目名称</span><input :value="value('project_name')" readonly /></label>
@@ -45,7 +54,7 @@ function rows(key){return Math.min(8,Math.max(2,Math.ceil(String(props.request[k
   <div v-if="panel==='style' && kind==='video'" class="tts-parameter-panel visual-prompt-panel review-settings">
    <h3>作品风格 <small class="muted">只读</small></h3>
    <label v-for="[key,label] in [['visual_style_prompt','统一画面风格'],['global_character_prompt','全局人物设定'],['story_environment_prompt','故事世界与环境']]" :key="key" class="stack"><span>{{label}}</span><textarea v-if="request[key]" :value="request[key]" readonly :rows="rows(key)"/><p v-else class="muted review-default-note">{{value(key,'未单独指定；具体表现由该任务的模式和提示词规则决定。')}}</p></label>
-   <p v-if="request.reference_image_ids?.length || request.protagonist_reference_image_id" class="muted">已附带角色参考素材：{{request.reference_image_ids?.length||1}} 张</p>
+   <section v-if="referenceItems.length" class="review-reference-assets"><div><b>角色参考图</b><small>点击图片可放大查看</small></div><button v-for="(asset,index) in referenceItems" :key="asset.id" type="button" class="review-reference-thumb" :title="`查看参考图 ${index+1}`" @click="referencePreview=asset"><img v-if="asset.url" :src="asset.url" :alt="asset.name"/><span v-else>图 {{index+1}}</span><em>图 {{index+1}}</em></button></section>
    <details><summary>进阶提示词 · 只读查看</summary><p class="muted">未单独记录的指令不使用当前版本的默认指令替代。</p><label v-for="[key,label] in [['agent0_prompt_system','Agent 0'],['agent1_prompt_system','Agent 1'],['visual_prompt_system','画面指令']]" :key="key" class="stack"><span>{{label}}</span><textarea v-if="request[key]" :value="request[key]" readonly :rows="rows(key)"/><p v-else class="muted">{{value(key,'未保存自定义指令，沿用任务默认规则。')}}</p></label></details>
   </div>
   <div v-if="panel==='pacing' && kind==='video'" class="tts-parameter-panel review-settings">
@@ -55,5 +64,6 @@ function rows(key){return Math.min(8,Math.max(2,Math.ceil(String(props.request[k
   </div>
   <details class="review-settings"><summary>其他执行设置 · 只读查看</summary><div class="parameter-review-grid"><label v-for="[key,label] in [['step_mode','逐步确认'],['auto_split_long_text','自动分段'],['split_text_threshold','每段最大字数'],['use_cloud_image_pool','使用号池'],['video_render_variant','成片版本'],['bgm_enabled','背景音乐'],['bgm_fade_enabled','音乐淡入淡出']].filter(([key])=>Object.hasOwn(request,key))" :key="key" class="stack"><span>{{label}}</span><input :value="value(key)" readonly /></label></div></details>
   <p class="muted review-footnote">以任务保存的记录为准，后续分步确认可能更新部分记录；未记录的历史配置无法完整还原。此处不显示 API 凭据，也不提供修改、上传或生成操作。</p>
+  <div v-if="referencePreview" class="review-image-dialog" role="dialog" aria-modal="true" :aria-label="referencePreview.name" @click.self="referencePreview=null"><button type="button" aria-label="关闭参考图预览" @click="referencePreview=null">×</button><img v-if="referencePreview.url" :src="referencePreview.url" :alt="referencePreview.name"/><p>{{referencePreview.name}}</p></div>
  </div>
 </template>

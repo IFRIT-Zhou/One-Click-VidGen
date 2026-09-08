@@ -6,6 +6,7 @@ import unittest
 from backend.app.main import GenerateRequest
 from backend.app.gemini_client import GeminiOutputTruncated
 from backend.app.tts_text_normalization import normalize_tts_text
+from backend.app.tts_editor import TtsEditor
 from module1_agent_director import (
     _build_indextts25_command,
     split_cluster_tts_text,
@@ -15,11 +16,31 @@ from backend.app.tts_segmentation import segment_indextts25_text
 
 
 class IndexTTS25IntegrationTests(unittest.TestCase):
+    def test_tts_subtitle_sync_maps_by_time_not_sentence_number(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project_dir = Path(temporary)
+            other = project_dir / "other"
+            other.mkdir()
+            (other / "画面时间线.json").write_text(
+                '[{"slide_id":"scene_001","start":0,"end":1.1,"text_content":"甲"},'
+                '{"slide_id":"scene_002","start":1.1,"end":3.2,"text_content":"乙"}]',
+                encoding="utf-8",
+            )
+            updates = TtsEditor._subtitle_updates_for_segments(
+                project_dir,
+                [
+                    {"index": 1, "start": 0, "end": 1.1},
+                    {"index": 2, "start": 1.1, "end": 3.2},
+                ],
+                {2: "更新后的乙"},
+            )
+        self.assertEqual(updates, {"scene_002": "更新后的乙"})
+
     def test_tts_reading_copy_normalizes_windows_hostile_typography(self):
         original = "IndexTTS‑2.5\u00a0支持“特殊”字符\u200b。"
         self.assertEqual(
             normalize_tts_text(original),
-            'IndexTTS-2.5 支持"特殊"字符。',
+            'IndexTTS-2.5 支持特殊字符。',
         )
         self.assertIn("‑", original)
 

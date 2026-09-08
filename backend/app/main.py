@@ -315,6 +315,7 @@ class VisualSubtitleRestoreRequest(BaseModel):
 class TtsSegmentRegenerateRequest(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=20)
     tts_text_overrides: dict[int, str] = Field(default_factory=dict)
+    subtitle_text_overrides: dict[int, str] = Field(default_factory=dict)
     tts_voice_id: str | None = Field(default=None, max_length=180)
     tts_speed: float | None = Field(default=None, ge=0.5, le=2)
     tts_volume: float | None = Field(default=None, ge=0.1, le=10)
@@ -3097,7 +3098,7 @@ def regenerate_tts_segments(
         raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再重配音")
     try:
         settings_override = payload.model_dump(
-            exclude={"indices", "tts_text_overrides"}, exclude_none=True
+            exclude={"indices", "tts_text_overrides", "subtitle_text_overrides"}, exclude_none=True
         )
         tts_editor.regenerate(
             job=job,
@@ -3105,6 +3106,7 @@ def regenerate_tts_segments(
             indices=payload.indices,
             settings_override=settings_override,
             text_overrides=payload.tts_text_overrides,
+            subtitle_text_overrides=payload.subtitle_text_overrides,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

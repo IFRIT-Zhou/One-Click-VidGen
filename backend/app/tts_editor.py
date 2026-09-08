@@ -886,6 +886,60 @@ class TtsEditor:
         store.log(job, f"已撤销音频编辑：{meta.get('action') or '上一步'}")
         return {"ok": True, "history_count": len(self._history_entries(project_dir)), "message": "已撤销上一步音频编辑"}
 
+    @staticmethod
+    def _subtitle_updates_for_segments(
+        project_dir: Path,
+        segments: list[dict[str, Any]],
+        text_overrides: dict[int, str],
+    ) -> dict[str, str]:
+        """Map opted-in TTS segments to their timeline subtitles before work starts."""
+        if not text_overrides:
+            return {}
+        timeline_path = project_dir / "other" / TIMELINE_FILENAME
+        if not timeline_path.is_file():
+            raise ValueError("当前项目没有可同步的画面字幕时间线")
+        timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
+        if not isinstance(timeline, list):
+            raise ValueError("当前项目的字幕时间线无效")
+        by_index = {int(item.get("index") or 0): item for item in segments if isinstance(item, dict)}
+        updates: dict[str, str] = {}
+        for index, text in text_overrides.items():
+            segment = by_index.get(index)
+            if not segment:
+                raise ValueError(f"第 {index} 句配音不存在，无法同步字幕")
+            start = float(segment.get("start") or 0)
+            end = float(segment.get("end") or 0)
+            if end <= start:
+                raise ValueError(f"第 {index} 句配音时间无效，无法同步字幕")
+            candidates: list[tuple[float, float, int, dict[str, Any]]] = []
+            center = (start + end) / 2
+            for position, raw in enumerate(timeline):
+                if not isinstance(raw, dict):
+                    continue
+                slide_id = str(raw.get("slide_id") or "").strip()
+                if not slide_id:
+                    continue
+                subtitle_start = float(raw.get("start") or 0)
+                subtitle_end = float(raw.get("end") or 0)
+                overlap = max(0.0, min(end, subtitle_end) - max(start, subtitle_start))
+                distance = abs(((subtitle_start + subtitle_end) / 2) - center)
+                candidates.append((overlap, distance, position, raw))
+            if not candidates:
+                raise ValueError(f"第 {index} 句找不到对应字幕")
+            overlap, _distance, _position, target = sorted(
+                candidates, key=lambda value: (-value[0], value[1], value[2])
+            )[0]
+            if overlap <= 0.001:
+                raise ValueError(f"第 {index} 句找不到时间对应的字幕")
+            if bool(target.get("subtitle_hidden")):
+                raise ValueError(f"第 {index} 句对应字幕已隐藏，请先恢复后再同步")
+            slide_id = str(target["slide_id"])
+            previous = updates.get(slide_id)
+            if previous is not None and previous != text:
+                raise ValueError(f"第 {index} 句与其他选中句对应同一字幕，不能同时同步不同文字")
+            updates[slide_id] = text
+        return updates
+
     def regenerate(
         self,
         *,
@@ -894,6 +948,7 @@ class TtsEditor:
         indices: list[int],
         settings_override: dict[str, Any] | None = None,
         text_overrides: dict[int, str] | None = None,
+        subtitle_text_overrides: dict[int, str] | None = None,
     ) -> None:
         selected = sorted(set(int(value) for value in indices if int(value) > 0))
         if not selected:
@@ -920,22 +975,40 @@ class TtsEditor:
             if len(text) > 1200:
                 raise ValueError(f"第 {index} 句朗读文本过长，请缩短后重试")
             normalized_text_overrides[index] = text
+        normalized_subtitle_overrides: dict[int, str] = {}
+        for raw_index, raw_text in dict(subtitle_text_overrides or {}).items():
+            index = int(raw_index)
+            if index not in selected:
+                raise ValueError("同步字幕只能修改本次选中的句子")
+            text = str(raw_text or "").strip()
+            if not text:
+                raise ValueError(f"第 {index} 句同步字幕不能为空")
+            if len(text) > 1200:
+                raise ValueError(f"第 {index} 句同步字幕过长，请缩短后重试")
+            normalized_subtitle_overrides[index] = text
+        subtitle_updates = self._subtitle_updates_for_segments(
+            project_dir,
+            manifest["segments"],
+            normalized_subtitle_overrides,
+        )
         self._set_task(job.id, status="running", progress=0, message=f"准备重配 {len(selected)} 句")
 
         def work() -> None:
             try:
-                self._regenerate_sync(
+                synced_subtitle_count = self._regenerate_sync(
                     job,
                     user_id,
                     selected,
                     dict(settings_override or {}),
                     normalized_text_overrides,
+                    subtitle_updates,
                 )
+                sync_note = f"，并同步 {synced_subtitle_count} 条字幕" if synced_subtitle_count else ""
                 self._set_task(
                     job.id, status="completed", progress=100,
-                    message=f"已重配 {len(selected)} 句，并重建配音与时间轴；请点击重新渲染。",
+                    message=f"已重配 {len(selected)} 句{sync_note}，并重建配音与时间轴；请点击重新渲染。",
                 )
-                store.log(job, f"单句重配完成：已更新 {len(selected)} 句配音、整条音频、字幕和画面时间线")
+                store.log(job, f"单句重配完成：已更新 {len(selected)} 句配音、整条音频、字幕和画面时间线{sync_note}")
             except Exception as exc:
                 self._set_task(job.id, status="failed", progress=0, message=f"单句重配失败：{exc}")
                 store.log(job, f"单句重配失败：{type(exc).__name__}: {exc}")
@@ -949,7 +1022,8 @@ class TtsEditor:
         indices: list[int],
         settings_override: dict[str, Any],
         text_overrides: dict[int, str],
-    ) -> None:
+        subtitle_updates: dict[str, str],
+    ) -> int:
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
         manifest_path = segment_dir / SEGMENT_MANIFEST
@@ -1165,6 +1239,15 @@ class TtsEditor:
         manifest["revision"] = int(manifest.get("revision") or 0) + 1
         manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        if subtitle_updates:
+            # The IDs were verified against the pre-edit timeline before synthesis.
+            # Save only after audio replacement succeeds, so failed TTS never changes
+            # the visible subtitle text.
+            VisualEditor().save_subtitle_texts(
+                job_id=job.id,
+                user_id=user_id,
+                updates=subtitle_updates,
+            )
         self._sync_module1_flat_outputs(project_dir, job.id)
         request_updates = {
             "tts_voice_id": manifest.get("tts_voice_id"),
@@ -1189,6 +1272,7 @@ class TtsEditor:
             )
             store.update(job, request=job.request)
         shutil.rmtree(work_dir, ignore_errors=True)
+        return len(subtitle_updates)
 
 
 tts_editor = TtsEditor()

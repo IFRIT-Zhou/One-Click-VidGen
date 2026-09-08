@@ -5,7 +5,15 @@ import { api } from './api'
 export function useStudio(w) {
   const creationDefaults = JSON.parse(JSON.stringify(w.form))
   const subtitleDefaults = JSON.parse(JSON.stringify(w.subtitleForm))
-  async function duplicateStudioProject() {
+  function requestReferenceImageIds(request) {
+    const ids = Array.isArray(request.reference_image_ids)
+      ? request.reference_image_ids.map((value) => String(value || '').trim()).filter(Boolean)
+      : []
+    const legacyId = String(request.protagonist_reference_image_id || '').trim()
+    if (!ids.length && legacyId) ids.push(legacyId)
+    return [...new Set(ids)].slice(0, 3)
+  }
+  async function createStudioProjectFromRequest({ reset = false } = {}) {
     const job = studioJob.value
     if (!job?.request || studioBusy.value) return
     const request = JSON.parse(JSON.stringify(job.request))
@@ -17,7 +25,15 @@ export function useStudio(w) {
       if (Object.hasOwn(request, key)) form[key] = request[key]
       else missing.push(key)
     }
-    form.project_name = String(request.project_name || '项目').slice(0,65) + ' · 副本'
+    // Defaults may contain assets from an unrelated draft. Reference images
+    // are opt-in, so they must only come from the saved source request.
+    form.reference_image_ids = requestReferenceImageIds(request)
+    form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
+    form.source_audio_id = String(request.source_audio_id || '')
+    form.bgm_tracks = Array.isArray(request.bgm_tracks) ? JSON.parse(JSON.stringify(request.bgm_tracks)) : []
+    form.project_name = reset
+      ? String(request.project_name || '项目').slice(0, 65)
+      : String(request.project_name || '项目').slice(0, 65) + ' · 副本'
     const subtitle = {...subtitleDefaults, project_name:form.project_name, source_audio_id:request.source_audio_id||'', reference_text:request.reference_text||request.script||'', use_correction:request.subtitle_use_correction??true}
     const referenced = [...(form.reference_image_ids||[]),form.protagonist_reference_image_id,request.source_audio_id,...(form.bgm_tracks||[]).map(t=>t.asset_id)].filter(Boolean)
     if (referenced.length) {
@@ -35,11 +51,22 @@ export function useStudio(w) {
       } finally { studioBusy.value = false }
     }
     newProject(kind,{id:'draft-'+crypto.randomUUID(),form,subtitle,engine:request.tts_engine==='indextts2'?'indextts25':request.tts_engine||'indextts25'})
-    studioError.value = '已创建独立草稿，尚未开始生成。请核对音色和素材；API 与账户使用当前配置。'+(missing.length?'部分历史参数未记录，已用初始值补齐，请核对。':'')
+    studioError.value = (reset
+      ? '已重置为未运行状态：保留原项目参数，进度与执行记录不会带入新草稿。'
+      : '已创建独立草稿，尚未开始生成。请核对音色和素材；API 与账户使用当前配置。')+(missing.length?'部分历史参数未记录，已用初始值补齐，请核对。':'')
     w.sourceAudioName.value = request.source_audio_id||''
     w.subtitleAudioName.value = request.source_audio_id||''
-    w.referenceImageNames.value = [...(form.reference_image_ids||[])]
+    w.referenceImageNames.value = (form.reference_image_ids || []).map((id) => {
+      const asset = w.editorAssets.value.find((item) => item.id === id)
+      return asset?.name || id
+    })
     saveDraft()
+  }
+  function duplicateStudioProject() { return createStudioProjectFromRequest() }
+  function resetStudioProject() {
+    if (!['failed', 'cancelled', 'completed'].includes(studioJob.value?.status)) return
+    if (!window.confirm('重置后将以当前项目参数创建一份未运行草稿；进度、已生成内容和断点不会带入。原项目会保留，可随时返回查看。是否继续？')) return
+    return createStudioProjectFromRequest({ reset: true })
   }
   const studioPage = ref('home'), studioTab = ref('文案'), studioDrawer = ref('')
   const studioKind = ref('video'), studioError = ref(''), studioBusy = ref(false)
@@ -63,6 +90,13 @@ export function useStudio(w) {
   const studioAudio = computed(()=>studioJob.value?.artifacts?.audio||'')
   const studioVideo = computed(()=>studioJob.value?.artifacts?.video_with_subtitles||studioJob.value?.artifacts?.video_raw||studioJob.value?.artifacts?.video||'')
   const studioTaskLogs = computed(()=>studioJob.value?.logs||[])
+  const studioReferenceAssets = computed(() => {
+    const request = studioJob.value?.request || {}
+    return requestReferenceImageIds(request).map((id, index) => {
+      const asset = w.editorAssets.value.find((item) => item.id === id)
+      return asset || { id, name: `参考图 ${index + 1}`, url: '' }
+    })
+  })
   const studioTitle = computed(()=>studioPage.value==='new'?(studioKind.value==='subtitle'?w.subtitleForm.project_name:w.form.project_name):studioJob.value?.request?.project_name||'项目工作区')
   const studioHasRunning = computed(()=>studioLiveJobs.value.length>0||['queued','running'].includes(studioJob.value?.status))
   let draftTimer, draftLoading=false, openSerial=0
@@ -100,7 +134,7 @@ export function useStudio(w) {
     w.guidedCreatingNew.value=true
     saveDraft();draftLoading=true;studioKind.value=kind;studioDraftId.value=draft?.id||`draft-${Date.now()}`;studioPage.value='new';studioProjectId.value='';studioError.value='';studioDrawer.value='';studioTab.value=kind==='subtitle'?'素材':'文案';w.activePage.value=kind==='audio'?'module1':kind==='subtitle'?'subtitle':'workspace';w.followLiveJob.value=false
     if(draft){Object.assign(w.form,draft.form);Object.assign(w.subtitleForm,draft.subtitle);w.ttsEngine.value=draft.engine||w.ttsEngine.value}
-    else {w.form.project_name=w.randomProjectName();w.form.script='';w.form.source_audio_id='';w.form.skip_tts=false;w.form.skip_text_correction=false;w.subtitleForm.project_name='字幕_'+new Date().toLocaleDateString();w.subtitleForm.source_audio_id='';w.subtitleForm.reference_text='';w.sourceAudioName.value='';w.scriptUploadName.value='';w.subtitleAudioName.value=''}
+    else {w.form.project_name=w.randomProjectName();w.form.script='';w.form.source_audio_id='';w.form.skip_tts=false;w.form.skip_text_correction=false;w.form.reference_image_ids=[];w.form.protagonist_reference_image_id='';w.referenceImageNames.value=[];w.protagonistReferenceImageError.value='';w.subtitleForm.project_name='字幕_'+new Date().toLocaleDateString();w.subtitleForm.source_audio_id='';w.subtitleForm.reference_text='';w.sourceAudioName.value='';w.scriptUploadName.value='';w.subtitleAudioName.value=''}
     draftLoading=false;saveDraft()
   }
   async function openProject(job){
@@ -177,5 +211,5 @@ export function useStudio(w) {
     const rows=studioSubtitles.value;if(rows.some((r,i)=>!Number.isFinite(Number(r.start))||!Number.isFinite(Number(r.end))||r.start<0||r.end<=r.start||(i&&r.start<rows[i-1].end))){studioSubtitleMessage.value='时间需按顺序排列，结束晚于开始，相邻字幕不能重叠。';return}
     const text=rows.map((r,i)=>`${i+1}\n${srtTime(r.start)} --> ${srtTime(r.end)}\n${r.text}\n`).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/x-subrip;charset=utf-8'}));a.download=`${studioTitle.value}_校对.srt`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);studioSubtitleMessage.value='已导出校对后的字幕。'
   }
-return {duplicateStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioAudio,studioVideo,studioTaskLogs,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles}
+return {duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles}
 }

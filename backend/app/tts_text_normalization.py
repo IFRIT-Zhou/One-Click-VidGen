@@ -40,6 +40,10 @@ _CHAR_TRANSLATION = str.maketrans({
 def normalize_tts_text(text: str) -> str:
     """Return an engine-safe reading copy without changing visible subtitles."""
     normalized = unicodedata.normalize("NFKC", str(text or "")).translate(_CHAR_TRANSLATION)
+    # IndexTTS can occasionally vocalize straight quotes left behind by the
+    # compatibility translation (for example after 中文引号) as a stray syllable.
+    # Quotes are typographic in the reading copy, so safely omit them here.
+    normalized = normalized.replace('"', '')
     # Preserve real line breaks but eliminate exotic horizontal whitespace and
     # control characters which some Windows-native tokenizers cannot print.
     normalized = re.sub(r"[\t\v\f\r ]+", " ", normalized)
