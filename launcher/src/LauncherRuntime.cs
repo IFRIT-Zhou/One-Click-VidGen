@@ -100,7 +100,23 @@ namespace OcvLauncher
             "frontend/src/App.vue",
             "frontend/src/api.js",
             "frontend/src/style.css",
+            "frontend/src/Studio.vue",
+            "frontend/src/studio.css",
+            "frontend/src/useStudio.js",
+            "frontend/src/useWorkspace.js",
+            "frontend/src/videoPresentation.js",
+            "frontend/src/components/ImageStudio.vue",
+            "frontend/src/components/ParameterReview.vue",
+            "frontend/src/components/SubtitleStyleEditor.vue",
             "backend/app/main.py",
+            "backend/app/image_studio.py",
+            "backend/app/pipeline.py",
+            "backend/app/subtitle_layout.py",
+            "backend/app/subtitle_preview.cjs",
+            "backend/app/subtitle_preview.py",
+            "backend/app/tts_editor.py",
+            "backend/app/tts_text_normalization.py",
+            "backend/app/visual_editor.py",
             "story_agents.py",
             "module1_agent_director.py",
             "module2_5_text_corrector.py",
@@ -905,7 +921,7 @@ namespace OcvLauncher
         {
             string extension = Path.GetExtension(path).ToLowerInvariant();
             bool isText = extension == ".bat" || extension == ".css" || extension == ".js"
-                || extension == ".json" || extension == ".ps1" || extension == ".py"
+                || extension == ".cjs" || extension == ".json" || extension == ".ps1" || extension == ".py"
                 || extension == ".vue";
             if (!isText) return ComputeFileSha256(path);
 

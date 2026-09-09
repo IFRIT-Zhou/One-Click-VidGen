@@ -1,5 +1,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
+import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 
 // Shared task state: each mounted workspace owns one polling lifecycle.
 export function useWorkspace() {
@@ -510,6 +511,8 @@ const form = reactive({
   visual_backend: 'poster',
   use_cloud_image_pool: false,
   video_render_variant: 'both',
+  video_orientation: 'landscape',
+  subtitle_layouts: {},
   bgm_enabled: false,
   bgm_tracks: [],
   bgm_fade_enabled: false,
@@ -2864,6 +2867,11 @@ async function loadVisualEditor({ preservePage = false, hydrateBgm = false } = {
   visualEditorLoading.value = true
   try {
     visualEditor.value = await api.visualEditor(visualEditorProjectId.value)
+    if (visualPresentation.projectId !== visualEditorProjectId.value || hydrateBgm) {
+      const project = await api.job(visualEditorProjectId.value)
+      hydrateVideoPresentation(visualEditorProjectId.value, project.request)
+      visualRenderMode.value = project.request?.video_render_variant || 'both'
+    }
     if (hydrateBgm) hydrateVisualBgm(visualEditor.value.bgm)
     if (!preservePage) visualEditorPage.value = 1
     if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
@@ -4012,6 +4020,8 @@ async function renderEditedVideo() {
     }
     const renderPayload = {
       mode: visualRenderMode.value,
+      video_orientation: visualPresentation.video_orientation,
+      subtitle_layouts: visualPresentation.subtitle_layouts,
       bgm_enabled: Boolean(visualBgm.enabled),
       bgm_tracks: visualBgm.tracks.map((track) => ({
         asset_id: track.asset_id || null,
@@ -4172,6 +4182,7 @@ function generationRequestPayload() {
 
 function guidedVisualParameters() {
   return {
+    video_orientation: form.video_orientation,
     content_mode: form.content_mode,
     director_strategy: form.director_strategy,
     auto_split_long_text: form.auto_split_long_text,
@@ -4196,6 +4207,8 @@ function guidedVisualParameters() {
 
 function guidedRenderParameters() {
   return {
+    video_orientation: form.video_orientation,
+    subtitle_layouts: form.subtitle_layouts,
     video_render_variant: form.video_render_variant,
     bgm_enabled: form.bgm_enabled,
     bgm_tracks: form.bgm_tracks.map((track) => ({ ...track })),

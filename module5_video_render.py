@@ -323,6 +323,10 @@ def build_subtitle_burn_command(
         f"subtitles=filename='{_subtitle_filter_path(srt_path)}':charenc=UTF-8:"
         f"force_style='{force_style}'"
     )
+    if os.getenv('OCV_PRESENTATION_JSON'):
+        from backend.app.subtitle_layout import from_env, write_ass
+        ass_path = write_ass(srt_path, output.with_suffix('.layout.ass'), from_env())
+        subtitle_filter = f"ass=filename='{_subtitle_filter_path(ass_path)}'"
     command = [
         str(ffmpeg or require_ffmpeg_binary()), "-y", "-i", str(source), "-vf", subtitle_filter,
         "-c:a", "copy", "-movflags", "+faststart",
@@ -430,15 +434,20 @@ def build_direct_filter_script(
     if not timeline or total_duration <= 0:
         raise ValueError("画面时间轴为空")
     lines: list[str] = []
+    from backend.app.subtitle_layout import from_env
+    portrait = from_env()['portrait']
+    geometry = (
+        "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x050a12,"
+        if portrait else
+        "scale=1836:918:force_original_aspect_ratio=decrease,pad=1836:918:(ow-iw)/2:(oh-ih)/2:color=0x050a12,pad=1920:1080:42:54:color=0x050a12,"
+    )
     for index, item in enumerate(timeline):
         start = float(item["start"])
         next_start = float(timeline[index + 1]["start"]) if index + 1 < len(timeline) else total_duration
         duration = max(1 / fps, next_start - start + (fade_duration if index + 1 < len(timeline) else 0))
         lines.append(
             f"[{index}:v]"
-            "scale=1836:918:force_original_aspect_ratio=decrease,"
-            "pad=1836:918:(ow-iw)/2:(oh-ih)/2:color=0x050a12,"
-            "pad=1920:1080:42:54:color=0x050a12,"
+            f"{geometry}"
             f"fps={fps},format=yuv420p,settb=AVTB,trim=duration={duration:.6f},setpts=PTS-STARTPTS[v{index}]"
         )
     if len(timeline) == 1:
@@ -651,9 +660,13 @@ def main() -> None:
     ensure_media_bridge()
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     source_html = html_path.read_text(encoding="utf-8")
+    from backend.app.subtitle_layout import apply_html, from_env, styled_srt
+    if os.getenv('OCV_PRESENTATION_JSON'):
+        source_html = apply_html(source_html, from_env())
     subtitle_html = VISUAL_DIR / "index.with_subtitles.html"
     raw_html = VISUAL_DIR / "index.raw.html"
-    subtitle_html.write_text(with_subtitles(source_html, srt_path), encoding="utf-8")
+    browser_srt = styled_srt(srt_path, subtitle_html.with_suffix('.layout.srt'), from_env()) if os.getenv('OCV_PRESENTATION_JSON') else srt_path
+    subtitle_html.write_text(with_subtitles(source_html, browser_srt), encoding="utf-8")
     raw_html.write_text(without_subtitles(source_html), encoding="utf-8")
 
     render_mode = str(os.getenv("VIDEO_RENDER_VARIANT", "both")).strip().lower()
@@ -693,11 +706,15 @@ def main() -> None:
             if render_mode in {"raw", "both"}:
                 render(raw_html, FINAL_DIR / "final_raw_presentation.mp4", "纯净版")
             if render_mode == "both":
-                render_subtitle_variant_from_raw(
-                    FINAL_DIR / "final_raw_presentation.mp4",
-                    srt_path,
-                    FINAL_DIR / "final_with_subtitles.mp4",
-                )
+                try:
+                    render_subtitle_variant_from_raw(
+                        FINAL_DIR / "final_raw_presentation.mp4",
+                        srt_path,
+                        FINAL_DIR / "final_with_subtitles.mp4",
+                    )
+                except Exception as exc:
+                    print(f"[WARN] FFmpeg 字幕压制不可用，自动回退 Hyperframes 字幕版：{exc}", flush=True)
+                    render(subtitle_html, FINAL_DIR / "final_with_subtitles.mp4", "字幕版")
     finally:
         subtitle_html.unlink(missing_ok=True)
         raw_html.unlink(missing_ok=True)

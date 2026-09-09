@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.08.1",
-  "release_order": 2026090801,
-  "display_version": "2026.09.08 创作编辑与稳定性更新",
+  "release_id": "2026.09.09.1",
+  "release_order": 2026090901,
+  "display_version": "2026.09.09 竖屏创作与字幕样式更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.08.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.08.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.09.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.09.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "全新创作工作台与编辑体验；新增任务重置、参考图回顾、逐图重绘分辨率、生成阶段 BGM 与成片版本选择；修复重绘编辑丢失、配音特殊字符和字幕同步等问题。",
-  "content_fingerprint": "4be96f7a9679dbf8fd9241ebbfd08adbe8db75f73aa12b31f2e91d61ffce4ee8"
+  "notes": "新增图片工作室、竖屏 9:16 图文视频与可调整字幕样式；支持字幕版和无字幕版同时输出、真实字幕预览、单图重绘分辨率与更稳定的编辑流程。",
+  "content_fingerprint": "49f8435d743a801fd3aec3e640a62d57956e088f5394ac87a2baf9a2ed691a05"
 }

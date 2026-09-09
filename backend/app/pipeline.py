@@ -1641,6 +1641,8 @@ def run_command(
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    from .subtitle_layout import presentation_env
+    env.update(presentation_env(job.request))
     if extra_env:
         env.update(extra_env)
     process = subprocess.Popen(

@@ -680,27 +680,56 @@ class VisualConstraintsTest(unittest.TestCase):
                 visual.build_macro_mapping([])
 
     def test_one_failed_image_reuses_neighbor_without_stopping_batch(self) -> None:
-        mapping = [
-            {"macro_scene_id": f"poster_{index:03d}", "image_prompt": f"画面 {index}"}
-            for index in range(1, 4)
-        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assets_dir = root / "assets"
+            mapping_path = root / "poster_mapping.json"
+            plan_path = root / "visual_prompt_plan.json"
+            mapping = [
+                {
+                    "macro_scene_id": f"poster_{index:03d}",
+                    "image_prompt": f"画面 {index}",
+                    "includes_slides": [f"scene_{index:03d}"],
+                }
+                for index in range(1, 4)
+            ]
 
-        def render_one(macro, _pool):
-            if macro["macro_scene_id"] == "poster_002":
-                raise RuntimeError("模拟单图持续失败")
-            return Path(f"{macro['macro_scene_id']}.jpg")
+            def render_one(macro, _pool):
+                poster_id = macro["macro_scene_id"]
+                if poster_id == "poster_002":
+                    raise RuntimeError("模拟单图持续失败")
+                output = assets_dir / f"{poster_id}_source.jpg"
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(poster_id.encode("utf-8"))
+                return output
 
-        with (
-            patch.object(visual, "_render_poster_with_retry", side_effect=render_one),
-            patch.dict(
-                os.environ,
-                {"RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "2", "RUNNINGHUB_ALLOW_NEIGHBOR_FALLBACK": "1"},
-                clear=False,
-            ),
-        ):
-            results = visual.render_posters_concurrently(mapping, [{}])
-        self.assertEqual(len(results), 3)
-        self.assertIn(results[1], {results[0], results[2]})
+            with (
+                patch.object(visual, "ASSETS_DIR", assets_dir),
+                patch.object(visual, "POSTER_MAPPING_PATH", mapping_path),
+                patch.object(visual, "VISUAL_PROMPT_PLAN_PATH", plan_path),
+                patch.object(visual, "_render_poster_with_retry", side_effect=render_one),
+                patch.dict(
+                    os.environ,
+                    {"RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "2", "RUNNINGHUB_ALLOW_NEIGHBOR_FALLBACK": "1"},
+                    clear=False,
+                ),
+            ):
+                results = visual.render_posters_concurrently(mapping, [{}])
+
+            self.assertEqual(len(results), 3)
+            self.assertTrue(results[1].name.startswith("poster_002_"))
+            self.assertNotEqual(results[1], results[0])
+            self.assertNotEqual(results[1], results[2])
+            self.assertIn(results[1].read_bytes(), {results[0].read_bytes(), results[2].read_bytes()})
+            # Editing/replacing the fallback file must never mutate its source.
+            results[1].write_bytes(b"redrawn-poster-002")
+            self.assertNotEqual(results[1].read_bytes(), results[0].read_bytes())
+
+            saved_mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved_mapping[1]["macro_scene_id"], "poster_002")
+            self.assertEqual(saved_mapping[1]["includes_slides"], ["scene_002"])
+            self.assertEqual(saved_mapping[1]["asset_filename"], results[1].name)
+            self.assertIn(saved_mapping[1]["fallback_from_macro_scene_id"], {"poster_001", "poster_003"})
 
     def test_cloud_pool_always_enqueues_the_whole_image_batch(self) -> None:
         with patch.dict(os.environ, {"RUNNINGHUB_ACTIVE_TASK_CONCURRENCY": "1"}):

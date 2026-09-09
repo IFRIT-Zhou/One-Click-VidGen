@@ -855,6 +855,8 @@ def _load_runninghub_env_from_file() -> None:
 
 
 def _provider_configs() -> list[dict[str, str]]:
+    from backend.app.subtitle_layout import from_env
+    portrait = from_env()['portrait']
     use_cloud_pool = os.getenv("USE_CLOUD_IMAGE_POOL", "").strip().lower() in {"1", "true", "yes", "on"}
     if use_cloud_pool:
         base_url = os.getenv("CLOUD_IMAGE_POOL_BASE_URL", "").strip().rstrip("/")
@@ -867,7 +869,7 @@ def _provider_configs() -> list[dict[str, str]]:
             "upload_url": f"{base_url}/image-pool/media/upload",
             "account_url": f"{base_url}/image-pool/account-status",
             "resolution": os.getenv("CLOUD_IMAGE_POOL_RESOLUTION", "1k").strip(),
-            "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+            "ratio": '9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
             "api_key": access_token,
             "refresh_token": os.getenv("CLOUD_IMAGE_POOL_REFRESH_TOKEN", "").strip(),
             "cloud_base_url": base_url,
@@ -888,7 +890,7 @@ def _provider_configs() -> list[dict[str, str]]:
             os.getenv("IMAGE_RESOLUTION", "").strip()
             or os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip()
         ),
-        "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+        "ratio": '9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
     }
     raw_keys = [os.getenv("RUNNINGHUB_API_KEY", "")]
     raw_keys.extend(re.split(r"[,;\s]+", os.getenv("RUNNINGHUB_API_KEYS", "")))
@@ -2315,6 +2317,10 @@ def _finalize_mapping(
             screen_content,
         )
         prompt = f"{prompt}\n{quality_requirement}"
+        from backend.app.subtitle_layout import from_env
+        if from_env()['portrait']:
+            prompt = re.sub(r'2\s*[:：]\s*1|16\s*[:：]\s*9', '9:16', prompt).replace('横版', '竖版').replace('横屏', '竖屏')
+            prompt += '\n【竖屏构图】9:16 竖向完整构图，优先清晰主体，避免重要人物或信息紧贴底部和右侧边缘。'
         item["image_prompt"] = prompt
         item["character_ids"] = shot_character_ids
         item["device_shot_mode"] = device_shot_mode
@@ -2381,6 +2387,10 @@ def build_macro_mapping(
     )
     if custom_prompt:
         system_prompt += f"\n\n【角色图像参考约束】\n{_reference_image_instruction()}"
+    from backend.app.subtitle_layout import from_env
+    if from_env()['portrait']:
+        system_prompt = re.sub(r'2\s*[:：]\s*1|16\s*[:：]\s*9', '9:16', system_prompt).replace('横版', '竖版').replace('横屏', '竖屏')
+        system_prompt += '\n【本次画布】9:16 竖屏。按竖向空间安排视觉焦点，避免宽幅多人并排或密集信息，重要内容避开底部与右侧边缘。'
     story_context = story_context_for_prompt(story_plan or {})
     if global_character_bible:
         story_context["user_global_character_bible"] = global_character_bible
@@ -3388,10 +3398,30 @@ def render_posters_concurrently(
             successful_indices = tuple(completed)
             for failed_index, error in sorted(failures.items()):
                 nearest_index = min(successful_indices, key=lambda value: abs(value - failed_index))
-                completed[failed_index] = completed[nearest_index]
+                source_index = nearest_index
+                source_asset = completed[source_index]
+                failed_macro = mapping[failed_index]
+                # A fallback must never make two macro scenes point at the same
+                # file.  The mapping is also the post-production identity: if
+                # poster_002 reuses poster_001's path, redrawing poster_002
+                # would overwrite poster_001 and the editor could no longer
+                # retain an independent subtitle/timing mapping for poster_002.
+                fallback_asset = _poster_output_path(failed_macro)
+                fallback_asset.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(source_asset, fallback_asset)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"{failed_macro['macro_scene_id']} 无法创建相邻画面兜底副本: {exc}"
+                    ) from exc
+                failed_macro["fallback_from_macro_scene_id"] = mapping[source_index]["macro_scene_id"]
+                failed_macro["fallback_reason"] = str(error)
+                completed[failed_index] = fallback_asset
+                _record_partial_poster_success(mapping, failed_index, fallback_asset)
                 print(
-                    f"{mapping[failed_index]['macro_scene_id']} 单图重试仍失败，"
-                    f"自动复用最近成功画面 {mapping[nearest_index]['macro_scene_id']}，任务继续: {error}",
+                    f"{failed_macro['macro_scene_id']} 单图重试仍失败，"
+                    f"已复制最近成功画面 {mapping[source_index]['macro_scene_id']} 作为独立兜底项，"
+                    f"可在编辑器单独重绘，任务继续: {error}",
                     flush=True,
                 )
         else:
@@ -3433,6 +3463,9 @@ window.__timelines=window.__timelines||{{}}; window.__timelines.main={{duration:
 </script></body></html>"""
     html_path = html_path or VISUAL_DIR / "index.html"
     html_path.parent.mkdir(parents=True, exist_ok=True)
+    if os.getenv('OCV_PRESENTATION_JSON'):
+        from backend.app.subtitle_layout import apply_html, from_env
+        page = apply_html(page, from_env())
     html_path.write_text(page, encoding="utf-8")
     return html_path
 

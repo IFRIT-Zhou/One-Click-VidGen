@@ -23,10 +23,19 @@ INTEGRITY_FILES = (
     "frontend/src/studio.css",
     "frontend/src/useStudio.js",
     "frontend/src/useWorkspace.js",
+    "frontend/src/videoPresentation.js",
+    "frontend/src/components/ImageStudio.vue",
     "frontend/src/components/ParameterReview.vue",
+    "frontend/src/components/SubtitleStyleEditor.vue",
     "backend/app/main.py",
+    "backend/app/image_studio.py",
+    "backend/app/pipeline.py",
+    "backend/app/subtitle_layout.py",
+    "backend/app/subtitle_preview.cjs",
+    "backend/app/subtitle_preview.py",
     "backend/app/tts_editor.py",
     "backend/app/tts_text_normalization.py",
+    "backend/app/visual_editor.py",
     "story_agents.py",
     "module1_agent_director.py",
     "module2_5_text_corrector.py",
@@ -37,7 +46,7 @@ INTEGRITY_FILES = (
     "launcher/update-sources.json",
 )
 
-TEXT_EXTENSIONS = {".bat", ".css", ".js", ".json", ".ps1", ".py", ".vue"}
+TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue"}
 
 
 def release_file_bytes(path: Path) -> bytes:

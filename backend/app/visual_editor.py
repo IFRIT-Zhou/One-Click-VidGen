@@ -1332,6 +1332,8 @@ class VisualEditor:
                     self._log(job, f"{macro_id} 使用云端图像号池重绘，费用由账户积分结算。")
                 else:
                     provider_configs = visual._provider_configs()
+                if (job.request or {}).get('video_orientation') == 'portrait':
+                    provider_configs = [{**config, 'ratio': '9:16'} for config in provider_configs]
                 if resolution:
                     # Copy instead of mutating the provider configuration or
                     # environment: this choice applies only to this redraw.
@@ -1698,6 +1700,7 @@ class VisualEditor:
         job: Any,
         mode: str = "both",
         bgm_override: dict[str, Any] | None = None,
+        presentation: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             has_active_image_tasks = any(
@@ -1758,6 +1761,10 @@ class VisualEditor:
                     shutil.copy2(subtitle_path, render_paths["audio"] / "final_short.srt")
                     render_env = os.environ.copy()
                     render_env["VIDEO_RENDER_VARIANT"] = mode
+                    from .subtitle_layout import presentation_env
+                    job.request.update(presentation or {})
+                    job.request['video_render_variant'] = mode
+                    render_env.update(presentation_env(job.request))
                     render_env["PYTHONUTF8"] = "1"
                     render_env["OCV_RENDER_WORKSPACE_DIR"] = str(render_root)
                     bgm_manifest_path = project_dir / "other" / "BGM设置.json"

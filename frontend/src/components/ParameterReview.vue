@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
 const props = defineProps({ request: { type: Object, default: () => ({}) }, referenceAssets: { type: Array, default: () => [] }, status: { type: String, default: '' }, busy:Boolean })
 defineEmits(['duplicate','reset'])
 const panel = ref('')
@@ -63,6 +64,7 @@ const canReset = computed(()=>['failed','cancelled','completed'].includes(props.
    <div class="parameter-review-grid"><label v-for="[key,label] in [['visual_min_duration','最低停留（秒）'],['visual_target_duration','目标时长（秒）'],['visual_max_duration','最长时长（秒）'],['visual_max_slides','单图最多字幕片段']]" :key="key" class="stack"><span>{{label}}</span><input :value="value(key,'按节奏规则确定')" readonly /></label></div>
   </div>
   <details class="review-settings"><summary>其他执行设置 · 只读查看</summary><div class="parameter-review-grid"><label v-for="[key,label] in [['step_mode','逐步确认'],['auto_split_long_text','自动分段'],['split_text_threshold','每段最大字数'],['use_cloud_image_pool','使用号池'],['video_render_variant','成片版本'],['bgm_enabled','背景音乐'],['bgm_fade_enabled','音乐淡入淡出']].filter(([key])=>Object.hasOwn(request,key))" :key="key" class="stack"><span>{{label}}</span><input :value="value(key)" readonly /></label></div></details>
+  <details v-if="kind==='video'" class="review-settings"><summary>画布与字幕样式 · 只读</summary><SubtitleStyleEditor :settings="request" :variant="request.video_render_variant||'both'" readonly /></details>
   <p class="muted review-footnote">以任务保存的记录为准，后续分步确认可能更新部分记录；未记录的历史配置无法完整还原。此处不显示 API 凭据，也不提供修改、上传或生成操作。</p>
   <div v-if="referencePreview" class="review-image-dialog" role="dialog" aria-modal="true" :aria-label="referencePreview.name" @click.self="referencePreview=null"><button type="button" aria-label="关闭参考图预览" @click="referencePreview=null">×</button><img v-if="referencePreview.url" :src="referencePreview.url" :alt="referencePreview.name"/><p>{{referencePreview.name}}</p></div>
  </div>

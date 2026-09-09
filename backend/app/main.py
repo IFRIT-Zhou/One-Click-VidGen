@@ -188,6 +188,8 @@ class GenerateRequest(BaseModel):
     visual_backend: str | None = "poster"
     use_cloud_image_pool: bool = False
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
+    video_orientation: Literal['landscape', 'portrait'] = 'landscape'
+    subtitle_layouts: dict[str, Any] = Field(default_factory=dict)
     bgm_enabled: bool = False
     bgm_tracks: list[BgmTrackRequest] = Field(default_factory=list)
     bgm_fade_enabled: bool = False
@@ -262,6 +264,8 @@ class SubtitleRenderRequest(BaseModel):
 
 class VisualRenderRequest(BaseModel):
     mode: Literal["subtitles", "raw", "both"] = "both"
+    video_orientation: Literal['landscape', 'portrait'] | None = None
+    subtitle_layouts: dict[str, Any] | None = None
     # None means "keep using the BGM already archived with this project".
     # Supplying True/False explicitly replaces or clears that archive.
     bgm_enabled: bool | None = None
@@ -425,6 +429,10 @@ class EditRequest(BaseModel):
 
 
 app = FastAPI(title="Voice Over Video API")
+from .image_studio import router as image_studio_router
+app.include_router(image_studio_router)
+from .subtitle_preview import router as subtitle_preview_router
+app.include_router(subtitle_preview_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -2271,6 +2279,7 @@ def advance_step_workflow(
     allowed_by_action = {
         "confirm_audio": set(),
         "start_visual": {
+            "video_orientation",
             "content_mode", "director_strategy", "auto_split_long_text", "split_text_threshold",
             "visual_backend", "use_cloud_image_pool", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
@@ -2281,6 +2290,7 @@ def advance_step_workflow(
         },
         "confirm_visual": set(),
         "start_render": {
+            "video_orientation", "subtitle_layouts",
             "video_render_variant", "bgm_enabled", "bgm_tracks",
             "bgm_fade_enabled", "bgm_fade_duration",
         },
@@ -3288,7 +3298,8 @@ def render_visual_editor_video(job_id: str, payload: VisualRenderRequest, reques
             "fade_enabled": payload.bgm_fade_enabled,
             "fade_duration": payload.bgm_fade_duration,
         }
-    visual_editor.render_video(job=job, mode=payload.mode, bgm_override=bgm_override)
+    presentation = {key: value for key, value in {'video_orientation': payload.video_orientation, 'subtitle_layouts': payload.subtitle_layouts}.items() if value is not None}
+    visual_editor.render_video(job=job, mode=payload.mode, bgm_override=bgm_override, presentation=presentation)
     return {"ok": True, "message": "module 5 render started"}
 
 
