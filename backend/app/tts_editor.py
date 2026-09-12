@@ -911,8 +911,7 @@ class TtsEditor:
             end = float(segment.get("end") or 0)
             if end <= start:
                 raise ValueError(f"第 {index} 句配音时间无效，无法同步字幕")
-            candidates: list[tuple[float, float, int, dict[str, Any]]] = []
-            center = (start + end) / 2
+            candidates: list[tuple[float, int, dict[str, Any]]] = []
             for position, raw in enumerate(timeline):
                 if not isinstance(raw, dict):
                     continue
@@ -922,15 +921,28 @@ class TtsEditor:
                 subtitle_start = float(raw.get("start") or 0)
                 subtitle_end = float(raw.get("end") or 0)
                 overlap = max(0.0, min(end, subtitle_end) - max(start, subtitle_start))
-                distance = abs(((subtitle_start + subtitle_end) / 2) - center)
-                candidates.append((overlap, distance, position, raw))
+                if overlap > 0.001:
+                    candidates.append((subtitle_start, position, raw))
             if not candidates:
                 raise ValueError(f"第 {index} 句找不到对应字幕")
-            overlap, _distance, _position, target = sorted(
-                candidates, key=lambda value: (-value[0], value[1], value[2])
-            )[0]
-            if overlap <= 0.001:
-                raise ValueError(f"第 {index} 句找不到时间对应的字幕")
+            # One TTS segment can span several subtitle rows and even several
+            # posters.  The subtitle to edit is its source anchor: the row that
+            # contains the segment start, or the first row immediately after it.
+            # Choosing the largest overlap would incorrectly jump to a later
+            # poster whenever the selected audio segment is long.
+            anchored = [
+                value for value in candidates
+                if value[0] <= start + 0.001
+                and float(value[2].get("end") or 0) > start + 0.001
+            ]
+            if anchored:
+                _subtitle_start, _position, target = sorted(
+                    anchored, key=lambda value: (abs(value[0] - start), value[1])
+                )[0]
+            else:
+                _subtitle_start, _position, target = sorted(
+                    candidates, key=lambda value: (value[0], value[1])
+                )[0]
             if bool(target.get("subtitle_hidden")):
                 raise ValueError(f"第 {index} 句对应字幕已隐藏，请先恢复后再同步")
             slide_id = str(target["slide_id"])

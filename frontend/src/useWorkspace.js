@@ -2832,11 +2832,11 @@ async function openSubtitleOutputFolder() {
   }
 }
 
-async function openProjectOutputFolder() {
+async function openProjectOutputFolder(jobId = activeJob.value?.id) {
   folderOpenMessage.value = ''
-  if (!activeJob.value?.id) return
+  if (!jobId) return
   try {
-    const payload = await api.openJobOutputFolder(activeJob.value.id)
+    const payload = await api.openJobOutputFolder(jobId)
     folderOpenMessage.value = `已打开项目输出：${payload.path || ''}`
   } catch (error) {
     folderOpenMessage.value = error.message || '暂时找不到项目输出文件夹'
@@ -3792,13 +3792,34 @@ async function pollVisualEditorTaskStatus() {
   if (!visualEditorOpen.value || !visualEditorProjectId.value) return
   try {
     const status = await api.visualEditorStatus(visualEditorProjectId.value)
-    visualEditor.value.task = status.task || visualEditor.value.task
+    const previousTask = visualEditor.value.task || {}
+    const nextTask = status.task || previousTask
+    visualEditor.value.task = nextTask
     for (const item of visualEditor.value.items) {
       const previousStatus = item.task?.status
       const nextTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
       item.task = nextTask
       if (previousStatus === 'running' && nextTask.status === 'completed') {
         item.image_url = `${item.image_url.split('?')[0]}?v=${Date.now()}`
+      }
+    }
+    const renderFinished = previousTask.status === 'running'
+      && nextTask.status === 'completed'
+      && (previousTask.action === 'render' || nextTask.action === 'render')
+    if (renderFinished) {
+      // Refresh only the current job's artifact record. Calling the global
+      // refresh() here could change the user's current workspace/page.
+      try {
+        const refreshedJob = await api.job(visualEditorProjectId.value)
+        if (activeJob.value?.id === refreshedJob.id) activeJob.value = refreshedJob
+        const jobIndex = jobs.value.findIndex((job) => job.id === refreshedJob.id)
+        if (jobIndex >= 0) jobs.value.splice(jobIndex, 1, refreshedJob)
+        // This revision is deliberately local to the visual editor. Studio
+        // observes it and swaps only the <video> source, without navigation.
+        visualEditor.value.preview_version = Date.now()
+      } catch {
+        // The completion state remains valid; a later ordinary refresh can
+        // recover the artifact record if this short request is interrupted.
       }
     }
     if (!status.has_active_image_tasks && status.task?.status !== 'running') {

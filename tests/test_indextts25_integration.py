@@ -36,6 +36,25 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
             )
         self.assertEqual(updates, {"scene_002": "更新后的乙"})
 
+    def test_tts_subtitle_sync_uses_segment_start_not_largest_later_overlap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project_dir = Path(temporary)
+            other = project_dir / "other"
+            other.mkdir()
+            (other / "画面时间线.json").write_text(
+                '[{"slide_id":"scene_011","start":30.75,"end":33.82,"text_content":"开头"},'
+                '{"slide_id":"scene_012","start":33.82,"end":34.55,"text_content":"中间"},'
+                '{"slide_id":"scene_013","start":34.55,"end":36.86,"text_content":"结尾"},'
+                '{"slide_id":"scene_015","start":38.70,"end":43.08,"text_content":"下一张画面"}]',
+                encoding="utf-8",
+            )
+            updates = TtsEditor._subtitle_updates_for_segments(
+                project_dir,
+                [{"index": 3, "start": 30.708, "end": 46.44}],
+                {3: "能看见不等于就理解了。"},
+            )
+        self.assertEqual(updates, {"scene_011": "能看见不等于就理解了。"})
+
     def test_tts_reading_copy_normalizes_windows_hostile_typography(self):
         original = "IndexTTS‑2.5\u00a0支持“特殊”字符\u200b。"
         self.assertEqual(

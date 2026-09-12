@@ -88,7 +88,17 @@ export function useStudio(w) {
   const studioTabs = computed(()=>studioKind.value==='audio'?['文案','配音','导出','参数回顾']:studioKind.value==='subtitle'?['素材','字幕','导出','参数回顾']:['文案','配音','画面与字幕','导出','参数回顾'])
   const studioSelectedImage = computed(()=>w.visualEditor.value.items.find(i=>i.id===w.visualTimingSelectedId.value)||w.visualEditor.value.items[0])
   const studioAudio = computed(()=>studioJob.value?.artifacts?.audio||'')
-  const studioVideo = computed(()=>studioJob.value?.artifacts?.video_with_subtitles||studioJob.value?.artifacts?.video_raw||studioJob.value?.artifacts?.video||'')
+  const studioVideo = computed(() => {
+    const url = studioJob.value?.artifacts?.video_with_subtitles
+      || studioJob.value?.artifacts?.video_raw
+      || studioJob.value?.artifacts?.video
+      || ''
+    // A finished re-render can replace a file at the same URL. Changing only
+    // this query marker reloads the video element without reloading the page.
+    const revision = Number(w.visualEditor.value?.preview_version || 0)
+    if (!url || !revision) return url
+    return `${url}${url.includes('?') ? '&' : '?'}v=${revision}`
+  })
   const studioTaskLogs = computed(()=>studioJob.value?.logs||[])
   const studioReferenceAssets = computed(() => {
     const request = studioJob.value?.request || {}

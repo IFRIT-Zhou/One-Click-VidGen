@@ -53,7 +53,8 @@ def config_for(user: int, data: ImageRequest):
         runtime = client.image_pool_runtime()
         base = runtime['base_url'].rstrip('/')
         config = dict(endpoint=base+'/image-pool/generate', query_url=base+'/image-pool/query',
-                      api_key=runtime['access_token'], cloud_base_url=base, cloud_pool='1')
+                      api_key=runtime['access_token'], refresh_token=runtime['refresh_token'],
+                      cloud_base_url=base, cloud_pool='1')
     else:
         configs = visual._provider_configs()
         if not configs:
@@ -68,7 +69,7 @@ def config_for(user: int, data: ImageRequest):
     return config, client
 
 
-def execute(user: int, path: Path, record: dict, config: dict) -> None:
+def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client=None) -> None:
     import module4_video_render as visual
     try:
         payload = dict(prompt=record['prompt'], aspectRatio=record['ratio'], resolution=record['resolution'])
@@ -85,7 +86,12 @@ def execute(user: int, path: Path, record: dict, config: dict) -> None:
             payload['clientJobId'] = 'image-studio-' + record['id']
         headers = {'Authorization': 'Bearer '+config['api_key']}
         with requests.Session() as session:
-            response = session.post(endpoint, json=payload, headers=headers, timeout=60)
+            # Keep the same clientJobId while renewing a short-lived cloud token.
+            # A 401 therefore resumes polling the original task instead of creating
+            # another billed image job.
+            response = visual._request_with_cloud_refresh(
+                session, 'POST', endpoint, json=payload, headers=headers, config=config, timeout=60
+            )
             response.raise_for_status()
             result = response.json()
             task_id = visual._find_first_key(result, {'taskId', 'taskID', 'id'})
@@ -96,8 +102,10 @@ def execute(user: int, path: Path, record: dict, config: dict) -> None:
             save(path, record)
             deadline = time.monotonic() + 1200
             while time.monotonic() < deadline:
-                response = session.post(config.get('query_url') or visual._runninghub_url('/openapi/v2/query'),
-                                        json={'taskId': task_id}, headers=headers, timeout=60)
+                response = visual._request_with_cloud_refresh(
+                    session, 'POST', config.get('query_url') or visual._runninghub_url('/openapi/v2/query'),
+                    json={'taskId': task_id}, headers=headers, config=config, timeout=60
+                )
                 response.raise_for_status()
                 result = response.json()
                 status = str(visual._find_first_key(result, {'status', 'state', 'taskStatus'}) or '').upper()
@@ -105,7 +113,9 @@ def execute(user: int, path: Path, record: dict, config: dict) -> None:
                 if status in {'FAILED','FAILURE','ERROR','CANCELLED','CANCELED','REJECTED','BLOCKED','ABORTED','TERMINATED','TIMEOUT','TIMED_OUT','EXPIRED'}:
                     raise RuntimeError(f"{status} / {visual._runninghub_result_error_code(result)}: " + (visual._runninghub_error_message(result) or '服务端未提供详细原因'))
                 if url:
-                    downloaded = session.get(url, timeout=120)
+                    downloaded = visual._request_with_cloud_refresh(
+                        session, 'GET', url, config=config, timeout=120
+                    )
                     downloaded.raise_for_status()
                     from PIL import Image
                     import io
@@ -134,6 +144,12 @@ def execute(user: int, path: Path, record: dict, config: dict) -> None:
         try:
             save(path, record)
         finally:
+            if cloud_pool_client is not None and config.get('cloud_pool') == '1':
+                cloud_pool_client.adopt_image_pool_runtime({
+                    'access_token': config.get('api_key'),
+                    'refresh_token': config.get('refresh_token'),
+                    'expires_in': 900,
+                })
             with LOCK:
                 ACTIVE.discard(user)
 
@@ -149,7 +165,7 @@ def create(data: ImageRequest, request: Request):
         ACTIVE.add(user)
     path = None
     try:
-        config, _ = config_for(user, data)
+        config, cloud_pool_client = config_for(user, data)
         sources = []
         for reference in data.references:
             if reference.startswith('history:'):
@@ -175,7 +191,7 @@ def create(data: ImageRequest, request: Request):
                       prompt=data.prompt, provider=data.provider, ratio=data.ratio,
                       resolution=config['resolution'], references=names)
         save(path, record)
-        threading.Thread(target=execute, args=(user,path,record,config), daemon=True).start()
+        threading.Thread(target=execute, args=(user,path,record,config,cloud_pool_client), daemon=True).start()
         return record
     except Exception as exc:
         with LOCK:
