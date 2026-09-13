@@ -182,8 +182,8 @@ export const api = {
   visualEditor: (id) => requestJSON(`/api/jobs/${id}/visual-editor`),
   visualEditorStatus: (id) => requestJSON(`/api/jobs/${id}/visual-editor/status`),
   visualEditorProjects: () => requestJSON('/api/visual-editor/projects'),
-  redrawVisualImage: (id, imageId, prompt, referenceMacroIds = [], referenceUploadIds = [], imageResolution = null) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, reference_macro_ids: referenceMacroIds, reference_upload_ids: referenceUploadIds, image_resolution: imageResolution }),
+  redrawVisualImage: (id, imageId, prompt, referenceMacroIds = [], referenceUploadIds = [], imageResolution = null, useSceneReference = true) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/redraw`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, reference_macro_ids: referenceMacroIds, reference_upload_ids: referenceUploadIds, image_resolution: imageResolution, use_scene_reference: useSceneReference }),
   }),
   uploadVisualImage: (id, imageId, file) => {
     const data = new FormData()
@@ -244,6 +244,7 @@ export const api = {
   cancelVisualRender: (id) => requestJSON(`/api/jobs/${id}/visual-editor/cancel`, { method: 'POST' }),
   openArtifactFolder: (artifactUrl) => requestJSON(`${artifactUrl}/open-folder`, { method: 'POST' }),
   editorUploads: () => requestJSON('/api/editor/uploads'),
+  analyzeReference: (id) => requestJSON(`/api/editor/reference-analysis/${encodeURIComponent(id)}`, { method: 'POST' }),
   uploadEditorAsset: (file) => {
     const data = new FormData()
     data.append('file', file)

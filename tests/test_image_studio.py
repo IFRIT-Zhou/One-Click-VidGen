@@ -77,6 +77,85 @@ class ImageStudioTests(unittest.TestCase):
         self.assertIs(returned,client)
         self.assertEqual(config['refresh_token'],'refresh-token')
         self.assertEqual(config['endpoint'],'https://pool.example/api/v1/image-pool/generate')
+        self.assertEqual(config['upload_url'],'https://pool.example/api/v1/image-pool/media/upload')
+
+    def test_pool_references_are_uploaded_before_single_generation_submission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / 'ref_1.png').write_bytes(b'first-reference')
+            (path / 'ref_2.png').write_bytes(b'second-reference')
+            record = dict(
+                id='with-refs', prompt='按参考图生成', references=['ref_1.png', 'ref_2.png'],
+                ratio='9:16', resolution='4k', status='running',
+            )
+            session = MagicMock()
+            session.__enter__.return_value = session
+            upload_one = MagicMock(status_code=200)
+            upload_one.json.return_value = {'data': {'download_url': 'https://pool.example/media/one'}}
+            upload_two = MagicMock(status_code=200)
+            upload_two.json.return_value = {'data': {'download_url': 'https://pool.example/media/two'}}
+            submit = MagicMock(status_code=200)
+            submit.json.return_value = {'data': {'taskId': 'remote-with-refs'}}
+            query = MagicMock(status_code=200)
+            query.json.return_value = {
+                'data': {'status': 'SUCCESS', 'imageUrl': 'https://pool.example/result.png'},
+            }
+            from PIL import Image
+            buffer = io.BytesIO()
+            Image.new('RGB', (18, 32)).save(buffer, format='PNG')
+            download = MagicMock(status_code=200, content=buffer.getvalue())
+            session.request.side_effect = [upload_one, upload_two, submit, query, download]
+            studio.ACTIVE.add(1)
+            config = dict(
+                endpoint='https://pool.example/image-pool/generate',
+                query_url='https://pool.example/image-pool/query',
+                upload_url='https://pool.example/image-pool/media/upload',
+                api_key='access', refresh_token='refresh',
+                cloud_base_url='https://pool.example', cloud_pool='1',
+            )
+            client = MagicMock()
+            with patch.object(studio.requests, 'Session', return_value=session):
+                studio.execute(1, path, record, config, client)
+
+            stored = json.loads((path / 'record.json').read_text(encoding='utf-8'))
+            self.assertEqual(stored['status'], 'completed', stored.get('message'))
+            self.assertEqual(session.request.call_count, 5)
+            submitted = session.request.call_args_list[2].kwargs['json']
+            self.assertEqual(submitted['imageUrls'], [
+                'https://pool.example/media/one', 'https://pool.example/media/two',
+            ])
+            self.assertEqual(submitted['clientJobId'], 'image-studio-with-refs')
+            self.assertEqual(sum('prompt' in (call.kwargs.get('json') or {}) for call in session.request.call_args_list), 1)
+
+    def test_pool_reference_upload_failure_does_not_submit_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / 'ref_1.png').write_bytes(b'reference')
+            record = dict(
+                id='upload-fails', prompt='按参考图生成', references=['ref_1.png'],
+                ratio='2:1', resolution='2k', status='running',
+            )
+            session = MagicMock()
+            session.__enter__.return_value = session
+            rejected = MagicMock(status_code=422)
+            rejected.raise_for_status.side_effect = requests.HTTPError('422 upload rejected', response=rejected)
+            rejected.json.return_value = {'error': {'message': '文件格式无效'}}
+            session.request.return_value = rejected
+            studio.ACTIVE.add(1)
+            config = dict(
+                endpoint='https://pool.example/image-pool/generate',
+                query_url='https://pool.example/image-pool/query',
+                upload_url='https://pool.example/image-pool/media/upload',
+                api_key='access', refresh_token='refresh',
+                cloud_base_url='https://pool.example', cloud_pool='1',
+            )
+            with patch.object(studio.requests, 'Session', return_value=session):
+                studio.execute(1, path, record, config, MagicMock())
+
+            stored = json.loads((path / 'record.json').read_text(encoding='utf-8'))
+            self.assertEqual(stored['status'], 'failed')
+            self.assertIn('出图任务尚未提交', stored['message'])
+            self.assertEqual(session.request.call_count, 1)
 
     def test_pool_query_401_refreshes_and_keeps_original_submission(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -5,9 +5,14 @@ from unittest.mock import patch
 
 import module4_video_render as visual
 import story_agents
+from backend.app.pipeline import visual_pacing_settings
 
 
 class VisualPacingTest(unittest.TestCase):
+    def test_missing_or_invalid_pacing_uses_standard_default(self) -> None:
+        self.assertEqual(visual_pacing_settings({})["preset"], "standard")
+        self.assertEqual(visual_pacing_settings({"visual_pacing_preset": "invalid"})["preset"], "standard")
+
     def test_pacing_groups_use_agent_recommendation_and_timestamps(self) -> None:
         scenes = [
             {"slide_id": f"scene_{index:03d}", "start": (index - 1) * 3, "end": index * 3}

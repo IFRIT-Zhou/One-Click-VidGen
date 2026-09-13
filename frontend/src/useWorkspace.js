@@ -42,6 +42,7 @@ const VISUAL_PROMPT_MODE_STORAGE_KEY = 'visual_prompt_mode_v2'
 const CONTENT_MODE_STORAGE_KEY = 'content_mode_v1'
 const DIRECTOR_STRATEGY_STORAGE_KEY = 'director_strategy_v1'
 const VISUAL_PACING_STORAGE_KEY = 'visual_pacing_v1'
+const REFERENCE_ANALYSIS_STORAGE_KEY = 'ocv.reference_material.auto_analysis.v1'
 const VISUAL_PACING_DEFAULTS = {
   urban_suspense: { min: 6, target: 8, max: 12, slides: 6 },
   science_explainer: { min: 7, target: 9, max: 14, slides: 6 },
@@ -493,6 +494,7 @@ const form = reactive({
   script: '',
   content_mode: 'urban_suspense',
   director_strategy: 'stable',
+  scene_references_enabled: true,
   tts_voice_id: 'voice_05.wav',
   tts_speed: 1,
   tts_volume: 1,
@@ -519,7 +521,7 @@ const form = reactive({
   bgm_fade_duration: 1,
   step_mode: false,
   visual_prompt_mode: 'simple',
-  visual_pacing_preset: 'auto',
+  visual_pacing_preset: 'standard',
   visual_min_duration: 6,
   visual_target_duration: 8,
   visual_max_duration: 12,
@@ -528,6 +530,14 @@ const form = reactive({
   global_character_prompt: '',
   protagonist_reference_image_id: '',
   reference_image_ids: [],
+  reference_image_notes: {},
+  reference_image_labels: {},
+  reference_image_kinds: {},
+  // Local UI preference; generationRequestPayload removes it before submit.
+  auto_analyze_reference_images: (() => {
+    try { return window.localStorage.getItem(REFERENCE_ANALYSIS_STORAGE_KEY) === '1' }
+    catch { return false }
+  })(),
   story_environment_prompt: '',
   visual_prompt_system: '',
   agent0_prompt_system: '',
@@ -684,7 +694,7 @@ function applyVisualPacing(mode = form.content_mode) {
   }
   form.visual_pacing_preset = ['auto', 'slow', 'standard', 'fast', 'custom'].includes(saved?.preset)
     ? saved.preset
-    : 'auto'
+    : 'standard'
   form.visual_min_duration = Number(saved?.min) || defaults.min
   form.visual_target_duration = Number(saved?.target) || defaults.target
   form.visual_max_duration = Number(saved?.max) || defaults.max
@@ -917,6 +927,9 @@ const hasPendingGeneration = computed(() => Boolean(pendingGenerationJob.value))
 const generationBlockReason = computed(() => {
   const block = (code, message) => ({ code: `[${code}]`, message })
   if (submitting.value) return block('SUBMITTING', '任务正在提交，请稍候。')
+  if (protagonistReferenceUploading.value) return block('REFERENCE_UPLOADING', form.auto_analyze_reference_images
+    ? '参考图正在上传并分析，请稍候。'
+    : '参考图正在上传，请稍候。')
   if (!session.value.user) return block('LOGIN_REQUIRED', '请先登录本地工作台。')
   if (hasPendingGeneration.value) {
     const status = pendingGenerationJob.value?.status
@@ -1826,6 +1839,9 @@ async function uploadCloudVoice(event) {
     if (!voice?.id) throw new Error('云端上传响应缺少 voice_id。')
     form.cluster_voice_type = voice.type === 'preset' ? 'preset' : 'uploaded'
     form.cluster_voice_id = voice.id
+    // A newly uploaded reference voice should initially retain the emotion
+    // carried by that recording. Explicit emotion remains available as opt-in.
+    form.tts_emotion = ''
     cloudMessage.value = payload.deduplicated ? '音色已存在，已直接选中。' : '参考音色上传成功。'
     cloudVoiceDisplayName.value = ''
     await refreshCloudState()
@@ -2100,8 +2116,8 @@ async function loadSettings() {
   form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY))
     || modeDefaults.default_style
   form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY))
-    || modeDefaults.default_character
-    || ''
+    ?? modeDefaults.default_character
+    ?? ''
   form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY)) || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY))
     || modeDefaults.default_system
@@ -2256,10 +2272,11 @@ async function saveCurrentParameterPreset() {
   savingParameterPreset.value = true
   parameterPresetMessage.value = ''
   try {
+    const { auto_analyze_reference_images: _localPreference, ...presetParameters } = form
     const payload = await api.saveParameterPreset({
       name,
       parameters: {
-        ...form,
+        ...presetParameters,
         manual_script: String(form.script || ''),
         tts_engine: ttsEngine.value,
       },
@@ -2280,7 +2297,9 @@ async function loadSelectedParameterPreset() {
   try {
     const payload = await api.parameterPreset(selectedParameterPreset.value)
     const parameters = payload.parameters || {}
+    const autoAnalyzeReferenceImages = form.auto_analyze_reference_images
     Object.assign(form, parameters)
+    form.auto_analyze_reference_images = autoAnalyzeReferenceImages
     form.bgm_enabled = Boolean(parameters.bgm_enabled)
     form.bgm_tracks = Array.isArray(parameters.bgm_tracks)
       ? parameters.bgm_tracks.map((track) => ({
@@ -2602,8 +2621,8 @@ function setContentMode(mode) {
   form.visual_style_prompt = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_STYLE_STORAGE_KEY, mode))
     || modeDefaults.default_style
   form.global_character_prompt = window.localStorage.getItem(modeStorageKey(GLOBAL_CHARACTER_STORAGE_KEY, mode))
-    || modeDefaults.default_character
-    || ''
+    ?? modeDefaults.default_character
+    ?? ''
   form.story_environment_prompt = window.localStorage.getItem(modeStorageKey(STORY_ENVIRONMENT_STORAGE_KEY, mode)) || ''
   form.visual_prompt_system = window.localStorage.getItem(modeStorageKey(VISUAL_PROMPT_FULL_STORAGE_KEY, mode))
     || modeDefaults.default_system
@@ -2679,6 +2698,8 @@ async function uploadTtsVoice(event) {
     const payload = await api.uploadEditorAsset(file)
     if (payload.asset?.kind !== 'audio') throw new Error('上传文件不是可识别的音频。')
     form.tts_voice_id = `upload:${payload.asset.id}`
+    // Do not carry a previously selected synthetic emotion onto a new voice.
+    form.tts_emotion = ''
     ttsVoiceUploadName.value = payload.asset.name || file.name
     ttsVoicePreviewUrl.value = payload.asset.url || ''
   } catch (error) {
@@ -2761,7 +2782,7 @@ async function toggleTtsVoicePreview() {
 
 async function restoreSavedProtagonistReferenceImageLabel() {
   let assetIds = Array.isArray(form.reference_image_ids)
-    ? form.reference_image_ids.map((value) => String(value || '')).filter(Boolean).slice(0, 3)
+    ? form.reference_image_ids.map((value) => String(value || '')).filter(Boolean).slice(0, 6)
     : []
   if (!assetIds.length && form.protagonist_reference_image_id) {
     assetIds = [String(form.protagonist_reference_image_id)]
@@ -3796,11 +3817,25 @@ async function pollVisualEditorTaskStatus() {
     const nextTask = status.task || previousTask
     visualEditor.value.task = nextTask
     for (const item of visualEditor.value.items) {
-      const previousStatus = item.task?.status
-      const nextTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
-      item.task = nextTask
-      if (previousStatus === 'running' && nextTask.status === 'completed') {
-        item.image_url = `${item.image_url.split('?')[0]}?v=${Date.now()}`
+      const previousImageTask = item.task || {}
+      const nextImageTask = status.image_tasks?.[item.id] || { status: 'idle', message: '' }
+      item.task = nextImageTask
+      const completedImageChange = nextImageTask.status === 'completed'
+        && ['redraw', 'upload'].includes(nextImageTask.action)
+        && (
+          previousImageTask.status === 'running'
+          || previousImageTask.status !== 'completed'
+          || Number(previousImageTask.updated_at || 0) !== Number(nextImageTask.updated_at || 0)
+        )
+      if (completedImageChange) {
+        if (Array.isArray(nextImageTask.reference_materials)) item.reference_materials = nextImageTask.reference_materials
+        if (nextImageTask.uses_scene_reference === false) item.scene_reference_url = null
+        // A fast redraw can finish before the first poll, so relying only on a
+        // running -> completed transition occasionally leaves the old browser
+        // cache visible. The backend completion timestamp is the durable asset
+        // revision and refreshes only this image, preserving every other draft.
+        const revision = Number(nextImageTask.updated_at || 0) || Date.now()
+        item.image_url = `${item.image_url.split('?')[0]}?v=${revision}`
       }
     }
     const renderFinished = previousTask.status === 'running'
@@ -3896,6 +3931,7 @@ async function redrawVisualImage(item, imageResolution = null) {
       usesCurrentReference && visualSelfReferenceMacroId.value ? [visualSelfReferenceMacroId.value] : [],
       usesCurrentReference ? visualReferenceUploads.value.map((asset) => asset.id) : [],
       imageResolution,
+      item.use_scene_reference !== false,
     )
     item.task = { status: 'running', action: 'redraw', message: `重绘中${referenceNote}${resolutionNote}` }
     visualEditor.value.task = { status: 'running', action: 'redraw', message: `${item.id} 已开始重绘${referenceNote}${resolutionNote}。` }
@@ -4121,14 +4157,15 @@ async function uploadReferenceImages(event) {
   input.value = ''
   protagonistReferenceImageError.value = ''
   if (!files.length) return
-  const availableSlots = 3 - form.reference_image_ids.length
+  if (protagonistReferenceUploading.value) return
+  const availableSlots = 6 - form.reference_image_ids.length
   if (availableSlots <= 0) {
-    protagonistReferenceImageError.value = '最多只能保留 3 张角色参考图。'
+    protagonistReferenceImageError.value = '最多只能保留 6 张参考素材。'
     return
   }
   const selectedFiles = files.slice(0, availableSlots)
   if (files.length > availableSlots) {
-    protagonistReferenceImageError.value = `最多只能保留 3 张，本次仅添加前 ${availableSlots} 张。`
+    protagonistReferenceImageError.value = `最多只能保留 6 张，本次仅添加前 ${availableSlots} 张。`
   }
   if (selectedFiles.some((file) => !['jpg', 'jpeg', 'png', 'webp'].includes(file.name.split('.').pop()?.toLowerCase()))) {
     protagonistReferenceImageError.value = '参考图仅支持 JPG、JPEG、PNG 或 WebP。'
@@ -4139,11 +4176,13 @@ async function uploadReferenceImages(event) {
     return
   }
   protagonistReferenceUploading.value = true
+  const referenceOwner = form.reference_image_ids
   try {
     // Upload each file independently. Promise.all used to discard every
     // successful result when one file failed, leaving orphaned server assets
     // and making the next retry look like a mysterious duplicate/max-3 error.
     const results = await Promise.allSettled(selectedFiles.map((file) => api.uploadEditorAsset(file)))
+    if (form.reference_image_ids !== referenceOwner) return
     const uploaded = []
     const failures = []
     results.forEach((result, index) => {
@@ -4160,14 +4199,38 @@ async function uploadReferenceImages(event) {
     form.reference_image_ids = [
       ...form.reference_image_ids,
       ...uploaded.map(({ payload }) => payload.asset.id),
-    ].slice(0, 3)
+    ].slice(0, 6)
     form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
     referenceImageNames.value = [
       ...referenceImageNames.value,
       ...uploaded.map(({ payload, file }) => payload.asset.name || file.name),
-    ].slice(0, 3)
+    ].slice(0, 6)
+    for (const { payload } of uploaded) {
+      const asset = payload.asset
+      editorAssets.value = [...editorAssets.value.filter(item => item.id !== asset.id), asset]
+      const used = new Set(Object.values(form.reference_image_labels))
+      for (const [index, id] of form.reference_image_ids.entries()) {
+        if (id !== asset.id && !form.reference_image_labels[id]) used.add(`图${index + 1}`)
+      }
+      form.reference_image_labels[asset.id] = Array.from({ length: 6 }, (_, i) => `图${i + 1}`).find(label => !used.has(label))
+    }
+    const analysisOwner = form.reference_image_notes
+    if (form.auto_analyze_reference_images) {
+      await Promise.all(uploaded.map(async ({ payload }) => {
+        const id = payload.asset.id
+        try {
+          const analysis = await api.analyzeReference(id)
+          if (form.reference_image_notes !== analysisOwner || !form.reference_image_ids.includes(id)) return
+          if (!form.reference_image_notes[id]?.trim()) form.reference_image_notes[id] = analysis.description
+          form.reference_image_kinds[id] = analysis.kind
+        } catch {
+          if (form.reference_image_notes === analysisOwner && form.reference_image_ids.includes(id)) failures.push(`${payload.asset.name}：自动分析未完成，可手动填写用途`)
+        }
+      }))
+      if (form.reference_image_notes !== analysisOwner) return
+    }
     protagonistReferenceImageError.value = failures.length
-      ? `部分参考图上传失败：${failures.join('；')}`
+      ? `参考素材提示：${failures.join('；')}`
       : ''
   } catch (error) {
     protagonistReferenceImageError.value = error.message || '角色参考图上传失败。'
@@ -4177,6 +4240,14 @@ async function uploadReferenceImages(event) {
 }
 
 function removeReferenceImage(index) {
+  // Material labels stay fixed when another image is removed.
+  for (const [position, id] of form.reference_image_ids.entries()) {
+    if (!form.reference_image_labels[id]) form.reference_image_labels[id] = `图${position + 1}`
+  }
+  const removedId = form.reference_image_ids[index]
+  delete form.reference_image_notes[removedId]
+  delete form.reference_image_labels[removedId]
+  delete form.reference_image_kinds[removedId]
   form.reference_image_ids = form.reference_image_ids.filter((_, currentIndex) => currentIndex !== index)
   form.protagonist_reference_image_id = form.reference_image_ids[0] || ''
   referenceImageNames.value = referenceImageNames.value.filter((_, currentIndex) => currentIndex !== index)
@@ -4195,6 +4266,7 @@ function generationRequestPayload() {
       cluster_voice_id: resolvedCloudVoice.id,
     } : {}),
   }
+  delete payload.auto_analyze_reference_images
   // An empty cluster voice is a valid idle UI state, but it must not be sent
   // to non-cluster jobs where the backend correctly enforces a real voice ID.
   if (ttsEngine.value !== 'cluster') delete payload.cluster_voice_id
@@ -4206,6 +4278,7 @@ function guidedVisualParameters() {
     video_orientation: form.video_orientation,
     content_mode: form.content_mode,
     director_strategy: form.director_strategy,
+    scene_references_enabled: form.scene_references_enabled,
     auto_split_long_text: form.auto_split_long_text,
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,
@@ -4219,6 +4292,9 @@ function guidedVisualParameters() {
     visual_style_prompt: form.visual_style_prompt,
     global_character_prompt: form.global_character_prompt,
     reference_image_ids: [...form.reference_image_ids],
+    reference_image_notes: { ...form.reference_image_notes },
+    reference_image_labels: { ...form.reference_image_labels },
+    reference_image_kinds: { ...form.reference_image_kinds },
     story_environment_prompt: form.story_environment_prompt,
     visual_prompt_system: form.visual_prompt_system,
     agent0_prompt_system: form.agent0_prompt_system,
@@ -4546,7 +4622,7 @@ async function submitModule1() {
   submittingModule1.value = true
   try {
     module1Job.value = await api.createJob({
-      ...form,
+      ...generationRequestPayload(),
       tts_engine: ttsEngine.value,
       module1_only: true,
       skip_tts: false,
@@ -4977,6 +5053,10 @@ onMounted(async () => {
   await refresh()
   await Promise.allSettled([refreshParameterPresets(), refreshAgentPromptPresets(), refreshCloudState()])
   timer = window.setInterval(refresh, 2500)
+})
+
+watch(() => form.auto_analyze_reference_images, (enabled) => {
+  try { window.localStorage.setItem(REFERENCE_ANALYSIS_STORAGE_KEY, enabled ? '1' : '0') } catch { /* optional browser storage */ }
 })
 
 watch(ttsEngine, (engine) => {

@@ -267,7 +267,16 @@ class VisualEditor:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, list):
             raise ValueError("poster mapping is invalid")
-        return [item for item in payload if isinstance(item, dict)]
+        items = [item for item in payload if isinstance(item, dict)]
+        # Archive staging folders are renamed on completion; resolve scene
+        # assets against the final project, including older staged paths.
+        for item in items:
+            scene = item.get("scene_reference")
+            root = project_dir / "other" / "scene_references"
+            item["reference_image_paths"] = [str((root / Path(p).name).resolve()) for p in item.get("reference_image_paths", [])]
+            if isinstance(scene, dict):
+                scene["path"] = str((root / Path(str(scene.get("path") or "" )).name).resolve())
+        return items
 
     @staticmethod
     def _legacy_text_by_image(project_dir: Path) -> dict[str, str]:
@@ -828,6 +837,10 @@ class VisualEditor:
             items.append({
                 "id": macro_id,
                 "prompt": str(entry.get("image_prompt") or ""),
+                "scene_reference_name": (entry.get("scene_reference") or {}).get("name") or (entry.get("scene_reference") or {}).get("scene_id"),
+                "scene_reference_url": f"/api/jobs/{job_id}/scene-reference/{macro_id}" if entry.get("scene_reference") else None,
+                "use_scene_reference": True,
+                "reference_materials": [{**row, 'image_url': f'/api/jobs/{job_id}/reference-material/{macro_id}/{index}'} for index, row in enumerate(entry.get('reference_materials') or [])],
                 "slides": slides,
                 "text": text,
                 "image_url": f"/api/jobs/{job_id}/visual-images/{image.name}?v={image.stat().st_mtime_ns}",
@@ -1250,6 +1263,7 @@ class VisualEditor:
         reference_macro_ids: list[str] | None = None,
         reference_upload_paths: list[str] | None = None,
         image_resolution: str | None = None,
+        use_scene_reference: bool = True,
     ) -> None:
         reference_macro_ids = list(dict.fromkeys(str(value) for value in (reference_macro_ids or []) if str(value)))[:1]
         reference_upload_paths = list(dict.fromkeys(str(value) for value in (reference_upload_paths or []) if str(value)))[:3]
@@ -1265,8 +1279,15 @@ class VisualEditor:
         def work() -> None:
             redraw_output: Path | None = None
             try:
+                # Keep the request argument immutable inside the worker.  Scene
+                # reference cleanup may derive a different submitted prompt;
+                # assigning back to ``prompt`` would make it an uninitialized
+                # local throughout this closure and fail before any API call.
+                effective_prompt = prompt
                 project_dir = self.output_dir(job.id, int(job.user_id))
-                image = self._find_image(project_dir / "image", macro_id)
+                scene_asset_id = macro_id.removeprefix("scene_asset_") if macro_id.startswith("scene_asset_") else None
+                scene_owner = next((row for row in self._load_mapping(project_dir) if (row.get("scene_reference") or {}).get("scene_id") == scene_asset_id), None) if scene_asset_id else None
+                image = Path(scene_owner["scene_reference"]["path"]) if scene_owner else self._find_image(project_dir / "image", macro_id)
                 reference_paths = [
                     str(self._find_image(project_dir / "image", reference_id))
                     for reference_id in reference_macro_ids
@@ -1285,18 +1306,48 @@ class VisualEditor:
                 reference_paths = list(dict.fromkeys(reference_paths))[:4]
                 with self._mapping_lock:
                     mapping = self._load_mapping(project_dir)
-                    item = next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None)
+                    item = ({"macro_scene_id": macro_id, "character_ids": [], "reference_image_ids": []}
+                            if scene_owner else next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None))
                     if item is None:
                         raise ValueError("image mapping was not found")
                     self._backup_current(project_dir, image, macro_id)
-                    item["image_prompt"] = prompt
+                    item["image_prompt"] = effective_prompt
+                    if scene_owner:
+                        for entry in mapping:
+                            if (entry.get("scene_reference") or {}).get("scene_id") == scene_asset_id:
+                                entry["scene_reference"]["prompt"] = effective_prompt
                     self._save_mapping(project_dir, mapping)
-                    image.with_suffix(".txt").write_text(prompt, encoding="utf-8")
+                    image.with_suffix(".txt").write_text(effective_prompt, encoding="utf-8")
                 import module4_video_render as visual
                 render_item = dict(item)
-                if not reference_paths and (
-                    item.get("reference_image_ids")
-                    or re.search(r"角色形象参考图[1-3]", prompt)
+                # Saved prompts can already contain the previous submission's
+                # numbering header. Replace it rather than stacking headers.
+                effective_prompt = re.sub(r'【参考图编号】[^\n]*(?:\n|$)', '', effective_prompt).strip()
+                render_item['image_prompt'] = effective_prompt
+                manual_references = bool(reference_paths)
+                if manual_references:
+                    render_item['reference_binding_version'] = 1
+                    render_item['reference_image_ids'] = []
+                    render_item['reference_materials'] = []
+                    render_item.pop('reference_image_paths', None)
+                    effective_prompt = re.sub(r'\n?【参考素材用途】[\s\S]*$', '', effective_prompt)
+                    render_item['image_prompt'] = effective_prompt
+                elif item.get('reference_binding_version') and not item.get('scene_reference'):
+                    reference_paths = list(item.get('reference_image_paths') or [])
+                if item.get("scene_reference"):
+                    if use_scene_reference and not reference_paths:
+                        reference_paths = list(item.get("reference_image_paths") or [])
+                    else:
+                        if not reference_paths:
+                            reference_paths = list(item.get("reference_image_paths") or [])[:-1]
+                        render_item.pop("scene_reference", None)
+                        render_item.pop("reference_image_paths", None)
+                        render_item["reference_image_ids"] = []
+                        effective_prompt = re.sub(r"\n?【场景参考】[^\n]*", "", effective_prompt)
+                        render_item["image_prompt"] = effective_prompt
+                if not item.get("scene_reference") and not reference_paths and not item.get('reference_binding_version') and (
+                    render_item.get("reference_image_ids")
+                    or re.search(r"角色形象参考图[1-3]", effective_prompt)
                 ):
                     # Module 4 sends the complete catalog whenever a prompt uses
                     # any task reference, preserving the original 图N numbering.
@@ -1306,7 +1357,7 @@ class VisualEditor:
                     render_item["image_prompt"] = (
                         f"【参考图编号】本次附带的第 1 至第 {len(reference_paths)} 张图片依次对应图1至图{len(reference_paths)}；"
                         "提示词中提及图N时，必须严格以第N张参考图作为该角色或物体的形象依据。\n"
-                        f"{prompt}"
+                        f"{effective_prompt}"
                     )
                 cloud_pool_client = None
                 if bool((job.request or {}).get("use_cloud_image_pool")):
@@ -1358,8 +1409,36 @@ class VisualEditor:
                 if not rendered.is_file() or rendered.stat().st_size <= 0:
                     raise FileNotFoundError(f"Image2 返回完成，但没有找到下载后的重绘图片: {rendered}")
                 shutil.copy2(rendered, image)
+                reference_view = None
+                if not scene_owner and render_item.get('reference_binding_version'):
+                    # Preserve the inputs of this successful redraw for the next edit.
+                    durable_paths = []
+                    durable_root = project_dir / 'other' / 'scene_references'
+                    durable_root.mkdir(parents=True, exist_ok=True)
+                    for index, source_path in enumerate(reference_paths):
+                        source = Path(source_path)
+                        if source.resolve().parent == durable_root.resolve():
+                            durable_paths.append(str(source.resolve()))
+                            continue
+                        target = durable_root / f'{macro_id}_reference_{index + 1}_{time.time_ns()}{source.suffix}'
+                        shutil.copy2(source, target)
+                        durable_paths.append(str(target.resolve()))
+                    materials = ([{'label': f'图{index + 1}', 'input_number': index + 1, 'description': '本次手动重绘参考', 'kind': 'unknown'} for index in range(len(durable_paths))]
+                                 if manual_references else list(render_item.get('reference_materials') or []))
+                    with self._mapping_lock:
+                        latest_mapping = self._load_mapping(project_dir)
+                        current = next(row for row in latest_mapping if row.get('macro_scene_id') == macro_id)
+                        current.update(reference_image_paths=durable_paths, reference_binding_version=1,
+                            reference_image_ids=[] if manual_references else render_item.get('reference_image_ids', []), reference_materials=materials,
+                            image_prompt=render_item['image_prompt'])
+                        if render_item.get('scene_reference') and durable_paths:
+                            current['scene_reference'] = {**render_item['scene_reference'], 'path': durable_paths[-1]}
+                        else:
+                            current.pop('scene_reference', None)
+                        self._save_mapping(project_dir, latest_mapping)
+                    reference_view = [{**row, 'image_url': f'/api/jobs/{job.id}/reference-material/{macro_id}/{index}?v={time.time_ns()}'} for index, row in enumerate(materials)]
                 completion_note = f"（{resolution.upper()}）" if resolution else ""
-                self._set_image_task(job.id, macro_id, status="completed", action="redraw", message=f"图片已重绘{completion_note}，请检查效果")
+                self._set_image_task(job.id, macro_id, status="completed", action="redraw", message=f"图片已重绘{completion_note}，请检查效果", **({'reference_materials': reference_view, 'uses_scene_reference': bool(render_item.get('scene_reference'))} if reference_view is not None else {}))
                 self._log(job, f"{macro_id} 重绘完成{completion_note}。")
             except Exception as exc:
                 self._set_image_task(job.id, macro_id, status="failed", action="redraw", message=str(exc))
@@ -1377,7 +1456,9 @@ class VisualEditor:
         def work() -> None:
             try:
                 project_dir = self.output_dir(job.id, int(job.user_id))
-                image = self._find_image(project_dir / "image", macro_id)
+                scene_id = macro_id.removeprefix("scene_asset_") if macro_id.startswith("scene_asset_") else None
+                owner = next((row for row in self._load_mapping(project_dir) if (row.get("scene_reference") or {}).get("scene_id") == scene_id), None) if scene_id else None
+                image = Path(owner["scene_reference"]["path"]) if owner else self._find_image(project_dir / "image", macro_id)
                 self._backup_current(project_dir, image, macro_id)
                 shutil.copy2(source, image)
                 self._set_image_task(job.id, macro_id, status="completed", action="upload", message="本地图片已替换")
@@ -1835,10 +1916,11 @@ class VisualEditor:
                         artifact = JOBS_DIR / job.id / "artifacts" / source.name
                         shutil.copy2(source, artifact)
                         register_job_asset(job, target, "project_output", {"project_name": project_dir.name})
+                    render_revision = time.time_ns()
                     if mode in {"subtitles", "both"}:
-                        job.artifacts["video_with_subtitles"] = f"/api/jobs/{job.id}/artifacts/final_with_subtitles.mp4"
+                        job.artifacts["video_with_subtitles"] = f"/api/jobs/{job.id}/artifacts/final_with_subtitles.mp4?v={render_revision}"
                     if mode in {"raw", "both"}:
-                        job.artifacts["video_raw"] = f"/api/jobs/{job.id}/artifacts/final_raw_presentation.mp4"
+                        job.artifacts["video_raw"] = f"/api/jobs/{job.id}/artifacts/final_raw_presentation.mp4?v={render_revision}"
                     retired = self._retire_unselected_video_variants(
                         project_dir=project_dir,
                         job=job,

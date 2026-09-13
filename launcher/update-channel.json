@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.12.1",
-  "release_order": 2026091201,
-  "display_version": "2026.09.12 编辑稳定性与号池修复",
+  "release_id": "2026.09.14.1",
+  "release_order": 2026091401,
+  "display_version": "2026.09.14 叙事增强与参考素材更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.12.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.12.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.14.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.14.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复图片工作室号池令牌续期、改配音后的字幕定位，以及重渲染预览和项目输出目录跳转；提高编辑过程稳定性。",
-  "content_fingerprint": "c6da1e97568fe04416903f3f1f8fe2d8fbc23ddec5cf96eabe14462a64264bf5"
+  "notes": "升级叙事增强、提示词定稿与场景参考能力；新增多参考图选择和素材展示，并修复参考人物优先级、分步时间轴一致性、单图兜底及编辑刷新问题。",
+  "content_fingerprint": "da569451ed344b32204c932c50b9c5a23706ba2393aa39fc5cebfcc0bc5fd664"
 }

@@ -73,6 +73,12 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
             "enhanced_beta",
         )
 
+    def test_request_schema_uses_beginner_safe_creation_defaults(self):
+        request = GenerateRequest()
+        self.assertFalse(request.step_mode)
+        self.assertEqual(request.visual_pacing_preset, "standard")
+        self.assertIsNone(request.tts_emotion)
+
     def test_25_command_uses_isolated_runner_and_native_speed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

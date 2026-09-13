@@ -51,6 +51,8 @@ class StoryAgentsTest(unittest.TestCase):
                 "visual_mode": "symbolic", "setting_hint": "无具体剧情地点的暗色空间",
                 "novelty_anchor": "人物之间的负空间", "visual_pacing": "hold",
                 "boundary_after": "hard", "character_ids": [],
+                "visual_intent": {key: "关系距离" for key in (
+                    "message", "viewer_takeaway", "source_basis", "narrative_role", "fact_status", "progression")},
             }],
         }, ensure_ascii=False)
         with (

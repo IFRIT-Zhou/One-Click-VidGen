@@ -4,6 +4,7 @@
 
 import mimetypes
 import json
+import hashlib
 import os
 import queue
 import re
@@ -182,9 +183,9 @@ def visual_pacing_settings(request: dict[str, Any]) -> dict[str, Any]:
     """Resolve mode defaults and the optional user pacing override safely."""
     mode = str(request.get("content_mode") or "urban_suspense")
     base = dict(VISUAL_PACING_DEFAULTS.get(mode, VISUAL_PACING_DEFAULTS["urban_suspense"]))
-    preset = str(request.get("visual_pacing_preset") or "auto").lower()
+    preset = str(request.get("visual_pacing_preset") or "standard").lower()
     if preset not in {"auto", "slow", "standard", "fast", "custom"}:
-        preset = "auto"
+        preset = "standard"
 
     result = {**base, "preset": preset}
     if preset == "slow":
@@ -2364,7 +2365,7 @@ def render_semantic_visual_video(
         store.log(job, f"HTML 模板写入: {html_path}")
         store.log(job, f"视觉生成来源: {provider}")
     elif visual_backend in {"poster", "online-poster", "runninghub"}:
-        poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id}
+        poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id, "USER_REFERENCE_IMAGE_PATHS_JSON": "[]", "USER_REFERENCE_IMAGE_METADATA_JSON": "[]", "USER_PROTAGONIST_REFERENCE_IMAGE_PATH": ""}
         cloud_pool_client = None
         cloud_session_update_path = None
         if bool(request.get("use_cloud_image_pool")):
@@ -2392,6 +2393,7 @@ def render_semantic_visual_video(
         poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"
         poster_env["CONTENT_MODE"] = str(request.get("content_mode") or "urban_suspense")
         poster_env["DIRECTOR_STRATEGY"] = director_strategy
+        poster_env["OCV_SCENE_REFERENCES_ENABLED"] = "1" if director_strategy == "enhanced_beta" and request.get("scene_references_enabled", True) else "0"
         visual_pacing = visual_pacing_settings(request)
         poster_env.update({
             "VISUAL_PACING_PRESET": visual_pacing["preset"],
@@ -2436,11 +2438,9 @@ def render_semantic_visual_video(
         global_character_prompt = str(request.get("global_character_prompt") or "").strip()
         if global_character_prompt:
             poster_env["GLOBAL_CHARACTER_PROMPT"] = global_character_prompt
-        requested_reference_ids = [
-            str(value).strip()
-            for value in request.get("reference_image_ids", [])
-            if str(value).strip()
-        ][:3]
+        from .reference_materials import request_reference_catalog
+        material_catalog = request_reference_catalog(request)
+        requested_reference_ids = [row['asset_id'] for row in material_catalog]
         legacy_reference_id = str(request.get("protagonist_reference_image_id") or "").strip()
         if not requested_reference_ids and legacy_reference_id:
             requested_reference_ids = [legacy_reference_id]
@@ -2452,10 +2452,11 @@ def render_semantic_visual_video(
                 for image_id in dict.fromkeys(requested_reference_ids)
             ]
             poster_env["USER_REFERENCE_IMAGE_PATHS_JSON"] = json.dumps(reference_images, ensure_ascii=False)
+            poster_env["USER_REFERENCE_IMAGE_METADATA_JSON"] = json.dumps(material_catalog, ensure_ascii=False)
             poster_env["USER_PROTAGONIST_REFERENCE_IMAGE_PATH"] = reference_images[0]
             store.log(
                 job,
-                f"已启用 {len(reference_images)} 张角色参考图：Agent 2 将按图 1 至图 {len(reference_images)} 标记实际出场镜头。",
+                f"已载入 {len(reference_images)} 张参考素材及用途说明：Agent 2 按镜头选图，单镜头最多3张，无关素材不提交。",
             )
         story_environment_prompt = str(request.get("story_environment_prompt") or "").strip()
         if story_environment_prompt:
@@ -3197,6 +3198,21 @@ def _copy_visual_segment(
             encoding="utf-8",
         )
         output_macro_id = re.sub(r"_[0-9a-f]{8,}$", "", output_image.stem, flags=re.IGNORECASE)
+        if item.get("reference_image_paths"):
+            reference_dir = output_image_dir.parent / "other" / "scene_references"
+            reference_dir.mkdir(parents=True, exist_ok=True)
+            archived_paths = []
+            for reference_path in item.get("reference_image_paths", []):
+                source_reference = Path(reference_path)
+                if not source_reference.is_file():
+                    raise ValueError("场景绑定参考图缺失，不能归档为完整项目")
+                reference_name = hashlib.sha256(str(source_reference.resolve()).encode()).hexdigest()[:12] + source_reference.suffix
+                target_reference = reference_dir / reference_name
+                shutil.copy2(source_reference, target_reference)
+                archived_paths.append(str(target_reference.resolve()))
+            item = {**item, "reference_image_paths": archived_paths}
+            if item.get('scene_reference'):
+                item['scene_reference'] = {**item['scene_reference'], 'path': archived_paths[-1]}
         archived_mapping.append({
             **item,
             "macro_scene_id": output_macro_id,
@@ -3260,10 +3276,100 @@ def sync_step_audio_snapshot(job: Job) -> Path:
             pass
     for path in (input_dir / "配音.wav", other_dir / "最终字幕.srt"):
         register_job_asset(job, path, "project_output", {"step_workflow": True, "stage": "audio_review"})
+    # Seal the first reviewable generation as one coherent revision.  All
+    # later TTS edits replace this revision through the same commit path.
+    sync_refined_step_audio_assets(job, output_dir)
     return output_dir
 
 
-def restore_step_audio_snapshot(job: Job) -> bool:
+STEP_AUDIO_REVISION_FILENAME = "audio_revision.json"
+
+
+def _step_audio_revision(project_dir: Path) -> dict[str, Any]:
+    files = {
+        "audio": project_dir / "input" / "配音.wav",
+        "subtitle": project_dir / "other" / "最终字幕.srt",
+        "timeline": project_dir / "other" / "画面时间线.json",
+        "manifest": project_dir / "other" / "tts_segments" / "manifest.json",
+    }
+    missing = [key for key, path in files.items() if not path.is_file() or path.stat().st_size <= 0]
+    if missing:
+        raise RuntimeError("配音精修资产不完整：" + "、".join(missing))
+    timeline = json.loads(files["timeline"].read_text(encoding="utf-8"))
+    if not isinstance(timeline, list) or not timeline:
+        raise RuntimeError("配音精修时间轴为空或格式错误")
+    expected = [str(row.get("text_content") or row.get("text") or "").strip()
+                for row in timeline if isinstance(row, dict)]
+    expected = [value for value in expected if value]
+    actual = _parse_srt_texts(files["subtitle"])
+    if actual != expected:
+        raise RuntimeError(
+            f"配音精修资产冲突：时间轴 {len(expected)} 句，SRT {len(actual)} 句；"
+            "请返回配音精修重新保存，禁止继续出图或渲染"
+        )
+    manifest = json.loads(files["manifest"].read_text(encoding="utf-8"))
+    segments = manifest.get("segments") if isinstance(manifest, dict) else None
+    if not isinstance(segments, list) or not segments:
+        raise RuntimeError("配音精修逐句清单为空或损坏")
+    hashes = {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in files.items()}
+    fingerprint = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+    return {"schema_version": 1, "fingerprint": fingerprint, "sentence_count": len(actual),
+            "manifest_revision": int(manifest.get("revision") or 0), "files": hashes,
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def validate_step_audio_snapshot(job: Job, *, require_revision: bool = True) -> dict[str, Any]:
+    output_dir = step_workflow_output_dir(job)
+    if output_dir is None:
+        raise RuntimeError("分步任务没有配音精修快照")
+    revision = _step_audio_revision(output_dir)
+    marker = output_dir / "other" / STEP_AUDIO_REVISION_FILENAME
+    if require_revision and marker.is_file():
+        saved = json.loads(marker.read_text(encoding="utf-8"))
+        if saved.get("fingerprint") != revision["fingerprint"]:
+            raise RuntimeError("配音精修资产版本不一致；请返回配音精修重新保存，禁止重复出图或渲染")
+    return revision
+
+
+def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any]:
+    """Commit one coherent refined generation to output, workspace and job checkpoint."""
+    revision = _step_audio_revision(project_dir)
+    marker = project_dir / "other" / STEP_AUDIO_REVISION_FILENAME
+    _write_json_atomic(marker, revision)
+    audio_dir = WORKSPACE_DIR / "2_audio_srt"
+    visual_dir = WORKSPACE_DIR / "3_visual_template"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    visual_dir.mkdir(parents=True, exist_ok=True)
+    for source, target in (
+        (project_dir / "input" / "配音.wav", audio_dir / "final_output.wav"),
+        (project_dir / "other" / "最终字幕.srt", audio_dir / "final_short.srt"),
+        (project_dir / "other" / "画面时间线.json", visual_dir / "scene_timeline.json"),
+    ):
+        _copy_file_atomic(source, target)
+    source_segments = project_dir / "other" / "tts_segments"
+    target_segments = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+    pending = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.tmp")
+    shutil.copytree(source_segments, pending)
+    backup = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.bak")
+    try:
+        if target_segments.exists():
+            os.replace(target_segments, backup)
+        os.replace(pending, target_segments)
+        shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        if backup.exists() and not target_segments.exists():
+            os.replace(backup, target_segments)
+        raise
+    finally:
+        shutil.rmtree(pending, ignore_errors=True)
+    _write_json_atomic(JOBS_DIR / job.id / "artifacts" / STEP_AUDIO_REVISION_FILENAME, revision)
+    job.request["_step_audio_revision"] = revision["fingerprint"]
+    job.request["_step_audio_sentence_count"] = revision["sentence_count"]
+    store.update(job, request=job.request)
+    return revision
+
+
+def restore_step_audio_snapshot(job: Job, *, require_revision: bool = True) -> bool:
     output_dir = step_workflow_output_dir(job)
     if output_dir is None:
         return False
@@ -3272,6 +3378,7 @@ def restore_step_audio_snapshot(job: Job) -> bool:
     timeline = output_dir / "other" / "画面时间线.json"
     if not audio.is_file() or not subtitle.is_file():
         return False
+    validate_step_audio_snapshot(job, require_revision=require_revision)
     audio_dir = WORKSPACE_DIR / "2_audio_srt"
     visual_dir = WORKSPACE_DIR / "3_visual_template"
     audio_dir.mkdir(parents=True, exist_ok=True)
@@ -3406,7 +3513,9 @@ def restore_step_visual_snapshot(job: Job) -> bool:
     html = output_dir / "other" / "最终画面.html"
     if html.is_file():
         shutil.copy2(html, visual_dir / "index.html")
-    restore_step_audio_snapshot(job)
+    # During visual review, users may legitimately edit subtitle text/timing.
+    # Require SRT/timeline consistency, but not the earlier audio-review hash.
+    restore_step_audio_snapshot(job, require_revision=False)
     return True
 
 
@@ -3604,11 +3713,9 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
         # Keep the original task reference images inside output so a completed
         # project remains fully editable after workspace/uploads is cleaned.
         reference_manifest: list[dict[str, Any]] = []
-        requested_reference_ids = [
-            str(value).strip()
-            for value in request.get("reference_image_ids", [])
-            if str(value).strip()
-        ][:3]
+        from .reference_materials import request_reference_catalog
+        material_catalog = request_reference_catalog(request)
+        requested_reference_ids = [row['asset_id'] for row in material_catalog]
         if job.user_id is not None:
             reference_dir = other_dir / "reference_images"
             for index, image_id in enumerate(dict.fromkeys(requested_reference_ids), start=1):
@@ -3619,7 +3726,9 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
                 target = reference_dir / f"main_{index:02d}{source.suffix.lower()}"
                 shutil.copy2(source, target)
                 reference_manifest.append({
-                    "reference_id": f"图{index}",
+                    "reference_id": material_catalog[index - 1]['label'],
+                    "description": material_catalog[index - 1]['description'],
+                    "kind": material_catalog[index - 1]['kind'],
                     "upload_id": image_id,
                     "filename": target.name,
                 })
@@ -3897,6 +4006,9 @@ def log_boundary_refinement(job: Job, store: JobStore, story_plan: dict[str, Any
 
 
 def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, resume: bool = False) -> None:
+    if is_step_workflow_v2(request):
+        # This is the last guard before Agent planning and paid image work.
+        validate_step_audio_snapshot(job, require_revision=True)
     threshold = int(request.get("split_text_threshold") or 3000)
     auto_split = bool(request.get("auto_split_long_text", True))
     scenes = load_scene_timeline()
@@ -3933,6 +4045,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
             global_character_prompt=global_character_prompt,
             world_prompt=world_prompt,
             agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+            director_strategy=str(request.get("director_strategy") or "stable"),
             require_ai_success=True,
         )
         story_plan_path = WORKSPACE_DIR / "3_visual_template" / "story_plan.json"
@@ -3965,6 +4078,7 @@ def render_downstream(job: Job, store: JobStore, request: dict[str, Any], *, res
         global_character_prompt=global_character_prompt,
         world_prompt=world_prompt,
         agent0_prompt_system=str(request.get("agent0_prompt_system") or "").strip(),
+        director_strategy=str(request.get("director_strategy") or "stable"),
         require_ai_success=True,
     )
     store.log(job, f"Agent 1：开始通读长文全文（{len(scenes)} 个片段）")
@@ -4271,6 +4385,10 @@ def render_from_visual_checkpoint(job: Job, store: JobStore, request: dict[str, 
     store.raise_if_cancelled(job)
     if is_step_workflow_v2(request) and not restore_step_visual_snapshot(job):
         raise RuntimeError("分步任务的画面精修快照不完整，无法安全渲染")
+    if is_step_workflow_v2(request):
+        # Visual editing may legitimately update subtitle text, so validate the
+        # live SRT/timeline pair but do not require the old audio-review hash.
+        validate_step_audio_snapshot(job, require_revision=False)
     store.update(job, status="running", step="render", progress=86, message=STEPS[5][1])
     render_variant = str(request.get("video_render_variant") or "both").strip().lower()
     if render_variant not in {"subtitles", "raw", "both"}:

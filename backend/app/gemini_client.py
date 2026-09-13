@@ -492,6 +492,7 @@ def _generate_openai_compatible_text(
     max_output_tokens: int | None,
     provider: str | None = None,
     json_root: str | None = None,
+    image_data: dict[str, str] | None = None,
 ) -> str:
     config = language_provider_config(provider)
     base_url = language_base_url(provider)
@@ -512,7 +513,7 @@ def _generate_openai_compatible_text(
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt.strip()},
-                {"role": "user", "content": user_prompt.strip()},
+                {"role": "user", "content": ([{"type": "text", "text": user_prompt.strip()}, {"type": "image_url", "image_url": {"url": f"data:{image_data['mime_type']};base64,{image_data['data']}"}}] if image_data else user_prompt.strip())},
             ],
             "max_tokens": max_output_tokens or int(os.getenv("GEMINI_MAX_TOKENS", "4096")),
             "temperature": temperature,
@@ -590,6 +591,7 @@ def _generate_anthropic_text(
     temperature: float,
     max_output_tokens: int | None,
     provider: str,
+    image_data: dict[str, str] | None = None,
 ) -> str:
     config = language_provider_config(provider)
     base_url = language_base_url(provider)
@@ -600,7 +602,7 @@ def _generate_anthropic_text(
         payload = {
             "model": model,
             "system": system_prompt.strip(),
-            "messages": [{"role": "user", "content": user_prompt.strip()}],
+            "messages": [{"role": "user", "content": ([{"type": "image", "source": {"type": "base64", "media_type": image_data['mime_type'], "data": image_data['data']}}, {"type": "text", "text": user_prompt.strip()}] if image_data else user_prompt.strip())}],
             "max_tokens": max_output_tokens or int(os.getenv("GEMINI_MAX_TOKENS", "4096")),
             "temperature": temperature,
         }
@@ -661,6 +663,7 @@ def generate_gemini_text(
     response_mime_type: str | None = None,
     max_output_tokens: int | None = None,
     json_root: str | None = None,
+    image_data: dict[str, str] | None = None,
 ) -> str:
     provider = _provider()
     config = language_provider_config(provider)
@@ -682,6 +685,7 @@ def generate_gemini_text(
             max_output_tokens=max_output_tokens,
             provider=provider,
             json_root=json_root,
+            image_data=image_data,
         )
     if config["protocol"] == "anthropic":
         return _generate_anthropic_text(
@@ -691,6 +695,7 @@ def generate_gemini_text(
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             provider=provider,
+            image_data=image_data,
         )
     base_url = language_base_url(provider)
     payload: dict[str, Any] = {
@@ -704,6 +709,8 @@ def generate_gemini_text(
     }
     if max_output_tokens:
         payload["generationConfig"]["maxOutputTokens"] = max_output_tokens
+    if image_data:
+        payload["contents"][0]["parts"].append({"inlineData": {"mimeType": image_data["mime_type"], "data": image_data["data"]}})
     if response_mime_type:
         payload["generationConfig"]["responseMimeType"] = response_mime_type
 

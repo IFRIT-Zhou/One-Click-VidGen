@@ -5,13 +5,33 @@ import { api } from './api'
 export function useStudio(w) {
   const creationDefaults = JSON.parse(JSON.stringify(w.form))
   const subtitleDefaults = JSON.parse(JSON.stringify(w.subtitleForm))
+  const creationPreferenceKey = 'ocv.studio.creation_preferences.v1'
+  const restoreDefaultsKey = 'ocv.studio.restore_defaults_on_new_project.v1'
+  const restoreDefaultsOnNewProject = ref(true)
+  try { restoreDefaultsOnNewProject.value = localStorage.getItem(restoreDefaultsKey) !== '0' } catch { /* optional browser storage */ }
+  function savedCreationPreferences() {
+    try { return JSON.parse(localStorage.getItem(creationPreferenceKey) || 'null') } catch { return null }
+  }
+  function rememberCreationPreferences() {
+    try {
+      localStorage.setItem(creationPreferenceKey, JSON.stringify({
+        step_mode: Boolean(w.form.step_mode),
+        visual_pacing_preset: String(w.form.visual_pacing_preset || 'standard'),
+        tts_emotion: String(w.form.tts_emotion || ''),
+      }))
+    } catch { /* optional browser storage */ }
+  }
+  watch(restoreDefaultsOnNewProject, (enabled) => {
+    try { localStorage.setItem(restoreDefaultsKey, enabled ? '1' : '0') } catch { /* optional browser storage */ }
+    if (!enabled) rememberCreationPreferences()
+  })
   function requestReferenceImageIds(request) {
     const ids = Array.isArray(request.reference_image_ids)
       ? request.reference_image_ids.map((value) => String(value || '').trim()).filter(Boolean)
       : []
     const legacyId = String(request.protagonist_reference_image_id || '').trim()
     if (!ids.length && legacyId) ids.push(legacyId)
-    return [...new Set(ids)].slice(0, 3)
+    return [...new Set(ids)].slice(0, 6)
   }
   async function createStudioProjectFromRequest({ reset = false } = {}) {
     const job = studioJob.value
@@ -97,7 +117,7 @@ export function useStudio(w) {
     // this query marker reloads the video element without reloading the page.
     const revision = Number(w.visualEditor.value?.preview_version || 0)
     if (!url || !revision) return url
-    return `${url}${url.includes('?') ? '&' : '?'}v=${revision}`
+    return `${url}${url.includes('?') ? '&' : '?'}preview=${revision}`
   })
   const studioTaskLogs = computed(()=>studioJob.value?.logs||[])
   const studioReferenceAssets = computed(() => {
@@ -124,7 +144,7 @@ export function useStudio(w) {
     if(!hasContent&&!studioDrafts.value.some(d=>d.id===studioDraftId.value)){studioSaveState.value='填写文案或上传素材后自动保存草稿';return}
     try{
       // Store creation inputs only. Account forms and API credentials are excluded.
-      const form=Object.fromEntries(Object.entries(w.form).filter(([k])=>!/(key|password|token|secret)/i.test(k)))
+      const form=Object.fromEntries(Object.entries(w.form).filter(([k])=>k!=='auto_analyze_reference_images'&&!/(key|password|token|secret)/i.test(k)))
       const record={id:studioDraftId.value,name:studioTitle.value,kind:studioKind.value,form,subtitle:{...w.subtitleForm},engine:w.ttsEngine.value,updated:new Date().toISOString()}
       const next=[record,...studioDrafts.value.filter(d=>d.id!==record.id)].slice(0,50)
       localStorage.setItem(storageKey(),JSON.stringify(next));studioDrafts.value=next;studioSaveState.value='草稿已保存到本机'
@@ -143,8 +163,21 @@ export function useStudio(w) {
     w.clearGuidedEditingState()
     w.guidedCreatingNew.value=true
     saveDraft();draftLoading=true;studioKind.value=kind;studioDraftId.value=draft?.id||`draft-${Date.now()}`;studioPage.value='new';studioProjectId.value='';studioError.value='';studioDrawer.value='';studioTab.value=kind==='subtitle'?'素材':'文案';w.activePage.value=kind==='audio'?'module1':kind==='subtitle'?'subtitle':'workspace';w.followLiveJob.value=false
-    if(draft){Object.assign(w.form,draft.form);Object.assign(w.subtitleForm,draft.subtitle);w.ttsEngine.value=draft.engine||w.ttsEngine.value}
-    else {w.form.project_name=w.randomProjectName();w.form.script='';w.form.source_audio_id='';w.form.skip_tts=false;w.form.skip_text_correction=false;w.form.reference_image_ids=[];w.form.protagonist_reference_image_id='';w.referenceImageNames.value=[];w.protagonistReferenceImageError.value='';w.subtitleForm.project_name='字幕_'+new Date().toLocaleDateString();w.subtitleForm.source_audio_id='';w.subtitleForm.reference_text='';w.sourceAudioName.value='';w.scriptUploadName.value='';w.subtitleAudioName.value=''}
+    w.form.reference_image_ids=[];w.form.protagonist_reference_image_id=''
+    w.form.reference_image_notes={};w.form.reference_image_labels={};w.form.reference_image_kinds={}
+    w.referenceImageNames.value=[];w.protagonistReferenceImageError.value=''
+    if(draft){const autoAnalyze=w.form.auto_analyze_reference_images;Object.assign(w.form,draft.form);w.form.auto_analyze_reference_images=autoAnalyze;Object.assign(w.subtitleForm,draft.subtitle);w.ttsEngine.value=draft.engine||w.ttsEngine.value}
+    else {
+      if(restoreDefaultsOnNewProject.value){w.form.step_mode=false;w.form.visual_pacing_preset='standard';w.form.tts_emotion=''}
+      else {const saved=savedCreationPreferences();if(saved){w.form.step_mode=Boolean(saved.step_mode);w.form.visual_pacing_preset=['auto','slow','standard','fast','custom'].includes(saved.visual_pacing_preset)?saved.visual_pacing_preset:w.form.visual_pacing_preset;w.form.tts_emotion=String(saved.tts_emotion||'')}}
+      w.form.project_name=w.randomProjectName();w.form.script='';w.form.source_audio_id='';w.form.skip_tts=false;w.form.skip_text_correction=false;w.form.reference_image_ids=[];w.form.protagonist_reference_image_id='';w.referenceImageNames.value=[];w.protagonistReferenceImageError.value='';w.subtitleForm.project_name='字幕_'+new Date().toLocaleDateString();w.subtitleForm.source_audio_id='';w.subtitleForm.reference_text='';w.sourceAudioName.value='';w.scriptUploadName.value='';w.subtitleAudioName.value=''
+    }
+    if(draft){
+      w.form.reference_image_ids=requestReferenceImageIds(draft.form||{})
+      w.form.protagonist_reference_image_id=w.form.reference_image_ids[0]||''
+      for(const field of ['reference_image_notes','reference_image_labels','reference_image_kinds'])w.form[field]={...(draft.form?.[field]||{})}
+      w.referenceImageNames.value=w.form.reference_image_ids.map(id=>w.editorAssets.value.find(asset=>asset.id===id)?.name||id)
+    }
     draftLoading=false;saveDraft()
   }
   async function openProject(job){
@@ -177,7 +210,7 @@ export function useStudio(w) {
   }
   async function launch(){
     if(studioBusy.value||studioHasRunning.value)return
-    saveDraft();studioBusy.value=true;studioError.value=''
+    saveDraft();rememberCreationPreferences();studioBusy.value=true;studioError.value=''
     try{
       const oldId=studioJob.value?.id
       if(studioKind.value==='audio')await w.submitModule1()
@@ -201,7 +234,18 @@ export function useStudio(w) {
     if(stage==='render_setup'){studioTab.value='导出';studioDrawer.value='背景音乐'}
   })
   watch(()=>w.ttsEditor.value.segments,segments=>{if(!segments.some(s=>s.index===studioSentence.value))studioSentence.value=segments[0]?.index??null},{immediate:true})
-  async function chooseTab(t){studioTab.value=t;if(t==='配音'&&!w.ttsEditor.value.available)await refreshEditorData();if(t==='画面与字幕'&&!w.visualEditor.value.items.length)await refreshEditorData()}
+  async function chooseTab(t){
+    studioTab.value=t
+    if(t==='导出'&&studioKind.value==='video'&&studioProjectId.value){
+      const projectId=studioProjectId.value
+      try{
+        const latest=await api.job(projectId)
+        if(studioProjectId.value===projectId&&w.activeJob.value?.id===projectId)w.activeJob.value=latest
+      }catch(error){studioError.value=error.message||'读取最新成片失败，请稍后重试'}
+    }
+    if(t==='配音'&&!w.ttsEditor.value.available)await refreshEditorData()
+    if(t==='画面与字幕'&&!w.visualEditor.value.items.length)await refreshEditorData()
+  }
   function keydown(e){if(e.key==='Escape')studioDrawer.value=''}
   window.addEventListener('keydown',keydown)
   function beforeUnload(){saveDraft()}
@@ -221,5 +265,5 @@ export function useStudio(w) {
     const rows=studioSubtitles.value;if(rows.some((r,i)=>!Number.isFinite(Number(r.start))||!Number.isFinite(Number(r.end))||r.start<0||r.end<=r.start||(i&&r.start<rows[i-1].end))){studioSubtitleMessage.value='时间需按顺序排列，结束晚于开始，相邻字幕不能重叠。';return}
     const text=rows.map((r,i)=>`${i+1}\n${srtTime(r.start)} --> ${srtTime(r.end)}\n${r.text}\n`).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/x-subrip;charset=utf-8'}));a.download=`${studioTitle.value}_校对.srt`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);studioSubtitleMessage.value='已导出校对后的字幕。'
   }
-return {duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles}
+return {restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles}
 }

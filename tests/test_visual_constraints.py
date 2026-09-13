@@ -2,14 +2,140 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import module4_video_render as visual
+import story_agents
+from backend.app.visual_editor import VisualEditor
+
+TEST_DESIGN = {key: "有效内容" for key in ("message", "fact_status", "subject", "source_basis", "new_information")}
+TEST_DESIGN["expression"] = "experience"
 
 
 class VisualConstraintsTest(unittest.TestCase):
+    def test_visual_editor_redraw_submits_prompt_without_closure_shadowing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "image").mkdir()
+            (project / "other").mkdir()
+            image = project / "image" / "poster_008.jpg"
+            image.write_bytes(b"old")
+            (project / "other" / "画面映射.json").write_text(json.dumps([{
+                "macro_scene_id": "poster_008", "includes_slides": ["scene_001"],
+                "image_prompt": "旧提示词", "character_ids": [], "reference_image_ids": [],
+            }], ensure_ascii=False), encoding="utf-8")
+            editor = VisualEditor()
+            job = SimpleNamespace(id="redraw-job", user_id=1, request={"use_cloud_image_pool": False})
+
+            def render(item, _pool):
+                target = Path(item["_output_path"])
+                target.write_bytes(b"new")
+                return target
+
+            with (
+                patch.object(editor, "output_dir", return_value=project),
+                patch.object(editor, "_log"),
+                patch.object(visual, "_provider_configs", return_value=[{
+                    "api_key": "test", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k",
+                }]),
+                patch.object(visual, "_render_poster_with_retry", side_effect=render),
+                patch("backend.app.visual_editor.JOBS_DIR", project / "jobs"),
+            ):
+                editor.redraw(job=job, prompt="新提示词", macro_id="poster_008")
+                for _ in range(100):
+                    status = editor.status(job.id)["image_tasks"].get("poster_008", {})
+                    if status.get("status") != "running":
+                        break
+                    time.sleep(0.01)
+
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(image.read_bytes(), b"new")
+            saved = json.loads((project / "other" / "画面映射.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["image_prompt"], "新提示词")
+
+    def test_explanatory_layout_is_beta_only_and_preserves_design(self):
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 8, "text_content": "双方各有压力"}]
+        item = {"includes_slides": ["scene_001"], "image_prompt": "人物为主体，画面左侧叠加压力示意",
+                "visual_design": {"expression": "explanatory", "subject": "双方的处境",
+                                  "support": ["工作", "照料"], "fact_status": "metaphorical"}}
+        with patch.dict(os.environ, {"DIRECTOR_STRATEGY": "enhanced_beta"}, clear=False):
+            normalized = visual._normalize_mapping([item], scenes, [["scene_001"]])[0]
+            self.assertEqual(normalized["visual_design"]["expression"], "explanatory")
+            self.assertTrue(visual._allows_explanatory_composition(normalized))
+            self.assertFalse(visual._allows_explanatory_composition({**normalized, "image_prompt": "先工作再回家，随后休息"}))
+        with patch.dict(os.environ, {"DIRECTOR_STRATEGY": "stable"}, clear=False):
+            normalized = visual._normalize_mapping([item], scenes, [["scene_001"]])[0]
+            self.assertNotIn("visual_design", normalized)
+            self.assertFalse(visual._allows_explanatory_composition(item))
+
+    def test_beta_scopes_inferred_continuity_without_mutating_stable_context(self):
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 8, "text_content": "生活的负担"}]
+        context = {"continuity_rules": ["场景固定在餐桌旁"], "user_world_bible": "用户明确设定",
+                   "semantic_units": [{"visual_focus": "看账单", "start_slide_id": "scene_001"}]}
+        output = json.dumps([{"includes_slides": ["scene_001"], "image_prompt": "环境意象"}])
+        for strategy in ("stable", "enhanced_beta"):
+            with patch.dict(os.environ, {"DIRECTOR_STRATEGY": strategy}, clear=False), patch.object(
+                visual, "generate_gemini_text", return_value=output
+            ) as call:
+                visual._plan_mapping_batch(scenes, "基础", "测试", context, [scenes])
+            prompt = call.call_args.kwargs["system_prompt"]
+            self.assertIn("用户明确设定", prompt)
+            self.assertEqual('"inferred_continuity_notes"' in prompt, strategy == "enhanced_beta")
+        self.assertEqual(context["continuity_rules"], ["场景固定在餐桌旁"])
+
+    def test_director_intent_survives_semantic_normalization(self):
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 8,
+                   "text_content": "她每天通勤接近三个小时。"}]
+        unit = {"start_slide_id": "scene_001", "end_slide_id": "scene_001",
+                "visual_intent": {"message": "通勤挤占生活", "source_basis": "通勤接近三个小时",
+                                  "scene_choice": "拥挤车厢中的疲惫通勤者"}}
+        result = story_agents._normalize_semantic_units([unit], scenes)
+        self.assertEqual(result[0]["visual_intent"], unit["visual_intent"])
+        legacy = story_agents._normalize_semantic_units(
+            [{"start_slide_id": "scene_001", "end_slide_id": "scene_001"}], scenes)
+        self.assertNotIn("visual_intent", legacy[0])
+
+    def test_enhanced_review_rejects_changed_groups_and_keeps_valid_plan(self):
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 8,
+                   "text_content": "用户反馈推动改进。"}]
+        original = [{"includes_slides": ["scene_001"], "image_prompt": "两位创作者共同修补作品",
+                     "character_ids": [], "reference_image_ids": [], "visual_design": TEST_DESIGN}]
+        invalid_revision = [{**original[0], "includes_slides": ["scene_999"]}]
+        for strategy, responses, expected_calls in (
+            ("stable", [json.dumps(original)], 1),
+            ("enhanced_beta", [json.dumps(original), json.dumps(invalid_revision)], 2),
+            ("enhanced_beta", [json.dumps(original), RuntimeError("review unavailable")], 2),
+        ):
+            with self.subTest(strategy=strategy, responses=str(responses)), patch.dict(
+                os.environ, {"DIRECTOR_STRATEGY": strategy}, clear=False
+            ), patch.object(visual, "generate_gemini_text", side_effect=responses) as generate:
+                result = visual._plan_mapping_batch(scenes, "基础提示词", "测试", {}, [scenes])
+                self.assertEqual(result[0]["includes_slides"], ["scene_001"])
+                self.assertEqual(result[0]["image_prompt"], original[0]["image_prompt"])
+                self.assertEqual(generate.call_count, expected_calls)
+
+    def test_enhanced_review_can_replace_literal_screen_with_source_backed_action(self):
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 8,
+                   "text_content": "用户反馈推动改进。"}]
+        original = [{"includes_slides": ["scene_001"], "image_prompt": "人物坐在电脑前",
+                     "character_ids": [], "reference_image_ids": [], "visual_design": TEST_DESIGN}]
+        revised = [{**original[0], "image_prompt": "创作者围绕待修补的作品共同协作"}]
+        with patch.dict(os.environ, {"DIRECTOR_STRATEGY": "enhanced_beta"}, clear=False), patch.object(
+            visual, "generate_gemini_text", side_effect=[json.dumps(original), json.dumps(revised)]
+        ) as generate:
+            result = visual._plan_mapping_batch(scenes, "基础提示词", "测试", {}, [scenes])
+        self.assertEqual(result[0]["image_prompt"], revised[0]["image_prompt"])
+        self.assertEqual(result[0]["director_review"]["before_prompt"], original[0]["image_prompt"])
+        self.assertTrue(result[0]["director_review"]["changed"])
+        review = json.loads(generate.call_args.kwargs["user_prompt"])
+        self.assertEqual(review["required_groups"], [["scene_001"]])
+        self.assertIn("其余项原样保留", review["revision_instruction"])
+        self.assertIn("允许否定 Agent 1", review["revision_instruction"])
+
     def test_enhanced_director_contract_is_injected_into_agent2_only_when_selected(self) -> None:
         scenes = [{
             "slide_id": "scene_001",
@@ -21,6 +147,7 @@ class VisualConstraintsTest(unittest.TestCase):
         mapping = json.dumps([{
             "includes_slides": ["scene_001"],
             "image_prompt": "暗色空间里背向而立的两个人",
+            "visual_design": TEST_DESIGN,
             "character_ids": [],
             "reference_image_ids": [],
         }], ensure_ascii=False)
@@ -1126,11 +1253,13 @@ class VisualConstraintsTest(unittest.TestCase):
         prompt = result[0]["image_prompt"]
         self.assertIn("萱萱妈妈：35岁中年女性", prompt)
         self.assertEqual(prompt.count("35岁中年女性，黑色长发，随时都戴着红色鸭舌帽"), 1)
-        self.assertIn("本镜头服装=磨旧的深灰色骑行服", prompt)
+        self.assertIn("身穿磨旧的深灰色骑行服", prompt)
         self.assertNotIn("前期居家服，后期骑行服或运动装", prompt)
-        self.assertNotIn("本镜头头部状态=白色骑行头盔", prompt)
+        self.assertNotIn("头部造型为白色骑行头盔", prompt)
         self.assertNotIn("同一角色的脸型、发型、年龄、服装和标志性物件", prompt)
-        self.assertIn("本镜头唯一角色卡", prompt)
+        self.assertIn("【人物与画风】", prompt)
+        self.assertNotIn("本镜头服装=", prompt)
+        self.assertNotIn("本镜头唯一角色卡", prompt)
         self.assertIn("【统一画面风格】", prompt)
         self.assertIn("【视觉媒介锁】", prompt)
 
@@ -1377,8 +1506,8 @@ class VisualConstraintsTest(unittest.TestCase):
         }, clear=False):
             result = visual._finalize_mapping(mapping, scenes, story_plan)
         prompt = result[0]["image_prompt"]
-        self.assertIn("莱恩：金色长发束在脑后；角色形象参考图3", prompt)
-        self.assertIn("艾德里安：年轻，身着银色胸甲；角色形象参考图1", prompt)
+        self.assertIn("莱恩：金色长发束在脑后，角色形象参考图3。", prompt)
+        self.assertIn("艾德里安：年轻，身着银色胸甲，角色形象参考图1。", prompt)
         self.assertIn("莱恩正向艾德里安严肃地讲述情况", prompt)
         self.assertEqual(result[0]["reference_image_ids"], ["图1", "图3"])
 
@@ -1550,6 +1679,56 @@ class VisualConstraintsTest(unittest.TestCase):
         self.assertIn("单镜头构图硬约束", risky)
         self.assertIn("不使用多格漫画", risky)
         self.assertEqual(comparison, "同一器材使用前后效果对比")
+
+    def test_stable_agent_two_requests_presence_and_visibility_check(self) -> None:
+        scenes = [{
+            "slide_id": "scene_001", "start": 0, "end": 5,
+            "text_content": "餐桌上的饭菜已经凉了。", "visual_summary": "深夜餐桌空镜",
+        }]
+        response = json.dumps([{
+            "includes_slides": ["scene_001"], "image_prompt": "深夜餐桌与凉透的饭菜",
+            "character_ids": [], "reference_image_ids": [], "human_presence": "none",
+        }], ensure_ascii=False)
+        with (
+            patch.dict(os.environ, {"DIRECTOR_STRATEGY": "stable"}, clear=False),
+            patch.object(visual, "generate_gemini_text", return_value=response) as generate,
+        ):
+            result = visual._plan_mapping_batch(scenes, "系统提示", "测试批次", {})
+        system_prompt = generate.call_args.kwargs["system_prompt"]
+        self.assertIn("human_presence", system_prompt)
+        self.assertIn("屏幕必须朝向镜头", system_prompt)
+        self.assertEqual(result[0]["human_presence"], "none")
+
+    def test_confirmed_stable_empty_scene_blocks_unrequested_people(self) -> None:
+        scenes = [{"slide_id": "scene_001", "start": 0, "end": 5}]
+        mapping = [{
+            "includes_slides": ["scene_001"], "image_prompt": "深夜出租屋的餐桌与凉透饭菜",
+            "character_ids": [], "reference_image_ids": [], "human_presence": "none",
+        }]
+        story_plan = {"characters": [{
+            "character_id": "xu_ning", "name": "许宁", "appearance": "齐耳短发",
+        }], "semantic_units": [{
+            "start_slide_id": "scene_001", "end_slide_id": "scene_001",
+            "character_ids": ["xu_ning"],
+        }]}
+        result = visual._finalize_mapping(mapping, scenes, story_plan)
+        self.assertEqual(result[0]["character_ids"], [])
+        self.assertIn("纯场景或静物画面", result[0]["image_prompt"])
+        self.assertIn("不添加人物", result[0]["image_prompt"])
+
+    def test_character_card_uses_readable_language(self) -> None:
+        story_plan = {"characters": [{
+            "character_id": "zhou_yu", "name": "周屿", "appearance": "30岁出头的职场工人",
+            "wardrobe": "白衬衫",
+        }]}
+        block = visual._character_continuity_block(
+            "周屿站在医院走廊", story_plan, "", ["scene_001"],
+            [{"slide_id": "scene_001"}], ["zhou_yu"],
+        )
+        self.assertTrue(block.startswith("【人物与画风】"))
+        self.assertIn("周屿：30岁出头的职场工人，身穿白衬衫。", block)
+        self.assertNotIn("本镜头服装=", block)
+        self.assertNotIn("唯一角色卡", block)
 
 
 if __name__ == "__main__":

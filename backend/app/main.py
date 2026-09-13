@@ -61,7 +61,7 @@ from .pipeline import (
     JOBS_DIR, OUTPUT_DIR, PROJECT_ROOT, GenerationCancelled, SUBTITLE_VIDEO_STYLES,
     initialize_step_workflow, is_step_workflow_v2, normalize_project_name,
     persist_step_workflow_state, render_standalone_subtitle_video, step_workflow_output_dir,
-    store, system_subtitle_fonts, validate_visual_coverage,
+    store, system_subtitle_fonts, validate_step_audio_snapshot, validate_visual_coverage,
     user_reference_image_path, user_upload_path,
 )
 from .visual_editor import IMAGE_EXTENSIONS, visual_editor
@@ -156,6 +156,7 @@ class GenerateRequest(BaseModel):
     subtitle_use_correction: bool = True
     content_mode: Literal["urban_suspense", "science_explainer", "pure_science", "general"] = "urban_suspense"
     director_strategy: Literal["stable", "enhanced_beta"] = "stable"
+    scene_references_enabled: bool = True
     skip_tts: bool = False
     source_audio_id: str | None = None
     skip_text_correction: bool = False
@@ -196,7 +197,7 @@ class GenerateRequest(BaseModel):
     bgm_fade_duration: float = Field(default=1, ge=0.1, le=30)
     step_mode: bool = False
     visual_prompt_mode: Literal["simple", "full"] = "simple"
-    visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "auto"
+    visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
     visual_target_duration: float | None = Field(default=None, ge=5, le=30)
     visual_max_duration: float | None = Field(default=None, ge=6, le=40)
@@ -204,7 +205,10 @@ class GenerateRequest(BaseModel):
     visual_style_prompt: str | None = Field(default=None, max_length=1000)
     global_character_prompt: str | None = Field(default=None, max_length=2000)
     protagonist_reference_image_id: str | None = Field(default=None, max_length=180)
-    reference_image_ids: list[str] = Field(default_factory=list, max_length=3)
+    reference_image_ids: list[str] = Field(default_factory=list, max_length=6)
+    reference_image_notes: dict[str, str] = Field(default_factory=dict, max_length=6)
+    reference_image_labels: dict[str, str] = Field(default_factory=dict, max_length=6)
+    reference_image_kinds: dict[str, str] = Field(default_factory=dict, max_length=6)
     story_environment_prompt: str | None = Field(default=None, max_length=2000)
     visual_prompt_system: str | None = Field(default=None, max_length=4000)
     agent0_prompt_system: str | None = Field(default=None, max_length=12000)
@@ -247,6 +251,7 @@ class VisualRedrawRequest(BaseModel):
     # uploads follow it as images 2-4.
     reference_macro_ids: list[str] = Field(default_factory=list, max_length=1)
     reference_upload_ids: list[str] = Field(default_factory=list, max_length=3)
+    use_scene_reference: bool = True
 
 
 class VisualBaselineRequest(BaseModel):
@@ -2076,6 +2081,7 @@ def save_agent_prompt_preset(payload: AgentPromptPresetRequest, request: Request
 @app.post("/api/jobs")
 def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
+    character_setting_was_submitted = "global_character_prompt" in payload.model_fields_set
     data = payload.model_dump()
     if data.get("tts_engine") == "indextts2":
         data["tts_engine"] = "indextts25"
@@ -2127,15 +2133,18 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         data["agent0_prompt_system"] = None
         data["agent1_prompt_system"] = None
     if data.get("visual_prompt_mode") == "simple":
-        if (
-            not str(data.get("global_character_prompt") or "").strip()
-            and str(data.get("content_mode") or "") in {CONTENT_MODE_STORY, CONTENT_MODE_SCIENCE}
-        ):
-            data["global_character_prompt"] = (
-                SCIENCE_GLOBAL_CHARACTER_PROMPT
-                if str(data.get("content_mode") or "") == CONTENT_MODE_SCIENCE
-                else DEFAULT_GLOBAL_CHARACTER_PROMPT
-            )
+        if not str(data.get("global_character_prompt") or "").strip():
+            from .reference_materials import reference_character_bible
+            material_character_bible = reference_character_bible(data)
+            if material_character_bible:
+                data["global_character_prompt"] = material_character_bible
+            elif not character_setting_was_submitted:
+                data["global_character_prompt"] = {
+                    CONTENT_MODE_STORY: DEFAULT_GLOBAL_CHARACTER_PROMPT,
+                    CONTENT_MODE_SCIENCE: SCIENCE_GLOBAL_CHARACTER_PROMPT,
+                }.get(str(data.get("content_mode") or ""))
+            else:
+                data["global_character_prompt"] = None
         data["visual_prompt_system"] = build_visual_prompt_system(
             str(data.get("visual_style_prompt") or ""),
             str(data.get("content_mode") or CONTENT_MODE_STORY),
@@ -2254,6 +2263,16 @@ def resume_job(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="job not found")
     if job.status not in {"failed", "cancelled", "waiting_confirmation"}:
         raise HTTPException(status_code=400, detail="只有失败、已停止或等待确认的任务可以继续")
+    if is_step_workflow_v2(job.request):
+        stage = str(job.request.get("_step_mode_stage") or "")
+        if stage in {"visual_running", "render_setup", "render_running"}:
+            try:
+                validate_step_audio_snapshot(job, require_revision=stage == "visual_running")
+            except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"检测到确定性的配音/字幕资产冲突，已禁止重复渲染：{exc}",
+                ) from exc
     return store.resume(job)
 
 
@@ -2280,11 +2299,11 @@ def advance_step_workflow(
         "confirm_audio": set(),
         "start_visual": {
             "video_orientation",
-            "content_mode", "director_strategy", "auto_split_long_text", "split_text_threshold",
+            "content_mode", "director_strategy", "scene_references_enabled", "auto_split_long_text", "split_text_threshold",
             "visual_backend", "use_cloud_image_pool", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
             "visual_max_duration", "visual_max_slides", "visual_style_prompt",
-            "global_character_prompt", "reference_image_ids", "story_environment_prompt",
+            "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt",
             "visual_prompt_system", "agent0_prompt_system", "agent1_prompt_system",
             "agent2_director_theme",
         },
@@ -2320,7 +2339,21 @@ def advance_step_workflow(
             message=job.message,
         )
         store.update(job, request=job.request)
+    if payload.action == "confirm_audio":
+        try:
+            revision = tts_editor.commit_step_review(job=job, user_id=int(user["id"]))
+            store.log(job, f"配音精修已封存为唯一时间轴：{revision['sentence_count']} 句")
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=409, detail=f"配音精修确认失败：{exc}") from exc
     if payload.action == "start_visual":
+        try:
+            revision = validate_step_audio_snapshot(job)
+            store.log(job, f"出图前配音快照校验通过：{revision['sentence_count']} 句")
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"配音精修资产未同步，已在出图前阻止：{exc}",
+            ) from exc
         visual_request = {**job.request, "step_mode": False}
         config_error = _required_job_config_error(visual_request)
         if config_error:
@@ -2352,6 +2385,14 @@ def advance_step_workflow(
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             if source.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
                 raise HTTPException(status_code=400, detail=f"BGM 只支持常规音频文件：{source.name}")
+    if payload.action in {"confirm_visual", "start_render"}:
+        try:
+            validate_step_audio_snapshot(job, require_revision=False)
+        except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"字幕与时间轴不一致，已禁止进入渲染：{exc}",
+            ) from exc
     if payload.action == "confirm_visual":
         output_dir = step_workflow_output_dir(job)
         if output_dir is None:
@@ -2778,7 +2819,69 @@ def get_visual_editor_image(job_id: str, filename: str, request: Request) -> Fil
         path = visual_editor.image_path(job_id, user_id, filename)
     except OSError as exc:
         raise HTTPException(status_code=404, detail="image not found") from exc
-    return FileResponse(str(path), media_type="image/jpeg")
+    return FileResponse(
+        str(path),
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@app.get("/api/jobs/{job_id}/scene-reference/{macro_id}")
+def get_scene_reference(job_id: str, macro_id: str, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    project = visual_editor.output_dir(job_id, user_id)
+    mapping = visual_editor._load_mapping(project)
+    item = next((row for row in mapping if row.get("macro_scene_id") == macro_id), {})
+    value = (item.get("scene_reference") or {}).get("path")
+    path = Path(str(value or "")).resolve()
+    root = (project / "other" / "scene_references").resolve()
+    if not value or root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="scene reference not found")
+    return FileResponse(
+        str(path),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@app.get("/api/jobs/{job_id}/scene-assets")
+def get_scene_assets(job_id: str, request: Request) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    mapping = visual_editor._load_mapping(visual_editor.output_dir(job_id, user_id))
+    assets = {}
+    for item in mapping:
+        scene = item.get("scene_reference") or {}
+        sid = scene.get("scene_id")
+        if not sid:
+            continue
+        asset = assets.setdefault(sid, {"id": "scene_asset_" + sid, "name": scene.get("name") or sid,
+            "prompt": scene.get("prompt") or "", "image_url": f"/api/jobs/{job_id}/scene-reference/{item['macro_scene_id']}", "used_by": []})
+        asset["used_by"].append(item["macro_scene_id"])
+    with visual_editor._lock:
+        tasks = dict(visual_editor._image_tasks.get(job_id) or {})
+    for asset in assets.values():
+        asset["task"] = tasks.get(asset["id"], {})
+    return {"items": list(assets.values())}
+
+
+@app.get('/api/jobs/{job_id}/reference-material/{macro_id}/{index}')
+def get_reference_material(job_id: str, macro_id: str, index: int, request: Request) -> FileResponse:
+    _job, user_id = _owned_completed_job(job_id, request)
+    project = visual_editor.output_dir(job_id, user_id)
+    mapping = visual_editor._load_mapping(project)
+    item = next((row for row in mapping if row.get('macro_scene_id') == macro_id), {})
+    paths = item.get('reference_image_paths') or []
+    if index < 0 or index >= len(item.get('reference_materials') or []) or index >= len(paths):
+        raise HTTPException(status_code=404, detail='reference material not found')
+    path = Path(paths[index]).resolve()
+    if project.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail='reference material not found')
+    return FileResponse(str(path), headers={'Cache-Control': 'no-store'})
 
 
 @app.get("/api/jobs/{job_id}/visual-bgm/{filename}")
@@ -2817,6 +2920,7 @@ def redraw_visual_editor_image(
         macro_id=macro_id,
         reference_macro_ids=payload.reference_macro_ids,
         reference_upload_paths=reference_upload_paths,
+        use_scene_reference=payload.use_scene_reference,
         image_resolution=payload.image_resolution,
     )
     return {"ok": True, "message": "image redraw started"}
@@ -3342,6 +3446,20 @@ async def upload_editor_asset(request: Request, file: UploadFile = File(...)) ->
 def get_editor_uploads(request: Request) -> dict[str, Any]:
     user = require_user(request)
     return {"assets": list_uploads(int(user["id"]))}
+
+
+@app.post("/api/editor/reference-analysis/{filename}")
+def analyze_reference_upload(filename: str, request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    try:
+        source = user_reference_image_path(int(user['id']), filename)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail='找不到当前用户的参考图') from exc
+    from .reference_materials import analyze_reference
+    try:
+        return analyze_reference(source)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail='参考图自动分析未完成，当前语言模型可能不支持看图或暂时不可用；可手动填写用途后继续。') from exc
 
 
 @app.get("/api/editor/uploads/{filename}")

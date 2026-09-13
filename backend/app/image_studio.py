@@ -53,6 +53,7 @@ def config_for(user: int, data: ImageRequest):
         runtime = client.image_pool_runtime()
         base = runtime['base_url'].rstrip('/')
         config = dict(endpoint=base+'/image-pool/generate', query_url=base+'/image-pool/query',
+                      upload_url=base+'/image-pool/media/upload',
                       api_key=runtime['access_token'], refresh_token=runtime['refresh_token'],
                       cloud_base_url=base, cloud_pool='1')
     else:
@@ -69,26 +70,58 @@ def config_for(user: int, data: ImageRequest):
     return config, client
 
 
+def upload_pool_reference(session: requests.Session, source: Path, config: dict) -> str:
+    """Upload a reference into the signed-in pool account before generation."""
+    import module4_video_render as visual
+
+    mime_type = mimetypes.guess_type(source.name)[0] or 'application/octet-stream'
+    response = visual._request_with_cloud_refresh(
+        session,
+        'POST',
+        config['upload_url'],
+        config=config,
+        files={'file': (source.name, source.read_bytes(), mime_type)},
+        timeout=120,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    url = str(visual._find_image_url(payload, base_url=config.get('cloud_base_url')) or '').strip()
+    if not url:
+        raise RuntimeError('号池参考图上传成功，但服务端未返回可用图片地址')
+    return url
+
+
 def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client=None) -> None:
     import module4_video_render as visual
+    generation_attempted = False
     try:
         payload = dict(prompt=record['prompt'], aspectRatio=record['ratio'], resolution=record['resolution'])
         if config.get('model'):
             payload['model'] = config['model']
         endpoint = config['endpoint']
-        if record['references']:
-            payload['imageUrls'] = [
-                'data:'+ (mimetypes.guess_type(name)[0] or 'image/png') + ';base64,' +
-                base64.b64encode((path/name).read_bytes()).decode('ascii') for name in record['references']
-            ]
-            endpoint = endpoint.replace('/text-to-image', '/image-to-image')
         if config.get('cloud_pool') == '1':
             payload['clientJobId'] = 'image-studio-' + record['id']
-        headers = {'Authorization': 'Bearer '+config['api_key']}
         with requests.Session() as session:
+            if record['references']:
+                if config.get('cloud_pool') == '1':
+                    record['message'] = f"正在上传 {len(record['references'])} 张参考图"
+                    save(path, record)
+                    payload['imageUrls'] = [
+                        upload_pool_reference(session, path / name, config)
+                        for name in record['references']
+                    ]
+                else:
+                    payload['imageUrls'] = [
+                        'data:'+ (mimetypes.guess_type(name)[0] or 'image/png') + ';base64,' +
+                        base64.b64encode((path/name).read_bytes()).decode('ascii')
+                        for name in record['references']
+                    ]
+                endpoint = endpoint.replace('/text-to-image', '/image-to-image')
+            headers = {'Authorization': 'Bearer '+config['api_key']}
             # Keep the same clientJobId while renewing a short-lived cloud token.
             # A 401 therefore resumes polling the original task instead of creating
             # another billed image job.
+            generation_attempted = True
             response = visual._request_with_cloud_refresh(
                 session, 'POST', endpoint, json=payload, headers=headers, config=config, timeout=60
             )
@@ -130,7 +163,15 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
                 raise TimeoutError('等待超时，远端结果尚未确认，请核对服务端记录后再生成')
     except Exception as exc:
         message = str(exc)
-        if isinstance(exc, requests.RequestException):
+        if record.get('references') and not generation_attempted:
+            detail = message
+            if isinstance(exc, requests.RequestException) and exc.response is not None:
+                try:
+                    detail = visual._runninghub_error_message(exc.response.json()) or detail
+                except ValueError:
+                    pass
+            message = f'参考图上传失败：{detail}。出图任务尚未提交，不会产生图片费用。'
+        elif isinstance(exc, requests.RequestException):
             response = exc.response
             detail = ''
             if response is not None:

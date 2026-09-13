@@ -158,7 +158,7 @@ GENERAL_AGENT_COMPACT_RETRY_PROMPT = STORY_AGENT_COMPACT_RETRY_PROMPT.replace(
 SCIENCE_AGENT_SYSTEM_PROMPT = """你是科普口播视频流水线的 Agent 1：知识结构策划与讲解编辑。
 你必须通读全部文案，建立供分镜 Agent 使用的全文知识上下文。只输出严格 JSON 对象，不要解释。
 字段沿用统一结构：story_type 固定为 science_explainer；logline 写核心主题；theme 写学习目标；
-narrative_tone 写讲解口吻；characters 记录固定讲解少女及原文必要人物；locations 记录实验、生活或行业场景；
+narrative_tone 写讲解口吻；characters 记录用户指定讲解人物及原文必要人物；用户没有人物设定时才使用内置讲解少女；locations 记录实验、生活或行业场景；
 story_beats 按讲解顺序拆成 4-8 个知识段，每项包含 beat_id、slide_ids、purpose、emotion、visual_focus；
 clues_and_payoffs 记录概念与后续解释、问题与答案、现象与原因；continuity_rules 记录术语、物体和角色一致性；
 segmentation_guidance 给出口播断句原则；visual_safety 给出安全可视化规则。
@@ -166,7 +166,8 @@ segmentation_guidance 给出口播断句原则；visual_safety 给出安全可�
 要求：
 - 找出核心观点、前置概念、因果链、案例、数据、结论和行动建议，不使用鬼故事或悬疑叙事框架。
 - 最多 8 个知识段、8 个关键概念、8 条连续性规则；文字字段尽量少于 80 个中文字符。
-- 固定视觉主持人为黑色短发、红色围巾的可爱少女；她只在有助讲解时出现，不要每张图都站着讲话。
+- user_global_character_bible 非空时，它完全替代内置主持人设定，禁止继续使用黑色短发、红色围巾等默认特征；其中明确的“每张图出现”等出场要求必须执行。
+- 仅当 user_global_character_bible 为空时，固定视觉主持人才是黑色短发、红色围巾的可爱少女；她只在有助讲解时出现，不要每张图都站着讲话。
 - 原文人物存在换装或头部状态变化时，characters 必须使用 wardrobe_states 按 slide_id 起止范围记录，
   每个状态只写当时唯一明确的服装、头部状态和随身物品。
 - 抽象知识优先建议生活化比喻、实验演示、物体对比和过程示意，不编造原文没有的数据或结论。
@@ -233,6 +234,7 @@ def story_fingerprint(
     # rebuild their plan after this optional Beta feature is installed.
     if normalize_director_strategy(director_strategy) == DIRECTOR_STRATEGY_ENHANCED:
         fingerprint_payload["director_strategy"] = DIRECTOR_STRATEGY_ENHANCED
+        fingerprint_payload["director_revision"] = 6
     payload = json.dumps(
         fingerprint_payload,
         ensure_ascii=False,
@@ -392,6 +394,20 @@ def _fallback_story_context(
         context.pop(key, None)
     if global_character_prompt:
         context["user_global_character_bible"] = global_character_prompt
+        if normalize_content_mode(content_mode) == CONTENT_MODE_SCIENCE:
+            context["characters"] = [{
+                "name": "用户指定讲解员",
+                "role": "固定视觉主持人",
+                "appearance": str(global_character_prompt)[:500],
+                "wardrobe": "以用户人物设定及参考素材为准",
+                "wardrobe_states": [],
+                "signature_item": "以用户参考素材为准",
+                "relationships": "负责串联知识讲解",
+            }]
+            context["continuity_rules"] = [
+                "用户指定讲解员的身份、外观及出场范围严格服从用户人物设定与参考素材",
+                "术语、物体外观、数据关系与原文保持一致",
+            ]
     if world_prompt:
         context["world_bible"] = world_prompt
     context["generation_source"] = "local_fallback"
@@ -444,6 +460,7 @@ def create_story_context(
     world_prompt: str = "",
     agent0_prompt_system: str = "",
     require_ai_success: bool = False,
+    director_strategy: str = DIRECTOR_STRATEGY_STABLE,
 ) -> dict[str, Any]:
     """Run Agent 0 once: full-text understanding without timing decisions."""
     content_mode = normalize_content_mode(content_mode)
@@ -478,6 +495,13 @@ def create_story_context(
             "也不得根据姓名刻板印象改变性别。"
         )
         system_prompt += "\n\n" + AGENT0_DEVICE_INFORMATION_CONTRACT
+        if normalize_director_strategy(director_strategy) == DIRECTOR_STRATEGY_ENHANCED:
+            system_prompt += (
+                "\n【叙事增强：事实资料范围】区分现场、被讨论的经历、假设未来与抽象观点。"
+                "地点清单不是取景白名单。continuity_rules 的空间道具规则必须以‘当镜头回到该地点时’限定；"
+                "不将主要谈话地点和道具固定为全片必须出现。不把隐喻当成现场事实；不凭医疗开支推断病情或设备。"
+                "你负责事实与全文主题，不提前给每段指定取景。服装只在同一连续场景保持；用户明确要求全片固定的除外。"
+            )
         if content_mode == CONTENT_MODE_PURE_SCIENCE and PURE_SCIENCE_AGENT0_CONTRACT not in system_prompt:
             system_prompt += "\n\n" + PURE_SCIENCE_AGENT0_CONTRACT
         response = generate_gemini_text(
@@ -562,8 +586,11 @@ def load_or_create_story_context(
     world_prompt: str = "",
     agent0_prompt_system: str = "",
     require_ai_success: bool = False,
+    director_strategy: str = DIRECTOR_STRATEGY_STABLE,
 ) -> dict[str, Any]:
     fingerprint = story_context_fingerprint(full_text, content_mode, global_character_prompt, world_prompt, agent0_prompt_system)
+    if normalize_director_strategy(director_strategy) == DIRECTOR_STRATEGY_ENHANCED:
+        fingerprint = hashlib.sha256((fingerprint + ":enhanced-v5").encode()).hexdigest()
     if path.is_file():
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -585,7 +612,9 @@ def load_or_create_story_context(
         world_prompt=world_prompt,
         agent0_prompt_system=agent0_prompt_system,
         require_ai_success=require_ai_success,
+        director_strategy=director_strategy,
     )
+    context["source_fingerprint"] = fingerprint
     path.parent.mkdir(parents=True, exist_ok=True)
     _backup_json(path)
     path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -790,6 +819,22 @@ def _normalize_semantic_units(raw_units: Any, scenes: list[dict[str, Any]]) -> l
             "device_type": str(unit.get("device_type") or "").strip()[:40] if device_mode != "none" else "",
             "screen_content": screen_content,
         })
+        # Optional director metadata: preserve old plans and stable-mode output.
+        intent = unit.get("visual_intent")
+        if isinstance(intent, dict):
+            normalized[-1]["visual_intent"] = {
+                key: str(intent.get(key) or "").strip()[:240]
+                for key in ("message", "viewer_takeaway", "source_basis", "scene_choice", "progression", "narrative_role", "selection_reason", "fact_status", "continuity_requirement", "merge_suggestion")
+                if isinstance(intent.get(key), str) and intent[key].strip()
+            }
+            candidates = intent.get("candidates")
+            if isinstance(candidates, list):
+                normalized[-1]["visual_intent"]["candidates"] = [
+                    {key: value[key].strip()[:240]
+                     for key in ("scene", "source_basis", "communicates")
+                     if isinstance(value.get(key), str)}
+                    for value in candidates[:2] if isinstance(value, dict)
+                ]
         expected_start = end + 1
     if not normalized or expected_start != len(ordered_ids):
         return []
@@ -1259,6 +1304,8 @@ def _normalize_story_plan(
         _normalize_semantic_units(raw.get("semantic_units"), scenes)
         or _fallback_semantic_units(scenes)
     )
+    if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+        _validate_visual_intents(plan["semantic_units"])
     for unit in plan["semantic_units"]:
         unit["character_ids"] = [
             value for value in unit.get("character_ids", []) if value in valid_character_ids
@@ -1298,15 +1345,30 @@ boundary_after 只能是 hard 或 soft：人物、地点、时间、事件、结
 story_beats 仅用于概括较高层节奏，每项包含 beat_id、slide_ids、purpose、emotion、visual_focus、visual_pacing。"""
 
 
-ENHANCED_DIRECTOR_AGENT1_CONTRACT = """【叙事增强 Beta：先设计视觉意图，再划分画面】
-- 不要逐句寻找名词配图。先判断每个语义单元的叙事功能：抽象观点、具体事件、现实成因/经历、关系或情绪状态、转折、总结。
-- 抽象观点尚未进入具体故事时，优先使用克制的 symbolic 构图或不绑定具体剧情地点的环境意象；禁止提前把后文人物塞进餐桌、办公室等具体主时间线场景。
-- 原文明确提供通勤、工作、家务、照料、医疗、住房等现实依据时，优先选其中最有表现力且能被单张图片清楚表达的一项作为 illustrative_broll；不要继续重复当前谈话地点和道具。
-- 每个单元的 visual_focus 必须写“人物/主体 + 一个可见动作或状态 + 画面要表达的关系”，setting_hint 必须是唯一地点，novelty_anchor 必须是能与前后画面实质区分的视觉锚点。
-- 在输出前纵向检查全部 semantic_units：相邻单元不能只更换机位、景别、表情或纸张数量；同一“人物组合 + 地点 + 动作 + 核心道具”原则上只能连续一次，确属不可中断事件时最多连续两次。
-- 同一主时间线地点再次出现时，地点名称与稳定空间特征必须复用 Agent 0 locations/continuity_rules 中的同一表述，不得临时改换家具、房间格局、主光源或标志道具。
-- 只做有原文依据的有限联想：假设未来必须明确为设想，不得把尚未存在的孩子、尚未发生的手术或其他可能性画成当前事实。
-- 纯科普仍以事实准确和知识关系清晰为最高优先级；只有无法直接可视化的概念才使用象征表达，不得用隐喻替代关键结构、数据和因果关系。"""
+def _validate_visual_intents(units):
+    required = ("message", "viewer_takeaway", "source_basis", "narrative_role", "fact_status", "progression")
+    missing = [str(unit.get("unit_id") or index) for index, unit in enumerate(units)
+               if not isinstance(unit.get("visual_intent"), dict)
+               or any(not str(unit["visual_intent"].get(key) or "").strip() for key in required)]
+    if not units or missing:
+        raise ValueError("叙事增强缺少完整视觉意图: " + ", ".join(missing))
+
+
+ENHANCED_DIRECTOR_AGENT1_CONTRACT = """【叙事增强 Beta：语义规划与视觉意图】
+- 语义压缩不得丢掉原文决定含义的参与者、责任分配和因果来源。不要将具体的多重负担概括成‘生活质量’、将具体支出来源概括成‘经济压力’后丢掉细节。message 保留具体关系，source_basis 覆盖本组全部关键事实，而非仅引用第一句。
+- 先理解后选景：message 必须明确原文的处境、关系或因果，不能只写‘表现担忧/展示诉求’。viewer_takeaway 写观众应理解的具体含义，而不是镜头或人物表情。你不负责拟定画面后再替它寻找解释。
+- 对未来设想保留原文描述的内容，不因尚未发生就删去其中的人物或责任关系；标记假设即可。不得将具体词汇绑定固定的视觉模板。
+- 本节扩展前文旧版字段清单：semantic_units 必须额外包含 visual_intent，前文“仅包含”不排除此字段。
+- Agent 0 continuity_rules 是模型推断的局部连续性建议，不是用户指令。其中固定地点、时间、桌面物件只约束回到该现场的镜头，不能将全片锁在该地点；人物身份保持一致。用户明确提供的设定仍最高优先。
+- 分工：你负责确定本段意思、事实边界与时间分组，Agent 2 负责场景和构图。以下规则优先于基础提示词的场景选择要求。
+- 每项 visual_intent 输出 message（本段独有的信息）、viewer_takeaway（观众应理解什么）、source_basis（本组原文依据）、narrative_role（现场动作/经历成因/抽象观点/知识演示）、fact_status（事实/假设/比喻）、progression（新增信息）。使用短语，不输出长篇推理。
+- continuity_requirement 只记录原文必须保持的现场动作与空间条件；旁白讨论的经历不受谈话地点限制。没有明确现场约束时填空，不凭角色所在地点锁住所有画面。
+- visual_focus 描述要传达的内容；visual_mode、setting_hint、scene_choice 若输出仅作候选建议，不能指定 Agent 2 必须沿用。character_ids 不要列仅被提及的人物，不强制主持人或主角每张出镜。
+- 不要在语义规划阶段替每段设计人物表情。讨论现实成因、成本、关系或选择时，保留其具体含义交给视觉导演；现场事件、假设与比喻须明确区分。
+- 定义与解释、观点与必要补充尽量保留在同一语义单元。若与前段无新增信息，可在 merge_suggestion 写明建议合并及原因；仍须遵守时间长度、全文覆盖和结构留白硬边界，不擅自删字幕。
+- 原文事实与用户明确设定最高优先级，纯科普保持结构、数据及因果准确；不增加病名、精确数字、产品能力或人物经历。
+"""
+
 
 PURE_SCIENCE_TIMELINE_CONTRACT = """【纯科普模式硬约束】
 - 不建立、暗示或反复调用默认主持人；原文没有人物参与时，character_ids 必须为 []。
@@ -1414,6 +1476,22 @@ def _create_timeline_story_plan(
                 content_mode,
                 require_ai_success=require_ai_success,
             )
+        if director_strategy == DIRECTOR_STRATEGY_ENHANCED:
+            try:
+                _validate_visual_intents(units)
+            except ValueError:
+                # One bounded repair, with the already validated timeline frozen.
+                repaired = parse_json_response(generate_gemini_text(
+                    system_prompt=ENHANCED_DIRECTOR_AGENT1_CONTRACT + "\n补全每组 visual_intent，返回 {semantic_units:[...]}。所有分组 ID 和起止字幕必须保持不变。",
+                    user_prompt=json.dumps({"semantic_units": units, "subtitle_timeline": compact_scenes}, ensure_ascii=False),
+                    temperature=0.12, response_mime_type="application/json", max_output_tokens=8192,
+                ))
+                repaired_units = _normalize_semantic_units(repaired.get("semantic_units"), scenes)
+                boundaries = lambda rows: [(u.get("unit_id"), u.get("start_slide_id"), u.get("end_slide_id")) for u in rows]
+                if boundaries(repaired_units) != boundaries(units):
+                    raise ValueError("视觉意图补全改变了字幕分组，已安全终止")
+                _validate_visual_intents(repaired_units)
+                units = repaired_units
         combined = dict(story_context)
         combined["semantic_units"] = units
         # story_beats remain the higher-level rhythm map produced by Agent 1;

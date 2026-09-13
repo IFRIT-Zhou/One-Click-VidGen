@@ -1165,23 +1165,7 @@
                     : '可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。'"
                 ></textarea>
               </label>
-              <div class="visual-reference-panel">
-                <div class="sidebar-label">角色一致性增强（可选）</div>
-                <strong>上传角色形象参考图（最多 3 张）</strong>
-                <label class="script-file-picker compact-reference-picker">
-                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadReferenceImages" />
-                  <span>{{ protagonistReferenceUploading ? '上传中' : '浏览图片' }}</span>
-                  <small>{{ referenceImageNames.length ? `已选择 ${referenceImageNames.length} 张（按上传顺序为图 1 至图 ${referenceImageNames.length}）` : 'JPG / PNG / WebP，建议单人清晰半身或正脸图' }}</small>
-                </label>
-                <div v-if="referenceImageNames.length" class="reference-image-chips">
-                  <span v-for="(name, index) in referenceImageNames" :key="`${name}-${index}`" class="reference-image-chip">
-                    图 {{ index + 1 }} · {{ name }}
-                    <button type="button" :title="`移除图 ${index + 1}`" @click="removeReferenceImage(index)">×</button>
-                  </span>
-                </div>
-                <div v-if="protagonistReferenceImageError" class="board-error">{{ protagonistReferenceImageError }}</div>
-                <small class="muted">可在全局人物设定中写“男主角图 1、女主角图 2”。Agent 2 会在镜头提示词中标注“角色形象参考图 1”，并只把实际出场角色对应的图片传给 Image2。</small>
-              </div>
+              <ReferenceMaterials :form="form" :assets="editorAssets" :names="referenceImageNames" :uploading="protagonistReferenceUploading" :error="protagonistReferenceImageError" :auto-analyze="form.auto_analyze_reference_images" @upload="uploadReferenceImages" @remove="removeReferenceImage" />
               <label class="stack">
                 <span>故事世界与环境设定（可选）</span>
                 <textarea
@@ -2691,5 +2675,6 @@
 
 <script>
 import { useWorkspace } from './useWorkspace'
-export default { setup: useWorkspace }
+import ReferenceMaterials from './components/ReferenceMaterials.vue'
+export default { components: { ReferenceMaterials }, setup: useWorkspace }
 </script>

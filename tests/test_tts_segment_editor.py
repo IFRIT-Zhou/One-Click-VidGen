@@ -11,6 +11,7 @@ import module1_agent_director as module1
 from backend.app.tts_editor import (
     TtsEditor,
     _build_regeneration_plan,
+    _commit_canonical_subtitle_timeline,
     _concat_wavs,
     _rewrite_srt_times,
 )
@@ -27,6 +28,32 @@ def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> N
 
 
 class TtsSegmentEditorTest(unittest.TestCase):
+    def test_refined_srt_replaces_old_longer_timeline_generation(self) -> None:
+        """A long TTS segment may collapse many ASR cues; no old rows may survive."""
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            other = project / "other"
+            other.mkdir(parents=True)
+            (other / "最终字幕.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n新第一句\n\n"
+                "2\n00:00:01,000 --> 00:00:02,000\n新第二句\n",
+                encoding="utf-8",
+            )
+            (other / "画面时间线.json").write_text(json.dumps([
+                {"slide_id": f"old_{index}", "text_content": f"旧字幕{index}",
+                 "start": (index - 1) * 0.25, "end": index * 0.25}
+                for index in range(1, 9)
+            ], ensure_ascii=False), encoding="utf-8")
+
+            _commit_canonical_subtitle_timeline(project)
+
+            timeline = json.loads((other / "画面时间线.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(timeline), 2)
+            self.assertEqual([item["text_content"] for item in timeline], ["新第一句", "新第二句"])
+            self.assertEqual([item["slide_id"] for item in timeline], ["scene_001", "scene_002"])
+            corrected = json.loads((other / "模块2.5_校对后字幕场景.json").read_text(encoding="utf-8"))
+            self.assertEqual(corrected, timeline)
+
     def test_refine_request_accepts_voice_and_emotion_overrides(self) -> None:
         payload = TtsSegmentRegenerateRequest(
             indices=[1, 2],

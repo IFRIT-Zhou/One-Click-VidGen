@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import json
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,6 +9,52 @@ from backend.app import pipeline
 
 
 class StepWorkflowV2Test(unittest.TestCase):
+    @staticmethod
+    def _write_audio_snapshot(root: Path, timeline_count: int, srt_count: int) -> pipeline.Job:
+        output = root / "output" / "guided"
+        (output / "input").mkdir(parents=True)
+        segment_dir = output / "other" / "tts_segments"
+        segment_dir.mkdir(parents=True)
+        with wave.open(str(output / "input" / "配音.wav"), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\0\0" * 32000)
+        (output / "other" / "最终字幕.srt").write_text("\n\n".join(
+            f"{index}\n00:00:0{index - 1},000 --> 00:00:0{index},000\n第{index}句"
+            for index in range(1, srt_count + 1)
+        ), encoding="utf-8")
+        (output / "other" / "画面时间线.json").write_text(json.dumps([
+            {"slide_id": f"scene_{index:03d}", "text_content": f"第{index}句",
+             "start": index - 1, "end": index}
+            for index in range(1, timeline_count + 1)
+        ], ensure_ascii=False), encoding="utf-8")
+        (segment_dir / "manifest.json").write_text(json.dumps({
+            "revision": 2,
+            "segments": [{"index": 1, "text": "原始长句", "filename": "segment.wav"}],
+        }, ensure_ascii=False), encoding="utf-8")
+        return pipeline.Job(id="guided", request={
+            "step_mode": True, "_step_workflow_version": 2, "_step_output_dir": "guided",
+        })
+
+    def test_pre_image_validation_rejects_deterministic_srt_timeline_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self._write_audio_snapshot(root, timeline_count=3, srt_count=2)
+            with patch.object(pipeline, "OUTPUT_DIR", root / "output"):
+                with self.assertRaisesRegex(RuntimeError, "时间轴 3 句，SRT 2 句"):
+                    pipeline.validate_step_audio_snapshot(job)
+
+    def test_matching_refined_snapshot_gets_stable_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self._write_audio_snapshot(root, timeline_count=2, srt_count=2)
+            with patch.object(pipeline, "OUTPUT_DIR", root / "output"):
+                first = pipeline.validate_step_audio_snapshot(job)
+                second = pipeline.validate_step_audio_snapshot(job)
+            self.assertEqual(first["fingerprint"], second["fingerprint"])
+            self.assertEqual(first["sentence_count"], 2)
+
     def test_initialize_and_explicit_waiting_transitions_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

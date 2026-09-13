@@ -22,7 +22,7 @@ from typing import Any
 from .db import list_media_assets
 from .pipeline import (
     JOBS_DIR, PROJECT_ROOT, TTS_OUTPUT_DIR, is_step_workflow_v2,
-    persist_step_workflow_state, store,
+    persist_step_workflow_state, store, sync_refined_step_audio_assets,
 )
 from .visual_editor import VisualEditor
 
@@ -32,6 +32,68 @@ SEGMENT_MANIFEST = "manifest.json"
 SUBTITLE_FILENAME = "最终字幕.srt"
 TIMELINE_FILENAME = "画面时间线.json"
 TTS_HISTORY_LIMIT = 20
+
+
+def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
+    """Make the reviewed SRT the sole source of truth for the next stage."""
+    subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
+    timeline_path = project_dir / "other" / TIMELINE_FILENAME
+    entries = _srt_entries(subtitle_path)
+    if not entries:
+        raise ValueError("精修后的最终字幕为空，无法重建时间轴")
+    old: list[dict[str, Any]] = []
+    if timeline_path.is_file():
+        raw = json.loads(timeline_path.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            old = [dict(item) for item in raw if isinstance(item, dict)]
+
+    canonical: list[dict[str, Any]] = []
+    for position, entry in enumerate(entries, 1):
+        start = float(entry["start"])
+        end = float(entry["end"])
+        # Preserve harmless correction metadata from the row occupying this
+        # time span, but never preserve its old identity, text or timing.
+        candidates: list[tuple[float, dict[str, Any]]] = []
+        for item in old:
+            item_start = float(item.get("start") or 0)
+            item_end = float(item.get("end") or 0)
+            overlap = max(0.0, min(end, item_end) - max(start, item_start))
+            if overlap > 0:
+                candidates.append((overlap, item))
+        base = dict(max(candidates, key=lambda value: value[0])[1]) if candidates else {}
+        for key in ("id", "slide_id", "scene_id", "index", "text", "text_content", "start", "end"):
+            base.pop(key, None)
+        base.update({
+            "id": f"scene_{position:03d}",
+            "slide_id": f"scene_{position:03d}",
+            "scene_id": f"scene_{position:03d}",
+            "index": position,
+            "text_content": str(entry["text"]).strip(),
+            "start": round(start, 6),
+            "end": round(end, 6),
+        })
+        canonical.append(base)
+
+    payload = json.dumps(canonical, ensure_ascii=False, indent=2)
+    pending = timeline_path.with_name(f".{timeline_path.name}.{uuid.uuid4().hex}.tmp")
+    pending.write_text(payload, encoding="utf-8")
+    os.replace(pending, timeline_path)
+    corrected = project_dir / "other" / "模块2.5_校对后字幕场景.json"
+    corrected_pending = corrected.with_name(f".{corrected.name}.{uuid.uuid4().hex}.tmp")
+    corrected_pending.write_text(payload, encoding="utf-8")
+    os.replace(corrected_pending, corrected)
+
+
+def _commit_step_audio_edit(job: Any, project_dir: Path) -> None:
+    _commit_canonical_subtitle_timeline(project_dir)
+    if is_step_workflow_v2(job.request):
+        sync_refined_step_audio_assets(job, project_dir)
+        persist_step_workflow_state(
+            job,
+            str(job.request.get("_step_mode_stage") or "audio_review"),
+            message=job.message,
+        )
+        store.update(job, request=job.request)
 
 
 def _srt_time(value: float) -> str:
@@ -581,6 +643,18 @@ class TtsEditor:
             raise FileNotFoundError("找不到该句配音文件")
         return path
 
+    def commit_step_review(self, *, job: Any, user_id: int) -> dict[str, Any]:
+        """Seal the user's reviewed audio/SRT pair before leaving audio review."""
+        if self.status(job.id).get("status") == "running":
+            raise RuntimeError("选中句仍在重配音，请等待完成后再确认")
+        project_dir = self._project_dir(job.id, user_id)
+        self._ensure_module1_layout(job.id, project_dir)
+        self._migrate_legacy_archive(job.id, project_dir)
+        _commit_step_audio_edit(job, project_dir)
+        from .pipeline import validate_step_audio_snapshot
+
+        return validate_step_audio_snapshot(job)
+
     @staticmethod
     def _apply_boundary_delta(project_dir: Path, boundary: float, delta: float) -> None:
         if abs(delta) < 0.0005:
@@ -648,6 +722,7 @@ class TtsEditor:
                 json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             self._sync_module1_flat_outputs(project_dir, job.id)
+            _commit_step_audio_edit(job, project_dir)
         except Exception:
             self._restore_history(project_dir, self._history_entries(project_dir)[-1], consume=True)
             raise
@@ -821,6 +896,7 @@ class TtsEditor:
                     if old_file.name not in used:
                         old_file.unlink(missing_ok=True)
                 self._sync_module1_flat_outputs(project_dir, job.id)
+                _commit_step_audio_edit(job, project_dir)
                 self._set_task(
                     job.id, status="completed", progress=100,
                     message=f"断句已调整；历史 {history_count}/20" + ("，最早一版已自动清理" if pruned else ""),
@@ -883,6 +959,7 @@ class TtsEditor:
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
         self._restore_history(project_dir, history, consume=True)
         self._sync_module1_flat_outputs(project_dir, job.id)
+        _commit_step_audio_edit(job, project_dir)
         store.log(job, f"已撤销音频编辑：{meta.get('action') or '上一步'}")
         return {"ok": True, "history_count": len(self._history_entries(project_dir)), "message": "已撤销上一步音频编辑"}
 
@@ -1261,6 +1338,7 @@ class TtsEditor:
                 updates=subtitle_updates,
             )
         self._sync_module1_flat_outputs(project_dir, job.id)
+        _commit_step_audio_edit(job, project_dir)
         request_updates = {
             "tts_voice_id": manifest.get("tts_voice_id"),
             "tts_speed": manifest.get("tts_speed", 1),

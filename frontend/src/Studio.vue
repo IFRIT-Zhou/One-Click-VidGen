@@ -78,6 +78,39 @@
             <span class="status-chip warning">框架预览</span>
           </article>
 
+          <article class="panel creation-preference-panel">
+            <div class="creation-preference-copy">
+              <div class="eyebrow">CREATION PREFERENCES</div>
+              <h2>新建任务参数</h2>
+              <p class="muted">控制新任务是使用 OCV 推荐默认值，还是沿用你上一次使用的常用选择。</p>
+              <small>文案、上传音频、参考图和 BGM 等任务素材始终会清空，不会串到新项目。</small>
+            </div>
+            <div class="creation-preference-options">
+            <label class="creation-preference-toggle">
+              <span>
+                <strong>新建任务时恢复推荐默认值</strong>
+                <small v-if="restoreDefaultsOnNewProject">分步模式关闭 · 节奏标准 · 情绪参考原音频</small>
+                <small v-else>沿用上次使用的分步模式、节奏与情绪</small>
+              </span>
+              <span class="inline-switch">
+                <input v-model="restoreDefaultsOnNewProject" type="checkbox" />
+                <span class="switch-track"><span></span></span>
+              </span>
+            </label>
+            <label class="creation-preference-toggle">
+              <span>
+                <strong>上传参考图后自动识别用途</strong>
+                <small v-if="form.auto_analyze_reference_images">已开启 · 每张新图片调用一次当前语言模型，结果会缓存</small>
+                <small v-else>默认关闭 · 不调用识图 API，可手动填写素材用途</small>
+              </span>
+              <span class="inline-switch">
+                <input v-model="form.auto_analyze_reference_images" type="checkbox" />
+                <span class="switch-track"><span></span></span>
+              </span>
+            </label>
+            </div>
+          </article>
+
           <article class="panel appearance-panel">
             <div class="panel-head appearance-head">
               <div>
@@ -419,6 +452,7 @@
     <template v-else-if="studioTab==='画面与字幕'">
      <div v-if="!visualEditor.items.length" class="empty">{{visualEditor.task?.message||'画面生成后，将在这里显示可编辑内容。'}}</div>
      <div v-else class="studio-visual-layout"><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small></span></button></aside><div class="studio-shot-detail"><div class="visual-image-grid">
+                <SceneAssets v-if="visualEditorProjectId" :job-id="visualEditorProjectId" />
                 <article v-for="item in studioSelectedImage ? [studioSelectedImage] : []" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
                   <div class="visual-image-actions">
                     <strong>{{ item.id }}</strong>
@@ -456,6 +490,15 @@
                     <span v-if="visualSelfReferenceMacroId === item.id" class="visual-reference-chip">图 1 · 当前画面<button type="button" title="取消当前画面参考" @click="toggleVisualSelfReferenceImage(item.id)">×</button></span>
                     <span v-for="(asset,index) in visualReferenceUploads" :key="asset.id" class="visual-reference-chip" :title="asset.name">{{ visualSelfReferenceMacroId === item.id ? `图 ${index + 2}` : `图 ${index + 1}` }} · {{ asset.name }}<button type="button" :title="`移除 ${asset.name}`" @click="clearVisualReferenceImages(index)">×</button></span>
                     <button type="button" class="visual-reference-clear" @click="clearVisualReferenceImages()">清空全部</button>
+                  </div>
+                  <div v-if="item.scene_reference_url" class="visual-reference-summary">
+                    <label><input type="checkbox" v-model="item.use_scene_reference" /> 使用场景参考 · {{ item.scene_reference_name }}</label>
+                    <button type="button" @click="visualPreviewItem = { ...item, image_url: item.scene_reference_url }">查看场景图</button>
+                    <small>取消勾选仅影响本次重绘；上传新的重绘参考图可替代原参考组合，不影响其他镜头。</small>
+                  </div>
+                  <div v-if="item.reference_materials?.length" class="visual-reference-summary">
+                    <span>本图使用的参考素材</span>
+                    <button v-for="reference in item.reference_materials" :key="reference.label" type="button" :title="reference.description" @click="visualPreviewItem={id:reference.label,image_url:reference.image_url}"><img :src="reference.image_url" :alt="reference.label" style="width:36px;height:28px;object-fit:contain"/>{{ reference.label }}</button>
                   </div>
                   <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
                     <img :src="item.image_url" :alt="item.id" />
@@ -1387,23 +1430,7 @@
                     : '可留空：使用当前模式默认主角。推荐写法：主角：固定外貌；前期造型；后期造型与触发条件。'"
                 ></textarea>
               </label>
-              <div class="visual-reference-panel">
-                <div class="sidebar-label">角色一致性增强（可选）</div>
-                <strong>上传角色形象参考图（最多 3 张）</strong>
-                <label class="script-file-picker compact-reference-picker">
-                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadReferenceImages" />
-                  <span>{{ protagonistReferenceUploading ? '上传中' : '浏览图片' }}</span>
-                  <small>{{ referenceImageNames.length ? `已选择 ${referenceImageNames.length} 张（按上传顺序为图 1 至图 ${referenceImageNames.length}）` : 'JPG / PNG / WebP，建议单人清晰半身或正脸图' }}</small>
-                </label>
-                <div v-if="referenceImageNames.length" class="reference-image-chips">
-                  <span v-for="(name, index) in referenceImageNames" :key="`${name}-${index}`" class="reference-image-chip">
-                    图 {{ index + 1 }} · {{ name }}
-                    <button type="button" :title="`移除图 ${index + 1}`" @click="removeReferenceImage(index)">×</button>
-                  </span>
-                </div>
-                <div v-if="protagonistReferenceImageError" class="board-error">{{ protagonistReferenceImageError }}</div>
-                <small class="muted">可在全局人物设定中写“男主角图 1、女主角图 2”。Agent 2 会在镜头提示词中标注“角色形象参考图 1”，并只把实际出场角色对应的图片传给 Image2。</small>
-              </div>
+              <ReferenceMaterials :form="form" :assets="editorAssets" :names="referenceImageNames" :uploading="protagonistReferenceUploading" :error="protagonistReferenceImageError" :auto-analyze="form.auto_analyze_reference_images" @upload="uploadReferenceImages" @remove="removeReferenceImage" />
               <label class="stack">
                 <span>故事世界与环境设定（可选）</span>
                 <textarea
@@ -1527,6 +1554,13 @@
                     : '忠实、克制地还原原文，保持当前已经验证的画面规划方式。' }}
                 </small>
               </div>
+            <div class="tts-parameter-panel" :style="{ opacity: form.director_strategy === 'enhanced_beta' ? 1 : 0.55 }">
+              <label class="checkbox-row">
+                <input type="checkbox" v-model="form.scene_references_enabled" :disabled="form.director_strategy !== 'enhanced_beta'" />
+                <span>启用场景参考</span>
+              </label>
+              <small class="muted">仅叙事增强可用。为重复的真实场景生成无人参考图，仅用于相关镜头；每个场景额外生成一张图片并计费。关闭后不生成场景参考图。</small>
+            </div>
             <div class="tts-parameter-panel visual-pacing-standalone">
               <div class="visual-pacing-panel">
                 <div class="visual-pacing-copy">
@@ -1919,7 +1953,9 @@ import ImageStudio from './components/ImageStudio.vue'
 import SubtitleStyleEditor from './components/SubtitleStyleEditor.vue'
 import { visualPresentation } from './videoPresentation'
 import ParameterReview from './components/ParameterReview.vue'
-export default { components: { TaskConsole, ParameterReview, ImageStudio, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation } } }
+import SceneAssets from './components/SceneAssets.vue'
+import ReferenceMaterials from './components/ReferenceMaterials.vue'
+export default { components: { ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation } } }
 </script>
 <style scoped>
 .live-studio .setting-summaries{grid-template-columns:repeat(4,minmax(0,1fr))}

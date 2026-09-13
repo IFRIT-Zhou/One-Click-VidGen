@@ -24,7 +24,7 @@ const referenceIds = computed(()=>{
  const ids=Array.isArray(props.request.reference_image_ids)?props.request.reference_image_ids.map(v=>String(v||'').trim()).filter(Boolean):[]
  const legacy=String(props.request.protagonist_reference_image_id||'').trim()
  if(!ids.length&&legacy)ids.push(legacy)
- return [...new Set(ids)].slice(0,3)
+ return [...new Set(ids)].slice(0,6)
 })
 const referenceItems = computed(()=>referenceIds.value.map((id,index)=>props.referenceAssets.find(asset=>asset.id===id)||{id,name:`参考图 ${index+1}`,url:''}))
 const canReset = computed(()=>['failed','cancelled','completed'].includes(props.status))
@@ -55,12 +55,12 @@ const canReset = computed(()=>['failed','cancelled','completed'].includes(props.
   <div v-if="panel==='style' && kind==='video'" class="tts-parameter-panel visual-prompt-panel review-settings">
    <h3>作品风格 <small class="muted">只读</small></h3>
    <label v-for="[key,label] in [['visual_style_prompt','统一画面风格'],['global_character_prompt','全局人物设定'],['story_environment_prompt','故事世界与环境']]" :key="key" class="stack"><span>{{label}}</span><textarea v-if="request[key]" :value="request[key]" readonly :rows="rows(key)"/><p v-else class="muted review-default-note">{{value(key,'未单独指定；具体表现由该任务的模式和提示词规则决定。')}}</p></label>
-   <section v-if="referenceItems.length" class="review-reference-assets"><div><b>角色参考图</b><small>点击图片可放大查看</small></div><button v-for="(asset,index) in referenceItems" :key="asset.id" type="button" class="review-reference-thumb" :title="`查看参考图 ${index+1}`" @click="referencePreview=asset"><img v-if="asset.url" :src="asset.url" :alt="asset.name"/><span v-else>图 {{index+1}}</span><em>图 {{index+1}}</em></button></section>
+   <section v-if="referenceItems.length" class="review-reference-assets"><div><b>参考素材</b><small>点击图片可放大查看</small></div><div v-for="(asset,index) in referenceItems" :key="asset.id"><button type="button" class="review-reference-thumb" :title="request.reference_image_notes?.[asset.id]||'查看参考图'" @click="referencePreview=asset"><img v-if="asset.url" :src="asset.url" :alt="asset.name"/><span v-else>{{request.reference_image_labels?.[asset.id]||`图${index+1}`}}</span><em>{{request.reference_image_labels?.[asset.id]||`图${index+1}`}}</em></button><small>{{request.reference_image_notes?.[asset.id]||'未单独填写用途'}}</small></div></section>
    <details><summary>进阶提示词 · 只读查看</summary><p class="muted">未单独记录的指令不使用当前版本的默认指令替代。</p><label v-for="[key,label] in [['agent0_prompt_system','Agent 0'],['agent1_prompt_system','Agent 1'],['visual_prompt_system','画面指令']]" :key="key" class="stack"><span>{{label}}</span><textarea v-if="request[key]" :value="request[key]" readonly :rows="rows(key)"/><p v-else class="muted">{{value(key,'未保存自定义指令，沿用任务默认规则。')}}</p></label></details>
   </div>
   <div v-if="panel==='pacing' && kind==='video'" class="tts-parameter-panel review-settings">
    <h3>画面编排 <small class="muted">只读</small></h3>
-   <div class="parameter-review-grid"><label v-for="[key,label] in [['director_strategy','导演策略'],['visual_pacing_preset','节奏预设']]" :key="key" class="stack"><span>{{label}}</span><select disabled><option>{{value(key)}}</option></select></label></div>
+   <div class="parameter-review-grid"><label v-for="[key,label] in [['director_strategy','导演策略'],['visual_pacing_preset','节奏预设']]" :key="key" class="stack"><span>{{label}}</span><select disabled><option>{{value(key)}}</option></select></label><label class="stack"><span>场景参考</span><input readonly :value="request.director_strategy === 'enhanced_beta' && request.scene_references_enabled !== false ? '启用' : '关闭'" /></label></div>
    <div class="parameter-review-grid"><label v-for="[key,label] in [['visual_min_duration','最低停留（秒）'],['visual_target_duration','目标时长（秒）'],['visual_max_duration','最长时长（秒）'],['visual_max_slides','单图最多字幕片段']]" :key="key" class="stack"><span>{{label}}</span><input :value="value(key,'按节奏规则确定')" readonly /></label></div>
   </div>
   <details class="review-settings"><summary>其他执行设置 · 只读查看</summary><div class="parameter-review-grid"><label v-for="[key,label] in [['step_mode','逐步确认'],['auto_split_long_text','自动分段'],['split_text_threshold','每段最大字数'],['use_cloud_image_pool','使用号池'],['video_render_variant','成片版本'],['bgm_enabled','背景音乐'],['bgm_fade_enabled','音乐淡入淡出']].filter(([key])=>Object.hasOwn(request,key))" :key="key" class="stack"><span>{{label}}</span><input :value="value(key)" readonly /></label></div></details>
