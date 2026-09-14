@@ -13,28 +13,38 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "OCV portable Python was not found: $python"
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $engineRoot ".git") -PathType Container)) {
+if (Test-Path -LiteralPath (Join-Path $engineRoot ".git") -PathType Container) {
+    git -C $engineRoot pull --ff-only
+    if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source update failed" }
+} elseif (-not (Test-Path -LiteralPath (Join-Path $engineRoot "indextts\infer_v2_5.py") -PathType Leaf)) {
     if (Test-Path -LiteralPath $engineRoot) {
-        throw "IndexTTS25 exists but is not an official Git checkout: $engineRoot"
+        throw "IndexTTS-2.5 source is incomplete: $engineRoot"
     }
     git clone --depth 1 https://github.com/index-tts/index-tts.git $engineRoot
     if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source clone failed" }
 } else {
-    git -C $engineRoot pull --ff-only
-    if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source update failed" }
+    Write-Host "Using the IndexTTS-2.5 source bundled with OCV."
 }
 
 $packages = Join-Path $engineRoot "python_packages"
 New-Item -ItemType Directory -Force $packages | Out-Null
-$env:PIP_CACHE_DIR = Join-Path $ProjectRoot "runtime\cache\pip"
-New-Item -ItemType Directory -Force $env:PIP_CACHE_DIR | Out-Null
-& $python -m pip install --disable-pip-version-check --target $packages --upgrade --no-deps `
-    fugashi unidic-lite openai-whisper tiktoken
-if ($LASTEXITCODE -ne 0) { throw "IndexTTS-2.5 isolated dependency install failed" }
+$requiredPackages = @("fugashi", "unidic_lite", "whisper", "tiktoken")
+$missingPackages = @($requiredPackages | Where-Object { -not (Test-Path -LiteralPath (Join-Path $packages $_)) })
+if ($missingPackages.Count -gt 0) {
+    Write-Host "Repairing IndexTTS-2.5 isolated dependencies: $($missingPackages -join ', ')"
+    $env:PIP_CACHE_DIR = Join-Path $ProjectRoot "runtime\cache\pip"
+    New-Item -ItemType Directory -Force $env:PIP_CACHE_DIR | Out-Null
+    & $python -m pip install --disable-pip-version-check --target $packages --upgrade --no-deps `
+        fugashi unidic-lite openai-whisper tiktoken
+    if ($LASTEXITCODE -ne 0) { throw "IndexTTS-2.5 isolated dependency install failed" }
+} else {
+    Write-Host "IndexTTS-2.5 isolated dependencies are already available."
+}
 
 if (-not $SkipModelDownload) {
     $modelDir = Join-Path $engineRoot "checkpoints"
     New-Item -ItemType Directory -Force $modelDir | Out-Null
+    Write-Host "Downloading the optional IndexTTS-2.5 model (resume is supported)..."
     $downloadCode = @"
 from modelscope.hub.snapshot_download import snapshot_download
 snapshot_download('IndexTeam/IndexTTS-2.5', local_dir=r'$modelDir')
@@ -45,13 +55,15 @@ snapshot_download('IndexTeam/IndexTTS-2.5', local_dir=r'$modelDir')
     $env:PYTHONPATH = "$packages;$engineRoot"
     $env:HF_HOME = Join-Path $modelDir "hf_cache"
     $env:HF_HUB_DOWNLOAD_TIMEOUT = "1800"
-    $auxCode = @"
+$auxCode = @"
+import os
 from indextts.utils.model_download import ensure_models_available
-from huggingface_hub import hf_hub_download
 ensure_models_available(r'$modelDir')
 w2v_dir = r'$modelDir\hf_cache\w2v-bert-2.0'
 for filename in ('model.safetensors', 'conformer_shaw.pt'):
-    hf_hub_download('facebook/w2v-bert-2.0', filename=filename, local_dir=w2v_dir)
+    path = os.path.join(w2v_dir, filename)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
 "@
     & $python -c $auxCode
     if ($LASTEXITCODE -ne 0) { throw "IndexTTS-2.5 auxiliary model download failed; rerun to resume" }

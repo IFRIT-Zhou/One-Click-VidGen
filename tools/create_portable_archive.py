@@ -21,8 +21,10 @@ ROOT_EXCLUDES = {
 }
 
 
-def is_excluded(relative: Path) -> bool:
+def is_excluded(relative: Path, *, without_local_tts: bool = False) -> bool:
     parts = relative.parts
+    if without_local_tts and parts[:3] == ("tools", "IndexTTS25", "checkpoints"):
+        return True
     if not parts or parts[0] in ROOT_EXCLUDES or ".git" in parts or "__pycache__" in parts:
         return True
     if relative.name == ".env" or relative.suffix.lower() in {".pyc", ".pyo", ".log"}:
@@ -51,6 +53,11 @@ def main() -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("archive", type=Path)
     parser.add_argument("--prefix", required=True, help="Top-level folder name inside the ZIP")
+    parser.add_argument(
+        "--without-local-tts",
+        action="store_true",
+        help="Omit IndexTTS-2.5 checkpoints while retaining PyTorch and all other runtimes.",
+    )
     args = parser.parse_args()
 
     source = args.source.resolve()
@@ -63,7 +70,9 @@ def main() -> int:
     files = [
         path
         for path in source.rglob("*")
-        if path.is_file() and not is_excluded(path.relative_to(source))
+        if path.is_file() and not is_excluded(
+            path.relative_to(source), without_local_tts=args.without_local_tts
+        )
     ]
     print(f"[zip] Preparing {len(files)} files", flush=True)
     with zipfile.ZipFile(

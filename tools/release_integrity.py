@@ -30,6 +30,7 @@ INTEGRITY_FILES = (
     "frontend/src/components/SceneAssets.vue",
     "frontend/src/components/SubtitleStyleEditor.vue",
     "backend/app/main.py",
+    "backend/app/local_tts_component.py",
     "backend/app/image_studio.py",
     "backend/app/pipeline.py",
     "backend/app/reference_materials.py",
@@ -49,6 +50,8 @@ INTEGRITY_FILES = (
     "module5_video_render.py",
     "launcher/safe_update_helper.ps1",
     "launcher/update-sources.json",
+    "tools/deploy_indextts25.ps1",
+    "tools/portable_preflight.py",
 )
 
 TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue"}

@@ -17,9 +17,9 @@ REQUIRED_FILES = (
     ".env.example",
     "runtime/python/python.exe",
     "runtime/node/node.exe",
-    "tools/IndexTTS25/checkpoints/gpt.pth",
-    "tools/IndexTTS25/checkpoints/codec.pth",
-    "tools/IndexTTS25/checkpoints/s2mel.pth",
+    "tools/IndexTTS25/indextts/infer_v2_5.py",
+    "tools/IndexTTS25/python_packages/tiktoken/__init__.py",
+    "tools/IndexTTS25/python_packages/whisper/__init__.py",
     "tools/IndexTTS25/examples/voice_05.wav",
     "launcher/update-channel.json",
     "launcher/update-sources.json",
@@ -28,6 +28,12 @@ REQUIRED_FILES = (
     "frontend/node_modules/vite/bin/vite.js",
     "node_modules/hyperframes/package.json",
     "runtime/hyperframes/.cache/hyperframes/chrome/chrome-headless-shell/win64-131.0.6778.85/chrome-headless-shell-win64/chrome-headless-shell.exe",
+)
+
+LOCAL_TTS_MODEL_FILES = (
+    "tools/IndexTTS25/checkpoints/gpt.pth",
+    "tools/IndexTTS25/checkpoints/codec.pth",
+    "tools/IndexTTS25/checkpoints/s2mel.pth",
 )
 
 FORBIDDEN_PATHS = (
@@ -50,6 +56,11 @@ FORBIDDEN_PATHS = (
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
+    parser.add_argument(
+        "--without-local-tts",
+        action="store_true",
+        help="Audit a lightweight package that intentionally omits IndexTTS-2.5 weights.",
+    )
     args = parser.parse_args()
     root = args.root.resolve()
     errors: list[str] = []
@@ -62,6 +73,17 @@ def main() -> int:
     for relative in REQUIRED_FILES:
         if not (root / Path(relative)).is_file():
             errors.append(f"缺少必需文件：{relative}")
+
+    if args.without_local_tts:
+        installed_model_files = [relative for relative in LOCAL_TTS_MODEL_FILES if (root / Path(relative)).is_file()]
+        if installed_model_files:
+            errors.append("轻便包仍含本地 TTS 大型权重：" + ", ".join(installed_model_files))
+        else:
+            notes.append("local_tts_model=optional/not bundled")
+    else:
+        for relative in LOCAL_TTS_MODEL_FILES:
+            if not (root / Path(relative)).is_file():
+                errors.append(f"完整包缺少本地 TTS 权重：{relative}")
 
     for relative in FORBIDDEN_PATHS:
         if (root / Path(relative)).exists():

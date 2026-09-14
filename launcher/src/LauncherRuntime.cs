@@ -302,7 +302,21 @@ namespace OcvLauncher
                 AddFileCheck(items, "FFmpeg", Path.Combine(root, "tools", "ffmpeg", "bin", "ffmpeg.exe"));
                 AddDirectoryCheck(items, "根目录依赖", Path.Combine(root, "node_modules", "hyperframes"));
                 AddDirectoryCheck(items, "前端依赖", Path.Combine(root, "frontend", "node_modules"));
-                AddDirectoryCheck(items, "IndexTTS-2.5 模型", Path.Combine(root, "tools", "IndexTTS25", "checkpoints"));
+                string ttsModelRoot = Path.Combine(root, "tools", "IndexTTS25", "checkpoints");
+                bool localTtsInstalled = File.Exists(Path.Combine(ttsModelRoot, "config.yaml"))
+                    && File.Exists(Path.Combine(ttsModelRoot, "gpt.pth"))
+                    && File.Exists(Path.Combine(ttsModelRoot, "codec.pth"))
+                    && File.Exists(Path.Combine(ttsModelRoot, "s2mel.pth"));
+                items.Add(new CheckItem
+                {
+                    Name = "本地 TTS 模型（可选）",
+                    // Lightweight packages intentionally omit this component.
+                    // It must never make the complete OCV workspace fail its check.
+                    Passed = true,
+                    Detail = localTtsInstalled
+                        ? "IndexTTS-2.5 权重已安装"
+                        : "未安装；不影响集群/API 配音，可在 OCV 声音设置中补充下载"
+                });
                 AddDirectoryCheck(items, "Faster-Whisper 模型", Path.Combine(root, "tools", "whisper_models", "faster-whisper-base"));
 
                 string browserRoot = Path.Combine(root, "runtime", "hyperframes", ".cache", "hyperframes", "chrome");

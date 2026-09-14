@@ -1083,7 +1083,7 @@
                     <div class="sidebar-label">{{ ttsEngineLabel }}</div>
                     <label class="tts-engine-select" title="选择配音执行方式">
                       <span>执行方式</span>
-                      <select v-model="ttsEngine">
+                      <select v-model="ttsEngine" @change="handleTtsEngineChanged">
                         <option value="indextts25">本地 GPU · IndexTTS-2.5</option>
                         <option value="cluster">集群 GPU · IndexTTS-2.5</option>
                         <option value="qwen">Qwen-TTS</option>
@@ -1103,8 +1103,13 @@
                 </div>
               </div>
               <div v-if="ttsEngine === 'indextts25'" class="local-tts-hardware-note">
-                <strong>本地配音需要 NVIDIA 显卡</strong>
-                <span>建议至少 8GB 显存，并保持并行数 1；6GB 及以下显存建议改用集群 GPU 或 Qwen-TTS。</span>
+                <div>
+                  <strong>本地配音需要 NVIDIA 显卡</strong>
+                  <span>建议至少 8GB 显存，并保持并行数 1；6GB 及以下显存建议改用集群 GPU 或 Qwen-TTS。</span>
+                </div>
+                <button v-if="!health.tts25_online" class="ghost-btn compact-btn" type="button" @click="openLocalTtsInstaller">
+                  安装本地语音模型
+                </button>
               </div>
               <div v-if="ttsEngine === 'indextts25'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
@@ -1896,6 +1901,44 @@
         <footer class="cloud-recharge-success-actions">
           <button class="ghost-btn" type="button" @click="continueCloudRecharge">继续充值</button>
           <button class="cloud-recharge-pay" type="button" @click="finishCloudRecharge">完成</button>
+        </footer>
+      </section>
+    </div><div v-if="localTtsInstallerOpen" class="local-tts-install-overlay" role="dialog" aria-modal="true" aria-labelledby="local-tts-install-title" @click.self="closeLocalTtsInstaller">
+      <section class="local-tts-install-dialog">
+        <header>
+          <div>
+            <div class="eyebrow">可选本地组件</div>
+            <h2 id="local-tts-install-title">安装 IndexTTS-2.5 语音模型</h2>
+          </div>
+          <button class="ghost-btn compact-btn" type="button" @click="closeLocalTtsInstaller">关闭</button>
+        </header>
+        <div v-if="localTtsComponent.ready" class="local-tts-install-result success">
+          <strong>本地语音模型已就绪</strong>
+          <p>现在可以正常使用本地 GPU 配音，功能与完整整合包一致。</p>
+        </div>
+        <template v-else>
+          <div class="local-tts-install-copy">
+            <strong>{{ localTtsComponent.message }}</strong>
+            <p>轻便包只省略约 {{ localTtsEstimatedGb }} GB 的模型权重。PyTorch、字幕、图像与渲染环境均已保留；不安装也不会影响集群 GPU、Qwen-TTS 或已有配音模式。</p>
+          </div>
+          <div v-if="localTtsComponent.installing || localTtsComponent.downloaded_bytes" class="local-tts-progress-block">
+            <div><span>{{ localTtsComponent.installing ? '正在后台下载与校验' : '已发现部分模型，可继续安装' }}</span><strong>{{ localTtsDownloadedGb }} / 约 {{ localTtsEstimatedGb }} GB</strong></div>
+            <div class="local-tts-progress"><i :style="{ width: `${localTtsInstallProgress}%` }"></i></div>
+            <small>可以关闭此窗口继续使用其他功能；OCV 会保留已下载内容并支持继续安装。</small>
+          </div>
+          <p v-if="localTtsInstallError" class="local-tts-install-error">{{ localTtsInstallError }}</p>
+          <p v-if="localTtsComponent.runtime_missing?.length" class="local-tts-install-error">基础运行文件不完整，请重新下载 OCV 轻便包或完整包。</p>
+        </template>
+        <footer>
+          <button class="ghost-btn" type="button" @click="switchToClusterTts">改用集群 GPU</button>
+          <button
+            class="primary-btn"
+            type="button"
+            :disabled="localTtsInstallBusy || localTtsComponent.installing || localTtsComponent.ready || localTtsComponent.runtime_missing?.length"
+            @click="startLocalTtsInstall"
+          >
+            {{ localTtsComponent.installing ? '正在安装…' : (localTtsComponent.downloaded_bytes ? '继续安装' : '下载并安装') }}
+          </button>
         </footer>
       </section>
     </div><div v-if="preflightOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="preflight-title">

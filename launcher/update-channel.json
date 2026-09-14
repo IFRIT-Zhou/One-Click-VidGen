@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.14.1",
-  "release_order": 2026091401,
-  "display_version": "2026.09.14 叙事增强与参考素材更新",
+  "release_id": "2026.09.14.2",
+  "release_order": 2026091402,
+  "display_version": "2026.09.14 本地 TTS 按需安装更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.14.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.14.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.14.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.14.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "升级叙事增强、提示词定稿与场景参考能力；新增多参考图选择和素材展示，并修复参考人物优先级、分步时间轴一致性、单图兜底及编辑刷新问题。",
-  "content_fingerprint": "5325687b579472bee2259d185e70d4cd2057a8a5604305117321f1ace302f132"
+  "notes": "新增轻便整合包支持：保留完整运行环境，将本地 IndexTTS-2.5 权重改为可选组件；缺少权重时仍可使用集群、API、字幕、图像及渲染功能，并可在声音设置中按需安装。",
+  "content_fingerprint": "7fdd112557994c2a06226b4d6ac0e579675dfcf15abe9e9367991809fab13106"
 }

@@ -585,7 +585,7 @@
                     <div class="sidebar-label">{{ ttsEngineLabel }}</div>
                     <label class="tts-engine-select" title="选择配音执行方式">
                       <span>执行方式</span>
-                      <select v-model="ttsEngine">
+                      <select v-model="ttsEngine" @change="handleTtsEngineChanged">
                         <option value="indextts25">本地 GPU · IndexTTS-2.5</option>
                         <option value="cluster">集群 GPU</option>
                         <option value="qwen">Qwen-TTS</option>
@@ -607,6 +607,7 @@
               <div v-if="ttsEngine === 'indextts25'" class="local-tts-hardware-note">
                 <strong>本地配音需要 NVIDIA 显卡</strong>
                 <span>建议至少 8GB 显存，并保持并行数 1；6GB 及以下显存建议改用集群 GPU 或 Qwen-TTS。</span>
+                <button v-if="!health.tts25_online" class="ghost-btn compact-btn" type="button" @click="openLocalTtsInstaller">安装本地语音模型</button>
               </div>
               <div v-if="ttsEngine === 'indextts25'" class="form-grid tts-param-grid">
                 <div class="script-upload-field tts-voice-upload">
@@ -2095,7 +2096,7 @@
                 <p class="muted create-summary">只执行断句、配音和原始字幕，不启动 ASR、双 Agent、出图及视频合成。</p>
               </div>
               <div class="module1-engine-control">
-                <select v-model="ttsEngine">
+                <select v-model="ttsEngine" @change="handleTtsEngineChanged">
                   <option value="indextts25">本地 GPU · IndexTTS-2.5</option>
                   <option value="cluster">集群 GPU</option>
                   <option value="qwen">Qwen-TTS</option>
@@ -2109,6 +2110,7 @@
             <div v-if="ttsEngine === 'indextts25'" class="local-tts-hardware-note module1-hardware-note">
               <strong>本地配音需要 NVIDIA 显卡</strong>
               <span>建议至少 8GB 显存，并保持并行数 1；6GB 及以下显存建议改用集群 GPU 或 Qwen-TTS。</span>
+              <button v-if="!health.tts25_online" class="ghost-btn compact-btn" type="button" @click="openLocalTtsInstaller">安装本地语音模型</button>
             </div>
 
             <div class="module1-layout">
@@ -2632,6 +2634,32 @@
           <button class="ghost-btn" type="button" @click="continueCloudRecharge">继续充值</button>
           <button class="cloud-recharge-pay" type="button" @click="finishCloudRecharge">完成</button>
         </footer>
+      </section>
+    </div>
+
+    <div v-if="localTtsInstallerOpen" class="preflight-overlay" role="dialog" aria-modal="true" aria-labelledby="legacy-local-tts-title" @click.self="closeLocalTtsInstaller">
+      <section class="preflight-dialog">
+        <div class="preflight-head">
+          <div>
+            <div class="eyebrow">可选本地组件</div>
+            <h2 id="legacy-local-tts-title">安装 IndexTTS-2.5 语音模型</h2>
+            <p class="muted">轻便包仅省略约 {{ localTtsEstimatedGb }} GB 权重，不安装也不影响集群/API 配音及其他功能。</p>
+          </div>
+          <button class="ghost-btn compact-btn" type="button" @click="closeLocalTtsInstaller">关闭</button>
+        </div>
+        <div class="preflight-body">
+          <article class="preflight-item" :class="localTtsComponent.ready ? 'passed' : 'warning'">
+            <span class="preflight-item-icon">{{ localTtsComponent.ready ? '✓' : '!' }}</span>
+            <div><strong>{{ localTtsComponent.message }}</strong><p v-if="localTtsComponent.installing || localTtsComponent.downloaded_bytes">已下载 {{ localTtsDownloadedGb }} / 约 {{ localTtsEstimatedGb }} GB；安装可在后台继续。</p></div>
+          </article>
+          <p v-if="localTtsInstallError" class="studio-notice error">{{ localTtsInstallError }}</p>
+          <div class="preflight-actions">
+            <button class="ghost-btn" type="button" @click="switchToClusterTts">改用集群 GPU</button>
+            <button class="primary-btn" type="button" :disabled="localTtsInstallBusy || localTtsComponent.installing || localTtsComponent.ready || localTtsComponent.runtime_missing?.length" @click="startLocalTtsInstall">
+              {{ localTtsComponent.installing ? '正在安装…' : (localTtsComponent.downloaded_bytes ? '继续安装' : '下载并安装') }}
+            </button>
+          </div>
+        </div>
       </section>
     </div>
 

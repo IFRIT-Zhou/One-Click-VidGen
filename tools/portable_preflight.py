@@ -53,15 +53,33 @@ def validate_portable_env() -> list[str]:
 
 def main() -> int:
     problems = validate_portable_env()
-    required_25 = (
+    required_25_runtime = (
+        PROJECT_ROOT / "tools" / "IndexTTS25" / "indextts" / "infer_v2_5.py",
+        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "whisper",
+        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "tiktoken",
+        PROJECT_ROOT / "tools" / "IndexTTS25" / "examples" / "voice_05.wav",
+    )
+    missing_25_runtime = [
+        str(path.relative_to(PROJECT_ROOT)) for path in required_25_runtime if not path.exists()
+    ]
+    if missing_25_runtime:
+        problems.append("IndexTTS-2.5 base runtime is incomplete: " + ", ".join(missing_25_runtime))
+
+    optional_25_model = (
         MODEL_DIR / "config.yaml",
         MODEL_DIR / "gpt.pth",
+        MODEL_DIR / "codec.pth",
+        MODEL_DIR / "s2mel.pth",
         MODEL_DIR / "multilingual_zh_ja_yue_char_del.tiktoken",
-        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "tiktoken",
     )
-    missing_25 = [str(path.relative_to(PROJECT_ROOT)) for path in required_25 if not path.exists()]
-    if missing_25:
-        problems.append("IndexTTS-2.5 runtime is incomplete: " + ", ".join(missing_25))
+    missing_25_model = [
+        str(path.relative_to(PROJECT_ROOT)) for path in optional_25_model if not path.exists()
+    ]
+    if missing_25_model:
+        print(
+            "[portable] Optional IndexTTS-2.5 model is not installed; "
+            "cluster/API TTS and all other features remain available."
+        )
     else:
         print(f"[portable] IndexTTS-2.5 model: {MODEL_DIR}")
     required_whisper = (

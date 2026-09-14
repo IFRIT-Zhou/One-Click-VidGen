@@ -49,6 +49,7 @@ from .indextts25_local import (
     load_indextts25_config,
     resolve_voice_reference,
 )
+from .local_tts_component import component_status as local_tts_component_status, start_install as start_local_tts_install
 from .qwen_tts import DEFAULT_VOICE as DEFAULT_QWEN_VOICE, voice_supports_instructions
 from .editor import (
     edit_store,
@@ -557,6 +558,7 @@ def _plugin_manifest_items() -> list[dict[str, Any]]:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     indextts25 = load_indextts25_config()
+    local_tts_component = local_tts_component_status()
     cloud = load_cloud_config()
     active_tasks = store.active_job_summary() + edit_store.active_job_summary()
     return {
@@ -574,6 +576,7 @@ def health() -> dict[str, Any]:
         "tts25_voice_id": indextts25.default_voice,
         "tts25_device": indextts25.device,
         "tts25_missing": indextts25.missing_resources(),
+        "tts25_component": local_tts_component,
         "cloud": {
             "configured": cloud.configured,
             "base_url": cloud.base_url,
@@ -667,12 +670,34 @@ def start_tts(request: Request) -> dict[str, Any]:
             "started": False,
             "message": f"官方 IndexTTS-2.5 已就绪（{indextts25.device}）",
         }
+    runtime_missing = indextts25.missing_runtime_resources()
+    model_missing = indextts25.missing_model_resources()
     return {
         "online": False,
         "launching": False,
         "started": False,
-        "message": "官方 IndexTTS-2.5 未就绪：" + "、".join(indextts25.missing_resources()),
+        "message": (
+            "本地 TTS 基础环境不完整：" + "、".join(runtime_missing)
+            if runtime_missing
+            else "本地 IndexTTS-2.5 权重尚未安装，可在声音设置中补充下载。缺少："
+            + "、".join(model_missing)
+        ),
     }
+
+
+@app.get("/api/tts/local-component")
+def local_tts_component(request: Request) -> dict[str, Any]:
+    require_user(request)
+    return local_tts_component_status()
+
+
+@app.post("/api/tts/local-component/install")
+def install_local_tts_component(request: Request) -> dict[str, Any]:
+    require_user(request)
+    try:
+        return start_local_tts_install()
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/session")
@@ -2175,8 +2200,12 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     elif data.get("tts_engine") == "indextts25":
         config = load_indextts25_config()
         if not config.ready:
-            missing = "、".join(config.missing_resources()) or "运行资源不完整"
-            raise HTTPException(status_code=503, detail=f"IndexTTS-2.5 本地环境未就绪：{missing}")
+            runtime_missing = config.missing_runtime_resources()
+            if runtime_missing:
+                detail = "本地 TTS 基础环境不完整，请重新下载 OCV 整合包：" + "、".join(runtime_missing)
+            else:
+                detail = "本地 IndexTTS-2.5 权重尚未安装，请在声音设置中下载安装，或改用集群/API 配音。"
+            raise HTTPException(status_code=503, detail=detail)
         try:
             resolve_voice_reference(config, data.get("tts_voice_id"), user_id=int(user["id"]))
         except (FileNotFoundError, ValueError) as exc:

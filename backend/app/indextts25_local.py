@@ -80,7 +80,7 @@ class IndexTTS25Config:
     def available_voices(self) -> tuple[str, ...]:
         return tuple(voice for voice in VOICE_IDS if (self.examples_dir / voice).is_file())
 
-    def missing_resources(self) -> list[str]:
+    def missing_runtime_resources(self) -> list[str]:
         missing: list[str] = []
         for label, path in (
             ("官方 IndexTTS-2.5 源码", self.root / "indextts" / "infer_v2_5.py"),
@@ -90,15 +90,26 @@ class IndexTTS25Config:
         ):
             if not path.exists():
                 missing.append(label)
+        if not self.available_voices():
+            missing.append("IndexTTS-2.5 参考音频")
+        return missing
+
+    def missing_model_resources(self) -> list[str]:
+        missing: list[str] = []
         for relative in REQUIRED_MODEL_FILES:
             if not (self.model_dir / relative).is_file():
                 missing.append(f"2.5 模型文件 {relative}")
         for relative in REQUIRED_MODEL_DIRS:
             if not (self.model_dir / relative).is_dir():
                 missing.append(f"2.5 模型目录 {relative}")
-        if not self.available_voices():
-            missing.append("IndexTTS-2.5 参考音频")
         return missing
+
+    def missing_resources(self) -> list[str]:
+        return self.missing_runtime_resources() + self.missing_model_resources()
+
+    @property
+    def model_installed(self) -> bool:
+        return not self.missing_model_resources()
 
     @property
     def ready(self) -> bool:

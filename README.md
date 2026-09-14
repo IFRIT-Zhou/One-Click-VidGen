@@ -10,8 +10,11 @@
 
 - **源码部署版（本仓库）**：适合开发者和协作者。包含完整源码、测试、依赖清单与锁文件，
   依赖通过包管理器安装。
-- **Windows 便携整合包**：适合普通用户。额外包含约 17 GB 的 Python/CUDA、Node.js、
-  FFmpeg、Chrome Headless Shell、IndexTTS-2.5 模型和其他运行资源，解压后双击启动。
+- **Windows 完整整合包**：包含 Python/PyTorch/CUDA、Node.js、FFmpeg、Chrome Headless
+  Shell、IndexTTS-2.5 权重和其他运行资源，解压后可直接使用本地 GPU 配音。
+- **Windows 轻便整合包**：与完整包使用同一套程序和更新通道，只省略约 10.2 GiB 的
+  IndexTTS-2.5 权重。集群 GPU、Qwen-TTS、已有配音、字幕和视频渲染均可直接使用；需要
+  本地配音时可在声音设置中继续下载安装权重。
 
 受 GitHub 单文件和仓库存储限制，便携运行时与模型权重不放入源码仓库，请从项目发布页或
 项目提供的网盘获取完整整合包。API Key、任务数据、日志和生成媒体同样不会进入版本控制。
@@ -94,8 +97,8 @@ Refresh Token 只保存在后端进程内存中，后端重启后需要重新登
 
 Windows 双击 `start_windows.bat`；Linux 可运行 `./start.sh`。
 
-注意：`start_windows.bat` 面向包含 `runtime/`、`tools/ffmpeg/` 和 IndexTTS-2.5 模型的便携
-整合包。纯 Git 源码部署请分别运行：
+注意：`start_windows.bat` 面向包含 `runtime/` 和 `tools/ffmpeg/` 的 Windows 便携整合包；
+IndexTTS-2.5 权重在轻便包中是可选组件，不会阻止 OCV 启动。纯 Git 源码部署请分别运行：
 
 ```bash
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010

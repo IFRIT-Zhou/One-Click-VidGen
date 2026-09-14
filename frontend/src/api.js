@@ -124,6 +124,8 @@ export const api = {
   }),
   cloudRechargeOrder: (id) => requestJSON(`/api/cloud/recharge/orders/${encodeURIComponent(id)}`),
   startTts: () => requestJSON('/api/tts/start', { method: 'POST' }),
+  localTtsComponent: () => requestJSON('/api/tts/local-component'),
+  installLocalTtsComponent: () => requestJSON('/api/tts/local-component/install', { method: 'POST' }),
   plugins: () => requestJSON('/api/plugins'),
   togglePlugin: (folder) => requestJSON(`/api/plugins/${encodeURIComponent(folder)}/toggle`, { method: 'POST' }),
   openPluginsFolder: () => requestJSON('/api/plugins/open-folder', { method: 'POST' }),
