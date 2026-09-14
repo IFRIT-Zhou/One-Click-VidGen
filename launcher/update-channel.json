@@ -13,5 +13,5 @@
   ],
   "archive_sha256": "",
   "notes": "新增轻便整合包支持：保留完整运行环境，将本地 IndexTTS-2.5 权重改为可选组件；缺少权重时仍可使用集群、API、字幕、图像及渲染功能，并可在声音设置中按需安装。",
-  "content_fingerprint": "7fdd112557994c2a06226b4d6ac0e579675dfcf15abe9e9367991809fab13106"
+  "content_fingerprint": "d5d107c7f1451e2681d08bad0cb32a0eac4e9948d5073b540bbcaa6dfd7a5bbd"
 }

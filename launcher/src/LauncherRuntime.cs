@@ -111,6 +111,7 @@ namespace OcvLauncher
             "frontend/src/components/SceneAssets.vue",
             "frontend/src/components/SubtitleStyleEditor.vue",
             "backend/app/main.py",
+            "backend/app/local_tts_component.py",
             "backend/app/image_studio.py",
             "backend/app/pipeline.py",
             "backend/app/reference_materials.py",
@@ -129,7 +130,9 @@ namespace OcvLauncher
             "module4_video_render.py",
             "module5_video_render.py",
             "launcher/safe_update_helper.ps1",
-            "launcher/update-sources.json"
+            "launcher/update-sources.json",
+            "tools/deploy_indextts25.ps1",
+            "tools/portable_preflight.py"
         };
         private readonly string root;
 
