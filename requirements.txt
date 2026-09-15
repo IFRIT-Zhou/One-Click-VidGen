@@ -39,6 +39,20 @@ tiktoken==0.13.0
 fugashi==1.5.2
 unidic-lite==1.0.8
 
+# Additional upstream dependencies of the IndexTTS-2.5 inference path that the
+# isolated overlay in tools/IndexTTS25/python_packages does not provide
+# (deploy_indextts25.ps1 only installs fugashi/unidic-lite/openai-whisper/tiktoken
+# there, with --no-deps). Verified against the import graph reachable from
+# indextts/infer_v2_5.py; versions follow the upstream pyproject.toml pins.
+#   einops     -> codec/amphion_codec/quantize/*.py (module level)
+#   munch      -> s2mel/modules/commons.py (module level)
+#   audiotools -> s2mel/dac/__init__.py (module level, via length_regulator)
+#   wetext     -> utils/front.py TextNormalizer on Windows/macOS (upstream marker)
+einops==0.8.2
+munch==4.0.0
+descript-audiotools==0.7.2
+wetext==0.1.8; platform_system != "Linux"
+
 # Utilities required by the official TTS runtime and this application
 numpy==1.26.2
 librosa==0.10.2.post1

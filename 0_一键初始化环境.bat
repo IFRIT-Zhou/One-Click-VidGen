@@ -336,6 +336,19 @@ if "!IS_PORTABLE!"=="1" (
     if "!INDEXTTS_OK!"=="1" (
         if "!INDEXTTS_WEIGHTS!"=="1" (set "INDEXTTS_STATUS=本地配音可用") else (set "INDEXTTS_STATUS=仅基础就绪，本地配音未启用")
         echo [信息] IndexTTS-2.5 基础运行时就绪。
+        rem 上游 IndexTTS-2.5 推理路径还需要 einops / munch / audiotools / wetext，
+        rem 官方 deploy_indextts25.ps1 只在 python_packages 装了 4 个隔离包，这里补齐并修复旧环境
+        "%PYEXE%" -I -c "import einops, munch, audiotools, wetext" >nul 2>nul
+        if errorlevel 1 (
+            echo [信息] IndexTTS-2.5 运行依赖不完整，正在补齐 requirements.txt ...
+            if not defined PIP_INDEX set "PIP_INDEX=%OCV_PIP_INDEX%"
+            "%PYEXE%" -m pip install -r "%ROOT_DIR%requirements.txt" -i "!PIP_INDEX!" --retries 5 --timeout 60
+            if errorlevel 1 (
+                echo [警告] IndexTTS-2.5 运行依赖补齐失败，本地配音可能不可用。
+            ) else (
+                echo [信息] IndexTTS-2.5 运行依赖已就绪。
+            )
+        )
         if not "!INDEXTTS_WEIGHTS!"=="1" (
             echo [信息] 未安装本地配音权重，本机跑 IndexTTS-2.5 模型不可用（约 10.2 GB）。
             echo        集群 GPU 配音、Qwen-TTS 云端配音、上传或已有配音、字幕识别与视频渲染
