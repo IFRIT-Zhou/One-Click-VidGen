@@ -1,54 +1,898 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
+rem ============================================================================
+rem ±æŒƒº˛±ÿ–Î±£≥÷ GBK(cp936) ±‡¬Î + chcp 936°£
+rem ÷–Œƒ≈˙¥¶¿Ì»Ù¥Ê≥… UTF-8 ≤¢≈‰∫œ chcp 65001£¨cmd Ω‚Œˆ ±ª·Ωÿ∂œ÷–Œƒ––≤¢µ±≥…√¸¡Ó
+rem ÷¥––£® µ≤‚ 21 ––÷–Œƒ¿Ô 4 ––±® "is not recognized"£©°£«ÎŒ∏ƒªÿ UTF-8°£
+rem ============================================================================
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
-chcp 65001 >nul
-title ÂàùÂßãÂåñ‰æøÊê∫ËßÜÈ¢ë‰∫ßÁ∫øÁéØÂ¢É
-set "PYTHON=%ROOT_DIR%runtime\python\python.exe"
-set "NPM=%ROOT_DIR%runtime\node\npm.cmd"
+chcp 936 >nul
+title ≥ı ºªØ±„–Ø ”∆µ≤˙œﬂª∑æ≥
+
+rem ==================== ø…∏≤∏«≤Œ ˝£®…Ë÷√Õ¨√˚ª∑æ≥±‰¡øº¥ø…£¨Œﬁ–Ë∏ƒŒƒº˛£© ====================
+if not defined OCV_PYTHON_VERSION  set "OCV_PYTHON_VERSION=3.11.13"
+if not defined OCV_PYTHON_BUILD    set "OCV_PYTHON_BUILD=20250818"
+if not defined OCV_NODE_VERSION    set "OCV_NODE_VERSION=22.20.0"
+if not defined OCV_CHROME_VERSION  set "OCV_CHROME_VERSION=131.0.6778.85"
+if not defined OCV_HF_ENDPOINT     set "OCV_HF_ENDPOINT=https://hf-mirror.com"
+if not defined OCV_PIP_INDEX       set "OCV_PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/"
+if not defined OCV_TORCH_WHEELS    set "OCV_TORCH_WHEELS=https://mirrors.aliyun.com/pytorch-wheels/cu128/"
+if not defined OCV_TORCH_INDEX     set "OCV_TORCH_INDEX=https://mirror.sjtu.edu.cn/pytorch-wheels/cu128/"
+rem   OCV_PYTHON                    ÷∏∂®“—”–Ω‚ Õ∆˜£®±ÿ–Î 64 Œª°¢3.10~3.12£©£¨”≈œ»º∂◊Ó∏ﬂ
+rem   OCV_PYTHON_MODE               portable=«ø÷∆œ¬‘ÿ±„–Ø Python£ªsystem=«ø÷∆ π”√±æª˙ Python
+rem   OCV_PYTHON_URL                ∏≤∏«±„–Ø Python œ¬‘ÿ‘¥«∞◊∫£®ƒø¬º–Œ Ω£¨–Ë“‘ / Ω·Œ≤£©
+rem   OCV_INDEXTTS_URL              ∏≤∏« IndexTTS-2.5 ‘¥¬Î∞¸œ¬‘ÿµÿ÷∑
+rem   OCV_FFMPEG_URL                ∏≤∏« FFmpeg —πÀı∞¸œ¬‘ÿµÿ÷∑
+rem   OCV_INSTALL_INDEXTTS_MODEL    1=œ¬‘ÿ±æµÿ≈‰“Ù»®÷ÿ£®‘º 10.2 GB£¨Ωˆ±æª˙≈‹ƒ£–Õ ±–Ë“™£¨Ω®“Èø…”√œ‘¥Ê 8 GB “‘…œ£©£ª0=≤ªœ¬‘ÿ«“≤ª—ØŒ 
+rem   OCV_FORCE_FFMPEG=1            œµÕ≥“—”– ffmpeg  ±“≤œ¬‘ÿ±„–Ø∞Ê±æ
+rem   OCV_SKIP_INDEX_PROBE=1       Ã¯π˝ PyPI æµœÒ≤‚ÀŸ£¨÷±Ω””√ OCV_PIP_INDEX
+rem   OCV_TORCH_INDEX            torch µƒ PEP 503 À˜“˝‘¥£®ƒ¨»œΩª¥ÛæµœÒ£¨ø…ªªπŸ∑Ω£©
+rem   OCV_TORCH_WHEELS           ±‚∆Ω cu128 ¬÷◊”ƒø¬º£®ƒ¨»œ∞¢¿Ô‘∆£¨◊˜ --find-links ±∏∑›£©
+rem   OCV_SKIP_PIP / OCV_SKIP_NPM / OCV_SKIP_NODE / OCV_SKIP_FFMPEG / OCV_SKIP_CHROME
+rem   OCV_SKIP_WHISPER / OCV_SKIP_INDEXTTS   …ËŒ™ 1 Ã¯π˝∂‘”¶≤Ω÷Ë
+
+set "PORTABLE_PY=%ROOT_DIR%runtime\python\python.exe"
+set "VENV_DIR=%ROOT_DIR%runtime\python"
+set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
+set "NODE_DIR=%ROOT_DIR%runtime\node"
+set "NPM=%NODE_DIR%\npm.cmd"
+set "FFMPEG_DIR=%ROOT_DIR%tools\ffmpeg\bin"
+set "BROWSER_DIR=%ROOT_DIR%runtime\hyperframes\.cache\hyperframes\chrome"
+set "WHISPER_DIR=%ROOT_DIR%tools\whisper_models\faster-whisper-base"
+set "INDEXTTS_DIR=%ROOT_DIR%tools\IndexTTS25"
+set "BOOT_DIR=%ROOT_DIR%runtime\_bootstrap"
 set "npm_config_cache=%ROOT_DIR%runtime\npm-cache"
-set "PATH=%ROOT_DIR%runtime\python;%ROOT_DIR%runtime\node;%ROOT_DIR%tools\ffmpeg\bin;%PATH%"
+set "PROBE_OUT=%TEMP%\ocv_python_probe.out"
+set "PROBE_CODE=import struct,sys;print(sys.executable);print(sys.version_info[0]*100+sys.version_info[1]);print(struct.calcsize('P')*8);print(0 if sys.prefix==sys.base_prefix else 1)"
+set "TORCH_LINKS=%OCV_TORCH_WHEELS%"
+set "PYEXE="
+set "PYMODE="
+set "IS_PORTABLE="
+set "CAND="
+set "PROBED_EXE="
+set "PROBED_VER="
+set "PROBED_BITS="
+set "PROBED_VENV="
+set "ACCEPT="
+set "PIP_STATUS=-"
+set "NODE_STATUS=-"
+set "FFMPEG_STATUS=-"
+set "BROWSER_STATUS=-"
+set "WHISPER_STATUS=-"
+set "INDEXTTS_STATUS=-"
+set "NPM_STATUS=-"
 
-if not exist "%PYTHON%" (
-    echo [Ëá¥ÂëΩÈîôËØØ] Áº∫Â∞ëÈ°πÁõÆÂÜÖ‰æøÊê∫ PythonÔºö%PYTHON%
-    pause
-    exit /b 1
+echo ============================================================
+echo   “ªº¸≥…∆¨ / One-Click VidGen °™°™ ª∑æ≥≥ı ºªØ
+echo   œÓƒøƒø¬º£∫%ROOT_DIR%
+echo ============================================================
+echo.
+
+if not exist ".env" if exist ".env.example" (
+    copy /Y ".env.example" ".env" >nul
+    echo [–≈œ¢] “—¥” .env.example …˙≥… .env£¨API Key «Î‘⁄ΩÁ√Ê◊Û≤‡√Ê∞ÂÃÓ–¥°£
+    echo.
 )
 
+rem ==================== [1/8] Python ‘À–– ± ====================
+echo [1/8] Ω‚Œˆ Python ‘À–– ±...
+if exist "%PORTABLE_PY%" (
+    set "CAND="%PORTABLE_PY%""
+    call :probe_current
+    if defined ACCEPT (
+        set "PYEXE=!PROBED_EXE!"
+        set "PYMODE=œÓƒøƒ⁄±„–Ø Python"
+        set "IS_PORTABLE=1"
+    ) else (
+        echo [æØ∏Ê] œÓƒøƒ⁄±„–Ø Python ≤ªø…”√£®Œª ˝ªÚ∞Ê±æ≤ª∑˚£©£¨ºÃ–¯≤È’“∆‰À¸¿¥‘¥°£
+    )
+)
+if not defined PYEXE if /i not "%OCV_PYTHON_MODE%"=="portable" if defined OCV_PYTHON (
+    if exist "!OCV_PYTHON!" (
+        set "CAND="!OCV_PYTHON!""
+        call :probe_current
+        if defined ACCEPT (
+            set "PYEXE=!PROBED_EXE!"
+            set "PYMODE=ª∑æ≥±‰¡ø OCV_PYTHON"
+        ) else (
+            echo [æØ∏Ê] OCV_PYTHON ÷∏∂®µƒΩ‚ Õ∆˜≤ª∫œ∏Ò£®–Ë“™ 64 Œª Python 3.10~3.12£©£∫!OCV_PYTHON!
+        )
+    ) else (
+        echo [æØ∏Ê] OCV_PYTHON ÷∏œÚµƒŒƒº˛≤ª¥Ê‘⁄£∫!OCV_PYTHON!
+    )
+)
+if not defined PYEXE if /i not "%OCV_PYTHON_MODE%"=="portable" (
+    where py >nul 2>nul
+    if not errorlevel 1 (
+        for %%V in (3.11 3.10 3.12) do (
+            if not defined PYEXE (
+                set "CAND=py -%%V"
+                call :probe_current
+                if defined ACCEPT (
+                    set "PYEXE=!PROBED_EXE!"
+                    set "PYMODE=œµÕ≥ py -%%V"
+                )
+            )
+        )
+    )
+)
+if not defined PYEXE if /i not "%OCV_PYTHON_MODE%"=="portable" (
+    where python >nul 2>nul
+    if not errorlevel 1 (
+        set "CAND=python"
+        call :probe_current
+        if defined ACCEPT (
+            set "PYEXE=!PROBED_EXE!"
+            set "PYMODE=PATH …œµƒ python"
+        )
+    )
+)
+
+rem ◊‘∂ØÃΩ≤‚µΩ±æª˙ Python  ±Ã· æ£∫÷ª”–±„–Ø Python ƒ‹∆Ù”√±æµÿ≈‰“Ù”ÎÕÍ’˚∆Ù∂ØΩ≈±æ
+if not defined PYEXE goto :python_download
+if "!IS_PORTABLE!"=="1" goto :python_ready
+if /i "%OCV_PYTHON_MODE%"=="system" goto :python_ready
+if defined OCV_PYTHON goto :python_ready
+echo.
+echo [Ã· æ] ±æª˙ Python ƒ£ Ωœ¬”¶”√πÃ∂®µ˜”√ runtime\python\python.exe£¨±æµÿ IndexTTS-2.5
+echo        ≈‰“Ù≤ªø…”√£¨start_windows.bat “≤Œﬁ∑® π”√°£
+choice /c YN /n /t 20 /d Y /m " «∑Ò∏ƒ”√±„–Ø Python£®Õ∆ºˆ£¨‘º 43 MB£¨π¶ƒ‹ÕÍ’˚£©£ø[Y=±„–Ø N=±æª˙] " 2>nul
+if errorlevel 2 (
+    echo [–≈œ¢] ºÃ–¯ π”√±æª˙ Python°£
+    goto :python_ready
+)
+echo [–≈œ¢] —°‘Ò±„–Ø Python°£
+set "PYEXE="
+set "IS_PORTABLE="
+
+:python_download
+if not defined PYEXE (
+    call :download_portable_python
+    if errorlevel 1 (
+        echo.
+        echo [÷¬√¸¥ÌŒÛ] √ª”–ø…”√µƒ Python ‘À–– ±°£
+        echo             ø… ÷∂Øœ¬‘ÿ±„–Ø Python ≤¢Ω‚—π£¨ πΩ‚ Õ∆˜Œª”⁄£∫
+        echo             %PORTABLE_PY%
+        echo             ªÚ∞≤◊∞ 64 Œª Python 3.10~3.12 ∫Û…Ë÷√ OCV_PYTHON ÷∏œÚ python.exe°£
+        pause
+        exit /b 1
+    )
+)
+
+:python_ready
+if not "!IS_PORTABLE!"=="1" (
+    if "!PROBED_VENV!"=="1" (
+        echo [–≈œ¢]  π”√“—”–µƒ–Èƒ‚ª∑æ≥Ω‚ Õ∆˜£∫!PYEXE!
+    ) else if exist "%VENV_PY%" (
+        echo [–≈œ¢] ∏¥”√œÓƒøƒ⁄–Èƒ‚ª∑æ≥£∫%VENV_PY%
+        set "PYEXE=%VENV_PY%"
+    ) else (
+        echo [–≈œ¢] ’˝‘⁄¥¥Ω®œÓƒøƒ⁄–Èƒ‚ª∑æ≥£∫%VENV_DIR%
+        "!PROBED_EXE!" -m venv "%VENV_DIR%"
+        if not exist "%VENV_PY%" (
+            echo [÷¬√¸¥ÌŒÛ] –Èƒ‚ª∑æ≥¥¥Ω® ß∞‹£¨«ÎºÏ≤È¥≈≈Ãø’º‰”Î»®œﬁ£∫%VENV_DIR%
+            pause
+            exit /b 1
+        )
+        set "PYEXE=%VENV_PY%"
+    )
+)
+for %%D in ("!PYEXE!") do set "PYDIR=%%~dpD"
+set "PATH=!PYDIR!;%ROOT_DIR%runtime\python;%NODE_DIR%;%FFMPEG_DIR%;%PATH%"
+echo [–≈œ¢] Python£∫!PYEXE!
+echo [–≈œ¢] ¿¥‘¥  £∫!PYMODE!
+echo.
+
+rem ==================== [2/8] Python “¿¿µ ====================
+echo [2/8] ºÏ≤È Python ∫À–ƒ“¿¿µ...
+if defined OCV_SKIP_PIP (
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_PIP Ã¯π˝°£
+    set "PIP_STATUS=“—Ã¯π˝"
+) else (
+    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper, PIL" >nul 2>nul
+    if errorlevel 1 (
+        echo [–≈œ¢] ∫À–ƒ“¿¿µ≤ªÕÍ’˚£¨ø™ º∞≤◊∞£®torch ¬÷◊” 3.46 GB£¨»´≤ø‘º 4-5 GB£©...
+        set "PIP_CACHE_DIR=%ROOT_DIR%runtime\cache\pip"
+        if not exist "!PIP_CACHE_DIR!" mkdir "!PIP_CACHE_DIR!"
+        call :pick_pypi_index
+        echo [–≈œ¢] PyPI æµœÒ£∫!PIP_INDEX!
+        "%PYEXE%" -m pip install --upgrade pip -i "!PIP_INDEX!" --disable-pip-version-check
+        call :install_torch
+        echo [–≈œ¢] ∞≤◊∞ requirements.txt ∆‰”‡“¿¿µ...
+        "%PYEXE%" -m pip install -r "%ROOT_DIR%requirements.txt" -i "!PIP_INDEX!" --find-links "!TORCH_LINKS!" --retries 5 --timeout 60
+        if errorlevel 1 (
+            echo [÷¬√¸¥ÌŒÛ] Python “¿¿µ∞≤◊∞ ß∞‹°£ø… ÷∂Ø÷ÿ ‘£∫
+            echo             "%PYEXE%" -m pip install -r "%ROOT_DIR%requirements.txt" -i !PIP_INDEX!
+            pause
+            exit /b 1
+        )
+    )
+    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper, PIL" >nul 2>nul
+    if errorlevel 1 (
+        echo [÷¬√¸¥ÌŒÛ] ∫À–ƒ“¿¿µ»‘≤ªÕÍ’˚£®fastapi / uvicorn / torch / faster_whisper / PIL£©°£
+        pause
+        exit /b 1
+    )
+    "%PYEXE%" -I -c "import indextts" >nul 2>nul
+    if errorlevel 1 (
+        echo [–≈œ¢] ±æµÿ IndexTTS-2.5 Ω´∞¥œ¬∑Ω≤Ω÷Ëµ•∂¿◊∞≈‰£®≤ª”… pip Ã·π©£©°£
+    )
+    set "PIP_STATUS=æÕ–˜"
+    echo [–≈œ¢] ∫À–ƒ“¿¿µæÕ–˜°£
+)
+echo.
+
+rem ==================== [3/8] ±„–Ø Node ====================
+echo [3/8] ºÏ≤È±„–Ø Node ‘À–– ±...
+if exist "%NPM%" (
+    set "NODE_STATUS=œÓƒøƒ⁄±„–Ø Node"
+    echo [–≈œ¢] “—¥Ê‘⁄£∫%NPM%
+) else if defined OCV_SKIP_NODE (
+    set "NODE_STATUS=“—Ã¯π˝"
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_NODE Ã¯π˝°£
+) else (
+    call :ensure_node
+    if errorlevel 1 (
+        set "NODE_STATUS=Œ¥∞≤◊∞"
+        echo [æØ∏Ê] ±„–Ø Node Œ¥ƒ‹∞≤◊∞£¨Ω´≥¢ ‘ π”√ PATH …œµƒœµÕ≥ npm°£
+    ) else (
+        set "NODE_STATUS=“—œ¬‘ÿ±„–Ø Node %OCV_NODE_VERSION%"
+    )
+)
+echo.
+
+rem ==================== [4/8] FFmpeg ====================
+echo [4/8] ºÏ≤È FFmpeg...
+if exist "%FFMPEG_DIR%\ffmpeg.exe" if exist "%FFMPEG_DIR%\ffprobe.exe" (
+    set "FFMPEG_STATUS=œÓƒøƒ⁄±„–Ø FFmpeg"
+    echo [–≈œ¢] “—¥Ê‘⁄£∫%FFMPEG_DIR%
+    goto :ffmpeg_done
+)
+if defined OCV_SKIP_FFMPEG (
+    set "FFMPEG_STATUS=“—Ã¯π˝"
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_FFMPEG Ã¯π˝°£
+    goto :ffmpeg_done
+)
+set "SYS_FFMPEG_OK="
+if not defined OCV_FORCE_FFMPEG (
+    where ffmpeg >nul 2>nul
+    if not errorlevel 1 (
+        where ffprobe >nul 2>nul
+        if not errorlevel 1 set "SYS_FFMPEG_OK=1"
+    )
+)
+if defined SYS_FFMPEG_OK (
+    set "FFMPEG_STATUS=œµÕ≥ PATH …œµƒ FFmpeg"
+    echo [–≈œ¢] œµÕ≥ PATH ÷–“—”– ffmpeg/ffprobe£¨Ã¯π˝±„–Ø∞Êœ¬‘ÿ°£
+    echo        »Á–ËœÓƒø◊‘¥¯£®Õ—¿ÎœµÕ≥ PATH£©£¨…Ë÷√ OCV_FORCE_FFMPEG=1 ÷ÿ≈‹±æΩ≈±æ°£
+    goto :ffmpeg_done
+)
+call :ensure_ffmpeg
+if errorlevel 1 (
+    set "FFMPEG_STATUS=Œ¥∞≤◊∞"
+    echo [æØ∏Ê] ±„–Ø FFmpeg Œ¥ƒ‹∞≤◊∞°£ ”∆µ‰÷»æ–Ë“™ FFmpeg£¨«Î ÷∂Ø∑≈»Î£∫
+    echo        %FFMPEG_DIR%\ffmpeg.exe ”Î ffprobe.exe
+) else (
+    set "FFMPEG_STATUS=“—œ¬‘ÿ±„–Ø FFmpeg"
+)
+:ffmpeg_done
+echo.
+
+rem ==================== [5/8] ŒﬁÕ∑‰Ø¿¿∆˜ ====================
+echo [5/8] ºÏ≤È Hyperframes ŒﬁÕ∑‰Ø¿¿∆˜...
+set "BROWSER_EXE="
+set "FOUND_FILE="
+if exist "%BROWSER_DIR%" call :find_in_tree "%BROWSER_DIR%" "chrome-headless-shell.exe"
+if defined FOUND_FILE set "BROWSER_EXE=!FOUND_FILE!"
+if defined BROWSER_EXE (
+    set "BROWSER_STATUS=“—æÕ–˜"
+    echo [–≈œ¢] “—¥Ê‘⁄£∫!BROWSER_EXE!
+) else if defined OCV_SKIP_CHROME (
+    set "BROWSER_STATUS=“—Ã¯π˝"
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_CHROME Ã¯π˝°£
+) else (
+    call :ensure_browser
+    if errorlevel 1 (
+        set "BROWSER_STATUS=Œ¥∞≤◊∞"
+        echo [æØ∏Ê] ŒﬁÕ∑‰Ø¿¿∆˜Œ¥ƒ‹∞≤◊∞£¨Hyperframes ‰÷»æ≤ªø…”√£®FFmpeg ÷±≥ˆ»‘ø…”√£©°£
+        echo        “≤ø……Ë÷√ HYPERFRAMES_BROWSER_PATH ÷∏œÚ±æª˙ Chrome/Edge°£
+    ) else (
+        set "BROWSER_STATUS=“—œ¬‘ÿ Chrome Headless Shell %OCV_CHROME_VERSION%"
+    )
+)
+echo.
+
+rem ==================== [6/8] Faster-Whisper ƒ£–Õ ====================
+echo [6/8] ºÏ≤È Faster-Whisper ◊÷ƒªƒ£–Õ...
+set "WHISPER_OK=1"
+for %%F in (config.json model.bin tokenizer.json vocabulary.txt) do if not exist "%WHISPER_DIR%\%%F" set "WHISPER_OK="
+if defined WHISPER_OK (
+    set "WHISPER_STATUS=“—æÕ–˜"
+    echo [–≈œ¢] “—¥Ê‘⁄£∫%WHISPER_DIR%
+) else if defined OCV_SKIP_WHISPER (
+    set "WHISPER_STATUS=“—Ã¯π˝"
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_WHISPER Ã¯π˝°£
+) else (
+    call :ensure_whisper
+    if errorlevel 1 (
+        set "WHISPER_STATUS=Œ¥∞≤◊∞"
+        echo [æØ∏Ê] Faster-Whisper Base ƒ£–ÕŒ¥ƒ‹œ¬‘ÿ£¨◊÷ƒª ∂±ª·ÕÀªØŒ™‘⁄œﬂ¿≠»°ƒ£–Õ°£
+    ) else (
+        set "WHISPER_STATUS=“—œ¬‘ÿ faster-whisper-base"
+    )
+)
+echo.
+
+rem ==================== [7/8] IndexTTS-2.5 ª˘¥°‘À–– ± ====================
+echo [7/8] ºÏ≤È IndexTTS-2.5 ±æµÿ≈‰“Ùª˘¥°‘À–– ±...
+if defined OCV_SKIP_INDEXTTS (
+    set "INDEXTTS_STATUS=“—Ã¯π˝"
+    echo [–≈œ¢] “—∞¥ OCV_SKIP_INDEXTTS Ã¯π˝°£
+    goto :indextts_done
+)
+if "!IS_PORTABLE!"=="1" (
+    call :ensure_indextts
+    if "!INDEXTTS_OK!"=="1" (
+        if "!INDEXTTS_WEIGHTS!"=="1" (set "INDEXTTS_STATUS=±æµÿ≈‰“Ùø…”√") else (set "INDEXTTS_STATUS=Ωˆª˘¥°æÕ–˜£¨±æµÿ≈‰“ÙŒ¥∆Ù”√")
+        echo [–≈œ¢] IndexTTS-2.5 ª˘¥°‘À–– ±æÕ–˜°£
+        rem …œ”Œ IndexTTS-2.5 Õ∆¿Ì¬∑æ∂ªπ–Ë“™ einops / munch / audiotools / wetext£¨
+        rem πŸ∑Ω deploy_indextts25.ps1 ÷ª‘⁄ python_packages ◊∞¡À 4 ∏ˆ∏Ù¿Î∞¸£¨’‚¿Ô≤π∆Î≤¢–ﬁ∏¥æ…ª∑æ≥
+        "%PYEXE%" -I -c "import einops, munch, audiotools, wetext" >nul 2>nul
+        if errorlevel 1 (
+            echo [–≈œ¢] IndexTTS-2.5 ‘À––“¿¿µ≤ªÕÍ’˚£¨’˝‘⁄≤π∆Î requirements.txt ...
+            if not defined PIP_INDEX set "PIP_INDEX=%OCV_PIP_INDEX%"
+            "%PYEXE%" -m pip install -r "%ROOT_DIR%requirements.txt" -i "!PIP_INDEX!" --retries 5 --timeout 60
+            if errorlevel 1 (
+                echo [æØ∏Ê] IndexTTS-2.5 ‘À––“¿¿µ≤π∆Î ß∞‹£¨±æµÿ≈‰“Ùø…ƒ‹≤ªø…”√°£
+            ) else (
+                echo [–≈œ¢] IndexTTS-2.5 ‘À––“¿¿µ“—æÕ–˜°£
+            )
+        )
+        if not "!INDEXTTS_WEIGHTS!"=="1" (
+            echo [–≈œ¢] Œ¥∞≤◊∞±æµÿ≈‰“Ù»®÷ÿ£¨±æª˙≈‹ IndexTTS-2.5 ƒ£–Õ≤ªø…”√£®‘º 10.2 GB£©°£
+            echo        ºØ»∫ GPU ≈‰“Ù°¢Qwen-TTS ‘∆∂À≈‰“Ù°¢…œ¥´ªÚ“—”–≈‰“Ù°¢◊÷ƒª ∂±”Î ”∆µ‰÷»æ
+            echo        æ˘≤ª ‹”∞œÏ°£œÎ∆Ù”√±æµÿ≈‰“Ù£∫÷ÿ≈‹±æΩ≈±æ°¢…Ë OCV_INSTALL_INDEXTTS_MODEL=1£¨
+            echo        ªÚ‘⁄ΩÁ√Ê°∞…˘“Ù…Ë÷√°±¿Ô∞¥–Ë∞≤◊∞°£
+        ) else (
+            echo [–≈œ¢] ±æµÿ≈‰“Ù»®÷ÿ“—æÕ–˜°£
+        )
+    ) else (
+        set "INDEXTTS_STATUS=≤ªÕÍ’˚"
+        echo [æØ∏Ê] IndexTTS-2.5 ª˘¥°‘À–– ±≤ªÕÍ’˚£¨±æµÿ≈‰“Ù≤ªø…”√£®∆‰À¸π¶ƒ‹≤ª ‹”∞œÏ£©°£
+    )
+) else (
+    set "INDEXTTS_STATUS=±æª˙ Python ƒ£ Ω≤ª  ”√"
+    echo [–≈œ¢] ±æª˙ Python ƒ£ ΩÃ¯π˝±æµÿ≈‰“Ù‘À–– ±£∫”¶”√πÃ∂®µ˜”√ runtime\python\python.exe°£
+    echo        –Ë“™±æµÿ IndexTTS-2.5 ≈‰“Ù ±£¨…æ≥˝ runtime\python ∫Û…Ë÷√ OCV_PYTHON_MODE=portable ÷ÿ≈‹°£
+)
+:indextts_done
+echo.
+
+rem ==================== [8/8] Node “¿¿µ ====================
 if not exist "%NPM%" (
-    echo [Ëá¥ÂëΩÈîôËØØ] Áº∫Â∞ëÈ°πÁõÆÂÜÖ‰æøÊê∫ Node/npmÔºö%NPM%
-    pause
-    exit /b 1
+    echo [æØ∏Ê] Œ¥’“µΩ±„–Ø Node/npm£∫%NPM%
+    echo [–≈œ¢] ≥¢ ‘ π”√ PATH …œµƒœµÕ≥ npm...
+    set "SYS_NPM="
+    for /f "delims=" %%P in ('where npm.cmd 2^>nul') do if not defined SYS_NPM set "SYS_NPM=%%P"
+    if not defined SYS_NPM (
+        if defined OCV_SKIP_NPM (
+            echo [æØ∏Ê] Œ¥’“µΩ npm£¨“—∞¥ OCV_SKIP_NPM Ã¯π˝°£
+        ) else (
+            echo [÷¬√¸¥ÌŒÛ] Œ¥’“µΩ npm°£«Î∞≤◊∞ Node.js 22 º∞“‘…œ£¨ªÚ∏ƒ”√∞¸∫¨ runtime\node µƒ’˚∫œ∞¸°£
+            pause
+            exit /b 1
+        )
+    ) else (
+        set "NPM=!SYS_NPM!"
+    )
+)
+echo [–≈œ¢] npm   £∫!NPM!
+
+if defined OCV_SKIP_NPM (
+    echo [8/8] “—∞¥ OCV_SKIP_NPM Ã¯π˝ Node “¿¿µ∞≤◊∞°£
+    set "NPM_STATUS=“—Ã¯π˝"
+    goto :final
 )
 
-echo [1/3] Ê£ÄÊü•‰æøÊê∫ Python Ê†∏ÂøÉ‰æùËµñ...
-"%PYTHON%" -I -c "import fastapi, faster_whisper, indextts, torch, uvicorn"
+echo [8/8] ºÏ≤È≤¢≤π∆Î∏˘ƒø¬º Node “¿¿µ...
+call "!NPM!" install --registry=https://registry.npmmirror.com
 if errorlevel 1 (
-    echo [Ëá¥ÂëΩÈîôËØØ] ‰æøÊê∫ Python ‰æùËµñ‰∏çÂÆåÊï¥ÔºåËØ∑ÈáçÊñ∞Ëé∑ÂèñÂÆåÊï¥Êï¥ÂêàÂåÖ„ÄÇ
-    pause
-    exit /b 1
-)
-
-echo [2/3] Ê£ÄÊü•Âπ∂Ë°•ÈΩêÊ†πÁõÆÂΩï Node ‰æùËµñ...
-call "%NPM%" install --registry=https://registry.npmmirror.com
-
-if errorlevel 1 (
-    echo [Ëá¥ÂëΩÈîôËØØ] Ê†πÁõÆÂΩï Node ‰æùËµñÂÆâË£ÖÂ§±Ë¥•ÔºåËØ∑Ê£ÄÊü•ÁΩëÁªú„ÄÇ
-    pause
-    exit /b 1
-)
-
-echo [3/3] Ê£ÄÊü•Âπ∂Ë°•ÈΩêÂâçÁ´Ø Node ‰æùËµñ...
-pushd "%ROOT_DIR%frontend"
-call "%NPM%" install --registry=https://registry.npmmirror.com
-set "INSTALL_RESULT=%ERRORLEVEL%"
-popd
-if not "%INSTALL_RESULT%"=="0" (
-    echo [Ëá¥ÂëΩÈîôËØØ] ÂâçÁ´Ø Node ‰æùËµñÂÆâË£ÖÂ§±Ë¥•ÔºåËØ∑Ê£ÄÊü•ÁΩëÁªú„ÄÇ
+    echo [÷¬√¸¥ÌŒÛ] ∏˘ƒø¬º Node “¿¿µ∞≤◊∞ ß∞‹£¨«ÎºÏ≤ÈÕ¯¬Á°£
     pause
     exit /b 1
 )
 
 echo.
-echo ÁéØÂ¢ÉÊ£ÄÊü•ÂÆåÊàê„ÄÇÊâÄÊúâËøêË°åÊó∂ÂíåÁºìÂ≠òÂùá‰Ωç‰∫éÂΩìÂâçÈ°πÁõÆÁõÆÂΩï„ÄÇ
+echo [8/8] ºÏ≤È≤¢≤π∆Î«∞∂À Node “¿¿µ...
+pushd "%ROOT_DIR%frontend"
+call "!NPM!" install --registry=https://registry.npmmirror.com
+set "INSTALL_RESULT=!ERRORLEVEL!"
+popd
+if not "!INSTALL_RESULT!"=="0" (
+    echo [÷¬√¸¥ÌŒÛ] «∞∂À Node “¿¿µ∞≤◊∞ ß∞‹£¨«ÎºÏ≤ÈÕ¯¬Á°£
+    pause
+    exit /b 1
+)
+set "NPM_STATUS=“—∞≤◊∞"
+
+:final
+if exist "%BOOT_DIR%" rmdir /s /q "%BOOT_DIR%" >nul 2>nul
+echo.
+echo ============================================================
+echo   ª∑æ≥ºÏ≤ÈÕÍ≥…
+echo ============================================================
+echo   Python Ω‚ Õ∆˜£∫!PYEXE!
+echo   Ω‚ Õ∆˜¿¥‘¥  £∫!PYMODE!
+echo   Python “¿¿µ £∫!PIP_STATUS!
+echo   ±„–Ø Node   £∫!NODE_STATUS!
+echo   FFmpeg      £∫!FFMPEG_STATUS!
+echo   ŒﬁÕ∑‰Ø¿¿∆˜  £∫!BROWSER_STATUS!
+echo   ◊÷ƒªƒ£–Õ    £∫!WHISPER_STATUS!
+echo   ±æµÿ≈‰“Ù    £∫!INDEXTTS_STATUS!
+echo   Node “¿¿µ   £∫!NPM_STATUS!
+echo.
+
+if "!IS_PORTABLE!"=="1" (
+    echo [–£—È] ‘À––±„–Øª∑æ≥◊‘ºÏ tools\portable_preflight.py ...
+    "%PORTABLE_PY%" "%ROOT_DIR%tools\portable_preflight.py"
+    if errorlevel 1 (
+        echo.
+        echo [æØ∏Ê] ±„–Øª∑æ≥◊‘ºÏŒ¥Õ®π˝£¨start_windows.bat ª·“Ú¥Àæ‹æ¯∆Ù∂Ø°£
+        echo        «Î∞¥…œ√ÊµƒÃ· æ≤π∆Î»± ßœÓ£¨ªÚ∏ƒ”√ÕÍ’˚’˚∫œ∞¸°£
+        pause
+        exit /b 1
+    )
+    echo.
+    echo œ¬“ª≤Ω£∫À´ª˜ start_windows.bat ∆Ù∂Ø£¨‰Ø¿¿∆˜¥Úø™ http://127.0.0.1:5173
+) else (
+    echo œ¬“ª≤Ω£∫±æª˙ Python ƒ£ Ω£¨«Î“¿¥Œ÷¥––£∫
+    echo   "!PYEXE!" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8010
+    echo   npm --prefix frontend run dev
+    echo ◊¢“‚£∫∏√ƒ£ Ω≤ª…˙≥… runtime\node ”Î runtime\hyperframes µ»±„–Ø◊Èº˛£¨
+    echo       start_windows.bat ≤ª  ”√£¨±æµÿ IndexTTS-2.5 ≈‰“Ù“≤≤ªø…”√°£
+)
+echo.
 pause
+exit /b 0
+
+rem ==================== ◊”π˝≥Ã ====================
+
+rem ”√ %CAND% ◊˜Œ™∫Ú—°Ω‚ Õ∆˜Ω¯––ÃΩ≤‚£ª∫œ∏Ò‘Ú…Ë÷√ PROBED_* ”Î ACCEPT
+:probe_current
+set "PROBED_EXE="
+set "PROBED_VER="
+set "PROBED_BITS="
+set "PROBED_VENV="
+set "ACCEPT="
+if not defined CAND exit /b 0
+del /q "%PROBE_OUT%" >nul 2>nul
+%CAND% -E -s -c "%PROBE_CODE%" > "%PROBE_OUT%" 2>nul
+if errorlevel 1 exit /b 0
+if not exist "%PROBE_OUT%" exit /b 0
+<"%PROBE_OUT%" (set /p PROBED_EXE=&set /p PROBED_VER=&set /p PROBED_BITS=&set /p PROBED_VENV=)
+if not defined PROBED_EXE exit /b 0
+if not defined PROBED_VER exit /b 0
+if not "!PROBED_BITS!"=="64" exit /b 0
+if !PROBED_VER! LSS 310 exit /b 0
+if !PROBED_VER! GTR 312 exit /b 0
+set "ACCEPT=1"
+exit /b 0
+
+rem “¿¥Œ≥¢ ‘∂‡∏ˆœ¬‘ÿ‘¥£∫%1=ƒø±ÍŒƒº˛ %2=◊Ó–°◊÷Ω⁄ ˝ %3=URL ¡–±Ì£®ø’∏Ò∑÷∏Ù£©
+:fetch
+set "FETCH_FILE=%~1"
+set "FETCH_MIN=%~2"
+set "FETCH_OK="
+if not exist "%~dp1" mkdir "%~dp1"
+if exist "%FETCH_FILE%" del /q "%FETCH_FILE%" >nul 2>nul
+for %%U in (%~3) do (
+    if not defined FETCH_OK (
+        echo       [œ¬‘ÿ] %~nx1
+        echo              ‘¥£∫%%U
+        curl.exe -L -sS -# --fail --retry 2 --connect-timeout 15 --speed-limit 10240 --speed-time 30 -o "%FETCH_FILE%" "%%U"
+        if exist "%FETCH_FILE%" for %%F in ("%FETCH_FILE%") do if %%~zF GEQ %FETCH_MIN% set "FETCH_OK=1"
+        if defined FETCH_OK (
+            for %%F in ("%FETCH_FILE%") do set /a "FETCH_MB=%%~zF/1048576"
+            echo              [ÕÍ≥…] “—œ¬‘ÿ !FETCH_MB! MB
+        ) else (
+            echo              [ ß∞‹] ∏√œ¬‘ÿ‘¥≤ªø…”√£¨ªªœ¬“ª∏ˆ‘¥÷ÿ ‘°£
+            if exist "%FETCH_FILE%" del /q "%FETCH_FILE%" >nul 2>nul
+        )
+    )
+)
+if defined FETCH_OK (exit /b 0) else (exit /b 1)
+
+rem  µ≤‚µ•∏ˆ URL µƒœ¬‘ÿÀŸ∂»£∫%1=URL %2=ÃΩ≤‚◊÷Ω⁄ ˝£¨Ω·π˚–¥»Î PROBE_SPEED£®B/s£©
+:probe_speed
+set "PROBE_SPEED=0"
+set "PROBE_RAW="
+for /f "delims=" %%S in ('curl.exe -sSL -m 15 -o NUL -r 0-%~2 -w "%%{speed_download}" "%~1" 2^>nul') do set "PROBE_RAW=%%S"
+if not defined PROBE_RAW exit /b 1
+for /f "tokens=1 delims=." %%A in ("!PROBE_RAW!") do set "PROBE_SPEED=%%A"
+if not defined PROBE_SPEED set "PROBE_SPEED=0"
+exit /b 0
+
+rem ÷∏ˆ µ≤‚π˙ƒ⁄ PyPI æµœÒÀŸ∂»£¨—°◊ÓøÏµƒ–¥»Î PIP_INDEX
+:pick_pypi_index
+set "PIP_INDEX=%OCV_PIP_INDEX%"
+if defined OCV_SKIP_INDEX_PROBE exit /b 0
+set "PIP_BEST=0"
+set "PYPI_CANDIDATES=https://mirrors.aliyun.com/pypi/simple/ https://pypi.tuna.tsinghua.edu.cn/simple/ https://mirrors.cloud.tencent.com/pypi/simple/ https://mirrors.ustc.edu.cn/pypi/simple/ https://mirrors.huaweicloud.com/repository/pypi/simple/ https://mirror.nju.edu.cn/pypi/web/simple/"
+echo [–≈œ¢] ’˝‘⁄ µ≤‚ PyPI æµœÒÀŸ∂»£®∏˜‘º 3 MB ÃΩ≤‚£©...
+for %%M in (%PYPI_CANDIDATES%) do (
+    call :probe_speed "%%Mpip/" 3000000
+    echo       %%M °˙ !PROBE_SPEED! B/s
+    if !PROBE_SPEED! GTR !PIP_BEST! (
+        set "PIP_BEST=!PROBE_SPEED!"
+        set "PIP_INDEX=%%M"
+    )
+)
+if !PIP_BEST! LEQ 0 set "PIP_INDEX=%OCV_PIP_INDEX%"
+exit /b 0
+
+rem  µ≤‚ cu128 ¬÷◊”‘¥ÀŸ∂»£¨—°◊ÓøÏµƒ–¥»Î TORCH_LINKS
+rem »° torch ¬÷◊”‘¥£∫PEP 503 À˜“˝‘¥”Î±‚∆Ω¬÷◊”ƒø¬º£®--find-links£©ª•Œ™±∏∑›
+:pick_torch_sources
+set "TORCH_INDEX="
+set "TORCH_LINKS="
+set "TORCH_ARGS="
+echo [–≈œ¢] ’˝‘⁄ºÏ≤È torch ¬÷◊”‘¥ø…”√–‘...
+"%PYEXE%" -m pip index versions torch --index-url %OCV_TORCH_INDEX% --timeout 10 --retries 0 --disable-pip-version-check >nul 2>nul
+if not errorlevel 1 set "TORCH_INDEX=%OCV_TORCH_INDEX%"
+if not defined TORCH_INDEX (
+    "%PYEXE%" -m pip index versions torch --index-url https://download.pytorch.org/whl/cu128 --timeout 10 --retries 0 --disable-pip-version-check >nul 2>nul
+    if not errorlevel 1 set "TORCH_INDEX=https://download.pytorch.org/whl/cu128"
+)
+curl.exe -sSL -m 15 -o NUL --fail "%OCV_TORCH_WHEELS%" >nul 2>nul
+if not errorlevel 1 set "TORCH_LINKS=%OCV_TORCH_WHEELS%"
+if defined TORCH_INDEX set "TORCH_ARGS=!TORCH_ARGS! --index-url !TORCH_INDEX!"
+if defined TORCH_LINKS set "TORCH_ARGS=!TORCH_ARGS! --find-links !TORCH_LINKS!"
+if not defined TORCH_ARGS echo [æØ∏Ê] Œ¥ƒ‹»∑»œ»Œ∫Œ torch ¬÷◊”‘¥£¨Ω´÷±Ω”ªÿÕÀπŸ∑ΩÀ˜“˝°£
+exit /b 0
+
+rem œ»µ•∂¿◊∞ torch/torchaudio£∫÷ª◊ﬂ…œ√Ê»∑»œø…”√µƒπ˙ƒ⁄‘¥£¨±‹√‚ 3.5 GB ±ªπ˙º ’æÕœ¬˝
+:install_torch
+set "TORCH_PIN="
+set "TORCHAUDIO_PIN="
+for /f "tokens=1 delims=; " %%L in ('findstr /b /c:"torch==" "%ROOT_DIR%requirements.txt"') do set "TORCH_PIN=%%L"
+for /f "tokens=1 delims=; " %%L in ('findstr /b /c:"torchaudio==" "%ROOT_DIR%requirements.txt"') do set "TORCHAUDIO_PIN=%%L"
+if not defined TORCH_PIN exit /b 0
+if not defined PIP_INDEX set "PIP_INDEX=%OCV_PIP_INDEX%"
+"%PYEXE%" -I -c "import torch" >nul 2>nul
+if not errorlevel 1 (
+    echo [–≈œ¢] torch “—∞≤◊∞£¨Ã¯π˝°£
+    exit /b 0
+)
+call :pick_torch_sources
+echo [–≈œ¢] torch À˜“˝‘¥£∫!TORCH_INDEX!
+echo [–≈œ¢] torch ±‚∆Ω‘¥£∫!TORCH_LINKS!
+if not defined TORCH_ARGS (
+    echo [æØ∏Ê] Œﬁø…”√π˙ƒ⁄‘¥£¨÷±Ω” π”√πŸ∑ΩÀ˜“˝£®Ωœ¬˝£©°£
+    "%PYEXE%" -m pip install --disable-pip-version-check --index-url https://download.pytorch.org/whl/cu128 --extra-index-url "!PIP_INDEX!" --retries 5 --timeout 120 "!TORCH_PIN!" "!TORCHAUDIO_PIN!"
+    exit /b 0
+)
+"%PYEXE%" -m pip install --disable-pip-version-check !TORCH_ARGS! --extra-index-url "!PIP_INDEX!" --retries 5 --timeout 120 "!TORCH_PIN!" "!TORCHAUDIO_PIN!"
+if errorlevel 1 (
+    echo [æØ∏Ê] π˙ƒ⁄‘¥∞≤◊∞ torch  ß∞‹£¨ªÿÕÀπŸ∑ΩÀ˜“˝÷ÿ ‘...
+    "%PYEXE%" -m pip install --disable-pip-version-check --index-url https://download.pytorch.org/whl/cu128 --extra-index-url "!PIP_INDEX!" --retries 5 --timeout 120 "!TORCH_PIN!" "!TORCHAUDIO_PIN!"
+)
+exit /b 0
+
+rem ‘⁄ƒø¬º ˜÷–≤È’“’Ê µ¥Ê‘⁄µƒŒƒº˛£∫%1=∏˘ƒø¬º %2=Œƒº˛√˚£¨Ω·π˚–¥»Î FOUND_FILE
+:find_in_tree
+set "FOUND_FILE="
+if not exist "%~1" exit /b 1
+for /f "delims=" %%F in ('dir /s /b "%~1\%~2" 2^>nul') do if not defined FOUND_FILE set "FOUND_FILE=%%F"
+if defined FOUND_FILE (exit /b 0) else (exit /b 1)
+
+rem Ω‚—π tar.gz£∫%1=—πÀı∞¸ %2=ƒø±Íƒø¬º
+:extract_targz
+if exist "%~2" rmdir /s /q "%~2"
+mkdir "%~2"
+tar.exe -xzf "%~1" -C "%~2"
+if errorlevel 1 exit /b 1
+if not exist "%~2" exit /b 1
+exit /b 0
+
+rem Ω‚—π zip£∫%1=—πÀı∞¸ %2=ƒø±Íƒø¬º
+:extract_zip
+if exist "%~2" rmdir /s /q "%~2"
+mkdir "%~2"
+tar.exe -xf "%~1" -C "%~2"
+if errorlevel 1 exit /b 1
+if not exist "%~2" exit /b 1
+exit /b 0
+
+rem ¥”π˙ƒ⁄æµœÒœ¬‘ÿ±„–Ø Python ≤¢∞≤◊∞µΩ runtime\python
+:download_portable_python
+echo [–≈œ¢] ’˝‘⁄ªÒ»°±„–Ø Python %OCV_PYTHON_VERSION%£®‘º 43 MB£©...
+if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    echo [÷¬√¸¥ÌŒÛ] ◊‘∂Øœ¬‘ÿΩˆ÷ß≥÷ 64 Œª Windows£¨µ±«∞º‹ππ£∫%PROCESSOR_ARCHITECTURE%
+    exit /b 1
+)
+where curl.exe >nul 2>nul
+if errorlevel 1 (
+    echo [÷¬√¸¥ÌŒÛ] »±…Ÿ Windows ◊‘¥¯µƒ curl.exe£®Windows 10 1803 º∞“‘…œÃ·π©£©°£
+    exit /b 1
+)
+where tar.exe >nul 2>nul
+if errorlevel 1 (
+    echo [÷¬√¸¥ÌŒÛ] »±…Ÿ Windows ◊‘¥¯µƒ tar.exe£®Windows 10 1803 º∞“‘…œÃ·π©£©°£
+    exit /b 1
+)
+set "ASSET=cpython-%OCV_PYTHON_VERSION%+%OCV_PYTHON_BUILD%-x86_64-pc-windows-msvc-install_only.tar.gz"
+set "SOURCES=https://registry.npmmirror.com/-/binary/python-build-standalone/%OCV_PYTHON_BUILD%/%ASSET% https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/%OCV_PYTHON_BUILD%/%ASSET% https://ghproxy.net/https://github.com/astral-sh/python-build-standalone/releases/download/%OCV_PYTHON_BUILD%/%ASSET% https://github.com/astral-sh/python-build-standalone/releases/download/%OCV_PYTHON_BUILD%/%ASSET%"
+if defined OCV_PYTHON_URL set "SOURCES=%OCV_PYTHON_URL%%ASSET%"
+call :fetch "%BOOT_DIR%\python.tar.gz" 20000000 "%SOURCES%"
+if errorlevel 1 (
+    echo [÷¬√¸¥ÌŒÛ] ±„–Ø Python œ¬‘ÿ ß∞‹£¨À˘”–æµœÒæ˘≤ªø…”√°£
+    exit /b 1
+)
+echo       ’˝‘⁄Ω‚—πµΩ runtime\python ...
+call :extract_targz "%BOOT_DIR%\python.tar.gz" "%BOOT_DIR%\python_stage"
+if errorlevel 1 (
+    echo [÷¬√¸¥ÌŒÛ] ±„–Ø Python Ω‚—π ß∞‹°£
+    exit /b 1
+)
+if not exist "%BOOT_DIR%\python_stage\python\python.exe" (
+    echo [÷¬√¸¥ÌŒÛ] ±„–Ø Python —πÀı∞¸Ω·ππ“Ï≥££¨»±…Ÿ python\python.exe°£
+    exit /b 1
+)
+if exist "%ROOT_DIR%runtime\python" rmdir /s /q "%ROOT_DIR%runtime\python"
+move "%BOOT_DIR%\python_stage\python" "%ROOT_DIR%runtime\python" >nul
+if not exist "%PORTABLE_PY%" (
+    echo [÷¬√¸¥ÌŒÛ] ±„–Ø Python ∞≤◊∞ ß∞‹£∫%PORTABLE_PY%
+    exit /b 1
+)
+"%PORTABLE_PY%" -m pip --version >nul 2>nul
+if errorlevel 1 "%PORTABLE_PY%" -m ensurepip --upgrade >nul 2>nul
+del /q "%BOOT_DIR%\python.tar.gz" >nul 2>nul
+rmdir /s /q "%BOOT_DIR%\python_stage" >nul 2>nul
+set "CAND="%PORTABLE_PY%""
+call :probe_current
+if not defined ACCEPT (
+    echo [÷¬√¸¥ÌŒÛ] œ¬‘ÿµƒ±„–Ø Python ◊‘ºÏ ß∞‹°£
+    exit /b 1
+)
+set "PYEXE=!PROBED_EXE!"
+set "PYMODE=◊‘∂Øœ¬‘ÿ±„–Ø Python !OCV_PYTHON_VERSION!"
+set "IS_PORTABLE=1"
+echo [–≈œ¢] ±„–Ø Python ∞≤◊∞ÕÍ≥…°£
+exit /b 0
+
+rem ±„–Ø Node.js ∞≤◊∞µΩ runtime\node
+:ensure_node
+echo [–≈œ¢] ’˝‘⁄ªÒ»°±„–Ø Node.js %OCV_NODE_VERSION%£®‘º 35 MB£©...
+set "ASSET=node-v%OCV_NODE_VERSION%-win-x64.zip"
+set "SOURCES=https://registry.npmmirror.com/-/binary/node/v%OCV_NODE_VERSION%/%ASSET% https://mirror.nju.edu.cn/nodejs-release/v%OCV_NODE_VERSION%/%ASSET% https://nodejs.org/dist/v%OCV_NODE_VERSION%/%ASSET%"
+call :fetch "%BOOT_DIR%\%ASSET%" 25000000 "%SOURCES%"
+if errorlevel 1 (
+    echo [æØ∏Ê] ±„–Ø Node œ¬‘ÿ ß∞‹£¨À˘”–æµœÒæ˘≤ªø…”√°£
+    exit /b 1
+)
+call :extract_zip "%BOOT_DIR%\%ASSET%" "%BOOT_DIR%\node_stage"
+if errorlevel 1 (
+    echo [æØ∏Ê] ±„–Ø Node Ω‚—π ß∞‹°£
+    exit /b 1
+)
+call :find_in_tree "%BOOT_DIR%\node_stage" "node.exe"
+if not defined FOUND_FILE (
+    echo [æØ∏Ê] ±„–Ø Node —πÀı∞¸Ω·ππ“Ï≥££¨Œ¥’“µΩ node.exe°£
+    exit /b 1
+)
+set "NODE_SRC=!FOUND_FILE!"
+set "NODE_TOP="
+for /d %%D in ("%BOOT_DIR%\node_stage\*") do if not defined NODE_TOP set "NODE_TOP=%%~fD"
+if exist "%NODE_DIR%" rmdir /s /q "%NODE_DIR%"
+if defined NODE_TOP (
+    move "!NODE_TOP!" "%NODE_DIR%" >nul
+) else (
+    for %%F in ("!NODE_SRC!") do set "NODE_SRC=%%~dpF"
+    if not exist "%NODE_DIR%" mkdir "%NODE_DIR%"
+    xcopy "!NODE_SRC!*" "%NODE_DIR%\" /E /I /Y /Q /H >nul
+)
+del /q "%BOOT_DIR%\%ASSET%" >nul 2>nul
+rmdir /s /q "%BOOT_DIR%\node_stage" >nul 2>nul
+if not exist "%NPM%" (
+    echo [æØ∏Ê] ±„–Ø Node ∞≤◊∞≤ªÕÍ’˚£¨»±…Ÿ npm.cmd°£
+    exit /b 1
+)
+echo [–≈œ¢] ±„–Ø Node ∞≤◊∞ÕÍ≥…£∫%NODE_DIR%
+exit /b 0
+
+rem ±„–Ø FFmpeg ∞≤◊∞µΩ tools\ffmpeg\bin
+:ensure_ffmpeg
+echo [–≈œ¢] ’˝‘⁄ªÒ»°±„–Ø FFmpeg£®‘º 80-160 MB£©...
+set "SOURCES=https://ghfast.top/https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip https://ghproxy.net/https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+if defined OCV_FFMPEG_URL set "SOURCES=%OCV_FFMPEG_URL%"
+call :fetch "%BOOT_DIR%\ffmpeg.zip" 30000000 "%SOURCES%"
+if errorlevel 1 (
+    echo [æØ∏Ê] ±„–Ø FFmpeg œ¬‘ÿ ß∞‹£¨À˘”–æµœÒæ˘≤ªø…”√°£
+    exit /b 1
+)
+call :extract_zip "%BOOT_DIR%\ffmpeg.zip" "%BOOT_DIR%\ffmpeg_stage"
+if errorlevel 1 (
+    echo [æØ∏Ê] ±„–Ø FFmpeg Ω‚—π ß∞‹°£
+    exit /b 1
+)
+call :find_in_tree "%BOOT_DIR%\ffmpeg_stage" "ffmpeg.exe"
+if not defined FOUND_FILE (
+    echo [æØ∏Ê] ±„–Ø FFmpeg —πÀı∞¸Ω·ππ“Ï≥££¨Œ¥’“µΩ ffmpeg.exe°£
+    exit /b 1
+)
+if not exist "%FFMPEG_DIR%" mkdir "%FFMPEG_DIR%"
+copy /Y "!FOUND_FILE!" "%FFMPEG_DIR%\ffmpeg.exe" >nul
+call :find_in_tree "%BOOT_DIR%\ffmpeg_stage" "ffprobe.exe"
+if defined FOUND_FILE copy /Y "!FOUND_FILE!" "%FFMPEG_DIR%\ffprobe.exe" >nul 2>nul
+del /q "%BOOT_DIR%\ffmpeg.zip" >nul 2>nul
+rmdir /s /q "%BOOT_DIR%\ffmpeg_stage" >nul 2>nul
+if not exist "%FFMPEG_DIR%\ffmpeg.exe" (
+    echo [æØ∏Ê] ±„–Ø FFmpeg ∞≤◊∞ ß∞‹°£
+    exit /b 1
+)
+echo [–≈œ¢] ±„–Ø FFmpeg ∞≤◊∞ÕÍ≥…£∫%FFMPEG_DIR%
+exit /b 0
+
+rem Chrome Headless Shell ∞≤◊∞µΩ Hyperframes ª∫¥Êƒø¬º
+:ensure_browser
+echo [–≈œ¢] ’˝‘⁄ªÒ»° Chrome Headless Shell %OCV_CHROME_VERSION%£®‘º 106 MB£©...
+set "ASSET=chrome-headless-shell-win64.zip"
+set "SOURCES=https://registry.npmmirror.com/-/binary/chrome-for-testing/%OCV_CHROME_VERSION%/win64/%ASSET% https://storage.googleapis.com/chrome-for-testing-public/%OCV_CHROME_VERSION%/win64/%ASSET%"
+call :fetch "%BOOT_DIR%\%ASSET%" 50000000 "%SOURCES%"
+if errorlevel 1 (
+    echo [æØ∏Ê] ŒﬁÕ∑‰Ø¿¿∆˜œ¬‘ÿ ß∞‹£¨À˘”–æµœÒæ˘≤ªø…”√°£
+    exit /b 1
+)
+call :extract_zip "%BOOT_DIR%\%ASSET%" "%BROWSER_DIR%\%OCV_CHROME_VERSION%"
+if errorlevel 1 (
+    echo [æØ∏Ê] ŒﬁÕ∑‰Ø¿¿∆˜Ω‚—π ß∞‹°£
+    exit /b 1
+)
+del /q "%BOOT_DIR%\%ASSET%" >nul 2>nul
+set "BROWSER_EXE="
+call :find_in_tree "%BROWSER_DIR%" "chrome-headless-shell.exe"
+if defined FOUND_FILE set "BROWSER_EXE=!FOUND_FILE!"
+if not defined BROWSER_EXE (
+    echo [æØ∏Ê] ŒﬁÕ∑‰Ø¿¿∆˜∞≤◊∞≤ªÕÍ’˚£¨Œ¥’“µΩ chrome-headless-shell.exe°£
+    exit /b 1
+)
+echo [–≈œ¢] ŒﬁÕ∑‰Ø¿¿∆˜∞≤◊∞ÕÍ≥…°£
+exit /b 0
+
+rem Faster-Whisper Base ƒ£–Õ∞≤◊∞µΩ tools\whisper_models\faster-whisper-base
+:ensure_whisper
+echo [–≈œ¢] ’˝‘⁄ªÒ»° Faster-Whisper Base ƒ£–Õ£®‘º 145 MB£©...
+if not exist "%WHISPER_DIR%" mkdir "%WHISPER_DIR%"
+for %%F in (config.json model.bin tokenizer.json vocabulary.txt) do (
+    if not exist "%WHISPER_DIR%\%%F" (
+        set "MIN=100000"
+        if /i "%%F"=="config.json" set "MIN=500"
+        set "SOURCES=%OCV_HF_ENDPOINT%/Systran/faster-whisper-base/resolve/main/%%F https://www.modelscope.cn/models/pengzhendong/faster-whisper-base/resolve/master/%%F https://huggingface.co/Systran/faster-whisper-base/resolve/main/%%F"
+        call :fetch "%WHISPER_DIR%\%%F" !MIN! "!SOURCES!"
+        if errorlevel 1 (
+            echo [æØ∏Ê] %%F œ¬‘ÿ ß∞‹°£
+            exit /b 1
+        )
+    )
+)
+for %%F in (config.json model.bin tokenizer.json vocabulary.txt) do if not exist "%WHISPER_DIR%\%%F" exit /b 1
+echo [–≈œ¢] ◊÷ƒªƒ£–Õ∞≤◊∞ÕÍ≥…£∫%WHISPER_DIR%
+exit /b 0
+
+rem IndexTTS-2.5 ª˘¥°‘À–– ±£∫‘¥¬Î +  æ¿˝“Ù…´ + ∏Ù¿Î“¿¿µ£®+ ø…—°»®÷ÿ£©
+:ensure_indextts
+set "INDEXTTS_OK="
+set "INDEXTTS_WEIGHTS="
+if not exist "%INDEXTTS_DIR%\indextts\infer_v2_5.py" (
+    echo [–≈œ¢] ’˝‘⁄ªÒ»° IndexTTS-2.5 ‘¥¬Î£®‘º 36 MB£©...
+    set "SOURCES=https://ghfast.top/https://github.com/index-tts/index-tts/archive/refs/heads/main.tar.gz https://ghproxy.net/https://github.com/index-tts/index-tts/archive/refs/heads/main.tar.gz https://codeload.github.com/index-tts/index-tts/tar.gz/refs/heads/main https://github.com/index-tts/index-tts/archive/refs/heads/main.tar.gz"
+    if defined OCV_INDEXTTS_URL set "SOURCES=%OCV_INDEXTTS_URL%"
+    call :fetch "%BOOT_DIR%\indextts.tar.gz" 10000000 "!SOURCES!"
+    if errorlevel 1 (
+        echo [æØ∏Ê] IndexTTS-2.5 ‘¥¬Îœ¬‘ÿ ß∞‹°£
+        exit /b 0
+    )
+    call :extract_targz "%BOOT_DIR%\indextts.tar.gz" "%BOOT_DIR%\indextts_stage"
+    if errorlevel 1 (
+        echo [æØ∏Ê] IndexTTS-2.5 ‘¥¬ÎΩ‚—π ß∞‹°£
+        exit /b 0
+    )
+    set "IT_SRC="
+    for /d %%D in ("%BOOT_DIR%\indextts_stage\*") do if not defined IT_SRC set "IT_SRC=%%~fD"
+    if not defined IT_SRC (
+        echo [æØ∏Ê] IndexTTS-2.5 —πÀı∞¸Ω·ππ“Ï≥£°£
+        exit /b 0
+    )
+    if not exist "%INDEXTTS_DIR%" mkdir "%INDEXTTS_DIR%"
+    xcopy "!IT_SRC!\*" "%INDEXTTS_DIR%\" /E /I /Y /Q /H >nul
+    del /q "%BOOT_DIR%\indextts.tar.gz" >nul 2>nul
+    rmdir /s /q "%BOOT_DIR%\indextts_stage" >nul 2>nul
+)
+if not exist "%INDEXTTS_DIR%\indextts\infer_v2_5.py" (
+    echo [æØ∏Ê] IndexTTS-2.5 ‘¥¬Î≤ªÕÍ’˚°£
+    exit /b 0
+)
+
+rem  æ¿˝“Ù…´£∫”¶”√ƒ¨»œ“Ù…´ voice_05.wav µ»£¨»°◊‘πŸ∑Ω IndexTTS-2-Demo ø’º‰
+if not exist "%INDEXTTS_DIR%\examples" mkdir "%INDEXTTS_DIR%\examples"
+set "VOICE_MISSING="
+for %%V in (voice_01.wav voice_02.wav voice_03.wav voice_04.wav voice_05.wav voice_06.wav voice_07.wav voice_08.wav voice_09.wav voice_11.wav voice_12.wav emo_hate.wav emo_sad.wav) do if not exist "%INDEXTTS_DIR%\examples\%%V" set "VOICE_MISSING=1"
+if defined VOICE_MISSING (
+    echo [–≈œ¢] ’˝‘⁄ªÒ»° IndexTTS-2.5  æ¿˝“Ù…´£®13 ∏ˆŒƒº˛£¨‘º 4 MB£©...
+    for %%V in (voice_01.wav voice_02.wav voice_03.wav voice_04.wav voice_05.wav voice_06.wav voice_07.wav voice_08.wav voice_09.wav voice_11.wav voice_12.wav emo_hate.wav emo_sad.wav) do (
+        if not exist "%INDEXTTS_DIR%\examples\%%V" (
+            set "SOURCES=%OCV_HF_ENDPOINT%/spaces/IndexTeam/IndexTTS-2-Demo/resolve/main/examples/%%V https://huggingface.co/spaces/IndexTeam/IndexTTS-2-Demo/resolve/main/examples/%%V"
+            call :fetch "%INDEXTTS_DIR%\examples\%%V" 10000 "!SOURCES!"
+            if errorlevel 1 echo [æØ∏Ê]  æ¿˝“Ù…´ %%V œ¬‘ÿ ß∞‹£¨ø…‘⁄ΩÁ√Ê∏ƒ”√◊‘±∏≤Œøº“Ù∆µ°£
+        )
+    )
+)
+
+rem ∏Ù¿Î“¿¿µ∞¸£∫∏¥”√œÓƒøπŸ∑Ω◊∞≈‰Ω≈±æ
+set "IT_PACKAGES_OK=1"
+for %%P in (whisper tiktoken) do if not exist "%INDEXTTS_DIR%\python_packages\%%P" set "IT_PACKAGES_OK="
+if not defined IT_PACKAGES_OK (
+    echo [–≈œ¢] ’˝‘⁄◊∞≈‰ IndexTTS-2.5 ∏Ù¿Î“¿¿µ∞¸£®∏¥”√ tools\deploy_indextts25.ps1£©...
+    if not defined PIP_INDEX set "PIP_INDEX=%OCV_PIP_INDEX%"
+    set "PIP_INDEX_URL=!PIP_INDEX!"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%tools\deploy_indextts25.ps1" -ProjectRoot "%ROOT_DIR:~0,-1%" -SkipModelDownload
+    set "PS_RESULT=!ERRORLEVEL!"
+    set "PIP_INDEX_URL="
+    if not "!PS_RESULT!"=="0" (
+        echo [æØ∏Ê] ◊∞≈‰Ω≈±æŒ¥ÕÍ’˚Ω· ¯£®∆‰ ’Œ≤µƒ æ¿˝“Ù…´/∏®÷˙ƒ£–Õ≤Ω÷Ë–Ë“™ requests
+        echo        «“÷±¡¨ huggingface.co£¨π˙ƒ⁄Õ¯¬Á≥£ ß∞‹£©°£ æ¿˝“Ù…´±æΩ≈±æ“—¥”π˙ƒ⁄æµœÒ
+        echo        ±∏∆Î£¨“Ú¥Àœ¬√Ê∞¥±ÿ–ËŒƒº˛ «∑Ò∆Î»´≈–∂®Ω·π˚°£“≤ø… ÷∂Ø÷ÿ≈‹£∫
+        echo        powershell -ExecutionPolicy Bypass -File tools\deploy_indextts25.ps1
+    )
+)
+
+rem ø…—°£∫±æµÿ≈‰“Ù»®÷ÿ£®‘º 10.2 GB£©
+if exist "%INDEXTTS_DIR%\checkpoints\gpt.pth" set "INDEXTTS_WEIGHTS=1"
+if not defined INDEXTTS_WEIGHTS (
+    set "DOWNLOAD_WEIGHTS="
+    if /i "%OCV_INSTALL_INDEXTTS_MODEL%"=="1" set "DOWNLOAD_WEIGHTS=1"
+    if not defined OCV_INSTALL_INDEXTTS_MODEL (
+        where nvidia-smi >nul 2>nul
+        if not errorlevel 1 (
+            set "GPU_INFO="
+            for /f "tokens=1,2 delims=," %%A in ('nvidia-smi --query-gpu^=name^,memory.total --format^=csv^,noheader^,nounits 2^>nul') do if not defined GPU_INFO (
+                set "GPU_MEM=%%B"
+                for /f "tokens=* delims= " %%M in ("!GPU_MEM!") do set "GPU_MEM=%%M"
+                set "GPU_INFO=%%A£¨π≤ !GPU_MEM! MiB"
+            )
+            echo.
+            echo [Àµ√˜] °∞±æµÿ≈‰“Ù°±÷∏”√±æª˙œ‘ø®≈‹ IndexTTS-2.5 ƒ£–Õ£¨–Ë“™∂ÓÕ‚œ¬‘ÿ‘º 10.2 GB »®÷ÿ°£
+            echo        ÷ª”–œÎ‘⁄±æª˙≈‹’‚∏ˆƒ£–Õ ±≤≈–Ë“™£ªºØ»∫ GPU ≈‰“Ù°¢Qwen-TTS ‘∆∂À≈‰“Ù°¢
+            echo        …œ¥´ªÚ“—”–≈‰“Ù°¢◊÷ƒª ∂±°¢…˙Õº”Î ”∆µ‰÷»æ∂º≤ª–Ë“™À¸°£
+            echo        Ω®“Èœ‘¥Ê£∫ø…”√ 8 GB “‘…œø…µ•≤¢∑¢‘À––£¨12 GB “‘…œ∏¸¥”»›
+            echo        £®œÓƒø◊‘ºÏ‘⁄°∞≤¢–– ˝¥Û”⁄ 1 «“ø…”√œ‘¥ÊµÕ”⁄ 9 GB°± ±ª·∏¯≥ˆ∏ÊæØ£©°£
+            echo        “‘∫ÛœÎ∆Ù”√“≤ø…“‘£∫÷ÿ≈‹±æΩ≈±æ°¢…Ë OCV_INSTALL_INDEXTTS_MODEL=1£¨
+            echo        ªÚ‘⁄ΩÁ√Ê°∞…˘“Ù…Ë÷√°±¿Ô∞¥–Ë∞≤◊∞°£
+            if defined GPU_INFO echo [–≈œ¢] ºÏ≤‚µΩœ‘ø®£∫!GPU_INFO!
+            choice /c YN /n /t 30 /d N /m " «∑Ò‘⁄±æª˙‘À–– IndexTTS-2.5 ±æµÿ≈‰“Ù£®œ÷‘⁄œ¬‘ÿ 10.2 GB »®÷ÿ£©£ø[Y/N] " 2>nul
+            if not errorlevel 2 set "DOWNLOAD_WEIGHTS=1"
+        ) else (
+            echo [–≈œ¢] Œ¥ºÏ≤‚µΩ NVIDIA œ‘ø®£¨Ã¯π˝±æµÿ≈‰“Ù»®÷ÿ£∫±æµÿ IndexTTS-2.5 –Ë“™ NVIDIA GPU°£
+            echo        ºØ»∫ GPU ≈‰“Ù°¢Qwen-TTS ‘∆∂À≈‰“Ù°¢◊÷ƒª ∂±”Î ”∆µ‰÷»æ∂º≤ª ‹”∞œÏ°£
+        )
+    )
+    if defined DOWNLOAD_WEIGHTS (
+        echo [–≈œ¢] ’˝‘⁄œ¬‘ÿ IndexTTS-2.5 »®÷ÿ£®‘º 10.2 GB£¨÷ß≥÷∂œµ„–¯¥´£©...
+        if not defined PIP_INDEX set "PIP_INDEX=%OCV_PIP_INDEX%"
+        set "PIP_INDEX_URL=!PIP_INDEX!"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT_DIR%tools\deploy_indextts25.ps1" -ProjectRoot "%ROOT_DIR:~0,-1%"
+        set "PS_RESULT=!ERRORLEVEL!"
+        set "PIP_INDEX_URL="
+        if not "!PS_RESULT!"=="0" (
+            echo [æØ∏Ê] »®÷ÿœ¬‘ÿŒ¥ÕÍ≥…£¨ø…‘⁄ΩÁ√Ê°∞…˘“Ù…Ë÷√°±÷–ºÃ–¯∞≤◊∞°£
+        ) else (
+            set "INDEXTTS_WEIGHTS=1"
+        )
+    )
+)
+
+set "IT_FINAL_OK=1"
+for %%P in ("indextts\infer_v2_5.py" "python_packages\whisper" "python_packages\tiktoken" "examples\voice_05.wav") do if not exist "%INDEXTTS_DIR%\%%~P" set "IT_FINAL_OK="
+if defined IT_FINAL_OK set "INDEXTTS_OK=1"
+exit /b 0
