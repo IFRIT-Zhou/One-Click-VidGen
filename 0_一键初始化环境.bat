@@ -190,7 +190,7 @@ if defined OCV_SKIP_PIP (
     echo [信息] 已按 OCV_SKIP_PIP 跳过。
     set "PIP_STATUS=已跳过"
 ) else (
-    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper" >nul 2>nul
+    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper, PIL" >nul 2>nul
     if errorlevel 1 (
         echo [信息] 核心依赖不完整，开始安装（torch 轮子 3.46 GB，全部约 4-5 GB）...
         set "PIP_CACHE_DIR=%ROOT_DIR%runtime\cache\pip"
@@ -208,9 +208,9 @@ if defined OCV_SKIP_PIP (
             exit /b 1
         )
     )
-    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper" >nul 2>nul
+    "%PYEXE%" -I -c "import fastapi, uvicorn, torch, faster_whisper, PIL" >nul 2>nul
     if errorlevel 1 (
-        echo [致命错误] 核心依赖仍不完整（fastapi / uvicorn / torch / faster_whisper）。
+        echo [致命错误] 核心依赖仍不完整（fastapi / uvicorn / torch / faster_whisper / PIL）。
         pause
         exit /b 1
     )

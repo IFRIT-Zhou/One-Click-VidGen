@@ -45,6 +45,11 @@ librosa==0.10.2.post1
 soundfile==0.13.1
 ffmpeg-python==0.2.0
 opencv-python==4.9.0.80
+# Imported unconditionally at startup (backend/app/reference_materials.py,
+# backend/app/image_studio.py, backend/app/subtitle_layout.py). modelscope and
+# huggingface_hub only declare Pillow behind optional extras, so it is never
+# pulled in transitively: it must be listed explicitly.
+Pillow==12.3.0
 omegaconf==2.3.0
 safetensors==0.5.2
 tqdm==4.67.1
