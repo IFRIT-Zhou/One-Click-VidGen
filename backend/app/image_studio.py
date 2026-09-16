@@ -26,7 +26,8 @@ ACTIVE: set[int] = set()
 class ImageRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     provider: Literal['custom', 'pool'] = 'custom'
-    ratio: Literal['2:1', '16:9', '1:1', '9:16'] = '2:1'
+    profile_id: str | None = Field(default=None, max_length=80)
+    ratio: Literal['2:1', '16:9', '3:2', '1:1', '3:4', '9:16', '21:9'] = '2:1'
     resolution: Literal['', '1k', '2k', '4k'] = ''
     references: list[str] = Field(default_factory=list, max_length=4)
 
@@ -57,14 +58,29 @@ def config_for(user: int, data: ImageRequest):
                       api_key=runtime['access_token'], refresh_token=runtime['refresh_token'],
                       cloud_base_url=base, cloud_pool='1')
     else:
-        configs = visual._provider_configs()
-        if not configs:
-            raise ValueError('请先在接口与服务中保存图像 API 配置')
-        config = dict(configs[0])
+        if data.profile_id:
+            from .image_profiles import profile_environment, profile_snapshot
+            snapshot = profile_snapshot(data.profile_id, data.resolution)
+            environment = profile_environment(snapshot)
+            config = {
+                'endpoint': environment['RUNNINGHUB_ENDPOINT'],
+                'query_url': environment['OCV_IMAGE_QUERY_URL'],
+                'reference_endpoint': environment['RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT'],
+                'api_key': environment['RUNNINGHUB_API_KEY'],
+                'model': environment['IMAGE_MODEL_ID'],
+                'resolution': environment['IMAGE_RESOLUTION'],
+                'profile_name': snapshot.get('name') or '',
+                'reference_images': snapshot.get('reference_images', True),
+            }
+        else:
+            configs = visual._provider_configs()
+            if not configs:
+                raise ValueError('请先在接口与服务中保存图像 API 配置')
+            config = dict(configs[0])
     config['ratio'] = data.ratio
     from .config import _parse_env_lines
     saved = _parse_env_lines(Path(__file__).resolve().parents[2] / '.env')
-    config['resolution'] = data.resolution or saved.get('IMAGE_RESOLUTION') or saved.get('RUNNINGHUB_RESOLUTION') or config.get('resolution') or '1k'
+    config['resolution'] = data.resolution or config.get('resolution') or saved.get('IMAGE_RESOLUTION') or saved.get('RUNNINGHUB_RESOLUTION') or '1k'
     config['endpoint'] = visual._runninghub_generate_url(config)
     config['query_url'] = config.get('query_url') or visual._runninghub_url('/openapi/v2/query')
     return config, client
@@ -103,6 +119,8 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
             payload['clientJobId'] = 'image-studio-' + record['id']
         with requests.Session() as session:
             if record['references']:
+                if config.get('reference_images') is False:
+                    raise ValueError('所选图像模型配置未启用参考图能力')
                 if config.get('cloud_pool') == '1':
                     record['message'] = f"正在上传 {len(record['references'])} 张参考图"
                     save(path, record)
@@ -116,7 +134,7 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
                         base64.b64encode((path/name).read_bytes()).decode('ascii')
                         for name in record['references']
                     ]
-                endpoint = endpoint.replace('/text-to-image', '/image-to-image')
+                endpoint = config.get('reference_endpoint') or endpoint.replace('/text-to-image', '/image-to-image')
             headers = {'Authorization': 'Bearer '+config['api_key']}
             # Keep the same clientJobId while renewing a short-lived cloud token.
             # A 401 therefore resumes polling the original task instead of creating
@@ -230,6 +248,7 @@ def create(data: ImageRequest, request: Request):
             names.append(name)
         record = dict(id=identity, created_at=time.time(), status='running', message='正在提交',
                       prompt=data.prompt, provider=data.provider, ratio=data.ratio,
+                      profile_id=data.profile_id, profile_name=config.get('profile_name') or '',
                       resolution=config['resolution'], references=names)
         save(path, record)
         threading.Thread(target=execute, args=(user,path,record,config,cloud_pool_client), daemon=True).start()

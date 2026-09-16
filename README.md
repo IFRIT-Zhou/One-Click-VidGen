@@ -28,6 +28,8 @@
 - 使用本地 IndexTTS-2.5 时，需要另行准备官方模型权重；没有合适显卡可改用 Qwen-TTS
 - 使用集群 GPU 时，需要部署符合《集群云端加速接口文档》的 cloud-api 服务
 
+不会填写个人 API 的用户，可查看 [OCV API 配置说明](./API_SETUP_GUIDE.md)。
+
 集群服务端文档：
 
 - [服务设计](./docs/cluster/集群云端加速服务设计文档.md)

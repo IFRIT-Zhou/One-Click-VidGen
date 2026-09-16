@@ -901,7 +901,10 @@ def _provider_configs() -> list[dict[str, str]]:
             "account_label": "云端号池",
             "cloud_pool": "1",
         }]
-    _load_runninghub_env_from_file()
+    # A task-selected image profile is injected by the parent process. Reloading
+    # the global .env here would silently replace that per-task model choice.
+    if os.getenv("OCV_IMAGE_PROFILE_ACTIVE", "").strip() != "1":
+        _load_runninghub_env_from_file()
     image_model = (
         os.getenv("IMAGE_MODEL_ID", "").strip()
         or os.getenv("RUNNINGHUB_IMAGE_MODEL", "").strip()
@@ -916,6 +919,7 @@ def _provider_configs() -> list[dict[str, str]]:
             or os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip()
         ),
         "ratio": '9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+        "query_url": os.getenv("OCV_IMAGE_QUERY_URL", "").strip(),
     }
     raw_keys = [os.getenv("RUNNINGHUB_API_KEY", "")]
     raw_keys.extend(re.split(r"[,;\s]+", os.getenv("RUNNINGHUB_API_KEYS", "")))
@@ -3011,6 +3015,12 @@ def _handle_runninghub_submit_error(payload: dict[str, Any], status_code: int | 
         raise RunningHubResultRetryableError(
             f"第三方图像模型执行超时（1504）{f': {message}' if message else ''}"
         )
+    if status_code in {400, 401, 403, 404}:
+        detail = message or f"HTTP {status_code}"
+        raise RunningHubAccessDenied(
+            f"图像模型配置被接口拒绝（HTTP {status_code}）：{detail}。"
+            "请核对 API Base URL、模型 ID、接口路径和 API Key 后断点续跑。"
+        )
     if code in {408, 409, 500, 502, 503, 504, 1005, 1010, 1011, 1012}:
         detail = f"，原因: {message}" if message else ""
         raise RunningHubTransientError(f"第三方图像接口临时不可用，错误码: {code}{detail}")
@@ -3062,6 +3072,8 @@ def _submit_poster_request(
     selected_reference_paths = [
         str(path).strip() for path in macro.get("reference_image_paths", []) if str(path).strip()
     ][:4]
+    if selected_reference_paths and config.get("reference_images") is False:
+        raise RunningHubAccessDenied("所选图像模型配置未启用参考图能力，请更换模型配置或移除参考图")
     if not selected_reference_paths and not macro.get('reference_binding_version'):
         catalog = _reference_image_catalog()
         if any(reference_id in catalog for reference_id in macro.get("reference_image_ids", [])):
@@ -3081,7 +3093,8 @@ def _submit_poster_request(
             reference_urls = [protagonist_url]
     if reference_urls:
         payload["imageUrls"] = reference_urls
-        endpoint = os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
+        endpoint = str(config.get("reference_endpoint") or "").strip() or \
+            os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
             str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
     if config.get("cloud_pool") == "1":
         payload["clientJobId"] = _cloud_client_job_id(macro, payload)

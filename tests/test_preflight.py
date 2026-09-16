@@ -70,6 +70,7 @@ class PreflightProbeTest(unittest.TestCase):
             language_model="local-model-v2",
             language_api_base_url="http://127.0.0.1:1234/v1/",
             language_api_key="optional-secret",
+            custom_llm_thinking_mode="disabled",
         )
         with (
             patch.object(main, "require_user"),
@@ -84,6 +85,7 @@ class PreflightProbeTest(unittest.TestCase):
         self.assertEqual(updates["CUSTOM_LLM_API_BASE"], "http://127.0.0.1:1234/v1")
         self.assertEqual(updates["CUSTOM_LLM_MODEL"], "local-model-v2")
         self.assertEqual(updates["CUSTOM_LLM_API_KEY"], "optional-secret")
+        self.assertEqual(updates["CUSTOM_LLM_THINKING_MODE"], "disabled")
 
     def test_non_custom_provider_cannot_override_base_url(self) -> None:
         payload = main.ApiKeySettingsRequest(

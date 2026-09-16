@@ -189,6 +189,8 @@ class GenerateRequest(BaseModel):
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     use_cloud_image_pool: bool = False
+    image_profile_id: str | None = Field(default=None, max_length=80)
+    image_resolution: Literal["1k", "2k", "4k"] | None = None
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
     video_orientation: Literal['landscape', 'portrait'] = 'landscape'
     subtitle_layouts: dict[str, Any] = Field(default_factory=dict)
@@ -295,6 +297,11 @@ class VisualTimingHistoryRequest(BaseModel):
     history_id: str = Field(min_length=1, max_length=260)
 
 
+class VisualPictureInsertRequest(BaseModel):
+    source_macro_id: str = Field(min_length=1, max_length=180)
+    first_slide_id: str = Field(min_length=1, max_length=180)
+
+
 class VisualSubtitleUpdateRequest(BaseModel):
     updates: dict[str, str] = Field(min_length=1, max_length=200)
 
@@ -320,6 +327,13 @@ class VisualSubtitleHideRequest(BaseModel):
 class VisualSubtitleRestoreRequest(BaseModel):
     slide_id: str = Field(min_length=1, max_length=180)
     force: bool = False
+
+
+class VisualSubtitleSplitRequest(BaseModel):
+    slide_id: str = Field(min_length=1, max_length=180)
+    left_text: str = Field(min_length=1, max_length=1200)
+    right_text: str = Field(min_length=1, max_length=1200)
+    boundary: float = Field(ge=0, le=86400)
 
 
 class TtsSegmentRegenerateRequest(BaseModel):
@@ -411,6 +425,7 @@ class ApiKeySettingsRequest(BaseModel):
     language_model: str | None = Field(default=None, max_length=256)
     language_api_base_url: str | None = Field(default=None, max_length=2048)
     language_api_key: str | None = Field(default=None, max_length=2048)
+    custom_llm_thinking_mode: Literal["follow", "disabled", "enabled"] | None = None
     image_api_base_url: str | None = Field(default=None, max_length=2048)
     image_model: str | None = Field(default=None, max_length=256)
     image_resolution: str | None = Field(default=None, max_length=64)
@@ -437,6 +452,8 @@ class EditRequest(BaseModel):
 app = FastAPI(title="Voice Over Video API")
 from .image_studio import router as image_studio_router
 app.include_router(image_studio_router)
+from .image_profiles import router as image_profiles_router
+app.include_router(image_profiles_router)
 from .subtitle_preview import router as subtitle_preview_router
 app.include_router(subtitle_preview_router)
 app.add_middleware(
@@ -1217,6 +1234,7 @@ def _api_key_status() -> dict[str, Any]:
             "base_url": (
                 "" if selected_configured else selected_base_url
             ) if legacy_relay_selected or provider == "custom" else "",
+            "custom_thinking_mode": str(values.get("CUSTOM_LLM_THINKING_MODE") or "follow"),
             "providers": provider_statuses,
         },
         "image": {
@@ -1255,7 +1273,8 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
     if not status["language"]["configured"]:
         return "完整视频生成需要语言模型 API Key，请先在接口配置中保存后再启动"
     visual_backend = str(data.get("visual_backend") or "poster").lower()
-    if visual_backend in {"poster", "online-poster", "runninghub"} and not status["image"]["configured"]:
+    has_selected_profile = bool(data.get("image_profile_snapshot"))
+    if visual_backend in {"poster", "online-poster", "runninghub"} and not (status["image"]["configured"] or has_selected_profile):
         return "在线海报生成需要第三方图像 API Key，请先在接口配置中保存后再启动"
     return None
 
@@ -1417,6 +1436,14 @@ def _probe_image_api_pool(api_keys: list[str]) -> tuple[str, str]:
 def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
+    if not data.get("use_cloud_image_pool") and str(data.get("image_profile_id") or "").strip():
+        from .image_profiles import profile_snapshot
+        try:
+            data["image_profile_snapshot"] = profile_snapshot(
+                str(data["image_profile_id"]), str(data.get("image_resolution") or "")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     items: list[dict[str, str]] = []
 
     def add(check_id: str, label: str, status: str, message: str) -> None:
@@ -1640,6 +1667,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     language_provider = payload.language_provider
     language_model = str(payload.language_model or "").strip()
     language_api_base_url = str(payload.language_api_base_url or "").strip().rstrip("/")
+    custom_llm_thinking_mode = payload.custom_llm_thinking_mode
     image_api_base_url = str(payload.image_api_base_url or "").strip().rstrip("/")
     image_model = str(payload.image_model or "").strip()
     image_resolution = str(payload.image_resolution or "").strip()
@@ -1657,6 +1685,7 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         not any(all_supplied)
         and not language_provider
         and not language_model
+        and custom_llm_thinking_mode is None
         and not image_api_base_url
         and not image_model
         and not image_resolution
@@ -1687,6 +1716,8 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
                 status_code=400,
                 detail="API Base URL 必须是有效的 http(s) 地址，且不能包含账号、查询参数或锚点",
             )
+    if custom_llm_thinking_mode is not None and language_provider != "custom":
+        raise HTTPException(status_code=400, detail="只有自定义兼容接口可以设置思考模式")
     if image_api_base_url:
         parsed_image_base_url = urlparse(image_api_base_url)
         if (
@@ -1744,6 +1775,8 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         if language:
             updates[provider_config["key_env"]] = language
         if language_provider == "custom":
+            if custom_llm_thinking_mode is not None:
+                updates["CUSTOM_LLM_THINKING_MODE"] = custom_llm_thinking_mode
             # An old relay installation is displayed as the unified custom
             # interface. On its first save, carry every hidden value across so
             # placeholder-only fields never force the user to re-enter it.
@@ -2120,6 +2153,14 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             ),
         )
     data["project_name"] = normalize_project_name(data.get("project_name"))
+    if not data.get("use_cloud_image_pool") and str(data.get("image_profile_id") or "").strip():
+        from .image_profiles import profile_snapshot
+        try:
+            data["image_profile_snapshot"] = profile_snapshot(
+                str(data["image_profile_id"]), str(data.get("image_resolution") or "")
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if data.get("tts_engine") == "cluster" and not str(data.get("cluster_voice_id") or "").strip():
         raise HTTPException(status_code=400, detail="使用集群配音前请选择一个云端音色")
     config_error = _required_job_config_error(data)
@@ -2329,7 +2370,7 @@ def advance_step_workflow(
         "start_visual": {
             "video_orientation",
             "content_mode", "director_strategy", "scene_references_enabled", "auto_split_long_text", "split_text_threshold",
-            "visual_backend", "use_cloud_image_pool", "visual_prompt_mode",
+            "visual_backend", "use_cloud_image_pool", "image_profile_id", "image_resolution", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
             "visual_max_duration", "visual_max_slides", "visual_style_prompt",
             "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt",
@@ -2375,6 +2416,15 @@ def advance_step_workflow(
         except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=409, detail=f"配音精修确认失败：{exc}") from exc
     if payload.action == "start_visual":
+        if not job.request.get("use_cloud_image_pool") and str(job.request.get("image_profile_id") or "").strip():
+            from .image_profiles import profile_snapshot
+            try:
+                job.request["image_profile_snapshot"] = profile_snapshot(
+                    str(job.request["image_profile_id"]), str(job.request.get("image_resolution") or "")
+                )
+                store.update(job, request=job.request)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             revision = validate_step_audio_snapshot(job)
             store.log(job, f"出图前配音快照校验通过：{revision['sentence_count']} 句")
@@ -2850,7 +2900,7 @@ def get_visual_editor_image(job_id: str, filename: str, request: Request) -> Fil
         raise HTTPException(status_code=404, detail="image not found") from exc
     return FileResponse(
         str(path),
-        media_type="image/jpeg",
+        media_type={".png": "image/png", ".webp": "image/webp"}.get(path.suffix.lower(), "image/jpeg"),
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
@@ -3094,6 +3144,29 @@ def remove_visual_editor_timing_picture(job_id: str, macro_id: str, request: Req
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/jobs/{job_id}/visual-editor/timing/insert")
+def insert_visual_editor_timing_picture(
+    job_id: str,
+    payload: VisualPictureInsertRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再添加画面")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请等待单句重配完成后再添加画面")
+    try:
+        return visual_editor.insert_timing_picture(
+            job_id=job_id,
+            user_id=user_id,
+            source_macro_id=payload.source_macro_id,
+            first_slide_id=payload.first_slide_id,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/jobs/{job_id}/visual-editor/subtitles")
 def save_visual_editor_subtitles(
     job_id: str,
@@ -3111,6 +3184,31 @@ def save_visual_editor_subtitles(
             job_id=job_id,
             user_id=user_id,
             updates=payload.updates,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/visual-editor/subtitles/split")
+def split_visual_editor_subtitle(
+    job_id: str,
+    payload: VisualSubtitleSplitRequest,
+    request: Request,
+) -> dict[str, Any]:
+    _job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get("task", {}).get("status") == "running" or visual_status.get("has_active_image_tasks"):
+        raise HTTPException(status_code=409, detail="请等待当前重绘或重新渲染任务完成后再拆分字幕")
+    if tts_editor.status(job_id).get("status") == "running":
+        raise HTTPException(status_code=409, detail="配音时长正在变化，请等待单句重配完成后再拆分字幕")
+    try:
+        return visual_editor.split_subtitle(
+            job_id=job_id,
+            user_id=user_id,
+            slide_id=payload.slide_id,
+            left_text=payload.left_text,
+            right_text=payload.right_text,
+            boundary=payload.boundary,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

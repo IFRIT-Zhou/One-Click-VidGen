@@ -255,6 +255,71 @@ class VisualEditorTimingTest(unittest.TestCase):
                 job_id="job", user_id=1, updates={"scene_003": "   "}
             )
 
+    def test_split_subtitle_adds_display_node_without_changing_audio_range(self) -> None:
+        payload = self.editor.split_subtitle(
+            job_id="job",
+            user_id=1,
+            slide_id="scene_002",
+            left_text="sentence",
+            right_text="two",
+            boundary=3.1,
+        )
+        timeline = VisualEditor._load_timeline(self.project)
+        self.assertEqual(len(timeline), 6)
+        self.assertEqual(timeline[1]["slide_id"], "scene_002")
+        self.assertEqual(timeline[1]["end"], 3.1)
+        self.assertEqual(timeline[2]["slide_id"], "scene_added_001")
+        self.assertEqual(timeline[2]["start"], 3.1)
+        self.assertEqual(timeline[2]["end"], 4.0)
+        self.assertTrue(timeline[2]["subtitle_only_split"])
+        mapping = VisualEditor._load_mapping(self.project)
+        self.assertEqual(
+            mapping[0]["includes_slides"],
+            ["scene_001", "scene_002", "scene_added_001"],
+        )
+        self.assertEqual(payload["items"][0]["timing"]["duration"], 4.0)
+        self.assertIn("sentence\n", (self.project / "other" / "最终字幕.srt").read_text(encoding="utf-8"))
+        self.assertFalse((self.project / "input" / "配音.wav").exists())
+        self.editor.adjust_timing(
+            job_id="job", user_id=1, macro_id="poster_001", action="shrink_next"
+        )
+        restored = self.editor.reset_timing(job_id="job", user_id=1)
+        restored_mapping = VisualEditor._load_mapping(self.project)
+        self.assertIn("scene_added_001", restored_mapping[0]["includes_slides"])
+        self.assertTrue(restored["timing_available"])
+
+    def test_insert_picture_assigns_existing_subtitle_suffix_and_preserves_partition(self) -> None:
+        payload = self.editor.insert_timing_picture(
+            job_id="job",
+            user_id=1,
+            source_macro_id="poster_001",
+            first_slide_id="scene_002",
+        )
+        mapping = VisualEditor._load_mapping(self.project)
+        self.assertEqual(
+            [item["macro_scene_id"] for item in mapping],
+            ["poster_001", "poster_added_001", "poster_002", "poster_003"],
+        )
+        self.assertEqual(mapping[0]["includes_slides"], ["scene_001"])
+        self.assertEqual(mapping[1]["includes_slides"], ["scene_002"])
+        self.assertEqual(
+            [slide for item in mapping for slide in item["includes_slides"]],
+            [item["slide_id"] for item in self.timeline],
+        )
+        placeholder = self.project / "image" / "poster_added_001.png"
+        self.assertTrue(placeholder.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(payload["items"][1]["id"], "poster_added_001")
+        self.assertTrue(payload["items"][1]["placeholder"])
+
+    def test_insert_picture_rejects_single_sentence_picture(self) -> None:
+        with self.assertRaisesRegex(ValueError, "只有一条字幕"):
+            self.editor.insert_timing_picture(
+                job_id="job",
+                user_id=1,
+                source_macro_id="poster_003",
+                first_slide_id="scene_005",
+            )
+
     def test_hiding_subtitle_as_blank_keeps_visual_timeline_and_omits_srt_entry(self) -> None:
         before_mapping = VisualEditor._load_mapping(self.project)
         before_ranges = [(item["start"], item["end"]) for item in VisualEditor._load_timeline(self.project)]

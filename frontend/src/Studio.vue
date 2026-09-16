@@ -480,8 +480,8 @@
                     </label>
                     <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
                     <button type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
-                    <label class="icon-action replace-action" title="替换本地 JPG 图片" aria-label="替换本地 JPG 图片">
-                      ↕<input type="file" accept="image/jpeg" @change="uploadVisualImage($event, item)" />
+                    <label class="icon-action replace-action" title="替换本地图片" aria-label="替换本地图片">
+                      ↕<input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualImage($event, item)" />
                     </label>
                     <button type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
                   </div>
@@ -500,11 +500,16 @@
                     <span>本图使用的参考素材</span>
                     <button v-for="reference in item.reference_materials" :key="reference.label" type="button" :title="reference.description" @click="visualPreviewItem={id:reference.label,image_url:reference.image_url}"><img :src="reference.image_url" :alt="reference.label" style="width:36px;height:28px;object-fit:contain"/>{{ reference.label }}</button>
                   </div>
-                  <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
-                    <img :src="item.image_url" :alt="item.id" />
-                    <span>点击放大预览</span>
-                    <em v-if="item.task?.status === 'running'" class="visual-image-running">{{ item.task?.action === 'upload' ? '替换中…' : '重绘中…' }}</em>
-                  </button>
+                  <div class="visual-image-preview-shell">
+                    <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
+                      <img :src="item.image_url" :alt="item.id" />
+                      <span>点击放大预览</span>
+                      <em v-if="item.placeholder" class="visual-image-running visual-image-placeholder">待生成 · 请填写提示词或替换图片</em>
+                      <em v-if="item.task?.status === 'running'" class="visual-image-running">{{ item.task?.action === 'upload' ? '替换中…' : '重绘中…' }}</em>
+                    </button>
+                    <button class="visual-image-nav visual-image-nav-prev" type="button" :disabled="!canSelectPreviousImage" title="前一个画面" aria-label="前一个画面" @click="selectAdjacentVisualImage(-1)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg></button>
+                    <button class="visual-image-nav visual-image-nav-next" type="button" :disabled="!canSelectNextImage" title="后一个画面" aria-label="后一个画面" @click="selectAdjacentVisualImage(1)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg></button>
+                  </div>
                   <label class="stack compact-stack">
                     <span>提示词</span>
                     <textarea v-model="item.prompt" rows="3" maxlength="12000"></textarea>
@@ -600,6 +605,9 @@
                             <template v-else>
                               <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="toggleVisualSubtitleEdit(sentence)">{{ visualSubtitleEditingId === sentence.slide_id ? '完成' : '✏️' }}</button>
                               <button v-if="isVisualSubtitleModified(sentence)" class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="撤销本句未保存修改" @click="resetVisualSubtitleDraft(sentence)">↶</button>
+                              <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="把本句显示字幕拆成两条，配音保持不变" @click="openVisualSubtitleSplit(sentence)">拆成两条</button>
+                              <button v-if="(selectedVisualTimingItem.timing?.sentences?.length || 0) >= 2" class="ghost-btn compact-btn timing-insert-label" type="button" :disabled="visualPictureInsertBusy || visualTimingAdjusting || ttsEditor.task?.status === 'running'" title="从本句开始插入一张可编辑的黑色占位画面" @click="insertVisualPicture(sentence)">{{ visualPictureInsertBusy ? '添加中…' : '＋画面' }}</button>
+                              <button v-else class="ghost-btn compact-btn" type="button" disabled title="当前画面只有一句，请先拆分字幕">＋画面</button>
                               <button v-if="hasNextVisualSubtitle(sentence)" class="ghost-btn compact-btn subtitle-align-trigger" type="button" :disabled="visualBoundaryAlign.status === 'loading' || visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="只移动本句结束与下一句开始的共同边界" @click="previewVisualSubtitleBoundary(sentence)">调整与下一句分界</button>
                               <button class="ghost-btn compact-btn subtitle-hide-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="从成片与 SRT 中隐藏这条字幕" @click="openVisualSubtitleRemove(sentence)">×</button>
                             </template>
@@ -619,6 +627,30 @@
                           <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving" @click="hideVisualSubtitle('blank')"><strong>留空</strong><small>这段时间不显示字幕</small></button>
                           <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'previous')" @click="hideVisualSubtitle('merge_previous')"><strong>并入前句</strong><small>前一条可见字幕延长到这里</small></button>
                           <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'next')" @click="hideVisualSubtitle('merge_next')"><strong>并入后句</strong><small>后一条可见字幕提前到这里</small></button>
+                        </div>
+                      </div>
+                      <div v-if="visualSubtitleSplitDialog.open" class="subtitle-boundary-panel subtitle-split-panel">
+                        <div class="subtitle-boundary-head">
+                          <div>
+                            <strong>拆分 {{ visualSubtitleSplitDialog.sentence?.slide_id }} 的显示字幕</strong>
+                            <small>只拆字幕与时间显示，原配音文件保持不变</small>
+                          </div>
+                          <button class="icon-action" type="button" title="关闭" @click="closeVisualSubtitleSplit">×</button>
+                        </div>
+                        <div class="subtitle-split-copy">
+                          <label><span>前一条字幕</span><textarea v-model="visualSubtitleSplitDialog.left_text" rows="2" maxlength="1200"></textarea></label>
+                          <label><span>后一条字幕</span><textarea v-model="visualSubtitleSplitDialog.right_text" rows="2" maxlength="1200"></textarea></label>
+                        </div>
+                        <label class="subtitle-boundary-slider">
+                          <span>两条字幕的共同分界：{{ formatTimingRange({ start: visualSubtitleSplitDialog.sentence?.start, end: visualSubtitleSplitDialog.boundary }) }}</span>
+                          <input v-model.number="visualSubtitleSplitDialog.boundary" type="range" :min="Number(visualSubtitleSplitDialog.sentence?.start || 0) + 0.05" :max="Number(visualSubtitleSplitDialog.sentence?.end || 0) - 0.05" step="0.01" />
+                        </label>
+                        <div class="subtitle-boundary-actions">
+                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.sentence?.start, visualSubtitleSplitDialog.boundary)">▶ 试听前句</button>
+                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.boundary, visualSubtitleSplitDialog.sentence?.end)">▶ 试听后句</button>
+                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.sentence?.start, visualSubtitleSplitDialog.sentence?.end)">▶ 连续试听</button>
+                          <button class="ghost-btn compact-btn" type="button" :disabled="Math.abs(Number(visualSubtitleSplitDialog.boundary) - Number(visualSubtitleSplitDialog.original_boundary)) < 0.005" @click="visualSubtitleSplitDialog.boundary = Number(visualSubtitleSplitDialog.original_boundary)">恢复边界</button>
+                          <button class="primary-btn compact-btn" type="button" :disabled="visualSubtitleSaving" @click="applyVisualSubtitleSplit">{{ visualSubtitleSaving ? '保存中…' : '确认拆分' }}</button>
                         </div>
                       </div>
                       <div class="timing-actions">
@@ -892,7 +924,16 @@
               <span>API Key（本地无鉴权可留空）</span>
               <input v-model="apiKeyForm.language_api_key" name="ocv-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
             </label>
+            <label>
+              <span>思考模式</span>
+              <select v-model="apiKeyForm.custom_llm_thinking_mode">
+                <option value="follow">跟随接口默认（推荐）</option>
+                <option value="disabled">强制关闭（DeepSeek 兼容）</option>
+                <option value="enabled">强制开启（DeepSeek 兼容）</option>
+              </select>
+            </label>
             <small>需兼容 <code>/chat/completions</code>、具备足够上下文长度并能稳定输出 JSON。</small>
+            <small>强制开关会发送 DeepSeek 格式的 <code>thinking</code> 参数；其他模型请选择“跟随接口默认”。</small>
             <small class="api-custom-security-note">安全提示：API Key 会随请求发送到此网址，请只填写你信任的服务地址。</small>
             <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
               {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
@@ -919,58 +960,8 @@
             {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
           </button>
         </div>
-        <div class="api-key-pool-field api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
-          <span>图像模型接口</span>
-          <div class="api-custom-provider-guide image-api-config">
-            <label>
-              <span>API Base URL</span>
-              <input v-model="apiKeyForm.image_api_base_url" name="ocv-image-api-base-url" type="url" inputmode="url" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；不修改可留空' : 'https://example.com'" @focus="unlockProtectedInput" />
-            </label>
-            <label>
-              <span>模型 ID</span>
-              <input v-model="apiKeyForm.image_model" name="ocv-image-model-id" type="text" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；不修改可留空' : 'rhart-image-g-2'" @focus="unlockProtectedInput" />
-            </label>
-            <label>
-              <span>出图分辨率</span>
-              <select v-model="apiKeyForm.image_resolution_preset" :disabled="form.use_cloud_image_pool">
-                <option value="1k">1K（推荐）</option>
-                <option value="2k">2K</option>
-                <option value="4k">4K</option>
-                <option value="custom">自定义</option>
-              </select>
-            </label>
-            <label v-if="apiKeyForm.image_resolution_preset === 'custom'">
-              <span>自定义分辨率参数</span>
-              <input v-model="apiKeyForm.image_resolution_custom" type="text" autocomplete="off" :disabled="form.use_cloud_image_pool" placeholder="填写服务商支持的参数，例如 2048x2048" />
-            </label>
-            <small><strong>强烈推荐 Image 2（rhart-image-g-2）</strong>，这是当前完整验证的模型。其他模型 ID 不拦截，但服务商接口需兼容 OCV 当前的异步出图协议。</small>
-            <small v-if="form.use_cloud_image_pool">号池分辨率由云端统一决定。</small>
-            <small class="api-custom-security-note">安全提示：API Key 和图像提示词会发送到此网址，请只填写你信任的服务地址。</small>
-          </div>
-          <span class="api-model-field-label">API Key</span>
-          <template v-if="apiKeyFieldOpen('image')">
-            <input v-model="apiKeyForm.image_api_key" name="ocv-image-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="apiKeyStatus.image?.configured ? '已保存；新增账号时填写' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
-          </template>
-          <div v-else class="api-key-state-bar api-key-pool-state" :class="{ error: apiKeyRuntimeErrors.image }">
-            <div class="api-key-pool-heading">
-              <strong>{{ apiKeyRuntimeErrors.image ? 'ERROR' : `已配置 ${apiKeyStatus.image?.count || 0} 个出图账号` }}</strong>
-              <small v-if="apiKeyRuntimeErrors.image">{{ apiKeyRuntimeErrors.image }}</small>
-            </div>
-            <details v-if="!apiKeyRuntimeErrors.image && (apiKeyStatus.image?.key_hints || []).length" class="api-key-account-details">
-              <summary>查看已配置账号（{{ (apiKeyStatus.image?.key_hints || []).length }}）</summary>
-              <div class="api-key-account-list">
-                <div v-for="(hint, index) in apiKeyStatus.image?.key_hints || []" :key="hint + index" class="api-key-account-row">
-                  <code>{{ hint }}</code>
-                  <button type="button" class="api-key-delete-btn" :disabled="form.use_cloud_image_pool || deletingApiKey" title="删除此图像 API Key" @click="deleteConfiguredApiKey('image', index)">×</button>
-                </div>
-              </div>
-            </details>
-            <button class="api-key-corner-add" type="button" :disabled="form.use_cloud_image_pool" title="新增图像模型并行账号" aria-label="新增图像模型并行账号" @click="addApiKeyAccount('image')">＋</button>
-          </div>
-          <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys || form.use_cloud_image_pool" @click="saveApiKeySettings">
-            {{ savingApiKeys ? '保存中…' : '保存图像接口设置' }}
-          </button>
-          <div class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
+        <ImageProfileSelector :form="form" manage />
+        <div class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
             <div class="image-concurrency-summary">
               <div>
                 <strong>出图并发</strong>
@@ -997,7 +988,6 @@
               </button>
               <small>三方接口通常保持单 Key 并发 1；官方或高并发接口可按服务商额度提高。</small>
             </details>
-          </div>
         </div>
         <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : 'OCV 不指定或推荐第三方接口；请自行选择服务商，并只向可信地址发送 API Key。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
@@ -1531,7 +1521,7 @@
      <p class="muted">风格库保存在当前浏览器本机，不会上传到云端。</p>
     </div>
    </template>
-   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><div class="director-strategy-row">
+   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" /><div class="director-strategy-row">
                 <div class="director-strategy-copy">
                   <span>导演策略</span>
                   <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
@@ -1993,12 +1983,13 @@ import { useStyleLibrary } from './useStyleLibrary'
 import { useAppearance } from './useAppearance'
 import TaskConsole from './components/TaskConsole.vue'
 import ImageStudio from './components/ImageStudio.vue'
+import ImageProfileSelector from './components/ImageProfileSelector.vue'
 import SubtitleStyleEditor from './components/SubtitleStyleEditor.vue'
 import { visualPresentation } from './videoPresentation'
 import ParameterReview from './components/ParameterReview.vue'
 import SceneAssets from './components/SceneAssets.vue'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
-export default { components: { ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation } } }
+export default { components: { ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation } } }
 </script>
 <style scoped>
 .live-studio .setting-summaries{grid-template-columns:repeat(4,minmax(0,1fr))}

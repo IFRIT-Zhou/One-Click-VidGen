@@ -34,6 +34,7 @@ tools/*
 !tools/create_portable_archive.py
 !tools/release_integrity.py
 !tools/portable_release_audit.py
+!tools/publish_launcher_release.py
 !tools/deploy_indextts25.ps1
 Sound Material/
 测试文案/

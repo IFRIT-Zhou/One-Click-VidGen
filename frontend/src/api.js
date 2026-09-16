@@ -135,6 +135,11 @@ export const api = {
   saveApiKeySettings: (payload) => requestJSON('/api/api-keys', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
+  imageProfiles: () => requestJSON('/api/image-profiles'),
+  saveImageProfile: (payload) => requestJSON('/api/image-profiles', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  deleteImageProfile: (id) => requestJSON(`/api/image-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   script: (name) => requestJSON(`/api/scripts/${encodeURIComponent(name)}`),
   parameterPresets: () => requestJSON('/api/parameter-presets'),
   parameterPreset: (name) => requestJSON(`/api/parameter-presets/${encodeURIComponent(name)}`),
@@ -207,8 +212,14 @@ export const api = {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
   }),
   removeVisualTimingPicture: (id, imageId) => requestJSON(`/api/jobs/${id}/visual-editor/${encodeURIComponent(imageId)}/timing/remove`, { method: 'POST' }),
+  insertVisualTimingPicture: (id, imageId, firstSlideId) => requestJSON(`/api/jobs/${id}/visual-editor/timing/insert`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_macro_id: imageId, first_slide_id: firstSlideId }),
+  }),
   saveVisualSubtitles: (id, updates) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }),
+  }),
+  splitVisualSubtitle: (id, payload) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/split`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   }),
   restoreVisualSubtitleHistory: (id, historyId) => requestJSON(`/api/jobs/${id}/visual-editor/subtitles/history`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ history_id: historyId }),
