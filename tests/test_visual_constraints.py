@@ -30,6 +30,7 @@ class VisualConstraintsTest(unittest.TestCase):
             }], ensure_ascii=False), encoding="utf-8")
             editor = VisualEditor()
             job = SimpleNamespace(id="redraw-job", user_id=1, request={"use_cloud_image_pool": False})
+            submitted_configs = []
 
             def render(item, _pool):
                 target = Path(item["_output_path"])
@@ -40,8 +41,9 @@ class VisualConstraintsTest(unittest.TestCase):
                 patch.object(editor, "output_dir", return_value=project),
                 patch.object(editor, "_log"),
                 patch.object(visual, "_provider_configs", return_value=[{
-                    "api_key": "test", "endpoint": "/generate", "ratio": "2:1", "resolution": "1k",
+                    "api_key": "test", "endpoint": "/generate", "resolution": "1k",
                 }]),
+                patch.object(visual, "shared_runninghub_account_pool", side_effect=lambda configs, **_kwargs: submitted_configs.extend(configs) or object()),
                 patch.object(visual, "_render_poster_with_retry", side_effect=render),
                 patch("backend.app.visual_editor.JOBS_DIR", project / "jobs"),
             ):
@@ -53,6 +55,7 @@ class VisualConstraintsTest(unittest.TestCase):
                     time.sleep(0.01)
 
             self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(submitted_configs[0]["ratio"], "2:1")
             self.assertEqual(image.read_bytes(), b"new")
             saved = json.loads((project / "other" / "画面映射.json").read_text(encoding="utf-8"))
             self.assertEqual(saved[0]["image_prompt"], "新提示词")
@@ -702,7 +705,10 @@ class VisualConstraintsTest(unittest.TestCase):
             )
         with patch.dict(
             os.environ,
-            {"RUNNINGHUB_BASE_URL": "https://images.example.test/root/"},
+            {
+                "IMAGE_API_BASE_URL": "",
+                "RUNNINGHUB_BASE_URL": "https://images.example.test/root/",
+            },
             clear=False,
         ):
             self.assertEqual(

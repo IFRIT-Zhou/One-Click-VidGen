@@ -64,6 +64,7 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(request_post.call_args.args[0], "https://llm.runninghub.ai/v1/chat/completions")
         self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer shared-relay-key")
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek/deepseek-v4-pro")
+        self.assertNotIn("thinking", request_post.call_args.kwargs["json"])
 
     def test_deepseek_official_uses_independent_key_base_and_model(self) -> None:
         response = Mock()
@@ -79,6 +80,7 @@ class GeminiClientTest(unittest.TestCase):
                 "DEEPSEEK_API_KEY": "official-deepseek-key",
                 "DEEPSEEK_API_BASE": "https://api.deepseek.com",
                 "DEEPSEEK_OFFICIAL_MODEL": "deepseek-v4-pro",
+                "GEMINI_REASONING_EFFORT": "none",
             }, clear=False),
         ):
             text = gemini_client.generate_gemini_text(
@@ -91,6 +93,7 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(request_post.call_args.args[0], "https://api.deepseek.com/chat/completions")
         self.assertEqual(request_post.call_args.kwargs["headers"]["Authorization"], "Bearer official-deepseek-key")
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "deepseek-v4-pro")
+        self.assertEqual(request_post.call_args.kwargs["json"]["thinking"], {"type": "disabled"})
 
     def test_gemini_official_uses_native_google_endpoint_and_key(self) -> None:
         response = Mock()
@@ -307,6 +310,28 @@ class GeminiClientTest(unittest.TestCase):
         self.assertEqual(text, "[]")
         self.assertNotIn("Authorization", request_post.call_args.kwargs["headers"])
         self.assertEqual(request_post.call_args.kwargs["json"]["model"], "local-test-model")
+
+    def test_custom_provider_can_explicitly_disable_deepseek_thinking(self) -> None:
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}],
+        }
+        with (
+            patch.object(gemini_client.requests, "post", return_value=response) as request_post,
+            patch.dict("os.environ", {
+                "LANGUAGE_PROVIDER": "custom",
+                "CUSTOM_LLM_API_BASE": "https://relay.example/v1",
+                "CUSTOM_LLM_MODEL": "deepseek-flash",
+                "CUSTOM_LLM_API_KEY": "custom-key",
+                "CUSTOM_LLM_THINKING_MODE": "disabled",
+                "GEMINI_REASONING_EFFORT": "high",
+            }, clear=False),
+        ):
+            gemini_client.generate_gemini_text(system_prompt="system", user_prompt="user")
+        payload = request_post.call_args.kwargs["json"]
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", payload)
 
     def test_html_generation_reuses_runninghub_gemini_settings(self) -> None:
         with TemporaryDirectory() as directory:

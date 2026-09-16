@@ -107,6 +107,13 @@ export function useStudio(w) {
   const studioJobs = computed(()=>w.jobs.value.filter(j=>(studioFilter.value==='all'||typeOf(j)===studioFilter.value)&&String(j.request?.project_name||j.id).toLowerCase().includes(studioSearch.value.toLowerCase())))
   const studioTabs = computed(()=>studioKind.value==='audio'?['文案','配音','导出','参数回顾']:studioKind.value==='subtitle'?['素材','字幕','导出','参数回顾']:['文案','配音','画面与字幕','导出','参数回顾'])
   const studioSelectedImage = computed(()=>w.visualEditor.value.items.find(i=>i.id===w.visualTimingSelectedId.value)||w.visualEditor.value.items[0])
+  const studioSelectedImageIndex = computed(()=>w.visualEditor.value.items.findIndex(i=>i.id===studioSelectedImage.value?.id))
+  const canSelectPreviousImage = computed(()=>studioSelectedImageIndex.value>0)
+  const canSelectNextImage = computed(()=>studioSelectedImageIndex.value>=0&&studioSelectedImageIndex.value<w.visualEditor.value.items.length-1)
+  function selectAdjacentVisualImage(offset){
+    const index=studioSelectedImageIndex.value+Number(offset||0),item=w.visualEditor.value.items[index]
+    if(item)w.visualTimingSelectedId.value=item.id
+  }
   const studioAudio = computed(()=>studioJob.value?.artifacts?.audio||'')
   const studioVideo = computed(() => {
     const url = studioJob.value?.artifacts?.video_with_subtitles
@@ -250,7 +257,7 @@ export function useStudio(w) {
   window.addEventListener('keydown',keydown)
   function beforeUnload(){saveDraft()}
   window.addEventListener('beforeunload',beforeUnload)
-  onBeforeUnmount(()=>{saveDraft();clearTimeout(draftTimer);window.removeEventListener('keydown',keydown);window.removeEventListener('beforeunload',beforeUnload)})
+  onBeforeUnmount(()=>{saveDraft();clearTimeout(draftTimer);stopVisualSubtitleSplitAudio();window.removeEventListener('keydown',keydown);window.removeEventListener('beforeunload',beforeUnload)})
 
   // Subtitle-only editing uses a local draft and exports an edited SRT. Original
   // recognition output remains available for the existing subtitle renderer.
@@ -265,5 +272,45 @@ export function useStudio(w) {
     const rows=studioSubtitles.value;if(rows.some((r,i)=>!Number.isFinite(Number(r.start))||!Number.isFinite(Number(r.end))||r.start<0||r.end<=r.start||(i&&r.start<rows[i-1].end))){studioSubtitleMessage.value='时间需按顺序排列，结束晚于开始，相邻字幕不能重叠。';return}
     const text=rows.map((r,i)=>`${i+1}\n${srtTime(r.start)} --> ${srtTime(r.end)}\n${r.text}\n`).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/x-subrip;charset=utf-8'}));a.download=`${studioTitle.value}_校对.srt`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);studioSubtitleMessage.value='已导出校对后的字幕。'
   }
-return {restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles}
+  const visualSubtitleSplitDialog=ref({open:false,sentence:null,left_text:'',right_text:'',boundary:0,original_boundary:0})
+  const visualPictureInsertBusy=ref(false)
+  let subtitleSplitAudio=null,subtitleSplitAudioEnd=0
+  function stopVisualSubtitleSplitAudio(){if(!subtitleSplitAudio)return;subtitleSplitAudio.pause();subtitleSplitAudio.removeAttribute('src');subtitleSplitAudio.load();subtitleSplitAudio=null;subtitleSplitAudioEnd=0}
+  function closeVisualSubtitleSplit(){stopVisualSubtitleSplitAudio();visualSubtitleSplitDialog.value={open:false,sentence:null,left_text:'',right_text:'',boundary:0,original_boundary:0}}
+  watch(()=>w.visualEditorProjectId.value,closeVisualSubtitleSplit)
+  function openVisualSubtitleSplit(sentence){
+    if(!sentence?.slide_id||w.visualSubtitleSaving.value||w.ttsEditor.value.task?.status==='running')return
+    if(w.visualSubtitleDirtyCount.value){w.visualEditor.value.task={status:'failed',action:'subtitle_split',message:'请先保存当前字幕文字修改，再拆分字幕。'};return}
+    const text=String(sentence.text||'').trim();if(text.length<2){w.visualEditor.value.task={status:'failed',action:'subtitle_split',message:'这条字幕太短，无法拆成两条。'};return}
+    const mid=text.length/2,candidates=[];for(let i=1;i<text.length;i+=1)if('，。！？；：、,.!?;:'.includes(text[i-1]))candidates.push(i)
+    const at=candidates.length?candidates.reduce((best,item)=>Math.abs(item-mid)<Math.abs(best-mid)?item:best):Math.max(1,Math.min(text.length-1,Math.round(mid)))
+    const start=Number(sentence.start||0),end=Number(sentence.end||0),ratio=Math.max(.15,Math.min(.85,at/text.length))
+    const boundary=Number((start+(end-start)*ratio).toFixed(2))
+    w.closeVisualSubtitleRemove();w.closeVisualBoundaryAlign();visualSubtitleSplitDialog.value={open:true,sentence,left_text:text.slice(0,at).trim(),right_text:text.slice(at).trim(),boundary,original_boundary:boundary}
+  }
+  async function playVisualSubtitleSplitRange(start,end){
+    if(!w.visualEditorProjectId.value||Number(end)<=Number(start))return
+    if(subtitleSplitAudio)subtitleSplitAudio.pause()
+    const audio=subtitleSplitAudio||new Audio();subtitleSplitAudio=audio;subtitleSplitAudioEnd=Number(end)
+    if(!audio.dataset.splitListener){audio.addEventListener('timeupdate',()=>{if(audio.currentTime>=subtitleSplitAudioEnd-.015)audio.pause()});audio.dataset.splitListener='1'}
+    const url=`/api/jobs/${encodeURIComponent(w.visualEditorProjectId.value)}/visual-editor/audio`
+    if(audio.dataset.source!==url){audio.src=url;audio.dataset.source=url;audio.load()}
+    const begin=Math.max(0,Number(start)||0),play=async()=>{audio.currentTime=begin;try{await audio.play()}catch(e){w.visualEditor.value.task={status:'failed',action:'subtitle_split',message:e?.message||'浏览器暂时无法播放项目配音'}}}
+    if(audio.readyState>=1)await play();else audio.addEventListener('loadedmetadata',play,{once:true})
+  }
+  async function applyVisualSubtitleSplit(){
+    const f=visualSubtitleSplitDialog.value,s=f.sentence;if(!w.visualEditorProjectId.value||!s?.slide_id||w.visualSubtitleSaving.value)return
+    const left=String(f.left_text||'').trim(),right=String(f.right_text||'').trim();if(!left||!right){w.visualEditor.value.task={status:'failed',action:'subtitle_split',message:'拆分后的两条字幕都需要填写文字。'};return}
+    w.visualSubtitleSaving.value=true
+    try{w.visualEditor.value=await api.splitVisualSubtitle(w.visualEditorProjectId.value,{slide_id:s.slide_id,left_text:left,right_text:right,boundary:Number(f.boundary)});w.hydrateVisualSubtitleDrafts({preserveDirty:false});closeVisualSubtitleSplit();w.visualEditor.value.task={status:'completed',action:'subtitle_split',message:'已拆成两条字幕；配音保持不变，重新渲染后生效。'}}
+    catch(e){w.visualEditor.value.task={status:'failed',action:'subtitle_split',message:e.message||'拆分字幕失败'}}finally{w.visualSubtitleSaving.value=false}
+  }
+  async function insertVisualPicture(sentence){
+    const item=w.selectedVisualTimingItem.value;if(!w.visualEditorProjectId.value||!item||visualPictureInsertBusy.value)return
+    if((item.timing?.sentences?.length||0)<2){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:'当前画面只有一条字幕，请先把字幕拆成两条再添加画面。'};return}
+    visualPictureInsertBusy.value=true
+    try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
+    catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
+  }
+return {restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

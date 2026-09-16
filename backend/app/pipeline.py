@@ -2388,6 +2388,19 @@ def render_semantic_visual_video(
                 "GEMINI_FALLBACK_MODELS": "",
             })
             store.log(job, "模块 4：Agent 2 与出图均使用云端号池，费用由云端账户积分结算")
+        elif isinstance(request.get("image_profile_snapshot"), dict):
+            from .image_profiles import profile_environment
+            image_snapshot = dict(request["image_profile_snapshot"])
+            poster_env.update(profile_environment(image_snapshot))
+            store.log(
+                job,
+                "图像模型：%s · %s · %s"
+                % (
+                    image_snapshot.get("name") or image_snapshot.get("model_id") or "自定义配置",
+                    image_snapshot.get("model_id") or "",
+                    str(image_snapshot.get("resolution") or "1k").upper(),
+                ),
+            )
         # Agent 2 is a paid-image safety gate. Never submit image jobs when its
         # language-model planning failed or silently fell back to raw subtitles.
         poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"

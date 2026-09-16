@@ -427,6 +427,7 @@ const apiKeyForm = reactive({
   language_provider: 'gemini_official',
   language_model: 'gemini-3.7-flash',
   language_api_base_url: '',
+  custom_llm_thinking_mode: 'follow',
   language_api_key: '',
   image_api_base_url: '',
   image_model: 'rhart-image-g-2',
@@ -439,6 +440,11 @@ const apiKeyForm = reactive({
   image_total_concurrency: 3,
   qwen_tts_api_key: '',
 })
+const imageProfiles = ref([])
+const imageProfileMessage = ref('')
+const selectedImageProfile = computed(() => (
+  imageProfiles.value.find((item) => item.id === form.image_profile_id) || null
+))
 const savingImageConcurrency = ref(false)
 const imageConcurrencyPreview = computed(() => {
   const keyCount = Number(apiKeyStatus.value.image?.count || 0)
@@ -515,6 +521,8 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   use_cloud_image_pool: false,
+  image_profile_id: '',
+  image_resolution: '1k',
   video_render_variant: 'both',
   video_orientation: 'landscape',
   subtitle_layouts: {},
@@ -2055,6 +2063,7 @@ async function loadApiKeySettings() {
     apiKeyForm.language_api_base_url = apiKeyStatus.value.language?.base_url
       || currentLanguageProvider.value?.base_url
       || ''
+    apiKeyForm.custom_llm_thinking_mode = apiKeyStatus.value.language?.custom_thinking_mode || 'follow'
     apiKeyForm.image_api_base_url = apiKeyStatus.value.image?.configured
       ? ''
       : (apiKeyStatus.value.image?.base_url || '')
@@ -2080,6 +2089,20 @@ async function loadApiKeySettings() {
   }
 }
 
+async function loadImageProfiles() {
+  if (!session.value.user) return
+  try {
+    imageProfiles.value = (await api.imageProfiles()).profiles || []
+    if (!imageProfiles.value.some((item) => item.id === form.image_profile_id)) {
+      form.image_profile_id = imageProfiles.value.find((item) => item.configured)?.id || ''
+    }
+    const resolutions = selectedImageProfile.value?.resolutions || ['1k', '2k', '4k']
+    if (!resolutions.includes(form.image_resolution)) form.image_resolution = resolutions[0] || '1k'
+  } catch (error) {
+    imageProfileMessage.value = error.message || '无法读取图像模型配置'
+  }
+}
+
 async function saveApiKeySettings() {
   const payload = {
     language_provider: apiKeyForm.language_provider,
@@ -2087,6 +2110,7 @@ async function saveApiKeySettings() {
   }
   if (customLanguageProvider.value) {
     payload.language_api_base_url = String(apiKeyForm.language_api_base_url || '').trim()
+    payload.custom_llm_thinking_mode = apiKeyForm.custom_llm_thinking_mode || 'follow'
   }
   payload.image_api_base_url = String(apiKeyForm.image_api_base_url || '').trim()
   payload.image_model = String(apiKeyForm.image_model || '').trim()
@@ -4362,6 +4386,8 @@ function guidedVisualParameters() {
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,
     use_cloud_image_pool: form.use_cloud_image_pool,
+    image_profile_id: form.image_profile_id,
+    image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
     visual_pacing_preset: form.visual_pacing_preset,
     visual_min_duration: form.visual_min_duration,
@@ -5130,12 +5156,17 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', handleCloudRechargeReturnFocus)
   try { await loadSettings() } catch { /* The launcher may still be starting. */ }
   await refresh()
-  await Promise.allSettled([refreshParameterPresets(), refreshAgentPromptPresets(), refreshCloudState()])
+  await Promise.allSettled([refreshParameterPresets(), refreshAgentPromptPresets(), refreshCloudState(), loadImageProfiles()])
   timer = window.setInterval(refresh, 2500)
 })
 
 watch(() => form.auto_analyze_reference_images, (enabled) => {
   try { window.localStorage.setItem(REFERENCE_ANALYSIS_STORAGE_KEY, enabled ? '1' : '0') } catch { /* optional browser storage */ }
+})
+
+watch(() => form.image_profile_id, () => {
+  const resolutions = selectedImageProfile.value?.resolutions || ['1k', '2k', '4k']
+  if (!resolutions.includes(form.image_resolution)) form.image_resolution = resolutions[0] || '1k'
 })
 
 watch(ttsEngine, (engine) => {

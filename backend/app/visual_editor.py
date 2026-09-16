@@ -10,10 +10,12 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -656,6 +658,26 @@ class VisualEditor:
         return sorted(matches)[0]
 
     @staticmethod
+    def _write_black_placeholder(path: Path, width: int = 32, height: int = 18) -> None:
+        """Write a tiny dependency-free, opaque black PNG placeholder."""
+        def chunk(kind: bytes, payload: bytes) -> bytes:
+            return (
+                struct.pack(">I", len(payload))
+                + kind
+                + payload
+                + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+            )
+
+        rows = b"".join(b"\x00" + (b"\x00\x00\x00" * width) for _ in range(height))
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9))
+            + chunk(b"IEND", b"")
+        )
+        path.write_bytes(png)
+
+    @staticmethod
     def _backup_dir(project_dir: Path) -> Path:
         # Keep versions alongside each exported project so users can find and copy
         # them directly from output, rather than hiding them in a dot-folder.
@@ -837,6 +859,7 @@ class VisualEditor:
             items.append({
                 "id": macro_id,
                 "prompt": str(entry.get("image_prompt") or ""),
+                "placeholder": bool(entry.get("placeholder")),
                 "scene_reference_name": (entry.get("scene_reference") or {}).get("name") or (entry.get("scene_reference") or {}).get("scene_id"),
                 "scene_reference_url": f"/api/jobs/{job_id}/scene-reference/{macro_id}" if entry.get("scene_reference") else None,
                 "use_scene_reference": True,
@@ -1164,6 +1187,146 @@ class VisualEditor:
         return self.inspect(job_id, user_id)
 
     @staticmethod
+    def _next_added_id(existing: set[str], prefix: str) -> str:
+        for index in range(1, 10000):
+            candidate = f"{prefix}_{index:03d}"
+            if candidate not in existing:
+                return candidate
+        raise ValueError("手动添加的项目过多，无法继续分配编号")
+
+    @staticmethod
+    def _replace_slide_in_mapping(
+        mapping: list[dict[str, Any]], slide_id: str, replacement: list[str]
+    ) -> None:
+        found = False
+        for item in mapping:
+            slides = [str(value) for value in item.get("includes_slides", []) if str(value)]
+            if slide_id not in slides:
+                continue
+            if found:
+                raise ValueError("画面映射中存在重复字幕，无法安全拆分")
+            position = slides.index(slide_id)
+            item["includes_slides"] = slides[:position] + replacement + slides[position + 1:]
+            found = True
+        if not found:
+            raise ValueError("当前字幕没有对应画面，无法安全拆分")
+
+    @staticmethod
+    def _reconcile_subtitle_only_splits(
+        mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Carry later display-only splits into an older picture allocation."""
+        result = [dict(item) for item in mapping]
+        for item in result:
+            item["includes_slides"] = list(item.get("includes_slides") or [])
+        present = {
+            str(slide)
+            for item in result
+            for slide in item.get("includes_slides", [])
+        }
+        for position, subtitle in enumerate(timeline):
+            slide_id = str(subtitle.get("slide_id") or "")
+            if slide_id in present or not bool(subtitle.get("subtitle_only_split")):
+                continue
+            previous_ids = [
+                str(row.get("slide_id") or "")
+                for row in reversed(timeline[:position])
+            ]
+            owner = next(
+                (
+                    (entry, entry["includes_slides"].index(previous_id))
+                    for previous_id in previous_ids
+                    for entry in result
+                    if previous_id in entry["includes_slides"]
+                ),
+                None,
+            )
+            if owner is None:
+                raise ValueError(f"{slide_id} 无法恢复到原画面时序")
+            entry, after = owner
+            entry["includes_slides"].insert(after + 1, slide_id)
+            present.add(slide_id)
+        return result
+
+    def split_subtitle(
+        self,
+        *,
+        job_id: str,
+        user_id: int,
+        slide_id: str,
+        left_text: str,
+        right_text: str,
+        boundary: float,
+    ) -> dict[str, Any]:
+        """Split one displayed subtitle while preserving the original audio.
+
+        The old node remains the left half so existing TTS references stay valid.
+        A clearly marked subtitle-only node is inserted for the right half and is
+        assigned to the same picture.  No audio or TTS manifest is rewritten.
+        """
+        left_text = str(left_text or "").strip()
+        right_text = str(right_text or "").strip()
+        if not left_text or not right_text:
+            raise ValueError("拆分后的两条字幕都不能为空")
+        if len(left_text) > 1200 or len(right_text) > 1200:
+            raise ValueError("拆分后的字幕正文过长")
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            timeline = self._validated_subtitle_timeline(self._load_timeline(project_dir))
+            mapping = self._load_mapping(project_dir)
+            mapping, _ = self._mapping_with_recovered_timing(project_dir, mapping, timeline)
+            original_timeline = json.loads(json.dumps(timeline, ensure_ascii=False))
+            original_mapping = json.loads(json.dumps(mapping, ensure_ascii=False))
+            index = next((i for i, item in enumerate(timeline) if str(item["slide_id"]) == slide_id), -1)
+            if index < 0:
+                raise ValueError("找不到需要拆分的字幕")
+            source = timeline[index]
+            if bool(source.get("subtitle_hidden")):
+                raise ValueError("请先恢复已隐藏字幕再进行拆分")
+            start, end = float(source["start"]), float(source["end"])
+            boundary = float(boundary)
+            margin = min(0.15, max(0.03, (end - start) * 0.08))
+            if boundary <= start + margin or boundary >= end - margin:
+                raise ValueError("字幕分界过于靠近首尾，请为两段都保留可读时间")
+            new_slide_id = self._next_added_id(
+                {str(item["slide_id"]) for item in timeline}, "scene_added"
+            )
+            self._archive_subtitle_state(project_dir, "拆分添加字幕前")
+            self._ensure_timing_backup(project_dir, mapping)
+            source["text_content"] = left_text
+            source["end"] = boundary
+            added = {
+                "slide_id": new_slide_id,
+                "start": boundary,
+                "end": end,
+                "text_content": right_text,
+                "subtitle_only_split": True,
+                "source_slide_id": slide_id,
+            }
+            timeline.insert(index + 1, added)
+            self._replace_slide_in_mapping(mapping, slide_id, [slide_id, new_slide_id])
+            self._validate_timing_partition(mapping, timeline)
+            try:
+                self._save_mapping(project_dir, mapping)
+                self._write_subtitle_files(project_dir, timeline)
+                self._write_timing_html(project_dir, mapping, timeline)
+            except Exception:
+                self._save_mapping(project_dir, original_mapping)
+                self._write_subtitle_files(project_dir, original_timeline)
+                try:
+                    self._write_timing_html(project_dir, original_mapping, original_timeline)
+                except Exception:
+                    pass
+                raise
+        self._set_task(
+            job_id,
+            status="completed",
+            action="subtitle_split",
+            message=f"已将 {slide_id} 拆成两条字幕；原配音保持不变。",
+        )
+        return self.inspect(job_id, user_id)
+
+    @staticmethod
     def _inspect_bgm_settings(job_id: str, project_dir: Path) -> dict[str, Any]:
         manifest_path = project_dir / "other" / "BGM设置.json"
         empty = {"enabled": False, "tracks": [], "fade_enabled": False, "fade_duration": 1}
@@ -1382,9 +1545,21 @@ class VisualEditor:
                     }]
                     self._log(job, f"{macro_id} 使用云端图像号池重绘，费用由账户积分结算。")
                 else:
-                    provider_configs = visual._provider_configs()
-                if (job.request or {}).get('video_orientation') == 'portrait':
-                    provider_configs = [{**config, 'ratio': '9:16'} for config in provider_configs]
+                    image_snapshot = (job.request or {}).get("image_profile_snapshot")
+                    if isinstance(image_snapshot, dict):
+                        from .image_profiles import profile_provider_configs
+                        provider_configs = profile_provider_configs(image_snapshot)
+                    else:
+                        provider_configs = visual._provider_configs()
+                target_ratio = '9:16' if (job.request or {}).get('video_orientation') == 'portrait' else '2:1'
+                # Saved model profiles deliberately contain endpoint/model data,
+                # while aspect ratio belongs to the project.  Redraw calls bypass
+                # the normal pipeline environment, so complete that project-level
+                # field here instead of indexing a missing ``ratio`` downstream.
+                provider_configs = [
+                    {**config, 'ratio': str(config.get('ratio') or target_ratio)}
+                    for config in provider_configs
+                ]
                 if resolution:
                     # Copy instead of mutating the provider configuration or
                     # environment: this choice applies only to this redraw.
@@ -1408,7 +1583,13 @@ class VisualEditor:
                     })
                 if not rendered.is_file() or rendered.stat().st_size <= 0:
                     raise FileNotFoundError(f"Image2 返回完成，但没有找到下载后的重绘图片: {rendered}")
-                shutil.copy2(rendered, image)
+                if not scene_owner and rendered.suffix.lower() != image.suffix.lower():
+                    replacement = image.with_suffix(rendered.suffix.lower())
+                    shutil.copy2(rendered, replacement)
+                    image.unlink(missing_ok=True)
+                    image = replacement
+                else:
+                    shutil.copy2(rendered, image)
                 reference_view = None
                 if not scene_owner and render_item.get('reference_binding_version'):
                     # Preserve the inputs of this successful redraw for the next edit.
@@ -1431,6 +1612,7 @@ class VisualEditor:
                         current.update(reference_image_paths=durable_paths, reference_binding_version=1,
                             reference_image_ids=[] if manual_references else render_item.get('reference_image_ids', []), reference_materials=materials,
                             image_prompt=render_item['image_prompt'])
+                        current.pop('placeholder', None)
                         if render_item.get('scene_reference') and durable_paths:
                             current['scene_reference'] = {**render_item['scene_reference'], 'path': durable_paths[-1]}
                         else:
@@ -1460,7 +1642,20 @@ class VisualEditor:
                 owner = next((row for row in self._load_mapping(project_dir) if (row.get("scene_reference") or {}).get("scene_id") == scene_id), None) if scene_id else None
                 image = Path(owner["scene_reference"]["path"]) if owner else self._find_image(project_dir / "image", macro_id)
                 self._backup_current(project_dir, image, macro_id)
-                shutil.copy2(source, image)
+                if not owner and source.suffix.lower() != image.suffix.lower():
+                    replacement = image.with_suffix(source.suffix.lower())
+                    shutil.copy2(source, replacement)
+                    image.unlink(missing_ok=True)
+                    image = replacement
+                else:
+                    shutil.copy2(source, image)
+                if not owner:
+                    with self._mapping_lock:
+                        mapping = self._load_mapping(project_dir)
+                        current = next((row for row in mapping if str(row.get("macro_scene_id")) == macro_id), None)
+                        if current is not None:
+                            current.pop("placeholder", None)
+                            self._save_mapping(project_dir, mapping)
                 self._set_image_task(job.id, macro_id, status="completed", action="upload", message="本地图片已替换")
                 self._log(job, f"{macro_id} 本地图片替换完成。")
             except Exception as exc:
@@ -1566,6 +1761,7 @@ class VisualEditor:
                     entry.update({key: value for key, value in edited.items() if key != "includes_slides"})
                 entry["includes_slides"] = list(saved.get("includes_slides") or [])
                 restored.append(entry)
+            restored = self._reconcile_subtitle_only_splits(restored, timeline)
             self._validate_timing_partition(restored, timeline)
             self._save_mapping(project_dir, restored)
         self._set_task(job_id, status="completed", action="timing", message="已恢复到首次调整前的画面时序")
@@ -1634,6 +1830,7 @@ class VisualEditor:
                     entry.update({key: value for key, value in edited.items() if key != "includes_slides"})
                 entry["includes_slides"] = list(saved.get("includes_slides") or [])
                 restored.append(entry)
+            restored = self._reconcile_subtitle_only_splits(restored, timeline)
             self._validate_timing_partition(restored, timeline)
             self._save_mapping(project_dir, restored)
         self._set_task(
@@ -1680,6 +1877,86 @@ class VisualEditor:
             self._save_mapping(project_dir, mapping)
         recovery_note = "（已兼容恢复该历史项目的字幕分组）" if recovered_timing else ""
         self._set_task(job_id, status="completed", action="timing_remove", macro_id=macro_id, message=f"已移除 {macro_id}，其字幕已分配给相邻画面{recovery_note}")
+        return self.inspect(job_id, user_id)
+
+    def insert_timing_picture(
+        self,
+        *,
+        job_id: str,
+        user_id: int,
+        source_macro_id: str,
+        first_slide_id: str,
+    ) -> dict[str, Any]:
+        """Insert an editable black placeholder at a subtitle boundary.
+
+        The new picture starts at the selected sentence.  At the first sentence it
+        takes that sentence only and is inserted before the old picture; otherwise
+        it takes the selected suffix.  A one-sentence picture cannot be split.
+        """
+        project_dir = self.output_dir(job_id, user_id)
+        with self._mapping_lock:
+            mapping = self._load_mapping(project_dir)
+            timeline = self._load_timeline(project_dir)
+            mapping, _ = self._mapping_with_recovered_timing(project_dir, mapping, timeline)
+            original_mapping = json.loads(json.dumps(mapping, ensure_ascii=False))
+            source_index = next(
+                (index for index, item in enumerate(mapping) if str(item.get("macro_scene_id")) == source_macro_id),
+                -1,
+            )
+            if source_index < 0:
+                raise ValueError("找不到新画面要插入的位置")
+            source_item = mapping[source_index]
+            source_slides = [str(value) for value in source_item.get("includes_slides", []) if str(value)]
+            if len(source_slides) < 2:
+                raise ValueError("当前画面只有一条字幕，请先拆分字幕，再从新字幕处插入画面")
+            if first_slide_id not in source_slides:
+                raise ValueError("所选字幕不属于当前画面")
+            split_at = source_slides.index(first_slide_id)
+
+            existing_ids = {str(item.get("macro_scene_id") or "") for item in mapping}
+            new_macro_id = self._next_added_id(existing_ids, "poster_added")
+            image_dir = project_dir / "image"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            target = image_dir / f"{new_macro_id}.png"
+            if target.exists():
+                raise ValueError("新增画面文件编号冲突，请重试")
+
+            self._ensure_timing_backup(project_dir, mapping)
+            new_item = {
+                "macro_scene_id": new_macro_id,
+                "includes_slides": source_slides[split_at:] if split_at else source_slides[:1],
+                "image_prompt": "请填写新增画面的提示词",
+                "manual_added": True,
+                "placeholder": True,
+            }
+            if split_at:
+                source_item["includes_slides"] = source_slides[:split_at]
+                mapping.insert(source_index + 1, new_item)
+            else:
+                source_item["includes_slides"] = source_slides[1:]
+                mapping.insert(source_index, new_item)
+            self._validate_timing_partition(mapping, timeline)
+            self._write_black_placeholder(target)
+            target.with_suffix(".txt").write_text("请填写新增画面的提示词", encoding="utf-8")
+            try:
+                self._save_mapping(project_dir, mapping)
+                self._write_timing_html(project_dir, mapping, timeline)
+            except Exception:
+                self._save_mapping(project_dir, original_mapping)
+                try:
+                    self._write_timing_html(project_dir, original_mapping, timeline)
+                except Exception:
+                    pass
+                target.unlink(missing_ok=True)
+                target.with_suffix(".txt").unlink(missing_ok=True)
+                raise
+        self._set_task(
+            job_id,
+            status="completed",
+            action="timing_insert",
+            macro_id=new_macro_id,
+            message=f"已添加 {new_macro_id}，从 {first_slide_id} 开始接管画面时间。",
+        )
         return self.inspect(job_id, user_id)
 
     @staticmethod

@@ -9,6 +9,12 @@ from backend.app import image_studio as studio
 
 
 class ImageStudioTests(unittest.TestCase):
+    def test_additional_aspect_ratios_are_accepted(self):
+        for ratio in ('3:4', '3:2', '21:9'):
+            with self.subTest(ratio=ratio):
+                request = studio.ImageRequest(prompt='比例测试', ratio=ratio)
+                self.assertEqual(request.ratio, ratio)
+
     def run_case(self, side_effect=None, results=None):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)

@@ -96,7 +96,16 @@
               <span>API Key（本地无鉴权可留空）</span>
               <input v-model="apiKeyForm.language_api_key" name="ocv-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
             </label>
+            <label>
+              <span>思考模式</span>
+              <select v-model="apiKeyForm.custom_llm_thinking_mode">
+                <option value="follow">跟随接口默认（推荐）</option>
+                <option value="disabled">强制关闭（DeepSeek 兼容）</option>
+                <option value="enabled">强制开启（DeepSeek 兼容）</option>
+              </select>
+            </label>
             <small>需兼容 <code>/chat/completions</code>、具备足够上下文长度并能稳定输出 JSON。</small>
+            <small>强制开关会发送 DeepSeek 格式的 <code>thinking</code> 参数；其他模型请选择“跟随接口默认”。</small>
             <small class="api-custom-security-note">安全提示：API Key 会随请求发送到此网址，请只填写你信任的服务地址。</small>
             <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
               {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}

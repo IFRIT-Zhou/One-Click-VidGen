@@ -498,7 +498,22 @@ def _generate_openai_compatible_text(
     base_url = language_base_url(provider)
     extra_body: dict[str, Any] = {}
     reasoning_effort = os.getenv("GEMINI_REASONING_EFFORT", "none").strip()
-    if reasoning_effort and reasoning_effort.lower() != "none":
+    allow_reasoning_effort = True
+    if provider == "deepseek_official":
+        # DeepSeek's official Chat Completions API enables thinking by default.
+        # OCV's planning stages need predictable JSON and token usage, so make
+        # non-thinking explicit unless an advanced environment override asks
+        # for a reasoning effort.
+        extra_body["thinking"] = {
+            "type": "enabled" if reasoning_effort and reasoning_effort.lower() != "none" else "disabled"
+        }
+    elif provider == "custom":
+        custom_thinking_mode = os.getenv("CUSTOM_LLM_THINKING_MODE", "follow").strip().lower()
+        if custom_thinking_mode in {"disabled", "enabled"}:
+            extra_body["thinking"] = {"type": custom_thinking_mode}
+        if custom_thinking_mode == "disabled":
+            allow_reasoning_effort = False
+    if allow_reasoning_effort and reasoning_effort and reasoning_effort.lower() != "none":
         extra_body["reasoning_effort"] = reasoning_effort
     # OpenAI's json_object mode requires a top-level object. Agent 2, however,
     # intentionally returns a top-level array. Enabling json_object for that
@@ -521,9 +536,9 @@ def _generate_openai_compatible_text(
             "presence_penalty": float(os.getenv("GEMINI_PRESENCE_PENALTY", "0")),
             "frequency_penalty": float(os.getenv("GEMINI_FREQUENCY_PENALTY", "0")),
         }
-        # Existing RunningHub relays historically accept this wrapper; official
-        # OpenAI-compatible providers expect these fields at the request root.
-        if config.get("source") == "official" or provider in {"deepseek", "openai", "qwen", "kimi", "glm"}:
+        # Legacy built-in relays may accept this wrapper; official and
+        # user-configured OpenAI-compatible endpoints expect request-root fields.
+        if config.get("source") in {"official", "custom"} or provider in {"deepseek", "openai", "qwen", "kimi", "glm"}:
             payload.update(extra_body)
         elif extra_body:
             payload["extra_body"] = extra_body

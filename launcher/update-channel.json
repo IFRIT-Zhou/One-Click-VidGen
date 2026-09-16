@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.14.2",
-  "release_order": 2026091402,
-  "display_version": "2026.09.14 本地 TTS 按需安装更新",
+  "release_id": "2026.09.16.1",
+  "release_order": 2026091601,
+  "display_version": "2026.09.16 图像配置与画面编辑更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.14.2/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.14.2/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.16.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.16.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增轻便整合包支持：保留完整运行环境，将本地 IndexTTS-2.5 权重改为可选组件；缺少权重时仍可使用集群、API、字幕、图像及渲染功能，并可在声音设置中按需安装。",
-  "content_fingerprint": "d5d107c7f1451e2681d08bad0cb32a0eac4e9948d5073b540bbcaa6dfd7a5bbd"
+  "notes": "新增任务级图像模型配置与 Image 2.5/多比例支持，补充自定义 API 配置说明；DeepSeek 官方接口默认关闭深度思考。画面编辑支持拆分字幕、新增可编辑画面、边界试听和前后翻页，并修复新增画面重绘比例、占位图替换及相关时间轴同步问题。",
+  "content_fingerprint": "92b41d1b759b3a8ae56a864147f568da0469d9cb3565d173a55851599a574b86"
 }
