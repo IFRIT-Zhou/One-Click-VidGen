@@ -3,6 +3,11 @@ param(
     [switch]$SkipModelDownload
 )
 
+# The official IndexTTS-2.5 source is pinned to a release tag instead of the moving
+# default branch, so a deployment is reproducible and the source always matches the
+# checkpoints it is used with.
+$IndexTtsTag = "v2.5.0"
+
 $ErrorActionPreference = "Stop"
 if (-not $ProjectRoot) {
     $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -14,13 +19,15 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
 }
 
 if (Test-Path -LiteralPath (Join-Path $engineRoot ".git") -PathType Container) {
-    git -C $engineRoot pull --ff-only
-    if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source update failed" }
+    git -C $engineRoot fetch --depth 1 origin "refs/tags/${IndexTtsTag}:refs/tags/${IndexTtsTag}"
+    if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source fetch failed" }
+    git -C $engineRoot checkout --detach $IndexTtsTag
+    if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source checkout failed" }
 } elseif (-not (Test-Path -LiteralPath (Join-Path $engineRoot "indextts\infer_v2_5.py") -PathType Leaf)) {
     if (Test-Path -LiteralPath $engineRoot) {
         throw "IndexTTS-2.5 source is incomplete: $engineRoot"
     }
-    git clone --depth 1 https://github.com/index-tts/index-tts.git $engineRoot
+    git clone --depth 1 --branch $IndexTtsTag https://github.com/index-tts/index-tts.git $engineRoot
     if ($LASTEXITCODE -ne 0) { throw "Official IndexTTS-2.5 source clone failed" }
 } else {
     Write-Host "Using the IndexTTS-2.5 source bundled with OCV."
@@ -39,6 +46,16 @@ if ($missingPackages.Count -gt 0) {
     if ($LASTEXITCODE -ne 0) { throw "IndexTTS-2.5 isolated dependency install failed" }
 } else {
     Write-Host "IndexTTS-2.5 isolated dependencies are already available."
+}
+
+# Dependencies of the inference path that the isolated overlay above does not provide
+# (it installs four packages with --no-deps). They live in their own manifest so that
+# users who never run the local voice mode do not inherit them.
+$inferenceManifest = Join-Path $ProjectRoot "requirements-indextts.txt"
+if (Test-Path -LiteralPath $inferenceManifest -PathType Leaf) {
+    Write-Host "Installing IndexTTS-2.5 inference dependencies from requirements-indextts.txt..."
+    & $python -m pip install --disable-pip-version-check -r $inferenceManifest
+    if ($LASTEXITCODE -ne 0) { throw "IndexTTS-2.5 inference dependency install failed" }
 }
 
 if (-not $SkipModelDownload) {
