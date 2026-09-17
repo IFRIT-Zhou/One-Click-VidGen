@@ -36,6 +36,8 @@ tools/*
 !tools/portable_release_audit.py
 !tools/publish_launcher_release.py
 !tools/deploy_indextts25.ps1
+!tools/provision_runtime.ps1
+!tools/portable_assets.json
 Sound Material/
 测试文案/
 venv_audio_vedio/
