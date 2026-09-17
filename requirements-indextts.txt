@@ -1,0 +1,31 @@
+# One-Click-VidGen — optional IndexTTS-2.5 inference dependencies.
+#
+# Required only by Module 1 local GPU voice mode (the official IndexTTS-2.5
+# engine). Install them together with the local voice setup:
+#
+#   python -m pip install -r requirements-indextts.txt
+#
+# They are deliberately kept out of requirements.txt. The upstream source and the
+# isolated overlay prepared by tools/deploy_indextts25.ps1 install only
+# fugashi/unidic-lite/openai-whisper/tiktoken (with --no-deps), while these four
+# are imported at module level by the inference path and therefore have to be
+# provided by the main environment.
+#
+# Keeping them optional matters because descript-audiotools pulls in
+# matplotlib / tensorboard / ipython / rich and pins protobuf<3.20, which
+# downgrades the protobuf that onnxruntime (pulled in by faster-whisper for
+# subtitle recognition) requires (>=4.25.8). For users who never run the local
+# voice mode that would be a pure regression, so it does not belong in the
+# default install set.
+#
+# Versions follow the upstream pyproject.toml pins. Import sites:
+#   einops     -> indextts/codec/amphion_codec/quantize/*.py  (module level)
+#   munch      -> indextts/s2mel/modules/commons.py           (module level)
+#   audiotools -> indextts/s2mel/dac/__init__.py              (module level,
+#                 reached through length_regulator)
+#   wetext     -> indextts/utils/front.py TextNormalizer      (Windows/macOS,
+#                 same platform marker as upstream)
+einops==0.8.2
+munch==4.0.0
+descript-audiotools==0.7.2
+wetext==0.1.8; platform_system != "Linux"

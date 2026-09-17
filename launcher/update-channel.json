@@ -13,5 +13,5 @@
   ],
   "archive_sha256": "",
   "notes": "新增任务级图像模型配置与 Image 2.5/多比例支持，补充自定义 API 配置说明；DeepSeek 官方接口默认关闭深度思考。画面编辑支持拆分字幕、新增可编辑画面、边界试听和前后翻页，并修复新增画面重绘比例、占位图替换及相关时间轴同步问题。",
-  "content_fingerprint": "92b41d1b759b3a8ae56a864147f568da0469d9cb3565d173a55851599a574b86"
+  "content_fingerprint": "bee7b79f2914871e8b766f919aae1b954a37af2d43ca0a89aea0ba8177fdf752"
 }

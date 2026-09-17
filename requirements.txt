@@ -45,6 +45,13 @@ librosa==0.10.2.post1
 soundfile==0.13.1
 ffmpeg-python==0.2.0
 opencv-python==4.9.0.80
+# Imported unconditionally while the backend starts: backend/app/reference_materials.py,
+# backend/app/image_studio.py and backend/app/subtitle_layout.py import PIL at module level,
+# and module4_video_render.py triggers that chain during uvicorn's import of the app
+# (DEFAULT_VISUAL_PROMPT_SYSTEM -> build_visual_prompt_system -> _reference_image_catalog).
+# modelscope and huggingface_hub declare Pillow only behind optional extras, so pip never
+# pulls it in transitively: it has to be listed here.
+Pillow==12.3.0
 omegaconf==2.3.0
 safetensors==0.5.2
 tqdm==4.67.1
