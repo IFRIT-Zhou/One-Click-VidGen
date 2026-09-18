@@ -2789,6 +2789,34 @@ def _parse_srt_texts(path: Path) -> list[str]:
     return texts
 
 
+def _parse_srt_entries(path: Path) -> list[dict[str, Any]]:
+    """Read timestamped SRT rows needed to archive uploaded finished audio."""
+    if not path.is_file():
+        return []
+    content = path.read_text(encoding="utf-8-sig", errors="replace").strip()
+    if not content:
+        return []
+
+    def parse_time(value: str) -> float:
+        match = re.fullmatch(r"(\d+):(\d+):(\d+)[,.](\d+)", value.strip())
+        if not match:
+            raise ValueError(f"无效字幕时间：{value}")
+        hours, minutes, seconds, millis = (int(part) for part in match.groups())
+        return hours * 3600 + minutes * 60 + seconds + millis / 1000
+
+    entries: list[dict[str, Any]] = []
+    for block in re.split(r"\r?\n\s*\r?\n", content):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) < 3 or "-->" not in lines[1]:
+            continue
+        left, right = (part.strip() for part in lines[1].split("-->", 1))
+        start, end = parse_time(left), parse_time(right)
+        text = "\n".join(lines[2:]).strip()
+        if text and end > start:
+            entries.append({"text": text, "start": start, "end": end})
+    return entries
+
+
 def validate_visual_coverage(
     timeline_path: Path,
     mapping_path: Path,
@@ -3274,6 +3302,8 @@ def sync_step_audio_snapshot(job: Job) -> Path:
         shutil.copy2(timeline, other_dir / "画面时间线.json")
         shutil.copy2(timeline, other_dir / "模块2.5_校对后字幕场景.json")
     segment_archive = JOBS_DIR / job.id / "artifacts" / "tts_segments"
+    if bool(job.request.get("skip_tts")):
+        _archive_uploaded_audio_segments(job, audio, subtitle, segment_archive)
     if segment_archive.is_dir() and (segment_archive / "manifest.json").is_file():
         shutil.copytree(segment_archive, other_dir / "tts_segments", dirs_exist_ok=True)
     if str(job.request.get("tts_engine") or "indextts25") in {"indextts2", "indextts25"} and job.user_id is not None:
@@ -3293,6 +3323,79 @@ def sync_step_audio_snapshot(job: Job) -> Path:
     # later TTS edits replace this revision through the same commit path.
     sync_refined_step_audio_assets(job, output_dir)
     return output_dir
+
+
+def _archive_uploaded_audio_segments(
+    job: Job,
+    audio_path: Path,
+    subtitle_path: Path,
+    segment_archive: Path,
+) -> Path:
+    """Create editable sentence assets for uploaded audio without re-synthesizing it."""
+    manifest_path = segment_archive / "manifest.json"
+    if manifest_path.is_file() and manifest_path.stat().st_size > 0:
+        return segment_archive
+    entries = _parse_srt_entries(subtitle_path)
+    if not entries:
+        raise RuntimeError("上传配音的校准字幕为空，无法进入配音精修")
+
+    pending = segment_archive.with_name(f".{segment_archive.name}.{uuid.uuid4().hex}.tmp")
+    shutil.rmtree(pending, ignore_errors=True)
+    pending.mkdir(parents=True, exist_ok=True)
+    try:
+        with wave.open(str(audio_path), "rb") as source:
+            params = source.getparams()
+            frame_rate = source.getframerate()
+            total_frames = source.getnframes()
+            total_duration = total_frames / frame_rate
+            segments: list[dict[str, Any]] = []
+            for position, entry in enumerate(entries, 1):
+                # Preserve edge audio and model interior subtitle gaps as
+                # explicit pauses so pause edits can rebuild the finished WAV.
+                slice_start = 0.0 if position == 1 else float(entry["start"])
+                slice_end = total_duration if position == len(entries) else float(entry["end"])
+                start_frame = min(total_frames, max(0, int(round(slice_start * frame_rate))))
+                end_frame = min(total_frames, max(start_frame + 1, int(round(slice_end * frame_rate))))
+                source.setpos(start_frame)
+                frames = source.readframes(end_frame - start_frame)
+                filename = f"segment_{position:04d}.wav"
+                with wave.open(str(pending / filename), "wb") as target:
+                    target.setparams(params)
+                    target.writeframes(frames)
+                duration = (end_frame - start_frame) / frame_rate
+                next_start = float(entries[position]["start"]) if position < len(entries) else slice_end
+                pause_after = max(0.0, next_start - float(entry["end"])) if position < len(entries) else 0.0
+                logical_start = sum(
+                    float(item["duration"]) + float(item.get("pause_after") or 0)
+                    for item in segments
+                )
+                segments.append({
+                    "index": position,
+                    "text": str(entry["text"]),
+                    "tts_text": str(entry["text"]),
+                    "filename": filename,
+                    "start": round(logical_start, 6),
+                    "end": round(logical_start + duration, 6),
+                    "duration": round(duration, 6),
+                    "pause_after": round(pause_after, 6),
+                })
+        manifest = {
+            "schema_version": 1,
+            "revision": 0,
+            "uploaded_finished_audio": True,
+            "engine": str(job.request.get("tts_engine") or "indextts25"),
+            "total_duration": round(total_duration, 6),
+            "segments": segments,
+        }
+        (pending / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        if segment_archive.exists():
+            shutil.rmtree(segment_archive)
+        os.replace(pending, segment_archive)
+    finally:
+        shutil.rmtree(pending, ignore_errors=True)
+    return segment_archive
 
 
 STEP_AUDIO_REVISION_FILENAME = "audio_revision.json"

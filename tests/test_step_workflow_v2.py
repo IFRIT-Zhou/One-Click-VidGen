@@ -55,6 +55,53 @@ class StepWorkflowV2Test(unittest.TestCase):
             self.assertEqual(first["fingerprint"], second["fingerprint"])
             self.assertEqual(first["sentence_count"], 2)
 
+    def test_uploaded_audio_snapshot_builds_missing_segment_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            jobs = root / "jobs"
+            workspace = root / "workspace"
+            output = root / "output"
+            audio_dir = workspace / "2_audio_srt"
+            visual_dir = workspace / "3_visual_template"
+            audio_dir.mkdir(parents=True)
+            visual_dir.mkdir(parents=True)
+            with wave.open(str(audio_dir / "final_output.wav"), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(16000)
+                audio.writeframes(b"\0\0" * 40000)
+            (audio_dir / "final_short.srt").write_text(
+                "1\n00:00:00,100 --> 00:00:01,000\n第一句\n\n"
+                "2\n00:00:01,200 --> 00:00:02,300\n第二句\n",
+                encoding="utf-8",
+            )
+            (visual_dir / "scene_timeline.json").write_text(json.dumps([
+                {"slide_id": "scene_001", "text_content": "第一句", "start": .1, "end": 1},
+                {"slide_id": "scene_002", "text_content": "第二句", "start": 1.2, "end": 2.3},
+            ], ensure_ascii=False), encoding="utf-8")
+            job = pipeline.Job(id="uploaded", user_id=1, request={
+                "step_mode": True,
+                "skip_tts": True,
+                "_step_workflow_version": 2,
+                "_step_output_dir": "uploaded",
+            })
+            with (
+                patch.object(pipeline, "JOBS_DIR", jobs),
+                patch.object(pipeline, "WORKSPACE_DIR", workspace),
+                patch.object(pipeline, "OUTPUT_DIR", output),
+                patch.object(pipeline, "register_job_asset"),
+                patch.object(pipeline.store, "update"),
+            ):
+                project = pipeline.sync_step_audio_snapshot(job)
+            manifest = json.loads(
+                (project / "other" / "tts_segments" / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["uploaded_finished_audio"])
+            self.assertEqual([item["text"] for item in manifest["segments"]], ["第一句", "第二句"])
+            self.assertAlmostEqual(manifest["segments"][0]["pause_after"], .2, places=3)
+            self.assertTrue((project / "other" / "tts_segments" / "segment_0002.wav").is_file())
+            self.assertTrue((project / "other" / "audio_revision.json").is_file())
+
     def test_initialize_and_explicit_waiting_transitions_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

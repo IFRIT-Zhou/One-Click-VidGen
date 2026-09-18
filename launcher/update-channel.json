@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.16.1",
-  "release_order": 2026091601,
-  "display_version": "2026.09.16 图像配置与画面编辑更新",
+  "release_id": "2026.09.19.1",
+  "release_order": 2026091901,
+  "display_version": "2026.09.19 上传配音分步流程修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.16.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.16.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.19.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.19.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增任务级图像模型配置与 Image 2.5/多比例支持，补充自定义 API 配置说明；DeepSeek 官方接口默认关闭深度思考。画面编辑支持拆分字幕、新增可编辑画面、边界试听和前后翻页，并修复新增画面重绘比例、占位图替换及相关时间轴同步问题。",
-  "content_fingerprint": "92b41d1b759b3a8ae56a864147f568da0469d9cb3565d173a55851599a574b86"
+  "notes": "修复上传已有配音并启用字幕校准、分步工作流时，因缺少逐句配音 manifest 而在进入配音精修前失败的问题。现在会按校准后的字幕安全生成逐句音频清单，保留首尾音频与句间停顿；正常 TTS 流程不受影响。",
+  "content_fingerprint": "3e3497751a3d99629962ce35f12a8fb97f2cd4e8db3017653b5ed1c051c509a2"
 }
