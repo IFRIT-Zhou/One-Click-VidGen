@@ -1,0 +1,128 @@
+{
+  "_comment": [
+    "Runtime assets provisioned by tools/provision_runtime.ps1 for a source (Git) deployment.",
+    "Every asset is pinned to an immutable version and carries the SHA-256 that its vendor",
+    "publishes (see sha256_source). Domestic mirrors are listed first because they are fast",
+    "from mainland China, and they are safe to use precisely because each download is",
+    "verified against the vendor value: a mirror that serves anything else is rejected.",
+    "Assets whose vendor publishes no checksum are deliberately absent - the provisioner",
+    "only downloads what it can verify."
+  ],
+  "schema": 1,
+  "assets": [
+    {
+      "id": "python",
+      "title": "Portable Python",
+      "version": "3.11.13+20250818",
+      "archive": "tar.gz",
+      "urls": [
+        "https://registry.npmmirror.com/-/binary/python-build-standalone/20250818/cpython-3.11.13%2B20250818-x86_64-pc-windows-msvc-install_only.tar.gz",
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/cpython-3.11.13%2B20250818-x86_64-pc-windows-msvc-install_only.tar.gz"
+      ],
+      "sha256": "008bab1b41dd88a831477af3deb3b10f056f02e3db8313f506e21b77ff2ae660",
+      "sha256_source": "https://github.com/astral-sh/python-build-standalone/releases/download/20250818/SHA256SUMS",
+      "size": 44769137,
+      "payload": "python",
+      "install_to": "runtime/python",
+      "required_entries": ["python.exe"],
+      "self_check": {
+        "path": "python.exe",
+        "args": ["-c", "import struct,sys;print(sys.version.split()[0], struct.calcsize('P')*8)"],
+        "expect_stdout": "3.11.13 64"
+      }
+    },
+    {
+      "id": "node",
+      "title": "Portable Node.js",
+      "version": "22.20.0",
+      "archive": "zip",
+      "urls": [
+        "https://registry.npmmirror.com/-/binary/node/v22.20.0/node-v22.20.0-win-x64.zip",
+        "https://nodejs.org/dist/v22.20.0/node-v22.20.0-win-x64.zip"
+      ],
+      "sha256": "bb819d6eb8f5bfda294bbc83a7e4ec6539da67c4233d54b0d655b9248b15e29d",
+      "sha256_source": "https://nodejs.org/dist/v22.20.0/SHASUMS256.txt",
+      "size": 35500968,
+      "payload": "node-v22.20.0-win-x64",
+      "install_to": "runtime/node",
+      "required_entries": ["node.exe", "npm.cmd"],
+      "self_check": {
+        "path": "node.exe",
+        "args": ["--version"],
+        "expect_stdout": "v22.20.0"
+      }
+    },
+    {
+      "id": "ffmpeg",
+      "title": "Portable FFmpeg",
+      "version": "autobuild-2026-09-12-13-12 / n8.1.2-52-g5a03dfa0f6",
+      "archive": "zip",
+      "urls": [
+        "https://ghfast.top/https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-12-13-12/ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-gpl-8.1.zip",
+        "https://ghproxy.net/https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-12-13-12/ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-gpl-8.1.zip",
+        "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-12-13-12/ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-gpl-8.1.zip"
+      ],
+      "sha256": "8ebd7e82791b8f753ade7fd6f2eacf8ce02127dfb1f25102d85154d1779cd2de",
+      "sha256_source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-12-13-12/checksums.sha256",
+      "size": 191851153,
+      "payload": "ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-gpl-8.1",
+      "install_to": "tools/ffmpeg",
+      "required_entries": ["bin/ffmpeg.exe"],
+      "self_check": {
+        "path": "bin/ffmpeg.exe",
+        "args": ["-hide_banner", "-filters"],
+        "expect_stdout": "libass"
+      },
+      "note": "expect_stdout checks for libass, which the subtitle burn-in step (ass= filter) requires. The first two URLs are mainland-China GitHub proxies; the file is verified against the vendor checksum either way."
+    },
+    {
+      "id": "whisper",
+      "title": "Faster-Whisper base model",
+      "version": "revision ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+      "archive": null,
+      "install_to": "tools/whisper_models/faster-whisper-base",
+      "required_entries": ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"],
+      "files": [
+        {
+          "name": "config.json",
+          "size": 2309,
+          "git_blob_sha1": "867cf1a0fece1394e01d55e287ba2f09a577c046",
+          "urls": [
+            "https://hf-mirror.com/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json",
+            "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json"
+          ]
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 2203239,
+          "git_blob_sha1": "7818adb6de9fa3064d3ff81226fdd675be1f6344",
+          "urls": [
+            "https://hf-mirror.com/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json",
+            "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json"
+          ]
+        },
+        {
+          "name": "vocabulary.txt",
+          "size": 459861,
+          "git_blob_sha1": "c9074644d9d1205686f16d411564729461324b75",
+          "urls": [
+            "https://hf-mirror.com/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt",
+            "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt"
+          ]
+        },
+        {
+          "name": "model.bin",
+          "size": 145217532,
+          "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+          "git_blob_sha1": "433870823f3f64fd6baaec3f61319124ba5033fd",
+          "urls": [
+            "https://hf-mirror.com/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin",
+            "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin"
+          ]
+        }
+      ],
+      "sha256_source": "https://huggingface.co/api/models/Systran/faster-whisper-base/paths-info/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66 (lfs.oid / oid)",
+      "note": "The vendor only publishes a SHA-256 for the large LFS payload (model.bin). The three small files are pinned by the immutable git revision in the URL and verified against their git blob SHA-1."
+    }
+  ]
+}
