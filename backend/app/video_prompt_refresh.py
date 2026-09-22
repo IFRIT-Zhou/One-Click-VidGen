@@ -143,8 +143,9 @@ refresh_basis=action 时按新动作重建图案、表情与必要短词表达�
         # into the user's replacement image. It may not, however, schedule new
         # long dialogue in later video beats.
         issues = visual_first_plan_issues(plan, inspect_reference=refresh_basis != 'image')
-        if issues:
-            raise ValueError('本镜少字方案仍过于复杂：' + '；'.join(issues))
+        # User-directed single-shot refreshes must remain editable.  The text
+        # budget is guidance for the model, not a reason to reject a valid
+        # structural plan after the user has already supplied its basis.
     return plan
 
 

@@ -180,6 +180,15 @@ def _insert_in_section(prompt: str, section: str, sentence: str) -> str:
     return prompt[:body_start] + "\n" + sentence.strip() + "\n" + prompt[body_start:]
 
 
+def _section_body(prompt: str, section: str) -> str:
+    """Return one H3 section body for section-specific policy checks."""
+    bounds = _section_bounds(prompt)
+    if section not in bounds:
+        return ''
+    body_start, body_end = bounds[section]
+    return prompt[body_start:body_end]
+
+
 def _repair_picture_label(prompt: str) -> str:
     """Canonicalize or supply the one image label required by this pipeline.
 
@@ -365,7 +374,7 @@ def source_fingerprint(shot: dict[str, Any], duration: int, *, reference_audio: 
         "reference_audio_lipsync": lipsync,
         "core_image_digest": image_digest,
         "skill": H3_SKILL_SOURCE,
-        "contract": 10,
+        "contract": 11,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -415,7 +424,13 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
     if not isinstance(result, dict) or not isinstance(result.get("h3_prompt"), str):
         raise ValueError("H3 提示词 Agent 未返回有效 JSON 对象")
     prompt = _validate(result["h3_prompt"], duration, reference_audio=reference_audio, lipsync=lipsync)
-    issues = visual_first_prompt_issues(prompt, shot.get("motion_plan"))
+    # Only the playback description instructs H3 to render new on-screen
+    # content.  Scanning subject_definitions with the generic quote matcher can
+    # pair the closing ASCII quote of one definition with the opening quote of
+    # the next and fabricate a false visible-text span across two subjects.
+    issues = visual_first_prompt_issues(
+        _section_body(prompt, "detailed_description"), shot.get("motion_plan")
+    )
     if issues:
         raise ValueError("H3 转换结果重新加入了未选用的画中文字：" + "；".join(issues))
     return prompt, fingerprint

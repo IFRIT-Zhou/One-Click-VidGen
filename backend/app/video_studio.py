@@ -1180,6 +1180,82 @@ async def upload_storyboard_reference(identity: str, request: Request, file: Upl
         return record
 
 
+def _redraw_reference_row(record, reference_id):
+    for origin, rows in (('project', record.get('references', [])),
+                         ('uploaded', record.get('redraw_references', []))):
+        row = next((item for item in rows if str(item.get('id')) == str(reference_id)), None)
+        if row:
+            return origin, row
+    return None, None
+
+
+@router.get('/{identity}/redraw-references/{reference_id}')
+def storyboard_reference_image(identity: str, reference_id: str, request: Request):
+    from fastapi.responses import FileResponse
+    with LOCK:
+        path = directory(require_user(request)['id'], identity)
+        record = read(path)
+        _, row = _redraw_reference_row(record, reference_id)
+        candidate = path / str((row or {}).get('file') or '')
+        if not row or not candidate.is_file() or path.resolve() not in candidate.resolve().parents:
+            raise HTTPException(404, '参考图不存在')
+        return FileResponse(candidate)
+
+
+@router.delete('/{identity}/redraw-references/{reference_id}')
+def delete_storyboard_reference(identity: str, reference_id: str, revision: int, request: Request):
+    with LOCK:
+        path = directory(require_user(request)['id'], identity)
+        record = read(path)
+        editable(record, revision, allow_image_edits=True)
+        if record['status'] != 'image_review':
+            raise HTTPException(409, '请在核心分镜图检查阶段管理重绘参考图')
+        if project_has_image_edits(record['id']):
+            raise HTTPException(409, '请等待当前重绘完成后再删除参考图')
+        origin, row = _redraw_reference_row(record, reference_id)
+        if origin != 'uploaded' or not row:
+            raise HTTPException(400, '任务原始参考图只能取消选择，不能在这里删除')
+        candidate = path / str(row.get('file') or '')
+        if candidate.is_file() and path.resolve() in candidate.resolve().parents:
+            candidate.unlink(missing_ok=True)
+        record['redraw_references'] = [item for item in record.get('redraw_references', [])
+                                       if str(item.get('id')) != str(reference_id)]
+        for shot in record.get('shots', []):
+            selection = shot.get('redraw_selection')
+            if isinstance(selection, dict):
+                selection['reference_ids'] = [value for value in selection.get('reference_ids', [])
+                                              if str(value) != str(reference_id)]
+        record['revision'] += 1
+        save(path, record)
+        return record
+
+
+@router.delete('/{identity}/redraw-references')
+def clear_storyboard_references(identity: str, revision: int, request: Request):
+    with LOCK:
+        path = directory(require_user(request)['id'], identity)
+        record = read(path)
+        editable(record, revision, allow_image_edits=True)
+        if record['status'] != 'image_review':
+            raise HTTPException(409, '请在核心分镜图检查阶段管理重绘参考图')
+        if project_has_image_edits(record['id']):
+            raise HTTPException(409, '请等待当前重绘完成后再清空参考图')
+        uploaded_ids = {str(row.get('id')) for row in record.get('redraw_references', [])}
+        for row in record.get('redraw_references', []):
+            candidate = path / str(row.get('file') or '')
+            if candidate.is_file() and path.resolve() in candidate.resolve().parents:
+                candidate.unlink(missing_ok=True)
+        record['redraw_references'] = []
+        for shot in record.get('shots', []):
+            selection = shot.get('redraw_selection')
+            if isinstance(selection, dict):
+                selection['reference_ids'] = [value for value in selection.get('reference_ids', [])
+                                              if str(value) not in uploaded_ids]
+        record['revision'] += 1
+        save(path, record)
+        return record
+
+
 @router.post('/{identity}/images/{shot_id}/redraw')
 def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw, request: Request):
     with LOCK:
@@ -1191,7 +1267,8 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
         shot = _find_shot(record, shot_id)
         if (shot.get('image_task') or {}).get('status') == 'running':
             raise HTTPException(409, '当前画面正在重绘，请等待完成')
-        references = {row['id']: row for row in record.get('redraw_references', [])}
+        references = {str(row['id']): row for row in [*record.get('references', []),
+                                                       *record.get('redraw_references', [])]}
         if len(set(data.reference_ids)) != len(data.reference_ids) or any(value not in references for value in data.reference_ids):
             raise HTTPException(400, '重绘参考图选择无效')
         if len(data.reference_ids) + int(data.use_current_image) > 3:
@@ -1204,10 +1281,15 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
             if not candidate.is_file() or path.resolve() not in candidate.resolve().parents:
                 raise HTTPException(404, '重绘参考图不存在，请重新上传')
             reference_paths.append(str(candidate.resolve()))
+        shot['redraw_selection'] = {
+            'reference_ids': list(data.reference_ids),
+            'use_current_image': bool(data.use_current_image),
+            'use_scene_reference': bool(data.use_scene_reference),
+        }
         try:
             prompt, reference_paths, scene = _image_inputs(
                 path, record, shot, data.prompt,
-                references=reference_paths if reference_paths else None,
+                references=reference_paths,
                 use_scene=data.use_scene_reference)
             configs = _image_configs(record)
         except ValueError as exc:

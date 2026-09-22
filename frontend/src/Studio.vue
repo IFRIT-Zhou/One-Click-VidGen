@@ -821,7 +821,7 @@
         <strong class="official-disclaimer">
           官方声明：OCV 目前未授权任何培训机构、付费课程或软件售卖方；第三方收费服务不代表 OCV 官方授权，其交付与售后由第三方自行承担。
         </strong>
-        <span>OCV v1.2.1 · Copyright © 2026 周若雨、何允</span>
+        <span>OCV v1.2.2 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>

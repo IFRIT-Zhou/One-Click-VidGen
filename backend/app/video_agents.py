@@ -378,7 +378,13 @@ id及顺序保持不变，不输出多格数量、面板或额外镜头。
                 if dynamic_text_mode(context) == VISUAL_FIRST:
                     text_issues = visual_first_plan_issues(plan)
                     if text_issues:
-                        raise ValueError(f"镜头 {row['id']} 的少字方案仍过于复杂：" + '；'.join(text_issues))
+                        # Text density is an artistic preference, not a broken
+                        # motion-plan contract. Give the director one repair
+                        # pass, then preserve an otherwise valid plan with a
+                        # review warning instead of trapping the whole job.
+                        if attempt == 0:
+                            raise ValueError(f"镜头 {row['id']} 的少字方案建议精简：" + '；'.join(text_issues))
+                        row['text_policy_warnings'] = text_issues
                 issues = prompt_plan_issues(plan['reference_visual'], plan, 'image')
                 # This is a director's draft, not the submitted image prompt.
                 # The image finalizer receives the structured subjects/texts

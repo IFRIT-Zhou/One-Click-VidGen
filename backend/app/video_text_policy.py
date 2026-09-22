@@ -93,8 +93,8 @@ def visual_first_plan_issues(plan: Any, *, inspect_reference: bool = True) -> li
             issues.append(f'第{index}阶段同时安排了{len(texts)}处文字；画面优先模式每阶段最多保留一处必要短字')
         all_texts.extend(texts)
     reference = plan.get('reference_texts') or []
-    if inspect_reference and len(reference) > 1:
-        issues.append(f'核心参考图安排了{len(reference)}处文字；应只保留一处必要短字，其余改用动作或图案')
+    if inspect_reference and len(reference) > 2:
+        issues.append(f'核心参考图安排了{len(reference)}处文字；应最多保留两处必要短字，其余改用动作或图案')
     if inspect_reference:
         all_texts.extend(reference)
     distinct = []
