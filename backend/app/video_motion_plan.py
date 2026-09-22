@@ -3,7 +3,48 @@
 Beats describe phases within ONE subtitle-bound shot, not extra timeline cuts.
 This module checks data and explicit prompt handoffs, not artistic correctness.
 """
+import copy
 import re
+
+
+def repair_generated_participant_membership(value):
+    """Repair bookkeeping drift in an LLM-produced plan without changing its semantics.
+
+    A subject visible in the core reference is necessarily a subject of the shot.
+    Providers occasionally omit it from ``participants`` or repeat a name with
+    surrounding whitespace.  Promote those already-declared reference subjects
+    into the registry before the strict contract validator runs.
+    """
+    if not isinstance(value, dict):
+        return value
+    repaired = copy.deepcopy(value)
+
+    def clean_names(raw):
+        if not isinstance(raw, list):
+            return raw
+        names = []
+        for item in raw:
+            if isinstance(item, str):
+                name = item.strip()
+            elif isinstance(item, dict) and isinstance(item.get('name'), str):
+                name = item['name'].strip()
+            else:
+                continue
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    participants = clean_names(repaired.get('participants'))
+    references = clean_names(repaired.get('reference_participants'))
+    if isinstance(participants, list):
+        repaired['participants'] = participants
+    if isinstance(references, list):
+        repaired['reference_participants'] = references
+        if isinstance(participants, list):
+            for name in references:
+                if name not in participants:
+                    participants.append(name)
+    return repaired
 
 
 def normalize_motion_plan(value):
@@ -113,7 +154,7 @@ def _requests_quoted_text(prompt, text):
 
 def restore_reference_draft(plan, visual_description):
     """Recover an accidental reference label without redesigning a valid scene."""
-    plan = normalize_motion_plan(plan)
+    plan = normalize_motion_plan(repair_generated_participant_membership(plan))
     if not plan or not re.fullmatch(r'(?:参考)?图\s*\d+[。.]?', plan['reference_visual']):
         return plan
     plan['reference_visual'] = visual_description.strip()

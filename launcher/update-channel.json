@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.22.1",
-  "release_order": 2026092201,
-  "display_version": "2026.09.22 动态视频工作流更新",
+  "release_id": "2026.09.22.2",
+  "release_order": 2026092202,
+  "display_version": "2026.09.22 动态分镜主体校验修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.22.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.22.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.22.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.22.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增动态视频完整工作流，支持自定义视频 API、本地 ComfyUI 与 H3 提示词转换；可逐镜规划、重绘、排队生成、替换和回看历史结果，并完成配音、环境音和双版本成片合成。新版同时包含上传已有配音的分步精修修复，并优化动态工作台 UI、配音语义分段、镜头边界及一键出视频模式。",
-  "content_fingerprint": "0b6a84eb2a16ed27cd531807cd079899dce5eca6af9c42e077fc5f7a9ac8d4a0"
+  "notes": "修复动态阶段方案中核心图主体已出现、但总主体表漏登记或重复时连续规划失败的问题。系统会在严格校验前确定性清理主体名称并补齐登记，不改变剧情、动作和文字归属；同时包含动态视频完整工作流与上传已有配音的分步精修修复。",
+  "content_fingerprint": "1a7366c011019ef6ac49874ad17b1b9e80e2e8ccf7b6ed3e7d5abd56e8a5db00"
 }

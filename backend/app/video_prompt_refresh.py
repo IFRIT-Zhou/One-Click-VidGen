@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from .gemini_client import generate_gemini_text, parse_json_response
 from .video_agents import ask_json, write_image_prompts, write_video_prompts
 from .video_director_contracts import SPEECH_ATTRIBUTION_CONTRACT
-from .video_motion_plan import normalize_motion_plan
+from .video_motion_plan import normalize_motion_plan, repair_generated_participant_membership
 from .video_text_policy import (VISUAL_FIRST, dynamic_text_mode, text_mode_contract,
                                 visual_first_plan_issues)
 
@@ -67,7 +67,7 @@ def _clean_generated_motion_plan(value):
             if name and name not in names:
                 names.append(name)
         cleaned[key] = names
-    return cleaned
+    return repair_generated_participant_membership(cleaned)
 
 
 def _normalize_generated_motion_plan(raw_plan, *, ask, shot_id):
