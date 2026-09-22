@@ -14,6 +14,7 @@ from backend.app.tts_editor import (
     _commit_canonical_subtitle_timeline,
     _concat_wavs,
     _rewrite_srt_times,
+    _srt_entries,
 )
 from backend.app.main import TtsSegmentRegenerateRequest
 
@@ -28,6 +29,17 @@ def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> N
 
 
 class TtsSegmentEditorTest(unittest.TestCase):
+    def test_status_revision_reads_persisted_boundary_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / "other" / "tts_segments"
+            segment_dir.mkdir(parents=True)
+            (segment_dir / "manifest.json").write_text(
+                json.dumps({"revision": 3, "segments": [{"index": 1}]}), encoding="utf-8")
+            editor = TtsEditor()
+            with patch.object(editor, "_project_dir", return_value=project):
+                self.assertEqual(editor.revision("job", 1), 3)
+
     def test_refined_srt_replaces_old_longer_timeline_generation(self) -> None:
         """A long TTS segment may collapse many ASR cues; no old rows may survive."""
         with tempfile.TemporaryDirectory() as directory:
@@ -279,6 +291,24 @@ class TtsSegmentEditorTest(unittest.TestCase):
                 editor.undo(job=job, user_id=1)
                 restored = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
                 self.assertEqual(len(restored["segments"]), 1)
+
+    def test_subtitle_reshape_keeps_the_user_selected_text_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            other = project / "other"
+            other.mkdir(parents=True)
+            (other / "最终字幕.srt").write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n甲乙\n\n"
+                "2\n00:00:01,000 --> 00:00:02,000\n丙丁戊己庚辛\n",
+                encoding="utf-8",
+            )
+            TtsEditor._reshape_subtitles_for_span(
+                project, 0, 2,
+                [{"start": 0, "end": .8}, {"start": 1, "end": 2}],
+                ["甲乙丙丁戊", "己庚辛"],
+            )
+            entries = _srt_entries(other / "最终字幕.srt")
+            self.assertEqual([row["text"] for row in entries], ["甲乙丙丁戊", "己庚辛"])
 
 
 if __name__ == "__main__":

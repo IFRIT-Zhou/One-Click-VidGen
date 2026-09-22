@@ -199,6 +199,15 @@ class GenerateRequest(BaseModel):
     bgm_fade_enabled: bool = False
     bgm_fade_duration: float = Field(default=1, ge=0.1, le=30)
     step_mode: bool = False
+    dynamic_video: bool = False
+    # Keep the same persisted, resumable stage workflow while allowing OCV to
+    # accept each successful review gate on the user's behalf.
+    dynamic_auto_advance: bool = False
+    dynamic_text_mode: Literal['text_assisted', 'visual_first'] = 'text_assisted'
+    video_generation_backend: Literal['api', 'comfyui'] = 'api'
+    comfyui_profile_id: str = Field(default='', max_length=80)
+    comfyui_h3_prompt_agent: bool = False
+    comfyui_reference_audio: bool = False
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
@@ -452,6 +461,16 @@ class EditRequest(BaseModel):
 app = FastAPI(title="Voice Over Video API")
 from .image_studio import router as image_studio_router
 app.include_router(image_studio_router)
+from .comfyui_bridge import router as comfyui_bridge_router
+app.include_router(comfyui_bridge_router)
+from .video_studio import router as video_studio_router
+app.include_router(video_studio_router)
+from .video_model_config import router as video_model_config_router
+from .video_generation import router as video_generation_router
+from .video_export import reconcile_completed_projects, router as video_export_router
+app.include_router(video_model_config_router)
+app.include_router(video_generation_router)
+app.include_router(video_export_router)
 from .image_profiles import router as image_profiles_router
 app.include_router(image_profiles_router)
 from .subtitle_preview import router as subtitle_preview_router
@@ -487,6 +506,7 @@ def startup() -> None:
         store.load_persisted()
         edit_store.load_persisted()
         store.import_legacy_jobs(sole_user_id())
+        reconcile_completed_projects()
 
 
 def list_files(patterns: list[str]) -> list[dict[str, str]]:
@@ -1436,6 +1456,8 @@ def _probe_image_api_pool(api_keys: list[str]) -> tuple[str, str]:
 def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     data = payload.model_dump()
+    if data.get('dynamic_video'):
+        data['step_mode'] = True
     if not data.get("use_cloud_image_pool") and str(data.get("image_profile_id") or "").strip():
         from .image_profiles import profile_snapshot
         try:
@@ -1599,6 +1621,24 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         )
                         add("language_api", "云端文本号池", "error", message)
                         add("image_api", "云端号池", "error", message)
+
+        if data.get('dynamic_video') and data.get('video_generation_backend') == 'comfyui':
+            from .comfyui_bridge import video_profile
+            try:
+                profile = video_profile(int(user['id']), str(data.get('comfyui_profile_id') or ''))
+                h3_note = ' · H3 提示词转换 Agent 已启用' if data.get('comfyui_h3_prompt_agent') else ''
+                effective_reference_audio = bool(data.get('comfyui_reference_audio') and
+                                                 not data.get('comfyui_h3_prompt_agent'))
+                audio_note = ' · 注入本镜 TTS 参考音频' if effective_reference_audio else ''
+                if effective_reference_audio:
+                    binding = (profile.get('mappings') or {}).get('audio') or {}
+                    if not binding.get('node_id') or not binding.get('input_name'):
+                        raise ValueError('所选 ComfyUI 工作流没有配置参考音频节点')
+                add('video_backend', '动态镜头生成', 'passed', f"本地 ComfyUI · {profile.get('name') or profile['id']}{h3_note}{audio_note}")
+            except ValueError as exc:
+                add('video_backend', '动态镜头生成', 'error', str(exc))
+        elif data.get('dynamic_video'):
+            add('video_backend', '动态镜头生成', 'passed', '使用已配置的视频 API；核心分镜确认前不会提交视频任务')
 
         for index, image_id in enumerate(data.get("reference_image_ids") or [], 1):
             try:
@@ -2141,6 +2181,8 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
     user = require_user(request)
     character_setting_was_submitted = "global_character_prompt" in payload.model_fields_set
     data = payload.model_dump()
+    if data.get('dynamic_video'):
+        data['step_mode'] = True
     if data.get("tts_engine") == "indextts2":
         data["tts_engine"] = "indextts25"
     script_length = len(str(data.get("script") or ""))
@@ -2692,7 +2734,13 @@ def open_job_output_folder(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="job not found")
     output_root = OUTPUT_DIR.resolve()
     project_dir: Path | None = None
+    if bool(job.request.get('dynamic_video')) and str(job.request.get('_dynamic_video_project_id') or ''):
+        candidate = step_workflow_output_dir(job)
+        if candidate is not None and candidate.is_dir():
+            project_dir = candidate
     for asset in list_media_assets(user_id=int(user["id"]), generation_job_id=job_id):
+        if project_dir is not None:
+            break
         if str(asset.get("role") or "") != "project_output":
             continue
         try:
@@ -3304,8 +3352,8 @@ def get_tts_editor(job_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/jobs/{job_id}/tts-editor/status")
 def get_tts_editor_status(job_id: str, request: Request) -> dict[str, Any]:
-    _owned_completed_job(job_id, request)
-    return {"task": tts_editor.status(job_id)}
+    _job, user_id = _owned_completed_job(job_id, request)
+    return {"task": tts_editor.status(job_id), "revision": tts_editor.revision(job_id, user_id)}
 
 
 @app.get("/api/jobs/{job_id}/tts-editor/audio/{index}")

@@ -92,10 +92,12 @@ def filter_eligible_members(raw, mapping):
     return result
 
 
-def plan_scene_references(mapping, scenes, cache_path, style=""):
+def plan_scene_references(mapping, scenes, cache_path, style="", *, contract=None):
     source = {"version": 2, "items": [{"index": i, "prompt": m["image_prompt"],
                "visual_design": m.get("visual_design", {})} for i, m in enumerate(mapping)],
               "source": scenes, "style": style}
+    if contract is not None:
+        source["coordination_contract"] = contract
     fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache_path = Path(cache_path)
     if cache_path.is_file():
@@ -103,7 +105,7 @@ def plan_scene_references(mapping, scenes, cache_path, style=""):
         if cached.get("fingerprint") == fingerprint:
             validate_plan(cached, mapping)
             return cached
-    raw = parse_json_response(generate_gemini_text(system_prompt=CONTRACT,
+    raw = parse_json_response(generate_gemini_text(system_prompt=contract or CONTRACT,
         user_prompt=json.dumps(source, ensure_ascii=False), temperature=0.05,
         response_mime_type="application/json", max_output_tokens=4096))
     filtered = filter_eligible_members(assign_scene_ids(raw), mapping)

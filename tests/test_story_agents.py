@@ -301,6 +301,14 @@ class StoryAgentsTest(unittest.TestCase):
             [],
         )
 
+    def test_reference_character_prevents_inferred_wardrobe(self) -> None:
+        characters = [{"name": "天降", "role": "演讲者", "appearance": "火柴人",
+                       "wardrobe": "专业演讲服装"}]
+        result = story_agents._enforce_user_character_identity(
+            characters, "图1：主角“天降”，具体外貌严格以对应参考图为准")
+        self.assertIn("参考素材为准", result[0]["wardrobe"])
+        self.assertNotIn("专业演讲服装", result[0]["wardrobe"])
+
     def test_pure_science_mode_has_no_fallback_host_and_uses_dedicated_contracts(self) -> None:
         scenes = sample_scenes()
         plan = story_agents._fallback_story_plan(

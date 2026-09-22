@@ -41,7 +41,7 @@ DIRECTOR_STRATEGY_STABLE = "stable"
 DIRECTOR_STRATEGY_ENHANCED = "enhanced_beta"
 STORY_AGENT_VERSION = 13
 CHARACTER_CONTINUITY_VERSION = 5
-STORY_CONTEXT_VERSION = 5
+STORY_CONTEXT_VERSION = 6
 
 
 class AgentPlanningFatalError(RuntimeError):
@@ -273,6 +273,8 @@ character_id 必须是唯一且稳定的英文小写 ID（例如 wife、husband�
 aliases 只能放该人物独占的姓名或称呼；“家庭经营者、同事、村民”等可能同时指向多人的职业或群体称呼只能放进 group_aliases，禁止当作个人 name 或独占 aliases。
 不同人物不得使用相同 name、character_id 或独占 alias。夫妻、父母、兄妹等没有姓名的人，必须分别命名为“妻子/丈夫”“母亲/父亲”等可区分的稳定代称。
 忠于原文，不得编造人物、事件、数据或世界观。用户人物设定与世界设定优先于你的推断。
+用户指定人物参考图或参考素材时，appearance、wardrobe、配色和标志物必须以参考素材为准；
+原文没有明确换装，不得因演讲者、主持人、职业或正式场景而推断专业服装、职业装或西装。
 key_information_objects 只登记会被手机、平板、电脑显示器等设备展示并影响剧情理解的信息载体；
 每项仅包含 object_id、device_type、content、first_context、later_references。content 必须忠于原文，原文没有明确内容时不得猜测或补写。
 输出应紧凑：人物最多 10 个、地点最多 10 个、关键信息载体最多 10 个、连续性规则最多 10 条。"""
@@ -337,9 +339,10 @@ def _enforce_user_character_identity(
     if not characters or not prompt:
         return characters
     clauses = [part.strip() for part in re.split(r"[\n。；;]+", prompt) if part.strip()]
-    identity_clauses = [
-        part for part in clauses if any(term in part for term in _GENDER_IDENTITY_TERMS)
-    ]
+    identity_clauses = [part for part in clauses if (
+        any(term in part for term in _GENDER_IDENTITY_TERMS) or
+        any(term in part for term in ("参考素材", "参考图", "形象参考"))
+    )]
     if not identity_clauses:
         return characters
     assignments: dict[int, list[str]] = {}
@@ -376,6 +379,8 @@ def _enforce_user_character_identity(
         appearance = str(character.get("appearance") or "").strip(" ，。；")
         if constraint and constraint not in appearance:
             character["appearance"] = f"{appearance}；用户明确设定：{constraint}".strip("；")
+        if any(term in constraint for term in ("参考素材", "参考图", "形象参考")):
+            character["wardrobe"] = "服装、配色与整体造型严格以用户参考素材为准；原文未明确换装时不得自行改装"
     return characters
 
 

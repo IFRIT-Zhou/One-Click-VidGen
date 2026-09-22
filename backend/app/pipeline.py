@@ -679,6 +679,8 @@ class JobStore:
 
     def advance_step_workflow(self, job: Job, action: str) -> dict[str, Any]:
         """Perform one explicit v2 transition; no action is allowed to guess a stage."""
+        if job.request.get('dynamic_video'):
+            raise ValueError('动态视频任务请在配音确认后进入动态分镜，不使用图文视频的出图流程')
         if not is_step_workflow_v2(job.request):
             raise ValueError("该任务不是新版分步任务")
         stage = str(job.request.get("_step_mode_stage") or "")
@@ -3401,6 +3403,11 @@ def _archive_uploaded_audio_segments(
 STEP_AUDIO_REVISION_FILENAME = "audio_revision.json"
 
 
+def _audio_snapshot_text(value: Any) -> str:
+    """Ignore visual line wrapping while keeping wording and punctuation strict."""
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
 def _step_audio_revision(project_dir: Path) -> dict[str, Any]:
     files = {
         "audio": project_dir / "input" / "配音.wav",
@@ -3417,12 +3424,19 @@ def _step_audio_revision(project_dir: Path) -> dict[str, Any]:
     expected = [str(row.get("text_content") or row.get("text") or "").strip()
                 for row in timeline if isinstance(row, dict)]
     expected = [value for value in expected if value]
-    actual = _parse_srt_texts(files["subtitle"])
-    if actual != expected:
+    subtitle_entries = _parse_srt_entries(files["subtitle"])
+    actual = [str(entry.get("text") or "").strip() for entry in subtitle_entries]
+    if [_audio_snapshot_text(value) for value in actual] != [_audio_snapshot_text(value) for value in expected]:
         raise RuntimeError(
             f"配音精修资产冲突：时间轴 {len(expected)} 句，SRT {len(actual)} 句；"
             "请返回配音精修重新保存，禁止继续出图或渲染"
         )
+    if len(subtitle_entries) != len(timeline) or any(
+        abs(float(row.get("start") or 0) - float(entry.get("start") or 0)) > 0.06
+        or abs(float(row.get("end") or 0) - float(entry.get("end") or 0)) > 0.06
+        for row, entry in zip(timeline, subtitle_entries)
+    ):
+        raise RuntimeError("配音精修资产冲突：画面时间线与 SRT 的起止时间不一致；请返回配音精修重新保存")
     manifest = json.loads(files["manifest"].read_text(encoding="utf-8"))
     segments = manifest.get("segments") if isinstance(manifest, dict) else None
     if not isinstance(segments, list) or not segments:
@@ -3443,7 +3457,15 @@ def validate_step_audio_snapshot(job: Job, *, require_revision: bool = True) -> 
     if require_revision and marker.is_file():
         saved = json.loads(marker.read_text(encoding="utf-8"))
         if saved.get("fingerprint") != revision["fingerprint"]:
-            raise RuntimeError("配音精修资产版本不一致；请返回配音精修重新保存，禁止重复出图或渲染")
+            saved_files = saved.get("files") if isinstance(saved, dict) else {}
+            stable_keys = ("audio", "subtitle", "manifest")
+            timeline_only = (isinstance(saved_files, dict)
+                             and all(saved_files.get(key) == revision["files"].get(key) for key in stable_keys)
+                             and saved_files.get("timeline") != revision["files"].get("timeline"))
+            if timeline_only:
+                _write_json_atomic(marker, revision)
+            else:
+                raise RuntimeError("配音精修资产版本不一致；请返回配音精修重新保存，禁止重复出图或渲染")
     return revision
 
 

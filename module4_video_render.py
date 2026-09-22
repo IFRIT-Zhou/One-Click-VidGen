@@ -3133,9 +3133,12 @@ def _poster_output_path(macro: dict[str, Any]) -> Path:
     explicit_output = str(macro.get("_output_path") or "").strip()
     if explicit_output:
         candidate = Path(explicit_output).resolve()
-        redraw_root = (PROJECT_ROOT / "workspace" / "jobs").resolve()
-        if redraw_root not in candidate.parents:
-            raise ValueError("重绘输出路径必须位于当前项目的独立任务目录中")
+        allowed_roots = (
+            (PROJECT_ROOT / "workspace" / "jobs").resolve(),
+            (PROJECT_ROOT / "workspace" / "video_studio").resolve(),
+        )
+        if not any(root in candidate.parents for root in allowed_roots):
+            raise ValueError("图片输出路径必须位于当前项目的独立任务目录中")
         return candidate
     poster_id = macro["macro_scene_id"]
     job_id = os.getenv("VOICE_OVER_VIDEO_JOB_ID", "").strip()

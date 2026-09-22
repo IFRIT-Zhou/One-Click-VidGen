@@ -55,6 +55,21 @@ class StepWorkflowV2Test(unittest.TestCase):
             self.assertEqual(first["fingerprint"], second["fingerprint"])
             self.assertEqual(first["sentence_count"], 2)
 
+    def test_snapshot_allows_visual_line_wrap_inside_same_srt_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self._write_audio_snapshot(root, timeline_count=2, srt_count=2)
+            output = root / "output" / "guided"
+            timeline = json.loads((output / "other" / "画面时间线.json").read_text(encoding="utf-8"))
+            timeline[0]["text_content"] = "第1 句"
+            (output / "other" / "画面时间线.json").write_text(
+                json.dumps(timeline, ensure_ascii=False), encoding="utf-8")
+            subtitle = output / "other" / "最终字幕.srt"
+            subtitle.write_text(subtitle.read_text(encoding="utf-8").replace("第1句", "第1\n句"), encoding="utf-8")
+            with patch.object(pipeline, "OUTPUT_DIR", root / "output"):
+                revision = pipeline.validate_step_audio_snapshot(job)
+            self.assertEqual(revision["sentence_count"], 2)
+
     def test_uploaded_audio_snapshot_builds_missing_segment_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

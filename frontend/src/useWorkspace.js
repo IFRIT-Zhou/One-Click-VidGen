@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
+import { normalizeDynamicTextMode } from './dynamicTextMode'
 
 // Shared task state: each mounted workspace owns one polling lifecycle.
 export function useWorkspace() {
@@ -531,6 +532,13 @@ const form = reactive({
   bgm_fade_enabled: false,
   bgm_fade_duration: 1,
   step_mode: false,
+  dynamic_video: false,
+  dynamic_auto_advance: false,
+  dynamic_text_mode: 'visual_first',
+  video_generation_backend: 'api',
+  comfyui_profile_id: '',
+  comfyui_h3_prompt_agent: false,
+  comfyui_reference_audio: false,
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'standard',
   visual_min_duration: 6,
@@ -2402,6 +2410,9 @@ async function loadSelectedParameterPreset() {
     const parameters = payload.parameters || {}
     const autoAnalyzeReferenceImages = form.auto_analyze_reference_images
     Object.assign(form, parameters)
+    if (parameters.dynamic_video || Object.hasOwn(parameters, 'dynamic_text_mode')) {
+      form.dynamic_text_mode = normalizeDynamicTextMode(parameters.dynamic_text_mode)
+    }
     form.auto_analyze_reference_images = autoAnalyzeReferenceImages
     form.bgm_enabled = Boolean(parameters.bgm_enabled)
     form.bgm_tracks = Array.isArray(parameters.bgm_tracks)
@@ -3328,11 +3339,18 @@ function ttsBoundaryOverLimit() {
 async function submitTtsBoundary() {
   if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsBoundaryOverLimit()) return
   if (!confirmTtsHistoryCapacity()) return
+  // When the user moves unchanged wording between the two reading boxes,
+  // that edit is also the intended visible sentence boundary. Previously the
+  // audio followed these boxes while the sidebar kept the stale click split.
+  const readingJoin = `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`
+  const readingDefinesDisplayBoundary = !ttsBoundary.merge && readingJoin === ttsBoundary.sourceText
+  const displayLeft = readingDefinesDisplayBoundary ? ttsBoundary.leftReading : ttsBoundary.leftText
+  const displayRight = readingDefinesDisplayBoundary ? ttsBoundary.rightReading : ttsBoundary.rightText
   const parts = ttsBoundary.merge
     ? [{ text: ttsBoundary.sourceText, tts_text: `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`, pause_after: 0 }]
     : [
-        { text: ttsBoundary.leftText, tts_text: ttsBoundary.leftReading, pause_after: Number(ttsBoundary.pause || 0) },
-        { text: ttsBoundary.rightText, tts_text: ttsBoundary.rightReading, pause_after: 0 },
+        { text: displayLeft, tts_text: ttsBoundary.leftReading, pause_after: Number(ttsBoundary.pause || 0) },
+        { text: displayRight, tts_text: ttsBoundary.rightReading, pause_after: 0 },
       ]
   if (parts.some((part) => !String(part.text).trim() || !String(part.tts_text).trim())) return
   if (['cluster', 'qwen'].includes(ttsEditor.value.engine)) {
@@ -3453,7 +3471,10 @@ async function pollTtsEditorStatus() {
     const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
     const previous = ttsEditor.value.task?.status
     ttsEditor.value.task = payload.task || ttsEditor.value.task
-    if (previous === 'running' && payload.task?.status !== 'running') {
+    const persistedRevision = Number(payload.revision || 0)
+    const displayedRevision = Number(ttsEditor.value.revision || 0)
+    const completedWithNewSegments = payload.task?.status === 'completed' && persistedRevision > displayedRevision
+    if ((previous === 'running' && payload.task?.status !== 'running') || completedWithNewSegments) {
       stopTtsEditorPolling()
       if (payload.task?.status === 'completed') {
         resetTtsSegmentAudio()
@@ -3475,6 +3496,7 @@ async function pollTtsEditorStatus() {
 
 function startTtsEditorPolling() {
   if (ttsEditorTaskTimer) return
+  void pollTtsEditorStatus()
   ttsEditorTaskTimer = window.setInterval(pollTtsEditorStatus, 1600)
 }
 
@@ -4370,6 +4392,15 @@ function generationRequestPayload() {
     } : {}),
   }
   delete payload.auto_analyze_reference_images
+  delete payload._rerun_source_project
+  delete payload._rerun_source_revision
+  delete payload._rerun_base
+  delete payload._rerun_base_engine
+  delete payload._rerun_tts_baseline
+  delete payload._rerun_stages
+  delete payload._rerun_return_view
+  delete payload._return_dynamic_stage
+  if (!form.dynamic_video) delete payload.dynamic_text_mode
   // An empty cluster voice is a valid idle UI state, but it must not be sent
   // to non-cluster jobs where the backend correctly enforces a real voice ID.
   if (ttsEngine.value !== 'cluster') delete payload.cluster_voice_id
@@ -4381,6 +4412,8 @@ function guidedVisualParameters() {
     video_orientation: form.video_orientation,
     content_mode: form.content_mode,
     director_strategy: form.director_strategy,
+    ...(form.dynamic_video ? { dynamic_text_mode: form.dynamic_text_mode } : {}),
+    ...(form.dynamic_video ? { video_generation_backend: form.video_generation_backend, comfyui_profile_id: form.comfyui_profile_id, comfyui_h3_prompt_agent: form.comfyui_h3_prompt_agent, comfyui_reference_audio: form.comfyui_h3_prompt_agent ? false : form.comfyui_reference_audio } : {}),
     scene_references_enabled: form.scene_references_enabled,
     auto_split_long_text: form.auto_split_long_text,
     split_text_threshold: form.split_text_threshold,
@@ -4426,6 +4459,7 @@ function hydrateGuidedForm(job) {
     form[key] = Array.isArray(value) ? value.map((item) => (typeof item === 'object' ? { ...item } : item)) : value
   }
   ttsEngine.value = job.request.tts_engine === 'indextts2' ? 'indextts25' : (job.request.tts_engine || ttsEngine.value)
+  if (job.request.dynamic_video) form.dynamic_text_mode = normalizeDynamicTextMode(job.request.dynamic_text_mode)
 }
 
 async function loadGuidedAudioReview() {

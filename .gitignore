@@ -6,6 +6,12 @@ __pycache__/
 .vscode/
 .codex_doc_review/
 .tmp_diagnostic_*/
+.tmp_diag_*/
+.release_staging/
+/support_patches/
+/test/
+/tmp/
+/tests/test_support_patch_bea5891d5a6b.py
 
 .env
 .env.*

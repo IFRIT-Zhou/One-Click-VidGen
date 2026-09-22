@@ -4,13 +4,14 @@
   <aside class="rail">
    <button class="brand" @click="goHome"><img src="/one-click-vidgen-logo.png" alt="OCV"/><span>OCV<small>创作工作台</small></span></button>
    <button class="new-button" @click="newProject()">＋ 新建图文视频</button>
-   <nav><button :class="{active:studioPage==='home'}" @click="goHome"><span>▦</span>项目首页</button><button :class="{active:studioPage==='logs'}" @click="openLogs()" aria-label="任务日志"><span>≋</span>任务日志</button><p>附加功能</p><button @click="newProject('audio')"><span>◉</span>配音工作室</button><button @click="newProject('subtitle')"><span>≡</span>字幕识别</button><button :class="{active:studioPage==='images'}" @click="studioPage='images'"><span>▧</span>图片工作室</button></nav>
+   <button class="new-button" @click="newProject('dynamic')">▷ 新建动态视频</button>
+   <nav><button :class="{active:studioPage==='home'}" @click="goHome"><span>▦</span>项目首页</button><button :class="{active:studioPage==='logs'}" @click="openLogs()" aria-label="任务日志"><span>≋</span>任务日志</button><p>附加功能</p><button @click="newProject('audio')"><span>◉</span>配音工作室</button><button @click="newProject('subtitle')"><span>≡</span>字幕识别</button><button :class="{active:studioPage==='images'}" @click="studioPage='images'"><span>▧</span>图片工作室</button><button :class="{active:studioPage==='comfyui'}" @click="studioPage='comfyui'"><span>⌘</span>ComfyUI 工作台</button></nav>
    <button v-for="job in studioLiveJobs" :key="job.id" class="running running-project-entry" @click="openProject(job)" :aria-label="'返回进行中项目：'+(job.request?.project_name||job.id)" title="返回此项目当前进度页面"><b>{{job.progress}}%</b><span class="dot"/> 任务进行中<progress :value="job.progress" max="100"/><span class="running-project-name">{{job.request?.project_name||job.id}} →</span></button>
    <div class="rail-bottom"><button @click="studioDrawer='接口与服务'">⚙ <span>接口与服务</span><i v-if="health.ok" class="dot"/></button><button @click="studioPage='plugins';openPluginsPage()">⊞ <span>插件与设置</span></button><a class="legacy-link" href="/legacy.html">返回经典界面 ↗</a><div class="local"><span class="avatar">本</span><div>本地工作空间<small>{{health.ok?'后端已连接':'正在连接后端…'}}</small></div></div>
    </div>
   </aside>
   <main>
-   <header class="studio-topbar"><div>工作空间 <span>/</span> {{studioPage==='images'?'图片工作室':studioPage==='home'?'项目首页':studioPage==='logs'?'任务日志':studioPage==='plugins'?'插件与设置':studioTitle}}</div><div class="cloud-account-entry">
+   <header class="studio-topbar"><div>工作空间 <span>/</span> {{studioPage==='videos'?'动态视频':studioPage==='images'?'图片工作室':studioPage==='comfyui'?'ComfyUI 工作台':studioPage==='home'?'项目首页':studioPage==='logs'?'任务日志':studioPage==='plugins'?'插件与设置':studioTitle}}</div><div class="cloud-account-entry">
           <a
             class="cloud-website-entry"
             href="https://oneclickvidgen.com/"
@@ -48,18 +49,20 @@
         </div></header>
    <div v-if="studioError" class="studio-notice error" role="alert">{{studioError}}<button @click="studioError=''">×</button></div>
    <div v-if="!health.ok" class="studio-notice">尚未连接本地后端，请通过 Launcher 启动 OCV。<button :disabled="studioBusy" @click="reconnectStudio">重新连接</button></div>
-   <ImageStudio v-if="studioPage==='images'" />
+   <VideoStudio v-if="studioPage==='videos'" @new-project="newProject('dynamic')" @duplicate-config="newProject('dynamic',$event)" @edit-config="newProject('dynamic',$event)" @edit-audio="openDynamicAudio($event)" />
+   <ImageStudio v-else-if="studioPage==='images'" />
+   <ComfyUIWorkbench v-else-if="studioPage==='comfyui'" />
    <section v-else-if="studioPage==='home'" class="content home">
     <div class="page-heading"><div><p class="eyebrow">YOUR CREATIVE SPACE</p><h1>让想法，成为作品。</h1><p class="muted">从一段文字开始，继续上次的创作。</p></div><button class="primary" @click="newProject()">＋ 新建图文视频</button></div>
     <div v-if="!session.user" class="resume"><div><h3>连接你的工作空间</h3><p>登录本地工作台后，查看项目并开始创作。</p></div><button @click="studioDrawer='接口与服务'">打开登录与配置</button></div>
     <div v-if="studioDrafts.length" class="studio-drafts">
      <header class="draft-heading"><h2>未完成的草稿 <small>{{studioDrafts.length}}</small></h2><button @click="clearStudioDrafts">清空草稿</button></header>
-     <div class="draft-rows"><div v-for="draft in visibleStudioDrafts" :key="draft.id" class="draft-row"><button class="draft-open" @click="newProject(draft.kind,draft)"><span>{{draft.name||'未命名草稿'}}</span><small>{{typeLabel(draft.kind)}}</small></button><button class="draft-delete" :aria-label="`删除草稿：${draft.name||'未命名草稿'}`" @click="deleteStudioDraft(draft.id)">删除</button></div></div>
+     <div class="draft-rows"><div v-for="draft in visibleStudioDrafts" :key="draft.id" class="draft-row"><button class="draft-open" @click="newProject(draft.kind,draft)"><span>{{draft.name||'未命名草稿'}}</span><small>{{typeLabel(draft.form?.dynamic_video?'dynamic':draft.kind)}}</small></button><button class="draft-delete" :aria-label="`删除草稿：${draft.name||'未命名草稿'}`" @click="deleteStudioDraft(draft.id)">删除</button></div></div>
      <button v-if="studioDrafts.length>3" class="draft-expand" @click="studioDraftsExpanded=!studioDraftsExpanded">{{studioDraftsExpanded?'收起':'查看其余 '+(studioDrafts.length-3)+' 条草稿'}}</button>
     </div>
     <div class="section-heading"><h2>我的项目 <small>{{jobTotal}}</small></h2><input v-model="studioSearch" class="search" placeholder="搜索当前页项目…" aria-label="搜索项目"/></div>
-    <div class="filters"><button v-for="f in [{id:'all',label:'全部'},{id:'video',label:'图文视频'},{id:'audio',label:'仅配音'},{id:'subtitle',label:'仅字幕识别'}]" :key="f.id" :class="{selected:studioFilter===f.id}" @click="studioFilter=f.id">{{f.label}}</button></div>
-    <div class="project-table"><div class="table-head"><span>项目名称</span><span>状态</span><span>进度</span><span/></div><div v-for="job in studioJobs" :key="job.id" class="project-row"><button class="project-title" @click="openProject(job)"><span class="project-icon">{{typeOf(job)==='video'?'▧':typeOf(job)==='audio'?'◉':'≡'}}</span><span><b>{{job.request?.project_name||job.id}}</b><small>{{typeLabel(job)}} · {{job.message}}</small></span></button><span class="status" :class="{waiting:job.status==='waiting_confirmation'}">{{statusLabel(job.status)}}</span><span class="muted">{{job.progress}}%</span><details class="project-menu"><summary>更多</summary><button @click="openProject(job)">打开项目</button><button @click="openLogs(job)">查看日志</button><button @click="exportDiagnosticPackage(job)">诊断包</button><button :disabled="['running','queued'].includes(job.status)" @click="deleteGenerationJob(job)">删除任务</button></details></div><div v-if="!studioJobs.length" class="empty">暂无项目。点击“新建图文视频”开始创作。</div></div>
+    <div class="filters"><button v-for="f in [{id:'all',label:'全部'},{id:'video',label:'图文视频'},{id:'dynamic',label:'动态视频'},{id:'audio',label:'仅配音'},{id:'subtitle',label:'仅字幕识别'}]" :key="f.id" :class="{selected:studioFilter===f.id}" @click="studioFilter=f.id">{{f.label}}</button></div>
+    <div class="project-table"><div class="table-head"><span>项目名称</span><span>状态</span><span>进度</span><span/></div><div v-for="job in studioJobs" :key="job.id" class="project-row"><button class="project-title" @click="openProject(job)"><span class="project-icon">{{typeOf(job)==='dynamic'?'▷':typeOf(job)==='video'?'▧':typeOf(job)==='audio'?'◉':'≡'}}</span><span><b>{{job.request?.project_name||job.id}}</b><small>{{typeLabel(job)}} · {{job.message}}</small></span></button><span class="status" :class="{waiting:job.status==='waiting_confirmation'}">{{statusLabel(job.status)}}</span><span class="muted">{{job.progress}}%</span><details class="project-menu"><summary>更多</summary><button @click="openProject(job)">打开项目</button><button @click="openLogs(job)">查看日志</button><button @click="exportDiagnosticPackage(job)">诊断包</button><button :disabled="['running','queued'].includes(job.status)" @click="deleteGenerationJob(job)">删除任务</button></details></div><div v-if="!studioJobs.length" class="empty">当前分类暂无项目。</div></div>
     <div v-if="jobTotalPages>1" class="studio-pagination"><button :disabled="jobPage<=1" @click="changeStudioPage(jobPage-1)">上一页</button><span>{{jobPage}} / {{jobTotalPages}}</span><button :disabled="jobPage>=jobTotalPages" @click="changeStudioPage(jobPage+1)">下一页</button></div>
    </section>
    <section v-else-if="studioPage==='logs'" class="content logs-page">
@@ -89,7 +92,7 @@
             <label class="creation-preference-toggle">
               <span>
                 <strong>新建任务时恢复推荐默认值</strong>
-                <small v-if="restoreDefaultsOnNewProject">分步模式关闭 · 节奏标准 · 情绪参考原音频</small>
+                <small v-if="restoreDefaultsOnNewProject">图文分步关闭 · 动态画面优先 · 节奏标准 · 情绪参考原音频</small>
                 <small v-else>沿用上次使用的分步模式、节奏与情绪</small>
               </span>
               <span class="inline-switch">
@@ -185,7 +188,10 @@
           </article>
         </section></section>
    <section v-else-if="studioPage==='new'" class="content creation">
-    <div class="page-heading"><div><p class="eyebrow">NEW PROJECT</p><h1>{{studioKind==='video'?'从文字，开始一部作品。':studioKind==='audio'?'让文字，有自己的声音。':'让每一句话，都清晰可见。'}}</h1><p class="muted">{{studioSaveState}}</p></div><button @click="studioDrawer='我的预设'">预设 · {{selectedParameterPreset||'选择预设'}}⌄</button></div>
+    <nav v-if="form.dynamic_video&&form._rerun_source_project" class="rerun-stage-nav" aria-label="动态视频任务阶段">
+      <button v-for="(stage,index) in form._rerun_stages" :key="stage.key" type="button" :class="[stage.state,{active:stage.key==='script'}]" @click="stage.key==='script'?null:form._return_dynamic_stage(stage.key)"><span>{{String(index+1).padStart(2,'0')}}</span><b>{{stage.label}}</b><small>{{stage.key==='script'?'正在编辑':stage.state==='done'?'已完成':'查看阶段'}}</small></button>
+    </nav>
+    <div class="page-heading"><div><p class="eyebrow">{{form.dynamic_video?'NEW DYNAMIC VIDEO':'NEW PROJECT'}}</p><h1>{{form.dynamic_video?'从声音开始，让画面动起来。':studioKind==='video'?'从文字，开始一部作品。':studioKind==='audio'?'让文字，有自己的声音。':'让每一句话，都清晰可见。'}}</h1><p class="muted">{{studioSaveState}}</p></div><button @click="studioDrawer='我的预设'">预设 · {{selectedParameterPreset||'选择预设'}}⌄</button></div>
     <template v-if="studioKind!=='subtitle'"><div class="create-copy-column">
             <div class="form-grid">
               <label class="project-name-field">
@@ -315,21 +321,26 @@
               </div>
             </div>
           </article></template>
-<div class="setting-summaries"><button v-if="studioKind!=='subtitle'" @click="studioDrawer='声音设置'"><span>◉</span><div><small>配音</small><b>{{ttsEngine==='cluster'?'集群 GPU · IndexTTS-2.5':ttsEngine==='qwen'?'Qwen TTS':'IndexTTS-2.5'}} · {{form.tts_emotion?emotionLabel(form.tts_emotion):'参考原音频'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='作品风格'"><span>▧</span><div><small>作品风格</small><b>{{styleName||contentModeOptions.find(m=>m.key===form.content_mode)?.label||'自定义'}}{{styleDirty?' · 已修改':''}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='画面编排'"><span>⊞</span><div><small>画面编排 · {{form.video_orientation==='portrait'?'竖屏 9:16':'横屏 16:9'}}</small><b>{{visualPacingSummary}} · {{form.director_strategy==='enhanced_beta'?'叙事增强':'稳健还原'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='字幕样式'"><span>字</span><div><small>字幕样式</small><b>{{form.video_render_variant==='raw'?'仅无字幕版':form.video_render_variant==='subtitles'?'仅字幕版':'字幕版 + 无字幕版'}}</b></div><span>›</span></button></div>
-    <div v-if="studioKind==='video'" class="create-footer"><label><input v-model="form.step_mode" type="checkbox"/>逐步确认<small>配音与画面完成后，由你确认再继续</small></label><button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitGeneration" @click="launch">{{studioBusy?'正在提交…':'开始生成 →'}}</button></div>
+<div class="setting-summaries"><button v-if="studioKind!=='subtitle'" @click="studioDrawer='声音设置'"><span>◉</span><div><small>配音</small><b>{{ttsEngine==='cluster'?'集群 GPU · IndexTTS-2.5':ttsEngine==='qwen'?'Qwen TTS':'IndexTTS-2.5'}} · {{form.tts_emotion?emotionLabel(form.tts_emotion):'参考原音频'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='作品风格'"><span>▧</span><div><small>作品风格</small><b>{{styleName||contentModeOptions.find(m=>m.key===form.content_mode)?.label||'自定义'}}{{styleDirty?' · 已修改':''}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='画面编排'"><span>⊞</span><div><small>画面编排 · {{form.video_orientation==='portrait'?'竖屏 9:16':'横屏 16:9'}}</small><b>{{visualPacingSummary}} · {{form.dynamic_video?(form.video_generation_backend==='comfyui'?'本地 ComfyUI'+(form.comfyui_h3_prompt_agent?' · H3 Agent':''):'视频 API')+' · '+dynamicTextModeLabel(form.dynamic_text_mode):form.director_strategy==='enhanced_beta'?'叙事增强':'稳健还原'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='字幕样式'"><span>字</span><div><small>字幕样式</small><b>{{form.video_render_variant==='raw'?'仅无字幕版':form.video_render_variant==='subtitles'?'仅字幕版':'字幕版 + 无字幕版'}}</b></div><span>›</span></button></div>
+    <div v-if="studioKind==='video'" class="create-footer dynamic-create-footer">
+      <label v-if="!form.dynamic_video"><input v-model="form.step_mode" type="checkbox"/>逐步确认<small>配音与画面完成后，由你确认再继续</small></label>
+      <label v-else class="one-click-video-option"><input v-model="form.dynamic_auto_advance" type="checkbox"/><span><b>一键出视频</b><small>仍使用完整分步流程；阶段成功后由 OCV 自动确认并继续，异常时停下等待处理。</small></span></label>
+      <button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitGeneration" @click="launch">{{studioBusy?'正在提交…':form._rerun_source_project?'重新运行 →':form.dynamic_video?(form.dynamic_auto_advance?'一键开始制作 →':'生成配音与字幕 →'):'开始生成 →'}}</button>
+    </div>
     <div v-else-if="studioKind==='audio'" class="create-footer"><span class="muted">生成后可以逐句精修、断句与添加停顿。</span><button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitModule1" @click="launch">生成配音 →</button></div>
     <div v-else class="create-footer"><span class="muted">识别完成后，可以校对文字并导出字幕。</span><button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitSubtitle" @click="launch">开始识别 →</button></div>
     <p v-if="studioHasRunning" class="studio-notice">已有任务正在执行，可先保存草稿，待当前任务结束后开始。</p><p v-if="studioKind==='video'&&generationBlockReason" class="muted">{{generationBlockReason.message}}</p>
    </section>
    <section v-else class="editor studio-editor">
 <div class="editor-heading"><div><h1>{{studioTitle}}</h1><span class="muted">{{typeLabel(studioKind)}} · {{statusLabel(studioJob?.status)}}</span></div><button v-if="studioTab!=='参数回顾'" @click="studioDrawer='我的预设'">我的预设⌄</button></div>
-    <div class="editor-tabs"><button v-for="t in studioTabs" :key="t" :class="{active:studioTab===t}" @click="chooseTab(t)">{{t}}</button><span class="tab-spacer"/><button @click="refreshEditorData">刷新资产 ↻</button></div>
+    <div v-if="!editingDynamicAudio" class="editor-tabs"><button v-for="t in studioTabs" :key="t" :class="{active:studioTab===t}" @click="chooseTab(t)">{{t}}</button><span class="tab-spacer"/><button @click="refreshEditorData">刷新资产 ↻</button></div>
     <div v-if="studioBusy" class="empty">正在读取项目…</div>
     <div v-if="['failed','cancelled','completed'].includes(studioJob?.status)" class="studio-notice" :class="{error:studioJob?.status==='failed'}"><span>{{studioJob.message}}</span><button v-if="['failed', 'cancelled'].includes(studioJob?.status)" :disabled="resumingGeneration" @click="resumeGeneration">{{ resumingGeneration ? '正在续跑…' : '断点续跑' }}</button></div>
     <ParameterReview v-if="studioTab==='参数回顾'" :request="studioJob?.request||{}" :reference-assets="studioReferenceAssets" :status="studioJob?.status" :busy="studioBusy" @duplicate="duplicateStudioProject" @reset="resetStudioProject"/>
     <template v-else-if="studioTab==='文案'"><div class="studio-original-script"><h2>本次任务文案</h2><p class="muted">原始文案用于核对。发音修正请在“配音”里操作，显示文字请在“画面与字幕”里修改。</p><textarea :value="studioJob?.request?.script||''" readonly rows="14"/></div></template>
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
+     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
      <div class="studio-audio-player"><audio v-if="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
      <div class="studio-audio-layout"><aside class="studio-sentence-list"><div class="list-heading">全部句子 <span>{{ttsEditor.segments.length}} 句</span></div><div v-for="segment in ttsEditor.segments" :key="segment.index" :class="{selected:studioSentence===segment.index}"><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="segment.index" :aria-label="'选中第'+segment.index+'句'"/><button @click="studioSentence=segment.index"><small>{{segment.index}}</small><span>{{segment.text}}</span><small>{{Number(segment.duration).toFixed(1)}}s</small></button></div></aside><div class="studio-sentence-detail"><section class="tts-segment-editor">
                 <div class="visual-timing-head">
@@ -745,7 +756,7 @@
             </div>
           </article></template>
     </template>
-    <section v-if="studioKind === 'video' && isGuidedWorkflowJob(studioJob) && studioJob?.status !== 'completed'" class="guided-workflow-shell" aria-label="分步制作流程">
+    <section v-if="['video','dynamic'].includes(studioKind) && isGuidedWorkflowJob(studioJob) && studioJob?.status !== 'completed'" class="guided-workflow-shell" aria-label="分步制作流程">
           <div class="guided-stage-strip">
             <div v-for="stage in guidedStageSteps" :key="stage.key" class="guided-stage-chip" :class="guidedStageChipClass(stage.key)">
               <span>{{ stage.index }}</span>
@@ -775,6 +786,7 @@
               <button v-else-if="guidedStage === 'audio_setup'" class="primary-btn guided-primary-action" type="button" :disabled="!canSubmitGeneration" @click="submit">
                 {{ submitting ? '正在提交…' : '开始生成配音与字幕' }}
               </button>
+              <button v-else-if="guidedStage === 'audio_review' && studioJob?.request?.dynamic_video" class="primary-btn guided-primary-action" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="enterDynamicStoryboard">确认配音与字幕，进入动态分镜 →</button>
               <button v-else-if="guidedStage === 'audio_review'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="advanceGuidedWorkflow('confirm_audio')">
                 {{ guidedAdvancing ? '正在确认…' : '确认配音与字幕' }}
               </button>
@@ -809,7 +821,7 @@
         <strong class="official-disclaimer">
           官方声明：OCV 目前未授权任何培训机构、付费课程或软件售卖方；第三方收费服务不代表 OCV 官方授权，其交付与售后由第三方自行承担。
         </strong>
-        <span>OCV v1.1.1 · Copyright © 2026 周若雨、何允</span>
+        <span>OCV v1.2.0 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
@@ -961,6 +973,7 @@
           </button>
         </div>
         <ImageProfileSelector :form="form" manage />
+        <VideoModelSettings v-if="!form.use_cloud_image_pool" />
         <div class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
             <div class="image-concurrency-summary">
               <div>
@@ -989,7 +1002,7 @@
               <small>三方接口通常保持单 Key 并发 1；官方或高并发接口可按服务商额度提高。</small>
             </details>
         </div>
-        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key。' : 'OCV 不指定或推荐第三方接口；请自行选择服务商，并只向可信地址发送 API Key。' }}</div>
+        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key；视频号池尚未接入。' : 'OCV 不指定或推荐第三方接口；请自行选择服务商，并只向可信地址发送 API Key。' }}</div>
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
       </div>
 
@@ -1521,7 +1534,7 @@
      <p class="muted">风格库保存在当前浏览器本机，不会上传到云端。</p>
     </div>
    </template>
-   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" /><div class="director-strategy-row">
+   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" /><ComfyUIVideoSelector v-if="form.dynamic_video" :form="form" @open-workbench="studioDrawer='';studioPage='comfyui'" /><DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" /><div v-else class="director-strategy-row">
                 <div class="director-strategy-copy">
                   <span>导演策略</span>
                   <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
@@ -1549,12 +1562,12 @@
                     : '忠实、克制地还原原文，保持当前已经验证的画面规划方式。' }}
                 </small>
               </div>
-            <div class="tts-parameter-panel" :style="{ opacity: form.director_strategy === 'enhanced_beta' ? 1 : 0.55 }">
-              <label class="checkbox-row">
-                <input type="checkbox" v-model="form.scene_references_enabled" :disabled="form.director_strategy !== 'enhanced_beta'" />
+            <div class="tts-parameter-panel" :style="{ opacity: form.dynamic_video || form.director_strategy === 'enhanced_beta' ? 1 : 0.55 }">
+              <label class="checkbox-row" :class="{ 'dynamic-scene-toggle': form.dynamic_video }">
+                <input type="checkbox" v-model="form.scene_references_enabled" :disabled="!form.dynamic_video && form.director_strategy !== 'enhanced_beta'" />
                 <span>启用场景参考</span>
               </label>
-              <small class="muted">仅叙事增强可用。为重复的真实场景生成无人参考图，仅用于相关镜头；每个场景额外生成一张图片并计费。关闭后不生成场景参考图。</small>
+              <small class="muted">{{ form.dynamic_video ? '文字辅助与画面优先均可使用。为重复出现的场景生成场景参考图' : '仅叙事增强可用。为重复的真实场景生成无人参考图' }}，仅用于相关镜头；每个场景额外生成一张图片并计费。关闭后不生成场景参考图。</small>
             </div>
             <div class="tts-parameter-panel visual-pacing-standalone">
               <div class="visual-pacing-panel">
@@ -1983,16 +1996,24 @@ import { useStyleLibrary } from './useStyleLibrary'
 import { useAppearance } from './useAppearance'
 import TaskConsole from './components/TaskConsole.vue'
 import ImageStudio from './components/ImageStudio.vue'
+import ComfyUIWorkbench from './components/ComfyUIWorkbench.vue'
+import ComfyUIVideoSelector from './components/ComfyUIVideoSelector.vue'
+import VideoStudio from './components/VideoStudio.vue'
+import VideoModelSettings from './components/VideoModelSettings.vue'
 import ImageProfileSelector from './components/ImageProfileSelector.vue'
 import SubtitleStyleEditor from './components/SubtitleStyleEditor.vue'
 import { visualPresentation } from './videoPresentation'
 import ParameterReview from './components/ParameterReview.vue'
 import SceneAssets from './components/SceneAssets.vue'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
-export default { components: { ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation } } }
+import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
+import { dynamicTextModeLabel } from './dynamicTextMode'
+export default { components: { DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
+.live-studio .drawer label.dynamic-scene-toggle{display:flex;align-items:center;gap:8px}.live-studio .drawer label.dynamic-scene-toggle input{width:16px;height:16px;min-height:0;margin:0}
 .live-studio .setting-summaries{grid-template-columns:repeat(4,minmax(0,1fr))}
+.live-studio .dynamic-create-footer .one-click-video-option{display:flex;align-items:flex-start;gap:11px;max-width:650px}.live-studio .dynamic-create-footer .one-click-video-option>input{flex:0 0 auto;margin-top:3px}.live-studio .one-click-video-option>span{display:grid;gap:4px}.live-studio .one-click-video-option b{font-size:14px}.live-studio .one-click-video-option small{margin:0;line-height:1.55}
 @media(max-width:1400px){.live-studio .setting-summaries{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:680px){.live-studio .setting-summaries{grid-template-columns:1fr}}
 </style>

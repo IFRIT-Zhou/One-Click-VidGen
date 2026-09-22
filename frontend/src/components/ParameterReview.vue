@@ -1,13 +1,15 @@
 <script setup>
 import { computed, ref } from 'vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
+import { dynamicTextModeLabel, dynamicTextModeDescriptions, normalizeDynamicTextMode } from '../dynamicTextMode'
 const props = defineProps({ request: { type: Object, default: () => ({}) }, referenceAssets: { type: Array, default: () => [] }, status: { type: String, default: '' }, busy:Boolean })
 defineEmits(['duplicate','reset'])
 const panel = ref('')
 const referencePreview = ref(null)
 const kind = computed(()=>props.request.subtitle_only?'subtitle':props.request.module1_only?'audio':'video')
-const labels={indextts25:'本地 GPU · IndexTTS-2.5',indextts2:'本地 IndexTTS（历史记录）',cluster:'集群 GPU · IndexTTS-2.5',qwen:'Qwen TTS',urban_suspense:'都市惊悚',science_explainer:'口播科普',pure_science:'纯科普',general:'通用自定义',stable:'稳健还原',enhanced_beta:'叙事增强',auto:'按作品风格自动',slow:'舒缓',standard:'标准',fast:'紧凑',custom:'自定义',both:'双版本',raw:'无字幕',subtitles:'带字幕',preset:'预设音色',uploaded:'上传音色',happy:'开心',sad:'悲伤',angry:'生气',fear:'害怕',disgust:'厌恶',surprise:'惊讶',calm:'平静'}
+const labels={indextts25:'本地 GPU · IndexTTS-2.5',indextts2:'本地 IndexTTS（历史记录）',cluster:'集群 GPU · IndexTTS-2.5',qwen:'Qwen TTS',api:'视频 API',comfyui:'本地 ComfyUI',urban_suspense:'都市惊悚',science_explainer:'口播科普',pure_science:'纯科普',general:'通用自定义',stable:'稳健还原',enhanced_beta:'叙事增强',auto:'按作品风格自动',slow:'舒缓',standard:'标准',fast:'紧凑',custom:'自定义',both:'双版本',raw:'无字幕',subtitles:'带字幕',preset:'预设音色',uploaded:'上传音色',happy:'开心',sad:'悲伤',angry:'生气',fear:'害怕',disgust:'厌恶',surprise:'惊讶',calm:'平静'}
 function value(key, empty='未单独指定（沿用任务默认处理）'){
+ if(key==='dynamic_text_mode')return dynamicTextModeLabel(props.request.dynamic_text_mode)
  if(!Object.hasOwn(props.request,key))return '该任务未记录'
  const v=props.request[key]
  if(v==null||v==='')return empty
@@ -28,6 +30,11 @@ const referenceIds = computed(()=>{
 })
 const referenceItems = computed(()=>referenceIds.value.map((id,index)=>props.referenceAssets.find(asset=>asset.id===id)||{id,name:`参考图 ${index+1}`,url:''}))
 const canReset = computed(()=>['failed','cancelled','completed'].includes(props.status))
+const arrangementFields = computed(()=>[
+ [props.request.dynamic_video?'dynamic_text_mode':'director_strategy',props.request.dynamic_video?'动态画面表达':'导演策略'],
+ ['visual_pacing_preset','节奏预设'],
+ ...(props.request.dynamic_video?[["video_generation_backend","动态镜头生成"],["comfyui_h3_prompt_agent","H3 提示词转换 Agent"],["comfyui_reference_audio","本镜 TTS 参考音频"]]:[]),
+])
 </script>
 <template>
  <div class="parameter-review creation review-creation">
@@ -44,7 +51,7 @@ const canReset = computed(()=>['failed','cancelled','completed'].includes(props.
   <div class="setting-summaries">
    <button v-if="kind!=='subtitle'" :class="{active:panel==='sound'}" @click="panel=panel==='sound'?'':'sound'"><span>◉</span><div><small>配音</small><b>{{value('tts_engine')}} · {{value('tts_emotion','参考原音频')}}</b></div><span>⌄</span></button>
    <button v-if="kind==='video'" :class="{active:panel==='style'}" @click="panel=panel==='style'?'':'style'"><span>▧</span><div><small>作品风格</small><b>{{value('content_mode')}}</b></div><span>⌄</span></button>
-   <button v-if="kind==='video'" :class="{active:panel==='pacing'}" @click="panel=panel==='pacing'?'':'pacing'"><span>⊞</span><div><small>画面编排</small><b>{{value('visual_pacing_preset')}} · {{value('director_strategy')}}</b></div><span>⌄</span></button>
+   <button v-if="kind==='video'" :class="{active:panel==='pacing'}" @click="panel=panel==='pacing'?'':'pacing'"><span>⊞</span><div><small>画面编排</small><b>{{value('visual_pacing_preset')}} · {{value(request.dynamic_video?'dynamic_text_mode':'director_strategy')}}</b></div><span>⌄</span></button>
   </div>
   <div v-if="panel==='sound' && kind!=='subtitle'" class="tts-parameter-panel review-settings">
    <h3>声音设置 <small class="muted">只读</small></h3>
@@ -60,7 +67,8 @@ const canReset = computed(()=>['failed','cancelled','completed'].includes(props.
   </div>
   <div v-if="panel==='pacing' && kind==='video'" class="tts-parameter-panel review-settings">
    <h3>画面编排 <small class="muted">只读</small></h3>
-   <div class="parameter-review-grid"><label v-for="[key,label] in [['director_strategy','导演策略'],['visual_pacing_preset','节奏预设']]" :key="key" class="stack"><span>{{label}}</span><select disabled><option>{{value(key)}}</option></select></label><label class="stack"><span>场景参考</span><input readonly :value="request.director_strategy === 'enhanced_beta' && request.scene_references_enabled !== false ? '启用' : '关闭'" /></label></div>
+   <div class="parameter-review-grid"><label v-for="[key,label] in arrangementFields" :key="key" class="stack"><span>{{label}}</span><select disabled><option>{{value(key)}}</option></select></label><label class="stack"><span>场景参考</span><input readonly :value="((request.dynamic_video && Object.hasOwn(request,'dynamic_text_mode')) || request.director_strategy === 'enhanced_beta') && request.scene_references_enabled !== false ? '启用' : '关闭'" /></label></div>
+   <p v-if="request.dynamic_video" class="muted">{{dynamicTextModeDescriptions[normalizeDynamicTextMode(request.dynamic_text_mode)]}}<template v-if="!Object.hasOwn(request,'dynamic_text_mode')"> 此历史任务未记录该选项，按原有的文字辅助处理。</template></p>
    <div class="parameter-review-grid"><label v-for="[key,label] in [['visual_min_duration','最低停留（秒）'],['visual_target_duration','目标时长（秒）'],['visual_max_duration','最长时长（秒）'],['visual_max_slides','单图最多字幕片段']]" :key="key" class="stack"><span>{{label}}</span><input :value="value(key,'按节奏规则确定')" readonly /></label></div>
   </div>
   <details class="review-settings"><summary>其他执行设置 · 只读查看</summary><div class="parameter-review-grid"><label v-for="[key,label] in [['step_mode','逐步确认'],['auto_split_long_text','自动分段'],['split_text_threshold','每段最大字数'],['use_cloud_image_pool','使用号池'],['video_render_variant','成片版本'],['bgm_enabled','背景音乐'],['bgm_fade_enabled','音乐淡入淡出']].filter(([key])=>Object.hasOwn(request,key))" :key="key" class="stack"><span>{{label}}</span><input :value="value(key)" readonly /></label></div></details>

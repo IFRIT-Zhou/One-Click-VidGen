@@ -2,7 +2,7 @@ import { computed, ref, watch } from 'vue'
 
 // Explicit allowlist: a style never carries credentials, audio or render settings.
 const fields = ['content_mode', 'visual_prompt_mode', 'visual_style_prompt', 'visual_prompt_system', 'agent0_prompt_system', 'agent1_prompt_system', 'agent2_director_theme']
-const arrangementFields = ['director_strategy', 'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration', 'visual_max_duration', 'visual_max_slides']
+const arrangementFields = ['director_strategy', 'dynamic_text_mode', 'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration', 'visual_max_duration', 'visual_max_slides']
 export function useStyleLibrary(w) {
   const styles = ref([]), styleName = ref(''), styleId = ref(''), styleMessage = ref('')
   const styleCharacters = ref(false), styleEnvironment = ref(false)

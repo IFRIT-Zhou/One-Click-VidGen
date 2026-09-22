@@ -260,6 +260,14 @@ class TtsEditor:
         with self._lock:
             return dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
 
+    def revision(self, job_id: str, user_id: int) -> int:
+        """Return the persisted segment revision without rebuilding editor rows."""
+        try:
+            manifest = self._load_manifest(self._project_dir(job_id, user_id))
+            return int(manifest.get("revision") or 0)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return 0
+
     @staticmethod
     def _project_dir(job_id: str, user_id: int) -> Path:
         try:
@@ -749,17 +757,12 @@ class TtsEditor:
             raise ValueError("无法在最终字幕中定位需要调整的句子")
         first, last = affected[0], affected[-1]
         preserved_text = "".join(str(entries[i]["text"]) for i in affected)
-        weights = [max(1, len(re.sub(r"\s+", "", text))) for text in requested_texts]
-        split_texts: list[str] = []
-        cursor = 0
-        total_weight = sum(weights)
-        for position, weight in enumerate(weights):
-            if position == len(weights) - 1:
-                end = len(preserved_text)
-            else:
-                end = round(len(preserved_text) * sum(weights[: position + 1]) / total_weight)
-            split_texts.append(preserved_text[cursor:end])
-            cursor = end
+        compact = lambda value: re.sub(r"\s+", "", str(value or ""))
+        if compact(preserved_text) != compact("".join(requested_texts)):
+            raise ValueError("最终字幕内容与断句文字不一致，已取消更新以避免错位")
+        # The requested texts are the user's chosen boundary. Proportional
+        # splitting silently moved that boundary even though audio was right.
+        split_texts = [str(text) for text in requested_texts]
         replacements = [
             {"text": text or requested_texts[index], "start": part["start"], "end": part["end"]}
             for index, (text, part) in enumerate(zip(split_texts, new_parts))

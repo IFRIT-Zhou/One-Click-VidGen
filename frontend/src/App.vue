@@ -1062,7 +1062,8 @@
                   <small>{{ mode.description }}</small>
                 </button>
               </div>
-              <div class="director-strategy-row">
+              <DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" />
+              <div v-else class="director-strategy-row">
                 <div class="director-strategy-copy">
                   <span>导演策略</span>
                   <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
@@ -2526,7 +2527,7 @@
         <strong class="official-disclaimer">
           官方声明：OCV 目前未授权任何培训机构、付费课程或软件售卖方；第三方收费服务不代表 OCV 官方授权，其交付与售后由第三方自行承担。
         </strong>
-        <span>OCV v1.1.1 · Copyright © 2026 周若雨、何允</span>
+        <span>OCV v1.2.0 · Copyright © 2026 周若雨、何允</span>
         <span>本程序不附带任何担保</span>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen" target="_blank" rel="noopener noreferrer">获取对应源代码</a>
         <a href="https://github.com/IFRIT-Zhou/One-Click-VidGen/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPL-3.0-only</a>
@@ -2713,5 +2714,6 @@
 <script>
 import { useWorkspace } from './useWorkspace'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
-export default { components: { ReferenceMaterials }, setup: useWorkspace }
+import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
+export default { components: { DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>
