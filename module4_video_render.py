@@ -17,6 +17,7 @@ import shutil
 import sys
 import threading
 import time
+import wave
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -3640,6 +3641,13 @@ def write_html(
     if not poster_timeline:
         raise RuntimeError("没有可用海报，拒绝生成空白视频页面")
     total_duration = max(float(item["end"]) for item in scenes)
+    # Subtitles can end before the WAV when narration has a trailing pause.
+    # Keep the last poster visible until the actual audio ends.
+    if html_path is None:
+        audio_path = VISUAL_DIR.parent / "2_audio_srt" / "final_output.wav"
+        if audio_path.is_file():
+            with wave.open(str(audio_path), "rb") as audio:
+                total_duration = max(total_duration, audio.getnframes() / audio.getframerate())
     poster_divs = "\n".join(
         f'<div class="poster-item" id="poster-{index}" style="background-image:url(\'{html.escape(item["url"], quote=True)}\')"></div>'
         for index, item in enumerate(poster_timeline)

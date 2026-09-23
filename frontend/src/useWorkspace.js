@@ -4557,6 +4557,7 @@ async function continueGuidedJob(job) {
   hydrateGuidedForm(activeJob.value)
   activePage.value = 'workspace'
   if (guidedStage.value === 'audio_review') await loadGuidedAudioReview()
+  if (guidedStage.value === 'visual_setup') await loadGuidedSubtitles()
   if (guidedStage.value === 'visual_review') await openGuidedVisualEditor()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -4722,6 +4723,7 @@ async function selectJob(id, replace = true) {
       form.step_mode = true
       hydrateGuidedForm(payload)
       if (String(payload.request?._step_mode_stage || '') === 'audio_review') await loadGuidedAudioReview()
+      if (String(payload.request?._step_mode_stage || '') === 'visual_setup') await loadGuidedSubtitles()
       if (String(payload.request?._step_mode_stage || '') === 'visual_review') await openGuidedVisualEditor()
     }
   }
@@ -5229,6 +5231,8 @@ watch(
     hydrateGuidedForm(activeJob.value)
     if (guidedStage.value === 'audio_review' && activeJob.value?.status === 'waiting_confirmation') {
       await loadGuidedAudioReview()
+    } else if (guidedStage.value === 'visual_setup' && activeJob.value?.status === 'waiting_confirmation') {
+      await loadGuidedSubtitles()
     } else if (guidedStage.value === 'visual_review' && activeJob.value?.status === 'waiting_confirmation') {
       await openGuidedVisualEditor()
     }

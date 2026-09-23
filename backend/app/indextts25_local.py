@@ -132,6 +132,9 @@ class IndexTTS25Config:
             "TORCH_HOME": str(self.model_dir / "hf_cache"),
             "XDG_CACHE_HOME": str(cache_dir),
             "NUMBA_CACHE_DIR": str(cache_dir / "numba"),
+            # Bundled Numba may detect an incomplete Intel SVML runtime and
+            # emit unresolved __svml_* calls during IndexTTS inference.
+            "NUMBA_DISABLE_INTEL_SVML": "1",
             "MPLCONFIGDIR": str(cache_dir / "matplotlib"),
             "CUDA_CACHE_PATH": str(cache_dir / "cuda"),
             "TEMP": str(temp_dir),

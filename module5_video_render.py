@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import wave
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping
@@ -395,6 +396,10 @@ def load_direct_poster_timeline() -> tuple[list[dict[str, Any]], float]:
         if isinstance(scene, dict) and scene.get("slide_id")
     }
     total_duration = max(float(scene.get("end") or 0) for scene in scenes if isinstance(scene, dict))
+    audio_path = AUDIO_DIR / "final_output.wav"
+    if audio_path.is_file():
+        with wave.open(str(audio_path), "rb") as audio:
+            total_duration = max(total_duration, audio.getnframes() / audio.getframerate())
     result: list[dict[str, Any]] = []
     for index, item in enumerate(mapping):
         if not isinstance(item, dict):

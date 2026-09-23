@@ -180,6 +180,34 @@ class LongTextResumeTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "画面映射未完整覆盖全文"):
                 validate_visual_coverage(timeline, mapping, images, subtitle_path=None)
 
+    def test_subtitle_coverage_ignores_line_wrapping_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            timeline = root / "timeline.json"
+            mapping = root / "mapping.json"
+            subtitle = root / "subtitle.srt"
+            images = root / "images"
+            images.mkdir()
+            timeline.write_text(
+                '[{"slide_id":"scene_001","text_content":"发票   不是付款凭证"}]',
+                encoding="utf-8",
+            )
+            mapping.write_text(
+                '[{"macro_scene_id":"poster_001","includes_slides":["scene_001"]}]',
+                encoding="utf-8",
+            )
+            subtitle.write_text(
+                "1\n00:00:00,000 --> 00:00:01,000\n发票\n不是付款凭证\n",
+                encoding="utf-8",
+            )
+            (images / "poster_001.png").write_bytes(b"image")
+
+            result = validate_visual_coverage(
+                timeline, mapping, images, subtitle_path=subtitle
+            )
+
+            self.assertTrue(result["subtitle_checked"])
+
     def test_invalid_new_concat_does_not_overwrite_previous_valid_video(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

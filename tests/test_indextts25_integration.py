@@ -2,13 +2,16 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from backend.app.main import GenerateRequest
+from backend.app.indextts25_local import IndexTTS25Config
 from backend.app.gemini_client import GeminiOutputTruncated
 from backend.app.tts_text_normalization import normalize_tts_text
 from backend.app.tts_editor import TtsEditor
 from module1_agent_director import (
     _build_indextts25_command,
+    _run_and_stream,
     split_cluster_tts_text,
     step1_indextts25_raw_input,
 )
@@ -16,6 +19,44 @@ from backend.app.tts_segmentation import segment_indextts25_text
 
 
 class IndexTTS25IntegrationTests(unittest.TestCase):
+    def test_local_runner_disables_unavailable_intel_svml(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = IndexTTS25Config(
+                root=root,
+                model_dir=root / "checkpoints",
+                python=root / "python" / "python.exe",
+                examples_dir=root / "examples",
+                packages_dir=root / "python_packages",
+                runtime_dir=root / "runtime",
+                default_voice="voice_05.wav",
+                device="cuda:0",
+                language="ZH",
+                use_bf16=True,
+                use_accel=False,
+                use_torch_compile=False,
+                emotion_weight=0.65,
+            )
+            self.assertEqual(config.runtime_environment()["NUMBA_DISABLE_INTEL_SVML"], "1")
+
+    def test_index_tts_reports_missing_driver_from_child_error(self):
+        process = SimpleNamespace(
+            stdout=["RuntimeError: Found no NVIDIA driver on your system.\n"],
+            wait=lambda: 1,
+        )
+        with patch("module1_agent_director.subprocess.Popen", return_value=process):
+            with self.assertRaisesRegex(RuntimeError, "NVIDIA 显卡或驱动"):
+                _run_and_stream(["python"], cwd=Path("."), env={})
+
+    def test_index_tts_reports_outdated_driver_from_child_error(self):
+        process = SimpleNamespace(
+            stdout=["RuntimeError: The NVIDIA driver on your system is too old (found version 11060).\n"],
+            wait=lambda: 1,
+        )
+        with patch("module1_agent_director.subprocess.Popen", return_value=process):
+            with self.assertRaisesRegex(RuntimeError, "NVIDIA 显卡或驱动"):
+                _run_and_stream(["python"], cwd=Path("."), env={})
+
     def test_tts_subtitle_sync_maps_by_time_not_sentence_number(self):
         with tempfile.TemporaryDirectory() as temporary:
             project_dir = Path(temporary)

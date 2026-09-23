@@ -460,6 +460,18 @@ def _run_and_stream(
                 print(prefix + line, flush=True)
     return_code = process.wait()
     if return_code != 0:
+        failure_text = "\n".join(diagnostic_tail).lower()
+        if any(message in failure_text for message in (
+            "found no nvidia driver",
+            "nvidia driver on your system is too old",
+            "no cuda gpus are available",
+            "cuda driver version is insufficient",
+            "torch not compiled with cuda enabled",
+        )):
+            raise RuntimeError(
+                "本地 IndexTTS 无法使用 NVIDIA 显卡或驱动；请检查显卡和驱动，"
+                "或改用集群/API 配音。"
+            )
         useful_tail = [
             line for line in diagnostic_tail
             if "%|" not in line and "it/s" not in line and not re.search(r"\d+/\d+\s*\[", line)

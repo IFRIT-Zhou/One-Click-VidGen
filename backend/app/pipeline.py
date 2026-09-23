@@ -1679,6 +1679,7 @@ def run_command(
     reader.start()
     try:
         stream_closed = False
+        fatal_error = ""
         safe_stop_requested = False
         safe_stop_notice_at = 0.0
         while not stream_closed:
@@ -1709,11 +1710,15 @@ def run_command(
             suppress_log = bool(output_handler(line)) if output_handler else False
             if not suppress_log:
                 store.log(job, line)
+            if label == "断句、配音、原始字幕" and "【致命错误】" in line:
+                fatal_error = line.strip()
         return_code = process.wait()
     finally:
         store.detach_process(job, process)
     store.raise_if_cancelled(job)
     if return_code != 0:
+        if fatal_error:
+            raise RuntimeError(fatal_error)
         raise RuntimeError(f"{label} 失败，退出码 {return_code}")
     store.log(job, f"完成: {label}")
 
@@ -2791,6 +2796,11 @@ def _parse_srt_texts(path: Path) -> list[str]:
     return texts
 
 
+def _normalized_subtitle_text(value: Any) -> str:
+    """Compare subtitle content independently of harmless SRT line wrapping."""
+    return re.sub(r"\s+", "", str(value or ""))
+
+
 def _parse_srt_entries(path: Path) -> list[dict[str, Any]]:
     """Read timestamped SRT rows needed to archive uploaded finished audio."""
     if not path.is_file():
@@ -2868,9 +2878,23 @@ def validate_visual_coverage(
         expected_texts = [str(item.get("text_content") or "").strip() for item in timeline]
         expected_texts = [value for value in expected_texts if value]
         subtitle_texts = _parse_srt_texts(subtitle_path)
-        if subtitle_texts != expected_texts:
+        normalized_expected = [_normalized_subtitle_text(value) for value in expected_texts]
+        normalized_subtitles = [_normalized_subtitle_text(value) for value in subtitle_texts]
+        if normalized_subtitles != normalized_expected:
+            mismatch_index = next(
+                (
+                    index
+                    for index, (expected, actual) in enumerate(
+                        zip(normalized_expected, normalized_subtitles),
+                        1,
+                    )
+                    if expected != actual
+                ),
+                min(len(normalized_expected), len(normalized_subtitles)) + 1,
+            )
             raise RuntimeError(
-                f"字幕未完整覆盖校对后全文：时间轴 {len(expected_texts)} 句，SRT {len(subtitle_texts)} 句"
+                f"字幕未完整覆盖校对后全文：时间轴 {len(expected_texts)} 句，"
+                f"SRT {len(subtitle_texts)} 句，首处差异为第 {mismatch_index} 句"
             )
     return {
         "timeline_slide_count": len(expected_ids),

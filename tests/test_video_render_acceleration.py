@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
 import module5_video_render
+import module4_video_render
 
 
 class VideoRenderAccelerationTest(unittest.TestCase):
@@ -194,6 +196,57 @@ class VideoRenderAccelerationTest(unittest.TestCase):
         self.assertIn("offset=15.000000", script)
         self.assertIn("pad=1920:1080:42:54", script)
         self.assertEqual(output_label, "x2")
+
+    def test_direct_timeline_holds_last_poster_through_trailing_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            visual = root / "3_visual_template"
+            audio_dir = root / "2_audio_srt"
+            assets = visual / "assets"
+            assets.mkdir(parents=True)
+            audio_dir.mkdir()
+            (visual / "poster_mapping.json").write_text(
+                '[{"macro_scene_id":"poster_001","includes_slides":["scene_001"],"asset_filename":"poster_001.jpg"}]',
+                encoding="utf-8",
+            )
+            (visual / "fine_grained_timeline.json").write_text(
+                '[{"slide_id":"scene_001","start":0,"end":57.15}]',
+                encoding="utf-8",
+            )
+            (assets / "poster_001.jpg").write_bytes(b"image")
+            with wave.open(str(audio_dir / "final_output.wav"), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(100)
+                audio.writeframes(b"\0\0" * 6015)
+            with (
+                patch.object(module5_video_render, "POSTER_MAPPING_PATH", visual / "poster_mapping.json"),
+                patch.object(module5_video_render, "FINE_TIMELINE_PATH", visual / "fine_grained_timeline.json"),
+                patch.object(module5_video_render, "ASSETS_DIR", assets),
+                patch.object(module5_video_render, "AUDIO_DIR", audio_dir),
+            ):
+                timeline, duration = module5_video_render.load_direct_poster_timeline()
+            self.assertEqual(len(timeline), 1)
+            self.assertEqual(duration, 60.15)
+
+    def test_html_timeline_holds_last_poster_through_trailing_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            visual = workspace / "3_visual_template"
+            audio_dir = workspace / "2_audio_srt"
+            visual.mkdir()
+            audio_dir.mkdir()
+            with wave.open(str(audio_dir / "final_output.wav"), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(100)
+                audio.writeframes(b"\0\0" * 6015)
+            with patch.object(module4_video_render, "VISUAL_DIR", visual):
+                html_path = module4_video_render.write_html(
+                    [{"start": 0, "end": 57.15}],
+                    [{"start": 0, "end": 57.15, "url": "./assets/poster.jpg"}],
+                )
+            self.assertIn('data-duration="60.15"', html_path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

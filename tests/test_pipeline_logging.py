@@ -11,10 +11,25 @@ from backend.app.pipeline import (
     corrected_scene_timeline_ready,
     parse_noisy_progress_log,
     render_standalone_subtitle_video,
+    run_command,
 )
 
 
 class PipelineLoggingTest(unittest.TestCase):
+    def test_tts_fatal_error_reaches_job_error(self) -> None:
+        job = Job(id="missing-driver", step="tts")
+        store = Mock()
+        store.is_cancelled.return_value = False
+        process = Mock()
+        process.stdout = ["【致命错误】本地 IndexTTS 无法使用 NVIDIA 显卡或驱动\n"]
+        process.wait.return_value = 1
+        with (
+            patch("backend.app.pipeline.subprocess.Popen", return_value=process),
+            patch("backend.app.subtitle_layout.presentation_env", return_value={}),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "NVIDIA 显卡或驱动"):
+                run_command(job, store, ["python"], "断句、配音、原始字幕")
+
     def test_launcher_restart_guard_reports_running_and_confirmation_jobs_only(self) -> None:
         store = JobStore()
         store._jobs = {
