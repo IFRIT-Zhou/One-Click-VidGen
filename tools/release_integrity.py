@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -43,6 +44,7 @@ INTEGRITY_FILES = (
     "backend/app/main.py",
     "backend/app/gemini_client.py",
     "backend/app/image_profiles.py",
+    "backend/app/indextts25_local.py",
     "backend/app/local_tts_component.py",
     "backend/app/image_studio.py",
     "backend/app/pipeline.py",
@@ -89,6 +91,22 @@ INTEGRITY_FILES = (
 TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue"}
 
 
+def validate_launcher_integrity_files(root: Path) -> None:
+    """Fail a release if the launcher and packaging tool hash different files."""
+    source = (root / "launcher" / "src" / "LauncherRuntime.cs").read_text(encoding="utf-8-sig")
+    match = re.search(r"ReleaseIntegrityFiles\s*=\s*\{(.*?)\};", source, re.DOTALL)
+    if not match:
+        raise ValueError("启动器关键文件清单未找到")
+    launcher_files = tuple(re.findall(r'"([^"\r\n]+)"', match.group(1)))
+    if launcher_files != INTEGRITY_FILES:
+        missing = [path for path in INTEGRITY_FILES if path not in launcher_files]
+        extra = [path for path in launcher_files if path not in INTEGRITY_FILES]
+        raise ValueError(
+            "启动器与发布工具的关键文件清单不一致（顺序也必须一致）："
+            f"启动器缺少 {missing}；启动器多出 {extra}"
+        )
+
+
 def release_file_bytes(path: Path) -> bytes:
     """Make text fingerprints independent from Git/Windows line endings."""
     data = path.read_bytes()
@@ -121,6 +139,11 @@ def main() -> int:
     args = parser.parse_args()
 
     root = args.root.resolve()
+    try:
+        validate_launcher_integrity_files(root)
+    except (OSError, ValueError) as exc:
+        print(exc)
+        return 2
     digest, missing = fingerprint(root)
     if missing:
         print("Missing release files:")

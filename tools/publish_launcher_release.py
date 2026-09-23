@@ -25,7 +25,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from release_integrity import fingerprint
+from release_integrity import fingerprint, validate_launcher_integrity_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +132,7 @@ def verify_archive(archive: Path, expected_fingerprint: str) -> None:
 
 
 def validate_committed_release(channel: dict[str, Any]) -> str:
+    validate_launcher_integrity_files(ROOT)
     dirty = run("git", "status", "--porcelain", "--untracked-files=no", capture=True)
     if dirty:
         raise RuntimeError("仍有未提交的已跟踪文件，禁止发布：\n" + dirty)

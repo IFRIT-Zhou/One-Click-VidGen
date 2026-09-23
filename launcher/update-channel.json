@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.24.2",
-  "release_order": 2026092402,
-  "display_version": "2026.09.24 本地配音补丁",
+  "release_id": "2026.09.24.3",
+  "release_order": 2026092403,
+  "display_version": "2026.09.24 启动器更新校验修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.24.2/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.24.2/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.24.3/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.24.3/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复本地 IndexTTS-2.5 更新后仍因旧 Numba 缓存引用 Intel SVML 而崩溃的问题。",
-  "content_fingerprint": "ba8cd2adb7faaf6cb3d0581dc50cdc4b365e01147c44a0a9a663eec67dbf6807"
+  "notes": "修复启动器与发布工具的关键文件校验清单不一致，避免更新成功后误报仍需更新；发布前新增清单一致性检查。",
+  "content_fingerprint": "25e3ccf8e433b270a71ed9841eab7a58673976d06d663ca1b04e0b39c8615323"
 }
