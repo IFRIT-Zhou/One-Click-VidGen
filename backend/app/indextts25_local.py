@@ -131,7 +131,9 @@ class IndexTTS25Config:
             "HF_HUB_CACHE": str(self.model_dir / "hf_cache"),
             "TORCH_HOME": str(self.model_dir / "hf_cache"),
             "XDG_CACHE_HOME": str(cache_dir),
-            "NUMBA_CACHE_DIR": str(cache_dir / "numba"),
+            # Numba's cache key does not reliably distinguish SVML-enabled code.
+            # Keep no-SVML JIT output away from caches made by older releases.
+            "NUMBA_CACHE_DIR": str(cache_dir / "numba-no-svml-v1"),
             # Bundled Numba may detect an incomplete Intel SVML runtime and
             # emit unresolved __svml_* calls during IndexTTS inference.
             "NUMBA_DISABLE_INTEL_SVML": "1",

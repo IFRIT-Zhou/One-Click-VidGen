@@ -38,6 +38,10 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
                 emotion_weight=0.65,
             )
             self.assertEqual(config.runtime_environment()["NUMBA_DISABLE_INTEL_SVML"], "1")
+            self.assertEqual(
+                Path(config.runtime_environment()["NUMBA_CACHE_DIR"]).name,
+                "numba-no-svml-v1",
+            )
 
     def test_index_tts_reports_missing_driver_from_child_error(self):
         process = SimpleNamespace(

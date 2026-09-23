@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.24.1",
-  "release_order": 2026092401,
-  "display_version": "2026.09.24 客户问题修复",
+  "release_id": "2026.09.24.2",
+  "release_order": 2026092402,
+  "display_version": "2026.09.24 本地配音补丁",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.24.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.24.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.24.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.24.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复隔天继续分步任务时图片数量预估显示为 1、字幕排版差异导致成片校验失败、配音末尾留白导致成片短于音频；优化本地 IndexTTS 的 SVML 兼容与显卡驱动报错提示。",
+  "notes": "修复本地 IndexTTS-2.5 更新后仍因旧 Numba 缓存引用 Intel SVML 而崩溃的问题。",
   "content_fingerprint": "ba8cd2adb7faaf6cb3d0581dc50cdc4b365e01147c44a0a9a663eec67dbf6807"
 }
