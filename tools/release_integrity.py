@@ -43,6 +43,7 @@ INTEGRITY_FILES = (
     "backend/app/h3_prompt_agent.py",
     "backend/app/main.py",
     "backend/app/gemini_client.py",
+    "backend/app/language_routing.py",
     "backend/app/image_profiles.py",
     "backend/app/indextts25_local.py",
     "backend/app/local_tts_component.py",

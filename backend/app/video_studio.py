@@ -19,6 +19,7 @@ from .video_plan import parse_srt, normalize_shots, edit_structure, plan_storybo
 from .video_sources import list_sources, source_project, copy_assets, narration_groups
 from . import video_scene_references as scene_references
 from .video_text_policy import normalize_text_mode
+from .language_routing import project_language_scope
 
 router = APIRouter(prefix='/api/video-studio')
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'video_studio'
@@ -146,10 +147,32 @@ def _normalize_rgb_image(image: Path, *, strict: bool = False) -> bool:
         return False
 
 
-def _image_configs(record):
+def _image_configs(record, user_id=None):
     import module4_video_render as visual
-    snapshot = record.get('creation_parameters', {}).get('image_profile_snapshot')
-    if isinstance(snapshot, dict):
+    parameters = record.get('creation_parameters', {})
+    snapshot = parameters.get('image_profile_snapshot')
+    if parameters.get('use_cloud_image_pool'):
+        if user_id is None:
+            raise ValueError('使用云端图像号池需要先登录账户；未改用个人 API。')
+        from .cloud_client import cloud_client_for
+        try:
+            runtime = cloud_client_for(int(user_id)).image_pool_runtime()
+            base = str(runtime.get('base_url') or '').strip().rstrip('/')
+            token = str(runtime.get('access_token') or '').strip()
+            if not base or not token:
+                raise ValueError('missing runtime')
+        except Exception as exc:
+            raise ValueError('云端图像号池登录状态不可用，请检查云端连接并重新登录；未改用个人 API。') from exc
+        configs = [{
+            'endpoint': base + '/image-pool/generate',
+            'query_url': base + '/image-pool/query',
+            'upload_url': base + '/image-pool/media/upload',
+            'account_url': base + '/image-pool/account-status',
+            'resolution': str(parameters.get('image_resolution') or '1k'),
+            'api_key': token, 'refresh_token': runtime.get('refresh_token', ''),
+            'cloud_base_url': base, 'account_label': '云端号池', 'cloud_pool': '1',
+        }]
+    elif isinstance(snapshot, dict):
         from .image_profiles import profile_provider_configs
         configs = profile_provider_configs(snapshot)
     else:
@@ -1084,7 +1107,7 @@ def generate_storyboard_images(identity: str, data: Review, request: Request):
         if record['status'] not in {'generation_ready', 'image_review'}:
             raise HTTPException(409, '请先确认分镜方案')
         try:
-            configs = _image_configs(record)
+            configs = _image_configs(record, require_user(request)['id'])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         unfinished = [shot for shot in record['shots'] if shot.get('image_status') != 'completed']
@@ -1122,7 +1145,7 @@ def generate_scene_references(identity: str, data: Review, request: Request):
         if not scene_references.enabled(record):
             raise HTTPException(409, '这个任务未启用叙事增强的场景参考')
         try:
-            configs = _image_configs(record)
+            configs = _image_configs(record, require_user(request)['id'])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         record.update(status='image_generating', error='', revision=record['revision'] + 1)
@@ -1291,7 +1314,7 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
                 path, record, shot, data.prompt,
                 references=reference_paths,
                 use_scene=data.use_scene_reference)
-            configs = _image_configs(record)
+            configs = _image_configs(record, require_user(request)['id'])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if data.image_resolution:
@@ -1479,7 +1502,8 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
         context = copy.deepcopy(record.get('context') or {})
         context.setdefault('video_direction', {})['dynamic_text_mode'] = normalize_text_mode(
             planning_parameters(record).get('dynamic_text_mode'))
-        updated, analysis = refresh(context, record['settings'].get('style', ''),
+        with project_language_scope(user['id'], planning_parameters(record)):
+            updated, analysis = refresh(context, record['settings'].get('style', ''),
                                     snapshot, record.get('references', []), basis=data.basis,
                                     action=data.action, image_prompt=data.image_prompt,
                                     image_path=image_path, force_vision=force_vision,
@@ -1591,8 +1615,9 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
 
 @router.post('/{identity}/plan')
 def plan(identity: str, request: Request, repair_only: bool = False):
+    user_id = int(require_user(request)['id'])
     with LOCK:
-        path = directory(require_user(request)['id'], identity)
+        path = directory(user_id, identity)
         record = read(path)
         if record['status'] in VIDEO_STAGE_STATUSES:
             raise HTTPException(409, '核心图已经确认，请在动态镜头阶段继续；此处不再重写已确认的分镜')
@@ -1663,7 +1688,8 @@ def plan(identity: str, request: Request, repair_only: bool = False):
     def worker():
         try:
             settings = record['settings']
-            context, shots = plan_storyboard(record['scenes'], settings['style'], settings['characters'],
+            with project_language_scope(user_id, planning_parameters(record), progress):
+                context, shots = plan_storyboard(record['scenes'], settings['style'], settings['characters'],
                                              settings['world'], record['references'], progress,
                                              planning_parameters(record), checkpoint=checkpoint,
                                              resume_state=resume_state, save_state=save_state,

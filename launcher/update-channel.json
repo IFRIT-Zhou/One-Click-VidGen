@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.24.3",
-  "release_order": 2026092403,
-  "display_version": "2026.09.24 启动器更新校验修复",
+  "release_id": "2026.09.26.1",
+  "release_order": 2026092601,
+  "display_version": "2026.09.26 号池与纯文生图修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.24.3/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.24.3/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.26.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.26.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复启动器与发布工具的关键文件校验清单不一致，避免更新成功后误报仍需更新；发布前新增清单一致性检查。",
-  "content_fingerprint": "25e3ccf8e433b270a71ed9841eab7a58673976d06d663ca1b04e0b39c8615323"
+  "notes": "修复动态分镜规划、单镜提示词更新与图像生成未正确使用号池的问题；号池请求按任务隔离，失败不切换个人 API，日志明确显示实际路由；修复纯文生图时模型引用不存在参考素材导致规划中断。",
+  "content_fingerprint": "dee77b432e184c0b804554eabab359952d6f80b0e0dd7072e8341a422c66a6de"
 }

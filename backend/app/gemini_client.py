@@ -6,6 +6,9 @@ import json
 import os
 import re
 import time
+from collections import ChainMap
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import requests
@@ -13,6 +16,26 @@ import requests
 from .config import load_project_env
 
 load_project_env()
+
+_LANGUAGE_ENV = ContextVar('ocv_language_environment', default=None)
+
+
+@contextmanager
+def language_environment(values):
+    """Request/thread-local routing; never expose pool tokens through os.environ."""
+    token = _LANGUAGE_ENV.set(dict(values))
+    try:
+        yield
+    finally:
+        _LANGUAGE_ENV.reset(token)
+
+
+def _language_env():
+    return ChainMap(_LANGUAGE_ENV.get() or {}, os.environ)
+
+
+def _language_getenv(key, default=''):
+    return _language_env().get(key, default)
 
 
 DEFAULT_GEMINI_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -315,10 +338,10 @@ def gemini_configured() -> bool:
 
 
 def _provider() -> str:
-    selected = os.getenv("LANGUAGE_PROVIDER", "").strip().lower()
+    selected = _language_getenv("LANGUAGE_PROVIDER", "").strip().lower()
     if selected in LANGUAGE_PROVIDER_OPTIONS:
         return "gemini" if selected == "runninghub" else selected
-    legacy = os.getenv("GEMINI_PROVIDER", "").strip().lower()
+    legacy = _language_getenv("GEMINI_PROVIDER", "").strip().lower()
     if not legacy:
         return "gemini_official"
     if legacy in {"google", "gemini"}:
@@ -357,7 +380,7 @@ def language_provider_models(provider: str | None = None) -> list[dict[str, str]
 
 def language_model(provider: str | None = None) -> str:
     config = language_provider_config(provider)
-    return os.getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
+    return _language_getenv(config["model_env"], config["default_model"]).strip() or config["default_model"]
 
 
 def language_base_url(provider: str | None = None) -> str:
@@ -365,7 +388,7 @@ def language_base_url(provider: str | None = None) -> str:
     config = language_provider_config(provider)
     if config.get("source") == "official":
         return str(config["default_base"]).rstrip("/")
-    return os.getenv(config["base_env"], config["default_base"]).strip().rstrip("/")
+    return _language_getenv(config["base_env"], config["default_base"]).strip().rstrip("/")
 
 
 def language_model_allowed(provider: str, model: str) -> bool:
@@ -373,13 +396,13 @@ def language_model_allowed(provider: str, model: str) -> bool:
     if config.get("allow_custom_model"):
         return bool(model.strip())
     candidate = model.strip()
-    configured = os.getenv(config["model_env"], "").strip()
+    configured = _language_getenv(config["model_env"], "").strip()
     return candidate == configured or candidate in {item["value"] for item in language_provider_models(provider)}
 
 
 def language_provider_configured(provider: str | None = None, values: Any | None = None) -> bool:
     config = language_provider_config(provider)
-    source = values if values is not None else os.environ
+    source = values if values is not None else _language_env()
     if config.get("optional_key"):
         return bool(
             str(source.get(config["base_env"], "")).strip()
@@ -425,7 +448,7 @@ def language_provider_status() -> dict[str, Any]:
 def _gemini_models(provider: str | None = None) -> list[str]:
     config = language_provider_config(provider)
     primary = language_model(provider)
-    fallback_raw = os.getenv("GEMINI_FALLBACK_MODELS", "").strip()
+    fallback_raw = _language_getenv("GEMINI_FALLBACK_MODELS", "").strip()
     models = [primary]
     if fallback_raw and (provider or _provider()) in {"gemini", "runninghub"}:
         models.extend(re.split(r"[,;\s]+", fallback_raw))
@@ -682,7 +705,7 @@ def generate_gemini_text(
 ) -> str:
     provider = _provider()
     config = language_provider_config(provider)
-    api_key = os.getenv(config["key_env"], "").strip()
+    api_key = _language_getenv(config["key_env"], "").strip()
     if not api_key and not config.get("optional_key"):
         raise GeminiError(f"未配置 {config['key_env']}")
     if config.get("optional_key") and not language_provider_configured(provider):

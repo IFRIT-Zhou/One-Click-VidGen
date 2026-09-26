@@ -419,10 +419,11 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     if use_h3_agent and not resume_prompt_id:
                         duration = int(source_shot.get('generation_duration') or 0)
                         source_shot['video_prompt'] = effective_source_prompt
-                        h3_prompt, h3_source = convert_for_h3(
-                            source_shot, duration, reference_audio=shot_reference_audio,
-                            lipsync=bool(shot_reference_audio and shot_lipsync),
-                            image_path=studio._storyboard_image_path(path, source_shot))
+                        with studio.project_language_scope(user_id, studio.planning_parameters(source_record)):
+                            h3_prompt, h3_source = convert_for_h3(
+                                source_shot, duration, reference_audio=shot_reference_audio,
+                                lipsync=bool(shot_reference_audio and shot_lipsync),
+                                image_path=studio._storyboard_image_path(path, source_shot))
                     if cancelled.is_set():
                         raise ComfyUIStopped('H3 提示词准备完成前已停止；尚未启动本地生成。')
                     with studio.LOCK:

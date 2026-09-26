@@ -4119,30 +4119,9 @@ def require_validated_output(job: Job, request: dict[str, Any]) -> None:
 @contextmanager
 def cloud_model_pool_environment(job: Job, store: JobStore, request: dict[str, Any]):
     """Route Agent 0/1 through the authenticated cloud text-model pool."""
-    if not bool(request.get("use_cloud_image_pool")):
+    from .language_routing import project_language_scope
+    with project_language_scope(job.user_id, request, lambda message: store.log(job, message)):
         yield
-        return
-    if job.user_id is None:
-        raise RuntimeError("使用云端号池需要先登录账户")
-    runtime = cloud_client_for(int(job.user_id)).image_pool_runtime()
-    updates = {
-        "LANGUAGE_PROVIDER": "runninghub",
-        "GEMINI_API_KEY": runtime["access_token"],
-        "GEMINI_API_BASE": f"{runtime['base_url'].rstrip('/')}/model-pool/v1",
-        "GEMINI_MODEL": "auto",
-        "GEMINI_FALLBACK_MODELS": "",
-    }
-    previous = {key: os.environ.get(key) for key in updates}
-    os.environ.update(updates)
-    store.log(job, "Agent 0/1：使用云端文本模型号池，费用由云端账户积分结算")
-    try:
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 def log_boundary_refinement(job: Job, store: JobStore, story_plan: dict[str, Any]) -> None:

@@ -1,0 +1,8 @@
+tests/ export-ignore
+frontend/tests/ export-ignore
+.agents/ export-ignore
+docs/cluster/ export-ignore
+tools/publish_launcher_release.py export-ignore
+tools/release_integrity.py export-ignore
+tools/portable_release_audit.py export-ignore
+tools/create_portable_archive.py export-ignore

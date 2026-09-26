@@ -40,9 +40,30 @@ def ask_json(system: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _complete_rows(response: dict[str, Any], expected: list[str], label: str) -> list[dict[str, Any]]:
-    rows = response.get("shots")
+    # Compatible endpoints sometimes serialize the array or wrap the object.
+    # Only unwrap explicit containers; never guess from arbitrary nested lists.
+    candidate = response
+    for _ in range(3):
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except (ValueError, TypeError):
+                break
+        elif isinstance(candidate, dict) and 'shots' in candidate:
+            candidate = candidate['shots']
+        elif isinstance(candidate, dict):
+            wrappers = [key for key in ('data', 'result', 'output') if key in candidate]
+            if len(wrappers) != 1:
+                break
+            candidate = candidate[wrappers[0]]
+        else:
+            break
+    if isinstance(candidate, dict) and len(expected) == 1 and candidate.get('id') == expected[0]:
+        candidate = [candidate]
+    rows = candidate
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        raise ValueError(f"{label}未返回有效镜头列表")
+        keys = ', '.join(str(key)[:60] for key in list(response)[:12]) if isinstance(response, dict) else type(response).__name__
+        raise ValueError(f"{label}未返回有效镜头列表（需要 shots 数组，返回顶层字段：{keys or '空对象'}）")
     identities = [row.get("id") for row in rows]
     if identities != expected:
         raise ValueError(f"{label}镜头缺失、重复或顺序改变")
@@ -226,6 +247,8 @@ def design_core_images(context: dict[str, Any], scenes: list[dict[str, Any]], sh
 可仅修正 intent、semantic.source_basis、progression_plan 中的错误角色归属，并用 attribution_correction
 写一句依据；不要趁机更换用户的表达目标、主题、场景或创意。没有归属错误时不返回这项修正。
 参考素材不是首帧约束，只在确实有用时选择 reference_ids，最多8张；用户写明全程使用的人物素材必须选择。
+reference_ids 只能填写本次 references 列表中的真实 id，不得填写角色名、图1、示例 id 或新建素材 id。
+references 为空时，所有镜头的 reference_ids 必须为 []；尚未生成的核心图和场景图也不是可选的已上传素材。
 人物参考图同时约束人物服装、配色、发型和整体造型。原文或用户设定没有明确要求换装时，必须沿用参考图，
 不得根据“演讲者、主持人、专业、正式”等身份或场景自行推断西装、职业装、演讲服等新服装。
 不要新增证据、数字或人物关系。
@@ -240,11 +263,22 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
     for attempt in range(2):
         try:
             rows = _complete_rows(response, expected, "核心画面导演")
+            available = {item['id'] for item in references}
+            for row in rows:
+                selected = row.get('reference_ids', [])
+                if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
+                    raise ValueError(f"镜头 {row['id']}：reference_ids 必须是已提供素材 id 的数组；没有参考素材时填 []")
+                selected = list(dict.fromkeys(selected))
+                if any(value not in available for value in selected) or len(selected) > 8:
+                    raise ValueError(f"镜头 {row['id']}：参考素材选择无效。只能从本次 references 的 id 中选择最多8张；"
+                                     + ('本任务没有上传参考素材，必须填 []。' if not references else
+                                        '不可使用角色名、图号、示例或不存在的素材 id。'))
+                row['reference_ids'] = selected
             break
         except ValueError as exc:
             if attempt:
                 raise
-            response = ask(system + '\n只修复返回格式；必须返回对象 {shots:[...]}，镜头顺序和设计内容保持不变。',
+            response = ask(system + '\n只修复 validation_errors 中的格式或参考素材选择问题；没有可用素材时清空 reference_ids，使用文字描述人物，不编造参考图。必须返回对象 {shots:[...]}，镜头顺序和设计内容保持不变。',
                            {**payload, 'previous_result': response, 'validation_errors': [str(exc)]})
     for row in rows:
         if not isinstance(row.get('visual_description'), str) or not row['visual_description'].strip():
