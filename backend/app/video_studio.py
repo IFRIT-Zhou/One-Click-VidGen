@@ -372,6 +372,13 @@ def _invalidate_shot_video(record, shot, reason):
     return True
 
 
+def _image_language_scope(path, record):
+    """Resolve routing inside each image worker; thread contexts are not inherited."""
+    parameters = planning_parameters(record)
+    user_id = int(path.parent.name) if parameters.get('use_cloud_image_pool') else None
+    return project_language_scope(user_id, parameters)
+
+
 def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths, scene_version=''):
     import module4_video_render as visual
     shot_id = str(shot['id'])
@@ -394,7 +401,8 @@ def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
                 '提示词中提及图N时，必须严格以第N张参考图作为形象或画面依据。\n' + data.prompt.strip())
         try:
             pool = visual.shared_runninghub_account_pool(configs, namespace='video_storyboard_redraw')
-            rendered = visual._render_poster_with_retry(macro, pool)
+            with _image_language_scope(path, record):
+                rendered = visual._render_poster_with_retry(macro, pool)
             if not rendered.is_file() or rendered.stat().st_size <= 0:
                 raise FileNotFoundError('图像模型返回完成，但没有找到重绘图片')
             _normalize_rgb_image(rendered)
@@ -444,7 +452,9 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                     shot['image_prompt'] = _bind_material_numbers(record, shot, shot.get('image_prompt', ''))
                     shot['image_material_numbers_bound'] = True
                 save(path, record)
-            _prepare_scene_assets(path, record, pool, cancelled)
+            # Scene coordination also calls the LLM, before image submission.
+            with _image_language_scope(path, record):
+                _prepare_scene_assets(path, record, pool, cancelled)
             if cancelled.is_set():
                 raise PlanningStopped()
             pending = [
@@ -484,7 +494,9 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                         if scene:
                             record['logs'].append(f'镜头 {index} 使用场景参考“{scene["name"]}”（图{len(references)}）。')
                         save(path, record)
-                    rendered = visual._render_poster_with_retry(macro, pool)
+                    # ThreadPoolExecutor does not propagate ContextVar routing.
+                    with _image_language_scope(path, record):
+                        rendered = visual._render_poster_with_retry(macro, pool)
                     _normalize_rgb_image(rendered)
                     with LOCK:
                         shot.update(image_status='completed', image='assets/storyboards/' + rendered.name,
