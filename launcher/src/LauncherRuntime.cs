@@ -104,6 +104,7 @@ namespace OcvLauncher
             "frontend/src/studio.css",
             "frontend/src/useStudio.js",
             "frontend/src/useWorkspace.js",
+            "frontend/src/cloudPoolPreference.js",
             "frontend/src/videoPresentation.js",
             "frontend/src/components/ImageProfileSelector.vue",
             "frontend/src/components/ImageStudio.vue",

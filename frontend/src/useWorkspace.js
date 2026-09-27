@@ -2,6 +2,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 import { normalizeDynamicTextMode } from './dynamicTextMode'
+import { readCloudPoolPreference, saveCloudPoolPreference, workspaceParameters } from './cloudPoolPreference'
 
 // Shared task state: each mounted workspace owns one polling lifecycle.
 export function useWorkspace() {
@@ -521,7 +522,7 @@ const form = reactive({
   qwen_tts_instructions: '',
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
-  use_cloud_image_pool: false,
+  use_cloud_image_pool: readCloudPoolPreference(),
   image_profile_id: '',
   image_resolution: '1k',
   video_render_variant: 'both',
@@ -2409,7 +2410,7 @@ async function loadSelectedParameterPreset() {
     const payload = await api.parameterPreset(selectedParameterPreset.value)
     const parameters = payload.parameters || {}
     const autoAnalyzeReferenceImages = form.auto_analyze_reference_images
-    Object.assign(form, parameters)
+    Object.assign(form, workspaceParameters(parameters))
     if (parameters.dynamic_video || Object.hasOwn(parameters, 'dynamic_text_mode')) {
       form.dynamic_text_mode = normalizeDynamicTextMode(parameters.dynamic_text_mode)
     }
@@ -4454,7 +4455,7 @@ function guidedRenderParameters() {
 
 function hydrateGuidedForm(job) {
   if (!job?.request) return
-  for (const [key, value] of Object.entries(job.request)) {
+  for (const [key, value] of Object.entries(workspaceParameters(job.request))) {
     if (!(key in form) || key.startsWith('_')) continue
     form[key] = Array.isArray(value) ? value.map((item) => (typeof item === 'object' ? { ...item } : item)) : value
   }
@@ -5199,6 +5200,10 @@ onMounted(async () => {
 watch(() => form.auto_analyze_reference_images, (enabled) => {
   try { window.localStorage.setItem(REFERENCE_ANALYSIS_STORAGE_KEY, enabled ? '1' : '0') } catch { /* optional browser storage */ }
 })
+
+watch(() => form.use_cloud_image_pool, (enabled) => {
+  saveCloudPoolPreference(enabled)
+}, { flush: 'sync' })
 
 watch(() => form.image_profile_id, () => {
   const resolutions = selectedImageProfile.value?.resolutions || ['1k', '2k', '4k']
