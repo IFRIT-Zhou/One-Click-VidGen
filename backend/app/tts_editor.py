@@ -444,7 +444,9 @@ class TtsEditor:
                 "cluster_voice_type", "cluster_voice_id", "tts_speed", "tts_volume",
                 "tts_pitch", "tts_emotion", "tts_emotion_weight",
             ):
-                if key in manifest:
+                if key in manifest and manifest[key] is not None:
+                    if key in {"cluster_voice_type", "cluster_voice_id"} and not manifest[key]:
+                        continue
                     cloud_request[key] = manifest[key]
             synthesize_cloud_tts(
                 client=cloud_client_for(user_id),
@@ -1343,18 +1345,25 @@ class TtsEditor:
         self._sync_module1_flat_outputs(project_dir, job.id)
         _commit_step_audio_edit(job, project_dir)
         request_updates = {
-            "tts_voice_id": manifest.get("tts_voice_id"),
             "tts_speed": manifest.get("tts_speed", 1),
             "tts_volume": manifest.get("tts_volume", 1),
             "tts_pitch": manifest.get("tts_pitch", 0),
             "tts_parallelism": manifest.get("tts_parallelism", 1),
             "tts_emotion": manifest.get("tts_emotion") or "",
             "tts_emotion_weight": manifest.get("tts_emotion_weight", 0.65),
-            "cluster_voice_type": manifest.get("cluster_voice_type") or "preset",
-            "cluster_voice_id": manifest.get("cluster_voice_id") or "",
-            "qwen_tts_voice": manifest.get("qwen_voice") or "Elias",
-            "qwen_tts_instructions": manifest.get("qwen_instructions") or "",
         }
+        request_updates = {key: value for key, value in request_updates.items() if value is not None}
+        if engine == "cluster":
+            for key in ("cluster_voice_type", "cluster_voice_id"):
+                if manifest.get(key):
+                    request_updates[key] = manifest[key]
+        elif engine == "qwen":
+            if manifest.get("qwen_voice"):
+                request_updates["qwen_tts_voice"] = manifest["qwen_voice"]
+            if manifest.get("qwen_instructions") is not None:
+                request_updates["qwen_tts_instructions"] = manifest["qwen_instructions"]
+        elif isinstance(manifest.get("tts_voice_id"), str) and manifest["tts_voice_id"].strip():
+            request_updates["tts_voice_id"] = manifest["tts_voice_id"]
         job.request.update(request_updates)
         store.update(job, request=job.request)
         if is_step_workflow_v2(job.request):

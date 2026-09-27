@@ -322,7 +322,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         'director_strategy', 'video_orientation') if key in parameters}
     arrangement['narration_groups'] = parameters.get('_narration_groups', [])
     if arrangement['narration_groups']:
-        progress(f'已读取 {len(arrangement["narration_groups"])} 段与当前字幕全文一致的配音语义分组；分镜时长以字幕时间轴为准。')
+        progress(f'已读取 {len(arrangement["narration_groups"])} 段配音作为语义参考，不强制按配音段切镜；画面按全文语义划分，时长以字幕时间轴为准。')
     if state.get('shots'):
         shots = normalize_shots(state['shots'], scenes, [r['id'] for r in references])
         progress('复用已保存的镜头划分与设计，继续未完成步骤。')

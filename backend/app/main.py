@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .config import _parse_env_lines, save_project_env_values
@@ -150,6 +150,13 @@ class BgmTrackRequest(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    @field_validator("tts_voice_id", mode="before")
+    @classmethod
+    def migrate_null_local_voice(cls, value):
+        # Older cluster revoicing saved this irrelevant local field as null.
+        # Keep the schema strict otherwise; cluster_voice_id is never changed.
+        return "voice_05.wav" if value is None else value
+
     project_name: str = Field(default="", max_length=80)
     script: str = ""
     module1_only: bool = False
@@ -2444,6 +2451,8 @@ def advance_step_workflow(
                 str(validated.get("global_character_prompt") or ""),
             )
         job.request.update({key: validated[key] for key in allowed if key in validated})
+        if job.request.get("tts_voice_id") is None:
+            job.request["tts_voice_id"] = validated["tts_voice_id"]
         store.update(job, request=job.request)
         persist_step_workflow_state(
             job,

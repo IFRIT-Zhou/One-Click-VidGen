@@ -70,81 +70,6 @@ def _complete_rows(response: dict[str, Any], expected: list[str], label: str) ->
     return rows
 
 
-def _validate_narration_partition(rows, scenes, narration_groups):
-    """Confirmed narration chunks are hard edit boundaries for video shots."""
-    if not narration_groups:
-        return
-    ordered = [scene['slide_id'] for scene in scenes]
-    positions = {identity: index for index, identity in enumerate(ordered)}
-    shot_ends = {row['slide_ids'][-1] for row in rows[:-1]}
-    for group in narration_groups:
-        ids = group.get('slide_ids') if isinstance(group, dict) else None
-        if not isinstance(ids, list) or not ids or any(identity not in positions for identity in ids):
-            raise ValueError('配音语义分组资料无效')
-        indexes = [positions[identity] for identity in ids]
-        if indexes != list(range(indexes[0], indexes[-1] + 1)):
-            raise ValueError('配音语义分组不是连续字幕')
-        if ids[-1] != ordered[-1] and ids[-1] not in shot_ends:
-            raise ValueError(f'镜头跨越已确认的配音段落边界：{ids[-1]} 之后必须切镜')
-        duration = float(scenes[indexes[-1]]['end']) - float(scenes[indexes[0]]['start'])
-        if duration <= 15.0001:
-            internal = set(ids[:-1]) & shot_ends
-            if internal:
-                raise ValueError(f'完整配音段落不超过15秒，不应在中间切镜：{sorted(internal)[0]}')
-
-
-def _coalesce_short_narration_groups(rows, scenes, narration_groups):
-    """Deterministically restore confirmed short TTS chunks after Agent mistakes.
-
-    The regular validator has already established that every confirmed narration
-    boundary is a shot boundary.  Therefore a short group can only be invalid
-    because the Agent inserted one or more extra cuts inside it.  Merge those
-    rows and combine their planning notes.  This must be deterministic: sending
-    the merged row back through Agent 1B would allow that Agent to insert the
-    same forbidden cut again.
-    """
-    if not narration_groups:
-        return rows
-    ordered = [scene['slide_id'] for scene in scenes]
-    positions = {identity: index for index, identity in enumerate(ordered)}
-    scene_by_id = {scene['slide_id']: scene for scene in scenes}
-    result = list(rows)
-    for group in narration_groups:
-        ids = group.get('slide_ids') if isinstance(group, dict) else None
-        if not isinstance(ids, list) or not ids or any(identity not in positions for identity in ids):
-            continue
-        duration = float(scene_by_id[ids[-1]]['end']) - float(scene_by_id[ids[0]]['start'])
-        if duration > 15.0001:
-            continue
-        indexes = [index for index, row in enumerate(result)
-                   if any(identity in set(ids) for identity in row.get('slide_ids', []))]
-        if len(indexes) <= 1 or indexes != list(range(indexes[0], indexes[-1] + 1)):
-            continue
-        covered = [identity for index in indexes for identity in result[index].get('slide_ids', [])]
-        if covered != ids:
-            # Do not guess if an Agent also crossed a confirmed outer boundary.
-            continue
-        parts = [result[index] for index in indexes]
-        def joined(key):
-            values = [str(part.get(key) or '').strip() for part in parts]
-            return '；'.join(dict.fromkeys(value for value in values if value))
-        semantics = [part.get('semantic') for part in parts if isinstance(part.get('semantic'), dict)]
-        semantic = {}
-        for key in ('message', 'source_basis', 'progression', 'continuity_requirement'):
-            values = [str(item.get(key) or '').strip() for item in semantics]
-            semantic[key] = '；'.join(dict.fromkeys(value for value in values if value))
-        statuses = list(dict.fromkeys(str(item.get('fact_status') or '').strip()
-                                     for item in semantics if item.get('fact_status')))
-        semantic['fact_status'] = statuses[0] if len(statuses) == 1 else ('quoted' if statuses else '')
-        merged = dict(parts[0])
-        merged.update(slide_ids=list(ids), kind='video', intent=joined('intent'),
-                      motion_basis=joined('motion_basis'), progression_plan=joined('progression_plan'),
-                      semantic=semantic)
-        merged['narration_partition_repair'] = '已自动撤销完整配音段落内部的错误切镜'
-        result[indexes[0]:indexes[-1] + 1] = [merged]
-    return result
-
-
 def plan_groups(context: dict[str, Any], scenes: list[dict[str, Any]], arrangement: dict[str, Any],
                 ask: Ask = ask_json, *, progress=None, on_draft=None, resume_rows=None,
                 boundary_review=False) -> list[dict[str, Any]]:
@@ -152,7 +77,7 @@ def plan_groups(context: dict[str, Any], scenes: list[dict[str, Any]], arrangeme
 每个镜头覆盖连续的一条或多条字幕，所有字幕按原顺序恰好覆盖一次，只能在字幕边界切换。
 先理解一段完整意思，再决定镜头；不要机械地一条字幕一镜。动态用于人物互动、提问与回应、
 过程、状态变化、因果展开、空间变化和能增强理解的动作；这些内容不要因为核心图可以静态表达就判为 static。
-纯信息展示、短句或运动没有表达增益时使用 static。开头两个镜头承担观众留存，必须规划为 video，
+纯信息展示或运动没有表达增益时使用 static，不因一句短就为它单独建镜。开头两个镜头承担观众留存，必须规划为 video，
 并控制在15秒以内；可在字幕边界合理缩短分组。单条字幕自身超过15秒才允许受限为 static，不能私自拆句。
 intent 用一句话说明观众看完这一镜应该理解什么，不复述字幕，不编造事实。
 先判断表达是否需要依次展开，再决定时间分组。不能以“超过15秒”为由把可拆分的动态内容选为静态。
@@ -162,39 +87,37 @@ intent 用一句话说明观众看完这一镜应该理解什么，不复述字�
 字幕短句是时间单位，不是独立语义单位：尾随的补充、反应、指代、例证必须先判断依附对象。
 不得仅因一句出现新名词就分给下一话题，也不能把前一案例的末尾补充当成下一结论的开场。
 先圈定完整语义，再按15秒硬上限安排镜头；不要为了凑8秒、12秒或固定字幕条数切断语义。
-narration_groups 若存在，是已校验与全文一致的配音段落线索；允许在其内部拆镜，
-不超过15秒的段落必须完整对应一个镜头；超过15秒才可在其内部沿字幕边界拆镜。
-禁止跨配音段落重新组合。时间始终以 scenes 为准。
+narration_groups 是配音生产/编辑单元，作为强语义线索，但不等于强制切镜位置。
+先通读全文与每句的依附关系，再决定画面分组；不要机械地一段配音一镜或一句字幕一镜。
+默认保留完整解说与自然停顿。短小的补充、回应、反问、指代句可以跨配音段落并入相关前镜或后镜；
+在 motion_basis 中写明原文依据，不能只为凑时长、减少镜头或看到同一关键词而合并。
+即使配音段落不超过15秒，若确有话题转换或独立视觉过程，也可沿完整字幕边界分镜并说明理由；
+超过15秒则必须按自然语义递进安排，不把附属短句机械甩给下一话题。
+配音文件、原文与字幕时间戳始终不变，只调整画面覆盖的连续字幕范围；时间始终以 scenes 为准。
 引用、想象、刻板印象始终保持其主观属性，不能画成对现实的事实断言。
 返回 {shots:[{slide_ids:[...],kind:"static|video",intent:"...",semantic:{...},motion_basis:"...",progression_plan:"..."}]}。
 """ + SEMANTIC_CONTRACT
     video_arrangement = {k:v for k,v in arrangement.items() if k not in {
-        'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration', 'visual_max_duration', 'visual_max_slides'}}
+        'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration', 'visual_max_duration', 'visual_max_slides',
+        'narration_groups'}}
     payload = {"story_context": context, "scenes": scenes,
                "narration_groups": arrangement.get('narration_groups', []),
                "arrangement": {**video_arrangement, "opening_motion_shots": 2, "max_video_duration": 15}}
     from .video_group_repair import repair_groups, validate_group_structure
     def finish(rows):
-        rows = repair_groups(context, scenes, rows, ask, progress=progress, on_draft=on_draft)
+        rows = repair_groups(context, scenes, rows, ask, progress=progress, on_draft=on_draft,
+                             narration_groups=arrangement.get('narration_groups', []))
         if boundary_review:
             from .video_boundary_review import review_boundaries
             rows = review_boundaries(context, scenes, rows, ask,
                 narration_groups=arrangement.get('narration_groups', []), progress=progress, on_draft=on_draft)
-        # Every later Agent is advisory. Re-apply the confirmed short narration
-        # invariant at the final exit so a repair/review Agent cannot reinsert
-        # an illegal internal cut after the initial validation succeeded.
-        final_rows = _coalesce_short_narration_groups(
-            rows, scenes, arrangement.get('narration_groups', []))
-        if final_rows != rows and progress:
-            progress('最终核对已撤销完整配音段落内部的非法切口。')
-        rows = final_rows
+        # Narration chunks are semantic evidence, not a second cut map that
+        # overwrites the directors' reviewed visual grouping.
         validate_group_structure(rows, scenes)
-        _validate_narration_partition(rows, scenes, arrangement.get('narration_groups', []))
         return rows
     if resume_rows is not None:
         try:
             validate_group_structure(resume_rows, scenes)
-            _validate_narration_partition(resume_rows, scenes, arrangement.get('narration_groups', []))
         except ValueError:
             pass
         else:
@@ -206,25 +129,11 @@ narration_groups 若存在，是已校验与全文一致的配音段落线索；
         rows = response.get('shots') if isinstance(response, dict) else None
         try:
             validate_group_structure(rows, scenes)
-            _validate_narration_partition(rows, scenes, arrangement.get('narration_groups', []))
         except ValueError as exc:
             issue = str(exc)
         else:
             return finish(rows)
         if attempt:
-            repaired = _coalesce_short_narration_groups(
-                rows, scenes, arrangement.get('narration_groups', []))
-            if repaired != rows:
-                try:
-                    validate_group_structure(repaired, scenes)
-                    _validate_narration_partition(
-                        repaired, scenes, arrangement.get('narration_groups', []))
-                except ValueError:
-                    pass
-                else:
-                    if progress:
-                        progress('Agent 1 连续在完整配音段落内切镜，已自动撤销非法切口并继续规划。')
-                    return finish(repaired)
             raise ValueError('分镜字幕覆盖修订仍未通过：' + issue)
         if progress:
             progress('Agent 1：修订字幕覆盖与镜头顺序')

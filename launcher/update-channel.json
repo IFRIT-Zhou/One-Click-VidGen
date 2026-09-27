@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.26.2",
-  "release_order": 2026092602,
-  "display_version": "2026.09.26 号池后台路由修复",
+  "release_id": "2026.09.27.1",
+  "release_order": 2026092701,
+  "display_version": "2026.09.27 配音续跑与分镜语义修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.26.2/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.26.2/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.27.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.27.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "补齐动态视频场景参考协调员、并行核心图生成及单镜重绘后台线程的号池语言模型路由，修复已开启号池却报未配置 GOOGLE_API_KEY 的问题；保留已有配音与分镜方案，失败不回退个人 API。",
-  "content_fingerprint": "1abaafdf23a4e5a29f7d1effad9036337ee0751784498f3f9e07b114fc8ef8f6"
+  "notes": "修复动态分镜机械按配音段落强制切镜导致规划失败的问题：按全文语义划分，配音分段仅作语义参考，保留字幕覆盖与动态时长校验；修复集群单句重配后本地音色字段被写为空导致进入画面阶段返回422，兼容历史空值任务，无须重新配音。",
+  "content_fingerprint": "b281785e59cb2d67390cb8104224930d934453ec9208bc47d462f752e8c46fa6"
 }

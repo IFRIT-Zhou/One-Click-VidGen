@@ -188,11 +188,13 @@ def _decorate_children(children, parent, by_id, method, reason):
             row['kind_adjustment'] = '已按语义沿字幕边界拆分' if len(children) > 1 else '已补全本镜规划信息'
         row['duration_repair']['note'] = row['kind_adjustment']
         result.append(row)
+    if parent.get('boundary_locked'):
+        result[-1]['boundary_locked'] = True
     return result
 
 
-def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_draft=None):
-    """Repair only invalid parent groups, preserving all other groups and their order."""
+def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_draft=None, narration_groups=()):
+    """Repair invalid groups, optionally coordinating their unlocked neighbors."""
     validate_group_structure(rows, scenes)
     result = copy.deepcopy(rows)
     for row in result:
@@ -231,29 +233,54 @@ def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_dra
             # Static metadata is safe to reconstruct directly from its own source text.
             children = [_fallback_row(local, parent, dynamic=False)]
         else:
-            system = """你是分镜时长协调 Agent 1B，只修订指定的一个父镜头，不重新导演全文。
+            # Give the director a bounded neighboring window when duration
+            # pressure may strand a dependent sentence at either edge.
+            window_first, window_last = index, index + 1
+            if overlong:
+                if (index and result[index-1]['kind'] == 'video'
+                        and not result[index-1].get('boundary_locked')
+                        and not result[index-1].get('manual_locked')
+                        and not parent.get('manual_locked')):
+                    window_first -= 1
+                if (index+1 < len(result) and result[index+1]['kind'] == 'video'
+                        and not parent.get('boundary_locked')
+                        and not parent.get('manual_locked')
+                        and not result[index+1].get('manual_locked')):
+                    window_last += 1
+            window_rows = result[window_first:window_last]
+            window_ids = [sid for row in window_rows for sid in row['slide_ids']]
+            window_scenes = [by_id[sid] for sid in window_ids]
+            system = """你是分镜时长协调 Agent 1B，只修订 editable_shots 指定的局部镜头窗口，不重新导演全文。
+先通读 source_text，把本段放回全文理解，再核对窗口前后的完整原文。不得只依据旧 intent 猜语义。
 依据原文含义、问答关系、补充说明及转折，沿提供的字幕边界分成连续子镜；每个动态子镜不超过15秒。
 legal_ranges 已由程序计算，必须使用其中合法范围，不能改写字幕时间；range_mode 为 any_end_up_to_last
 时表示该起点到 last_slide_id 之间的任一字幕结束处均合法，single_only 则只能独立保留该字幕。
-所有 parent_shot.slide_ids 按原顺序恰好覆盖一次，不加入邻镜字幕，不改变其他镜头。
+所有 editable_shots 的字幕按原顺序恰好覆盖一次，可重新分配窗口内相邻镜头、合并短补充句，
+必要时增加或减少镜头数。窗口外原文只作理解背景，不得加入分组或改变窗口外镜头。
+narration_groups 是配音语义线索而非强制切镜位置：默认尊重完整配音；允许基于补充、问答、
+指代、话题转换等原文关系跨段合并或段内拆镜，并在 motion_basis 中说明依据。
+不能为了凑秒数切断语义；不能改配音、改字幕、猜新的时间戳。
 保留动态表达；仅单条字幕自己超15秒时将该条独立为static，绝不能把可拆分的多句整段降为static。
 优先完整语义与问答关系，尽量避免不足4秒的碎段，不机械按每条字幕拆镜。
 为每个子镜分别重写 intent、semantic、motion_basis、progression_plan，只表达该子镜覆盖的原文。
 不复制父镜全文的目的，不写构图、提示词或秒级动作。保持引用、假设、比喻和事实的原有属性。
 返回 {shots:[{slide_ids:[...],kind:"video|static",intent:"...",semantic:{message,source_basis,fact_status,progression,continuity_requirement},motion_basis:"...",progression_plan:"..."}]}。
 """ + SEMANTIC_CONTRACT
-            payload = dict(story_context=context, parent_shot=copy.deepcopy(parent), scenes=local,
-                           legal_ranges=legal_ranges(local), validation_errors=[reason],
-                           neighbors={side: {key: candidate.get(key, '') for key in ('intent', 'semantic')}
-                                      for side, candidate in (('previous', result[index - 1] if index else {}),
-                                                              ('following', result[index + 1] if index + 1 < len(result) else {}))})
+            payload = dict(story_context=context, source_text='\n'.join(s['text'] for s in scenes),
+                           narration_groups=narration_groups, parent_shot=copy.deepcopy(parent),
+                           editable_shots=copy.deepcopy(window_rows), scenes=window_scenes,
+                           legal_ranges=legal_ranges(window_scenes), validation_errors=[reason],
+                           neighbors={side: {'intent': candidate.get('intent', ''),
+                                            'subtitles': [by_id[sid] for sid in candidate.get('slide_ids', [])]}
+                                      for side, candidate in (('previous', result[window_first - 1] if window_first else {}),
+                                                              ('following', result[window_last] if window_last < len(result) else {}))})
             for attempt in range(2):
                 if progress:
                     progress(f'Agent 1B：第{index + 1}镜语义二次分段' + ('（定点修订）' if attempt else ''))
                 response = None
                 try:
                     response = ask(system, payload)
-                    candidate = _validate_children(response, local, dynamic=True)
+                    candidate = _validate_children(response, window_scenes, dynamic=True)
                 except (GeminiError, ValueError, TypeError) as exc:
                     payload['validation_errors'] = [str(exc)]
                     if isinstance(response, dict):
@@ -261,13 +288,20 @@ legal_ranges 已由程序计算，必须使用其中合法范围，不能改写�
                     candidate = None
                 if candidate is not None:
                     children, method = candidate, 'semantic'
+                    if window_first != index or window_last != index+1:
+                        parent = dict(parent, slide_ids=window_ids,
+                                      boundary_locked=bool(window_rows[-1].get('boundary_locked')))
+                        index = window_first
+                        if progress:
+                            progress(f'Agent 1B：已按全文语义协调相邻 {len(window_rows)} 镜，重组为 {len(children)} 镜；窗口外分镜不变。')
                     break
             if children is None:
                 children = [_fallback_row(part, parent, dynamic=True) for part in safe_partitions(local)]
                 if progress:
                     progress(f'第{index + 1}镜已按字幕边界安全拆分，继续规划；可在分镜确认时调整表达。')
         replacements = _decorate_children(children, parent, by_id, method, reason)
-        result[index:index + 1] = replacements
+        replace_count = len(window_rows) if method == 'semantic' and dynamic and not own_static else 1
+        result[index:index + replace_count] = replacements
         validate_group_structure(result, scenes)
         if on_draft:
             on_draft(copy.deepcopy(result))
