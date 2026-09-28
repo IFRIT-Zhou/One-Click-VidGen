@@ -401,7 +401,9 @@ def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
                 f'【参考图编号】本次附带的第 1 至第 {len(reference_paths)} 张图片依次对应图1至图{len(reference_paths)}；'
                 '提示词中提及图N时，必须严格以第N张参考图作为形象或画面依据。\n' + data.prompt.strip())
         try:
-            pool = visual.shared_runninghub_account_pool(configs, namespace='video_storyboard_redraw')
+            pool = visual.shared_runninghub_account_pool(
+                configs, namespace='video_storyboard_redraw', retry_power_exhausted=True,
+            )
             with _image_language_scope(path, record):
                 rendered = visual._render_poster_with_retry(macro, pool)
             if not rendered.is_file() or rendered.stat().st_size <= 0:
@@ -447,7 +449,9 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
 
     def worker():
         try:
-            pool = visual.shared_runninghub_account_pool(configs, namespace='video_storyboard')
+            pool = visual.shared_runninghub_account_pool(
+                configs, namespace='video_storyboard', retry_power_exhausted=True,
+            )
             with LOCK:
                 route = '云端号池' if any(config.get('cloud_pool') == '1' for config in configs) else '用户图像 API'
                 record['logs'].append(f'图像路由：{route}。')

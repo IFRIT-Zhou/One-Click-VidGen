@@ -762,6 +762,18 @@ class RunningHubAccountPool:
         with _ACCOUNT_STATE_LOCK:
             _POWER_EXHAUSTED_ACCOUNT_KEYS.add(config["api_key"])
 
+    def retry_power_exhausted_accounts(self) -> None:
+        """Allow an explicit new attempt to recheck quota, preserving active leases."""
+        with self._condition:
+            keys = {
+                config["api_key"] for config in self._configs
+                if self._inflight.get(config["api_key"], 0) == 0
+            }
+            with _ACCOUNT_STATE_LOCK:
+                _POWER_EXHAUSTED_ACCOUNT_KEYS.difference_update(keys)
+            self._power_exhausted.difference_update(keys)
+            self._condition.notify_all()
+
     def mark_access_denied(self, config: dict[str, str]) -> None:
         with self._condition:
             self._access_denied.add(config["api_key"])
@@ -826,7 +838,8 @@ _SHARED_ACCOUNT_POOLS_LOCK = threading.Lock()
 
 
 def shared_runninghub_account_pool(
-    configs: list[dict[str, str]], *, namespace: str = "default"
+    configs: list[dict[str, str]], *, namespace: str = "default",
+    retry_power_exhausted: bool = False,
 ) -> RunningHubAccountPool:
     """Reuse one round-robin cursor across independently started image tasks.
 
@@ -850,6 +863,8 @@ def shared_runninghub_account_pool(
         if pool is None:
             pool = RunningHubAccountPool(configs)
             _SHARED_ACCOUNT_POOLS[key] = pool
+        if retry_power_exhausted:
+            pool.retry_power_exhausted_accounts()
         return pool
 
 
