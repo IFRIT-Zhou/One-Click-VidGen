@@ -28,6 +28,9 @@ def normalize(request=None):
     return dict(width=1080 if portrait else 1920, height=1920 if portrait else 1080,
                 portrait=portrait, font=font, size=number('size',56 if portrait else 36,20,100),
                 position=number('position',75 if portrait else 95,10,96),
+                x_position=number('x_position',50,5,95),
+                frame_scale=number('frame_scale',1,.25,2),
+                frame_x=number('frame_x',50,0,100), frame_y=number('frame_y',50,0,100),
                 width_percent=number('width_percent',78 if portrait else 92,35,95),
                 max_chars=int(number('max_chars',14 if portrait else 44,6,60)),
                 color=color('color','#ffffff'), outline_color=color('outline_color','#000000'),
@@ -61,7 +64,7 @@ def css(layout):
     p=layout
     background=f"rgba(7,24,52,{p['opacity']})" if p['background'] else 'transparent'
     return f'''html,body{{width:{p['width']}px!important;height:{p['height']}px!important}}
-    #subtitle-overlay{{top:{p['position']}%!important;left:50%!important;width:{p['width_percent']}%!important;height:auto!important;transform:translate(-50%,-50%);padding:0!important;overflow:visible!important}}
+    #subtitle-overlay{{top:{p['position']}%!important;left:{p['x_position']}%!important;width:{p['width_percent']}%!important;height:auto!important;transform:translate(-50%,-50%);padding:0!important;overflow:visible!important}}
     .subtitle-inner{{font-family:"{p['font']}","Microsoft YaHei",sans-serif!important;font-size:{p['size']}px!important;line-height:1.2!important;color:{p['color']}!important;white-space:pre-wrap;overflow-wrap:anywhere;max-height:none!important;max-width:100%!important;background:{background}!important;-webkit-text-stroke:{p['outline']*2}px {p['outline_color']};paint-order:stroke fill;padding:5px 12px!important}}
     ''' + ('.poster-item{left:0!important;top:0!important;width:100%!important;height:100%!important}' if p['portrait'] else '.poster-item{left:2.1875%!important;top:5%!important;width:95.625%!important;height:85%!important}')
 
@@ -139,7 +142,7 @@ Style: Default,{p['font']},{p['size']*ass_font_scale(p['font']):.3f},{col(p['col
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 '''
     events=[]
-    x=p['width']/2;y=p['height']*p['position']/100
+    x=p['width']*p['x_position']/100;y=p['height']*p['position']/100
     for start,end,text in srt_cues(source):
         lines=wrap(text,p).splitlines()
         safe='\\N'.join(line.replace('\\','').replace('{','').replace('}','') for line in lines)

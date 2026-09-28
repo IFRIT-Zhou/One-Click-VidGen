@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.27.2",
-  "release_order": 2026092702,
-  "display_version": "2026.09.27 号池开关记忆修复",
+  "release_id": "2026.09.29.1",
+  "release_order": 2026092901,
+  "display_version": "2026.09.29 动态视频与编辑体验内测更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.27.2/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.27.2/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.29.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.29.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复号池开关刷新或重开页面后恢复关闭的问题；用户选择保存到当前浏览器，打开历史任务、切换阶段及加载预设不再覆盖全局号池开关。进入画面生成仍使用当前开关状态，不会因切换或恢复开关自动重跑或扣费。包含此前配音续跑与动态分镜语义修复。",
-  "content_fingerprint": "32fc72e44b9dbf4f5bc4cb542d43c8e58e8c5c5c2547e2feed671ccad19b513f"
+  "notes": "动态视频与编辑体验内测更新：支持单镜工作流与自定义分辨率、批量尊重单镜配置、运行状态反馈、分镜局部重新规划及生成结果恢复；图文与动态工作区支持宽度调整、模块排序和折叠；优化 API 设置与模型切换；新增成片画面拖动缩放和字幕布局调整，修正字幕尺寸；改进单句配音编辑与后续画面时间轴同步。包含此前号池路由、开关记忆、集群配音续跑等客户问题修复。",
+  "content_fingerprint": "165d7266a4bc80ea2704296349444df0388a7def3d42b0cf9230733f7c9a72ac"
 }

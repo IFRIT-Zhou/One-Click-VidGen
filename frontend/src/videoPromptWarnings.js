@@ -3,7 +3,7 @@
 export function promptWarningSeverity(value) {
   const text = String(value ?? '').trim()
   if (!text || /^(提示词分节标题不完整或顺序不同|分镜图提示词结构或顺序不正确)/.test(text)) return 'format'
-  if (/^(缺少短文字原文|规划了画面短文字，却同时要求全面禁止文字|核心图混入未选用的阶段文字|核心图混入其他阶段文字)/.test(text)) return 'warning'
+  if (/^(少字表达建议：|发言归属冲突|缺少短文字原文|规划了画面短文字，却同时要求全面禁止文字|核心图混入未选用的阶段文字|核心图混入其他阶段文字)/.test(text)) return 'warning'
   // Names, attribution and container wording are lexical comparisons, not a
   // reliable determination that the meaning or speaker is actually wrong.
   return 'info'

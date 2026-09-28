@@ -97,6 +97,9 @@ export function useStudio(w) {
     return createStudioProjectFromRequest({ reset: true })
   }
   const studioPage = ref('home'), studioTab = ref('文案'), studioDrawer = ref('')
+  let servicesReturnPage = 'home'
+  function closeServices(){studioPage.value=servicesReturnPage}
+  watch(studioDrawer, value=>{if(value==='接口与服务'){servicesReturnPage=studioPage.value==='services'?servicesReturnPage:studioPage.value;saveDraft();studioDrawer.value='';studioPage.value='services'}},{flush:'sync'})
   const studioKind = ref('video'), studioError = ref(''), studioBusy = ref(false)
   const dynamicAudioProjectId = ref(''), dynamicAudioBaselineRevision = ref(0)
   const editingDynamicAudio = computed(()=>Boolean(dynamicAudioProjectId.value))
@@ -229,8 +232,10 @@ export function useStudio(w) {
       const existing=await requestJSON('/api/video-studio/by-audio-task/'+encodeURIComponent(studioJob.value.id))
       if(existing.project){
         if(sessionStorage.getItem('ocv-video-audio-edit')===existing.project.id){
-          const audioChanged=Number(w.ttsEditor.value?.revision||0)!==Number(dynamicAudioBaselineRevision.value||0)
-          if(audioChanged)await requestJSON('/api/video-studio/'+existing.project.id+'/sync-audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:existing.project.revision})})
+          // Always ask the backend to compare the canonical audio/SRT files.
+          // Revision-only gating missed recovered or migrated TTS edits whose
+          // manifest revision happened to match the value loaded on entry.
+          await requestJSON('/api/video-studio/'+existing.project.id+'/sync-audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:existing.project.revision})})
           sessionStorage.removeItem('ocv-video-audio-edit')
         }
         sessionStorage.setItem('ocv-video-open',existing.project.id)
@@ -411,5 +416,5 @@ export function useStudio(w) {
     try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
     catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
   }
-return {openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
+return {closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

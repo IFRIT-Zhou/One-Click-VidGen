@@ -10,6 +10,7 @@ from .video_motion_plan import normalize_motion_plan
 from .video_director_contracts import VIDEO_DIRECTOR_REVISION
 from .video_text_policy import normalize_text_mode
 from .video_prompt_notices import has_prompt_warning
+from .video_speech import normalize_turns
 
 
 _DRAFT_FIELDS = ('id', 'slide_ids', 'kind', 'intent', 'action', 'image_prompt', 'video_prompt', 'visual_description')
@@ -50,25 +51,7 @@ def _normalize_speech_turns(value, source_text):
     Keep only bounded, source-anchored records. The original subtitles remain
     available to every director even if a provider omits/malforms these hints.
     """
-    if not isinstance(value, list):
-        return []
-    def compact(text):
-        return ''.join(char for char in text if char.isalnum()).casefold()
-    source = compact(source_text)
-    result = []
-    limits = dict(source_text=2000, speaker=200, addressee=200, mode=40, basis=1200)
-    for item in value[:32]:
-        if not isinstance(item, dict) or any(not isinstance(item.get(key, ''), str)
-                or len(item.get(key, '')) > limit for key, limit in limits.items()):
-            continue
-        turn = {key: item.get(key, '').strip() for key in limits}
-        anchor = compact(turn['source_text'])
-        if not anchor or anchor not in source:
-            continue
-        if turn['mode'] not in {'spoken', 'thought', 'quoted', 'narration', 'unknown'}:
-            turn['mode'] = 'unknown'
-        result.append(turn)
-    return result
+    return normalize_turns(value, source_text)
 
 
 def normalize_shots(raw, scenes, reference_ids=()):
@@ -154,6 +137,8 @@ def normalize_shots(raw, scenes, reference_ids=()):
         if 'speech_turns' in row.get('semantic', {}):
             clean['semantic']['speech_turns'] = _normalize_speech_turns(
                 row['semantic']['speech_turns'], ''.join(by_id[identity]['text'] for identity in ids))
+        if row.get('semantic', {}).get('speech_mode') in ('none', 'dialogue', 'mixed', 'uncertain'):
+            clean['semantic']['speech_mode'] = row['semantic']['speech_mode']
         # Derive from authoritative subtitles; never trust stale/client-provided text.
         clean['source_subtitles'] = [dict(by_id[identity]) for identity in ids]
         if kind == 'video' and row.get('motion_plan') is not None:
@@ -288,7 +273,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         context = create_story_context('\n'.join(s['text'] for s in scenes),
                                        content_mode=parameters.get('content_mode', 'general'),
                                        global_character_prompt=characters, world_prompt=world, require_ai_success=True,
-                                       director_strategy=parameters.get('director_strategy', 'stable'))
+                                       director_strategy=parameters.get('director_strategy', 'stable'), speech_attribution=True)
     context['video_direction'] = {
         'director_revision': VIDEO_DIRECTOR_REVISION,
         'director_strategy': parameters.get('director_strategy', 'stable'),
@@ -350,8 +335,11 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         if checkpoint:
             checkpoint(copy.deepcopy(context), copy.deepcopy(shots), stage)
     preserve('镜头划分')
-    for offset in range(0, len(shots), 6):
-        batch = shots[offset:offset+6]
+    # Keep structured responses below the shared output budget, including
+    # providers that spend part of that budget on reasoning.
+    design_batch_size = 3
+    for offset in range(0, len(shots), design_batch_size):
+        batch = shots[offset:offset+design_batch_size]
         needed = pending(batch, 'core')
         if needed:
             progress(f'Agent 2：设计前段核心场面与按需素材（单图 v2）{offset+1}～{offset+len(batch)}')
@@ -371,6 +359,8 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
                     semantic = update.get('semantic')
                     if isinstance(semantic, dict) and 'speech_turns' in semantic:
                         shot.setdefault('semantic', {})['speech_turns'] = semantic['speech_turns']
+                    if isinstance(semantic, dict) and 'speech_mode' in semantic:
+                        shot.setdefault('semantic', {})['speech_mode'] = semantic['speech_mode']
                     correction = update.get('attribution_correction')
                     shot['attribution_correction'] = ''
                     if isinstance(correction, str) and correction.strip() and len(correction) <= 2000:

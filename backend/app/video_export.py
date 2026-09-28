@@ -7,11 +7,14 @@ import re
 import shutil
 import subprocess
 import threading
+import tempfile
+import base64
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from .subtitle_layout import normalize as normalize_layout, write_ass
 
 from . import video_studio as studio
 from .pipeline import (ffmpeg_binary, ffprobe_binary, probe_media_duration, _subtitle_filter_path,
@@ -24,11 +27,65 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class ExportRequest(BaseModel):
     revision: int
     use_video_audio: bool = True
+    subtitle_layouts: dict | None = None
 
 
-def _run(command, label):
+class LayoutPreviewRequest(BaseModel):
+    subtitle_layouts: dict
+    shot_id: str
+    text: str = '从一段文字开始，让每个想法被看见。'
+    video_render_variant: str = 'both'
+
+
+def presentation(record, layouts=None):
+    params = record.get('creation_parameters') or {}
+    return normalize_layout(dict(
+        video_orientation='portrait' if record.get('settings', {}).get('ratio') == '9:16' else 'landscape',
+        subtitle_layouts=layouts if layouts is not None else params.get('subtitle_layouts', {})))
+
+
+def frame_filter(layout):
+    w, h, scale = layout['width'], layout['height'], layout['frame_scale']
+    sw, sh = max(2, round(w*scale/2)*2), max(2, round(h*scale/2)*2)
+    return (f'setpts=PTS-STARTPTS,scale={sw}:{sh}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[placed];'
+            f'color=c=black:s={w}x{h}:r=30[canvas];'
+            f'[canvas][placed]overlay=x={w*layout["frame_x"]/100:.3f}-overlay_w/2:'
+            f'y={h*layout["frame_y"]/100:.3f}-overlay_h/2:shortest=1,fps=30,format=yuv420p')
+
+
+@router.post('/{identity}/layout-preview')
+def layout_preview(identity: str, data: LayoutPreviewRequest, request: Request):
+    path = studio.directory(studio.require_user(request)['id'], identity)
+    record = studio.read(path)
+    shot = next((s for s in record.get('shots', []) if s['id'] == data.shot_id), None)
+    if not shot:
+        raise HTTPException(404, '预览镜头不存在')
+    try:
+        source = _asset(path, shot.get('image') or shot.get('video'))
+    except ValueError as exc:
+        raise HTTPException(409, '此镜头尚无可用于预览的素材，请先生成或替换图片。') from exc
+    layout = presentation(record, data.subtitle_layouts)
+    with tempfile.TemporaryDirectory(prefix='ocv-layout-preview-') as folder:
+        root = Path(folder)
+        srt = root / 'preview.srt'
+        srt.write_text('1\n00:00:00,000 --> 00:00:05,000\n'+data.text[:160]+'\n', encoding='utf-8')
+        ass = write_ass(srt, root / 'preview.ass', layout)
+        vf = frame_filter(layout)
+        if data.video_render_variant != 'raw':
+            vf += f",ass=filename='{_subtitle_filter_path(ass)}'"
+        output = root / 'frame.png'
+        image_input = ['-loop', '1'] if shot.get('image') else []
+        try:
+            _run([ffmpeg_binary(), '-y', *image_input, '-i', str(source), '-vf', vf, '-frames:v', '1', str(output)], '布局预览', timeout=30)
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(422, '本地布局预览未能完成，请检查素材或稍后重试；布局设置仍然保留。') from exc
+        return dict(image='data:image/png;base64,'+base64.b64encode(output.read_bytes()).decode(),
+                    engine='动态视频 / FFmpeg', width=layout['width'], height=layout['height'])
+
+
+def _run(command, label, timeout=None):
     completed = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace',
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, check=False)
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, check=False, timeout=timeout)
     if completed.returncode:
         detail = (completed.stderr or completed.stdout or 'unknown error').strip()[-3000:]
         raise RuntimeError(f'{label}失败：{detail}')
@@ -105,7 +162,8 @@ def _render(path, record):
     output_root.mkdir(parents=True, exist_ok=True)
     clips = []
     use_video_audio = bool((record.get('export_settings') or {}).get('use_video_audio', True))
-    vf = f'scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p'
+    layout = presentation(record)
+    base_vf = frame_filter(layout)
     for index, shot in enumerate(record['shots'], 1):
         source = _source(path, shot)
         duration = float(shot['end']) - float(shot['start'])
@@ -117,10 +175,29 @@ def _render(path, record):
             if shot.get('video_status') != 'completed':
                 raise ValueError(f'第 {index} 镜动态片段尚未完成')
             command += ['-i', str(source)]
+        vf = base_vf
+        source_duration = duration
+        if shot['kind'] == 'video':
+            source_duration = max(0.001, probe_media_duration(source))
+            # Preserve natural speed when the source is long enough: -t below
+            # simply cuts at the new narration boundary.  If the narration is
+            # longer than the generated clip, uniformly slow the clip instead
+            # of freezing its last frame or forcing the user to regenerate it.
+            if duration > source_duration + 0.03:
+                stretch = duration / source_duration
+                vf = f'setpts={stretch:.9f}*PTS,{base_vf}'
         keep_source_audio = bool(use_video_audio and shot['kind'] == 'video' and _has_audio_stream(source))
         if keep_source_audio:
-            command += ['-map', '0:v:0', '-map', '0:a:0', '-af',
-                        'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad']
+            audio_filter = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo'
+            if duration > source_duration + 0.03:
+                tempo = source_duration / duration
+                factors = []
+                while tempo < 0.5:
+                    factors.append(0.5)
+                    tempo /= 0.5
+                factors.append(tempo)
+                audio_filter += ',' + ','.join(f'atempo={value:.9f}' for value in factors)
+            command += ['-map', '0:v:0', '-map', '0:a:0', '-af', audio_filter + ',apad']
         else:
             command += ['-f', 'lavfi', '-t', f'{duration:.3f}', '-i', 'anullsrc=r=48000:cl=stereo',
                         '-map', '0:v:0', '-map', '1:a:0']
@@ -143,11 +220,11 @@ def _render(path, record):
         audio_args = ['-map', '0:v:0', '-map', '1:a:0']
     _run([ffmpeg_binary(), '-y', '-i', str(assembled), '-i', str(audio), *audio_args,
           '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', str(raw)], '配音与音效合成')
-    srt = _asset(path, 'assets/subtitles.srt')
+    srt = _asset(path, record.get('subtitles', 'assets/subtitles.srt'))
     shutil.copy2(srt, output_root / '最终字幕.srt')
     subtitled = output_root / '最终视频_字幕版.mp4'
-    style = _subtitle_style(record, height)
-    subtitle_filter = f"subtitles=filename='{_subtitle_filter_path(srt)}':charenc=UTF-8:force_style='{style}'"
+    ass = write_ass(srt, work / 'subtitles.ass', layout)
+    subtitle_filter = f"ass=filename='{_subtitle_filter_path(ass)}'"
     _run([ffmpeg_binary(), '-y', '-i', str(raw), '-vf', subtitle_filter, '-c:v', 'libx264', '-preset', 'fast',
           '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', str(subtitled)], '字幕版合成')
     shutil.copy2(audio, output_root / '配音.wav')
@@ -186,7 +263,10 @@ def reconcile_source_job(record, user_id: int) -> bool:
         video_raw=f'/api/video-studio/{project_id}/export/raw',
     )
     job.request['_dynamic_video_project_id'] = project_id
-    job.request['_step_output_dir'] = output_root.name
+    # Keep the guided task's narration workspace stable.  Replacing this with
+    # the final-video folder made later sentence-level TTS edits write into an
+    # export directory that has no editable subtitle timeline.
+    job.request['_dynamic_video_output_dir'] = output_root.name
     job.request['_step_mode_stage'] = 'completed'
     already_synced = (
         job.status == 'completed'
@@ -265,14 +345,22 @@ def start_export(identity: str, data: ExportRequest, request: Request):
         path = studio.directory(user_id, identity)
         record = studio.read(path)
         studio.editable(record, data.revision)
-        if record['status'] not in {'video_review', 'export_failed', 'completed'}:
+        all_static_ready = (bool(record.get('shots')) and
+                            all(shot.get('kind') == 'static' and shot.get('image_status') == 'completed'
+                                for shot in record['shots']))
+        if record['status'] not in {'video_review', 'export_failed', 'completed'} and not (
+                record['status'] == 'video_generation_ready' and all_static_ready):
             raise HTTPException(409, '请先完成全部动态镜头')
+        if not record.get('shots'):
+            raise HTTPException(409, '项目没有可合成的镜头')
         missing = [shot['id'] for shot in record['shots'] if shot['kind']=='video' and shot.get('video_status')!='completed']
         if missing:
             raise HTTPException(409, f'仍有 {len(missing)} 个动态镜头未完成')
         if str(path) in studio.ACTIVE:
             raise HTTPException(409, '此任务正在处理')
         studio.ACTIVE.add(str(path))
+        if data.subtitle_layouts is not None:
+            record.setdefault('creation_parameters', {})['subtitle_layouts'] = data.subtitle_layouts
         record.update(status='exporting', error='', revision=record['revision']+1,
                       export_settings={'use_video_audio': data.use_video_audio})
         record['logs'].append('开始合成动态视频：按字幕时长裁切动态片段并补齐静态镜头；' +

@@ -17,6 +17,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -24,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from . import video_studio as studio
 from .video_model_config import load_config
-from .comfyui_bridge import ComfyUIStopped, run_video_profile, video_profile, video_task_state
+from .comfyui_bridge import ComfyUIStopped, run_video_profile, video_profile, video_task_state, _video_dimensions, VIDEO_RESOLUTION_PRESETS
 from .h3_prompt_agent import H3_SKILL_SOURCE, convert_for_h3
 from .video_director_contracts import enforce_no_auto_subtitles
 from module6_dynamic_video import (
@@ -40,11 +41,77 @@ LOCAL_VIDEO_QUEUES: dict[str, list[str]] = {}
 LOCAL_VIDEO_RUNNING: dict[str, str] = {}
 
 
+class ClipGenerationOptions(BaseModel):
+    backend: Literal['api', 'comfyui']
+    profile_id: str = Field(default='', max_length=80)
+    resolution: Literal['', '480p', '720p', '1080p', 'custom'] = ''
+    width: int | None = Field(default=None, ge=32, le=8192)
+    height: int | None = Field(default=None, ge=32, le=8192)
+    h3_prompt_agent: bool = False
+
+
 class GenerateClips(BaseModel):
     revision: int
     shot_ids: list[str] = Field(default_factory=list, max_length=1000)
     retry_failed: bool = False
     regenerate_completed: bool = False
+    options: ClipGenerationOptions | None = None
+    shot_options: dict[str, ClipGenerationOptions] = Field(default_factory=dict)
+
+
+class SaveClipOptions(BaseModel):
+    revision: int
+    options: ClipGenerationOptions
+
+
+def _resolve_generation_options(record, shot, user_id, override=None):
+    params = record.get('creation_parameters') or {}
+    saved = shot.get('video_generation_options') or {}
+    previous = shot.get('video_request') or {}
+    values = dict(backend=params.get('video_generation_backend') or 'api',
+                  profile_id=params.get('comfyui_profile_id') or '', resolution='',
+                  h3_prompt_agent=bool(params.get('comfyui_h3_prompt_agent')))
+    if not saved and previous:
+        values.update({key: previous[key] for key in ('backend', 'profile_id', 'resolution', 'width', 'height') if key in previous})
+        values['h3_prompt_agent'] = previous.get('prompt_format') == 'h3_ref2va'
+    values.update(saved)
+    if override is not None:
+        values.update(override.model_dump())
+    options = ClipGenerationOptions.model_validate(values).model_dump()
+    if options['backend'] == 'comfyui':
+        profile = video_profile(user_id, options['profile_id'])
+        if options['resolution'] == 'custom' and not (options['width'] and options['height']):
+            raise ValueError('自定义分辨率需要填写宽度与高度')
+    else:
+        options.update(profile_id='', h3_prompt_agent=False)
+        if options['resolution'] not in {'', '480p', '720p'}:
+            raise ValueError('当前视频 API 支持 480p 和 720p')
+    return options
+
+
+@router.put('/{identity}/shots/{shot_id}/generation-options')
+def save_generation_options(identity: str, shot_id: str, data: SaveClipOptions, request: Request):
+    with studio.LOCK:
+        user_id = int(studio.require_user(request)['id'])
+        path = studio.directory(user_id, identity)
+        record = studio.read(path)
+        studio.editable(record, data.revision)
+        if str(path) in studio.ACTIVE:
+            raise HTTPException(409, '任务正在生成，请在结束后保存配置')
+        shot = studio._find_shot(record, shot_id)
+        if shot.get('kind') != 'video':
+            raise HTTPException(400, '静态镜头不需要视频生成配置')
+        if shot.get('video_request') and not shot.get('video_terminal') and shot.get('video_status') != 'completed':
+            raise HTTPException(409, '原任务尚未确认结束，请先继续查询原任务')
+        try:
+            options = _resolve_generation_options(record, shot, user_id, data.options)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        shot['video_generation_options'] = options
+        record['revision'] += 1
+        record.setdefault('logs', []).append(f'{shot_id}：已保存下次生成配置；现有视频保持不变。')
+        studio.save(path, record)
+        return record
 
 
 class VideoHistoryAction(BaseModel):
@@ -235,7 +302,7 @@ def _freeze_request(path, record, shot, config):
     if shot.get('video_attempt'):
         shot.setdefault('video_history', []).append({key: copy.deepcopy(shot.get(key)) for key in (
             'video_attempt', 'video_task_id', 'video_state_file', 'video_request', 'video', 'video_error')})
-    shot.update(video_attempt=attempt, video_request=snapshot, video=f'{relative}/clip.mp4',
+    shot.update(video_attempt=attempt, video_backend='api', video_request=snapshot, video=f'{relative}/clip.mp4',
                 video_state_file=f'{relative}/task.json', video_task_id='', video_terminal=False,
                 video_resume_available=False, video_status='pending', video_error='', video_version='',
                 video_resolution=config['resolution'], video_execution_started=False)
@@ -257,7 +324,7 @@ def _prompt_with_reference_audio(prompt: str, *, lipsync: bool) -> str:
 
 
 def _freeze_local_request(path, record, shot, profile_id, *, prompt=None, prompt_format='generic',
-                          include_reference_audio=False):
+                          include_reference_audio=False, resolution='', dimensions=None):
     """Freeze one local request without cloud task identity or billing state."""
     core = _inputs(path, record, shot)[0]
     source_prompt = str(shot.get('video_prompt') or '').strip()
@@ -279,6 +346,10 @@ def _freeze_local_request(path, record, shot, profile_id, *, prompt=None, prompt
                     ratio=record['settings'].get('ratio') or '16:9',
                     reference_files=[f'{relative}/references/core.jpg'],
                     seed=uuid.uuid4().int % (2**63 - 1))
+    if resolution:
+        snapshot['resolution'] = resolution
+    if dimensions:
+        snapshot['width'], snapshot['height'] = dimensions
     if prompt_format == 'h3_ref2va':
         snapshot['h3_skill_source'] = H3_SKILL_SOURCE
     target.mkdir(parents=True, exist_ok=False)
@@ -302,7 +373,8 @@ def _freeze_local_request(path, record, shot, profile_id, *, prompt=None, prompt
     shot.update(video_attempt=attempt, video_backend='comfyui', video_request=snapshot,
                 video=f'{relative}/clip.mp4', video_state_file='', video_task_id='',
                 video_terminal=True, video_resume_available=False, video_status='pending',
-                video_error='', video_version='', video_execution_started=False)
+                video_error='', video_version='', video_execution_started=False,
+                video_resolution=resolution)
 
 
 def _recover_local_prompt_id(record, shot):
@@ -336,12 +408,13 @@ def _enqueue_local_videos(path, identities):
 
 
 def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_agent=False,
-                        use_reference_audio=False):
+                        use_reference_audio=False, api_configs=None):
     cancelled = threading.Event()
     worker_key = str(path)
     studio.ACTIVE.add(worker_key)
     studio.CANCEL_EVENTS[worker_key] = cancelled
     LOCAL_VIDEO_QUEUES[worker_key] = list(dict.fromkeys(identities))
+    default_profile_id, default_h3_agent = profile_id, use_h3_agent
 
     def worker():
         try:
@@ -354,6 +427,14 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     LOCAL_VIDEO_RUNNING[worker_key] = identity
                 if cancelled.is_set():
                     break
+                if api_configs and identity in api_configs:
+                    with studio.LOCK:
+                        current = studio.read(path)
+                        studio._find_shot(current, identity)['video_queued'] = False
+                        studio.save(path, current)
+                    if not _process_api_clip(path, identity, api_configs[identity], cancelled, threading.Event()):
+                        break
+                    continue
                 status, error = 'completed', ''
                 # Prompt conversion and request freezing happen inside the worker.
                 # Therefore a slow/failed language call cannot block the HTTP
@@ -361,8 +442,15 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                 with studio.LOCK:
                     current = studio.read(path)
                     shot = studio._find_shot(current, identity)
+                    options = shot.get('video_generation_options') or {}
+                    profile_id = options.get('profile_id') or default_profile_id
+                    use_h3_agent = bool(options.get('h3_prompt_agent', default_h3_agent))
+                    resolution = str(options.get('resolution') or '')
                     resume_prompt_id = _recover_local_prompt_id(current, shot) if shot.get('video_request') else ''
-                    shot.update(video_status='pending', video_error='', video_execution_started=False)
+                    shot.update(video_status='running', video_error='', video_execution_started=False, video_queued=False,
+                                video_started_at=time.time(), video_finished_at=None,
+                                video_progress_message='正在查询原 ComfyUI 任务' if resume_prompt_id else
+                                '正在转换 H3 提示词' if use_h3_agent else '正在准备工作流与参考素材')
                     if resume_prompt_id:
                         current['logs'].append(f'{identity}：发现原 ComfyUI 任务 {resume_prompt_id}，将续查并下载，不会重复提交。')
                     elif use_h3_agent:
@@ -401,6 +489,11 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                             studio.save(path, current)
 
                 try:
+                    if resume_prompt_id:
+                        previous = shot.get('video_request') or {}
+                        if (previous.get('profile_id') != profile_id or
+                                (previous.get('resolution') and resolution and previous['resolution'] != resolution)):
+                            raise ValueError('原 ComfyUI 任务仍可能运行或已有结果，请先按原配置查询；确认结束后再更换配置重新生成。')
                     h3_prompt = None
                     h3_source = ''
                     shot_reference_audio = False
@@ -442,14 +535,22 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                                         h3_prompt_skill=H3_SKILL_SOURCE)
                             current['logs'].append(f'{identity}：H3 专用提示词已生成并缓存；通用提示词保持不变。')
                         if not resume_prompt_id:
+                            profile = video_profile(user_id, profile_id)
+                            if resolution:
+                                profile = {**profile, 'resolution_preset': resolution}
+                            dimensions = _video_dimensions(profile, current['settings'].get('ratio') or '16:9')
+                            if resolution == 'custom':
+                                dimensions = (int(options['width']), int(options['height']))
                             _freeze_local_request(
                                 path, current, shot, profile_id,
                                 prompt=h3_prompt if use_h3_agent else effective_source_prompt,
                                 prompt_format='h3_ref2va' if use_h3_agent else 'generic',
                                 include_reference_audio=shot_reference_audio,
+                                resolution=resolution if resolution in {*VIDEO_RESOLUTION_PRESETS, 'custom'} else '',
+                                dimensions=dimensions,
                             )
                             shot.update(video_status='running', video_error='', video_execution_started=True)
-                            current['logs'].append(f'{identity}：开始调用本地 ComfyUI，使用预设 {profile_id}，本地任务串行执行。')
+                            current['logs'].append(f'{identity}：开始调用本地 ComfyUI，使用预设“{profile.get("name") or profile_id}”，实际分辨率 {dimensions[0]} × {dimensions[1]}，本地任务串行执行。')
                             current['revision'] += 1
                             studio.save(path, current)
                             snapshot = copy.deepcopy(shot)
@@ -461,6 +562,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                 def progress(message):
                     with studio.LOCK:
                         latest = studio.read(path)
+                        studio._find_shot(latest, identity)['video_progress_message'] = str(message)[:1800]
                         latest['logs'].append(f'{identity}：{str(message)[:1800]}')
                         studio.save(path, latest)
 
@@ -485,6 +587,8 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                         progress=progress, should_stop=cancelled.is_set,
                         existing_prompt_id=resume_prompt_id, on_submitted=submitted,
                         audio_path=reference_audio,
+                        resolution=saved.get('resolution') or '',
+                        dimensions=(int(saved['width']), int(saved['height'])) if saved.get('width') and saved.get('height') else None,
                     )
                 except ComfyUIStopped as exc:
                     if status == 'completed':
@@ -496,6 +600,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     live = studio._find_shot(latest, identity)
                     live.update(video_status=status, video_error=error,
                                 video_resume_available=False, video_terminal=True)
+                    live.update(video_finished_at=time.time(), video_progress_message='已完成，可试看' if status == 'completed' else error)
                     if status == 'completed':
                         live['video_version'] = _video_version(_asset(path, live['video']))
                         latest['logs'].append(f'{identity}：本地 ComfyUI 视频已生成并归档，可直接预览。')
@@ -518,13 +623,21 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                 try:
                     current = studio.read(path)
                     for shot in current['shots']:
+                        shot.pop('video_queued', None)
                         if shot.get('video_status') == 'running':
-                            shot.update(video_status='failed', video_error='本地 ComfyUI 处理已中断，可重新生成。',
-                                        video_resume_available=False, video_terminal=True)
+                            if api_configs and shot['id'] in api_configs:
+                                shot.update(video_status='unknown', video_error='本地处理中断，请继续查询原任务。')
+                                try:
+                                    _sync_identity(path, shot)
+                                except ValueError:
+                                    shot['video_resume_available'] = False
+                            else:
+                                shot.update(video_status='failed', video_error='本地 ComfyUI 处理已中断，可重新生成。',
+                                            video_resume_available=False, video_terminal=True)
                     completed = sum(shot.get('video_status') == 'completed' for shot in current['shots'] if shot['kind'] == 'video')
                     total = sum(shot['kind'] == 'video' for shot in current['shots'])
                     current.update(status='video_review', revision=current['revision'] + 1)
-                    current['logs'].append(f'本地动态片段已完成 {completed}/{total}。请逐镜预览；静态镜头保留核心图。')
+                    current['logs'].append(f'动态片段已完成 {completed}/{total}。请逐镜预览；静态镜头保留核心图。')
                     studio.save(path, current)
                 finally:
                     LOCAL_VIDEO_QUEUES.pop(worker_key, None)
@@ -619,6 +732,83 @@ def _config_for_shot(config, shot, fallback=0):
     return {**config, 'api_key': key}
 
 
+def _process_api_clip(path, identity, config, cancelled, halted):
+    if cancelled.is_set() or halted.is_set():
+        return False
+    with studio.LOCK:
+        current = studio.read(path)
+        shot = studio._find_shot(current, identity)
+        shot.update(video_status='running', video_error='')
+        shot.update(video_started_at=time.time(), video_finished_at=None, video_progress_message='正在准备并提交视频请求')
+        current['logs'].append(f'{identity}：开始处理动态镜头，使用 {shot["duration"]} 秒，请求 {shot["video_request"]["duration"]} 秒。')
+        current['revision'] += 1
+        studio.save(path, current)
+        snapshot = copy.deepcopy(shot)
+    def progress(message):
+        with studio.LOCK:
+            latest = studio.read(path)
+            live = studio._find_shot(latest, identity)
+            _sync_identity(path, live)
+            live['video_progress_message'] = _safe_message(message, config)
+            latest['logs'].append(f'{identity}：{_safe_message(message, config)}')
+            studio.save(path, latest)
+    status, error = 'completed', ''
+    try:
+        saved = snapshot['video_request']
+        if (config['base_url'].rstrip('/') != saved['base_url'].rstrip('/')
+                or config['submit_path'] != saved['submit_path']
+                or config.get('query_path') != saved.get('query_path', config.get('query_path'))
+                or config.get('upload_path') != saved.get('upload_path', config.get('upload_path'))):
+            raise ValueError('原视频任务使用另一套接口配置，请恢复原配置后继续查询，不会重新付费提交')
+        provider = RunningHubVideoProvider(config['api_key'], base_url=saved['base_url'],
+                                           submit_path=saved['submit_path'],
+                                           query_path=saved.get('query_path'),
+                                           upload_path=saved.get('upload_path'))
+        frozen_request = _request(path, snapshot)
+        validate_request(frozen_request)
+        if cancelled.is_set():
+            raise DynamicVideoStopped('尚未开始提交，已停止本地处理。')
+        with studio.LOCK:
+            latest = studio.read(path)
+            live = studio._find_shot(latest, identity)
+            live['video_execution_started'] = True
+            studio.save(path, latest)
+        provider.run(frozen_request, _state_path(path, snapshot),
+                     progress=progress, should_stop=cancelled.is_set)
+    except DynamicVideoStopped as exc:
+        status, error = 'stopped', _safe_message(exc, config)
+    except DynamicVideoTaskFailed as exc:
+        status, error = 'failed', _safe_message(exc, config)
+    except Exception as exc:
+        status, error = 'unknown', _safe_message(exc, config)
+    with studio.LOCK:
+        latest = studio.read(path)
+        live = studio._find_shot(latest, identity)
+        live.update(video_status=status, video_error=error)
+        live.update(video_finished_at=time.time(), video_progress_message='已完成，可试看' if status == 'completed' else error)
+        try:
+            state = _sync_identity(path, live)
+            if live.get('video_terminal'):
+                live['video_status'] = 'failed'
+            elif status == 'unknown' and not state:
+                live['video_status'] = 'pending'
+        except ValueError as exc:
+            live.update(video_status='unknown', video_resume_available=False, video_terminal=False,
+                        video_error=str(exc))
+        if live['video_status'] == 'completed':
+            output = _asset(path, live['video'])
+            live['video_version'] = _video_version(output)
+            live['video_resume_available'] = False
+            latest['logs'].append(f'{identity}：视频已下载，可直接预览。')
+        else:
+            latest['logs'].append(f'{identity}：{live["video_error"] or "已停止，本镜头资产已保留"}')
+        latest['revision'] += 1
+        studio.save(path, latest)
+    if status != 'completed':
+        halted.set()
+    return status == 'completed'
+
+
 def _start_worker(path, record, identities, configs):
     cancelled = threading.Event()
     halted = threading.Event()
@@ -626,77 +816,7 @@ def _start_worker(path, record, identities, configs):
     studio.CANCEL_EVENTS[str(path)] = cancelled
 
     def process(identity, config):
-        if cancelled.is_set() or halted.is_set():
-            return False
-        with studio.LOCK:
-            current = studio.read(path)
-            shot = studio._find_shot(current, identity)
-            shot.update(video_status='running', video_error='')
-            current['logs'].append(f'{identity}：开始处理动态镜头，使用 {shot["duration"]} 秒，请求 {shot["video_request"]["duration"]} 秒。')
-            current['revision'] += 1
-            studio.save(path, current)
-            snapshot = copy.deepcopy(shot)
-        def progress(message):
-            with studio.LOCK:
-                latest = studio.read(path)
-                live = studio._find_shot(latest, identity)
-                _sync_identity(path, live)
-                latest['logs'].append(f'{identity}：{_safe_message(message, config)}')
-                studio.save(path, latest)
-        status, error = 'completed', ''
-        try:
-            saved = snapshot['video_request']
-            if (config['base_url'].rstrip('/') != saved['base_url'].rstrip('/')
-                    or config['submit_path'] != saved['submit_path']
-                    or config.get('query_path') != saved.get('query_path', config.get('query_path'))
-                    or config.get('upload_path') != saved.get('upload_path', config.get('upload_path'))):
-                raise ValueError('原视频任务使用另一套接口配置，请恢复原配置后继续查询，不会重新付费提交')
-            provider = RunningHubVideoProvider(config['api_key'], base_url=saved['base_url'],
-                                               submit_path=saved['submit_path'],
-                                               query_path=saved.get('query_path'),
-                                               upload_path=saved.get('upload_path'))
-            frozen_request = _request(path, snapshot)
-            validate_request(frozen_request)
-            if cancelled.is_set():
-                raise DynamicVideoStopped('尚未开始提交，已停止本地处理。')
-            with studio.LOCK:
-                latest = studio.read(path)
-                live = studio._find_shot(latest, identity)
-                live['video_execution_started'] = True
-                studio.save(path, latest)
-            provider.run(frozen_request, _state_path(path, snapshot),
-                         progress=progress, should_stop=cancelled.is_set)
-        except DynamicVideoStopped as exc:
-            status, error = 'stopped', _safe_message(exc, config)
-        except DynamicVideoTaskFailed as exc:
-            status, error = 'failed', _safe_message(exc, config)
-        except Exception as exc:
-            status, error = 'unknown', _safe_message(exc, config)
-        with studio.LOCK:
-            latest = studio.read(path)
-            live = studio._find_shot(latest, identity)
-            live.update(video_status=status, video_error=error)
-            try:
-                state = _sync_identity(path, live)
-                if live.get('video_terminal'):
-                    live['video_status'] = 'failed'
-                elif status == 'unknown' and not state:
-                    live['video_status'] = 'pending'
-            except ValueError as exc:
-                live.update(video_status='unknown', video_resume_available=False, video_terminal=False,
-                            video_error=str(exc))
-            if live['video_status'] == 'completed':
-                output = _asset(path, live['video'])
-                live['video_version'] = _video_version(output)
-                live['video_resume_available'] = False
-                latest['logs'].append(f'{identity}：视频已下载，可直接预览。')
-            else:
-                latest['logs'].append(f'{identity}：{live["video_error"] or "已停止，本镜头资产已保留"}')
-            latest['revision'] += 1
-            studio.save(path, latest)
-        if status != 'completed':
-            halted.set()
-        return status == 'completed'
+        return _process_api_clip(path, identity, config, cancelled, halted)
 
     def worker():
         try:
@@ -745,127 +865,132 @@ def _start_worker(path, record, identities, configs):
 @router.post('/{identity}/videos/generate')
 def generate(identity: str, data: GenerateClips, request: Request):
     with studio.LOCK:
-        path = studio.directory(studio.require_user(request)['id'], identity)
+        user_id = int(studio.require_user(request)['id'])
+        path = studio.directory(user_id, identity)
         record = studio.read(path)
-        backend = str(record.get('creation_parameters', {}).get('video_generation_backend') or 'api')
-        local_queue_append = (backend == 'comfyui' and str(path) in studio.ACTIVE
-                              and record.get('status') == 'video_generating')
+        if data.options and (len(data.shot_ids) != 1 or data.shot_options):
+            raise HTTPException(400, '单镜配置只能用于一个明确选择的镜头')
+        catalog = {shot['id']: shot for shot in record['shots']}
+        if len(set(data.shot_ids)) != len(data.shot_ids) or any(key not in catalog for key in data.shot_ids):
+            raise HTTPException(400, '选择的镜头不存在或重复')
+        if set(data.shot_options) - set(data.shot_ids):
+            raise HTTPException(400, '镜头配置与本次选择不一致')
+        if any(catalog[key]['kind'] != 'video' for key in data.shot_ids):
+            raise HTTPException(400, '静态镜头不需要生成视频')
+        if data.regenerate_completed and not data.shot_ids:
+            raise HTTPException(400, '重新生成必须明确选择镜头')
+        selected = [shot for shot in record['shots'] if shot['kind'] == 'video'
+                    and (not data.shot_ids or shot['id'] in data.shot_ids)
+                    and (data.regenerate_completed or shot.get('video_status') != 'completed')]
+        if not selected:
+            raise HTTPException(409, '没有需要生成的动态镜头')
+        try:
+            resolved = {shot['id']: _resolve_generation_options(
+                record, shot, user_id, data.options or data.shot_options.get(shot['id'])) for shot in selected}
+            backends = {options['backend'] for options in resolved.values()}
+            backend = next(iter(backends)) if len(backends) == 1 else 'mixed'
+            config = load_config() if 'api' in backends else {}
+            if 'api' in backends and not str(config.get('api_key') or '').strip():
+                raise ValueError('请先到“接口与服务”保存视频 API 配置')
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        local_queue_append = (backend == 'comfyui' and
+                              record.get('active_video_backend') in {'comfyui', 'mixed'} and
+                              str(path) in studio.ACTIVE and record.get('status') == 'video_generating')
         if local_queue_append:
             if int(record.get('revision') or 0) != data.revision:
                 raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
-            if studio.project_has_image_edits(record['id']):
-                raise HTTPException(409, '核心分镜图正在重绘，请等待完成后再生成对应视频')
         else:
             studio.editable(record, data.revision)
             if record['status'] not in VIDEO_GENERATION_ENTRY_STAGES:
                 raise HTTPException(409, '请先确认核心分镜图，再生成动态镜头')
         if (str(path) in studio.ACTIVE and not local_queue_append) or studio.project_has_image_edits(record['id']):
             raise HTTPException(409, '此任务正在处理，请稍后重试')
-        catalog = {shot['id']: shot for shot in record['shots']}
-        if len(set(data.shot_ids)) != len(data.shot_ids) or any(identity not in catalog for identity in data.shot_ids):
-            raise HTTPException(400, '选择的镜头不存在或重复')
-        if data.shot_ids and any(catalog[identity]['kind'] != 'video' for identity in data.shot_ids):
-            raise HTTPException(400, '静态镜头保留图片，不需要提交视频生成')
-        if data.regenerate_completed:
-            if not data.shot_ids:
-                raise HTTPException(400, '重新生成必须明确选择镜头')
-            rerolls = [catalog[shot_id] for shot_id in data.shot_ids]
-            if local_queue_append and any(shot['id'] == LOCAL_VIDEO_RUNNING.get(str(path)) for shot in rerolls):
-                raise HTTPException(409, '当前镜头已经在生成中，不能重复加入队列')
-            for shot in rerolls:
-                # "Regenerate all" means a genuinely fresh pass regardless of
-                # whether the previous attempt completed, failed, stopped, is
-                # resumable, or was only frozen but never submitted.
-                studio._invalidate_shot_video(
-                    record, shot, '用户保留当前核心图与提示词，要求重新生成本镜动态片段')
-        selected = [shot for shot in record['shots'] if shot['kind'] == 'video'
-                    and (not data.shot_ids or shot['id'] in data.shot_ids)
-                    and shot.get('video_status') != 'completed']
-        if not selected:
-            raise HTTPException(409, '没有需要生成的动态镜头；已完成视频不会重复提交')
-        if backend == 'comfyui':
-            profile_id = str(record.get('creation_parameters', {}).get('comfyui_profile_id') or '')
-            try:
-                user_id = int(studio.require_user(request)['id'])
-                profile = video_profile(user_id, profile_id)
-                # Validate all shots before starting the background worker. The
-                # worker converts/finalizes one prompt and freezes its inputs
-                # immediately before that specific local GPU task.
-                for shot in selected:
-                    _inputs(path, record, shot)
-                    if not str(shot.get('video_prompt') or '').strip():
-                        raise ValueError(f'{shot["id"]} 的视频提示词为空')
-                use_h3_agent = bool(record.get('creation_parameters', {}).get('comfyui_h3_prompt_agent'))
-                use_reference_audio = bool(record.get('creation_parameters', {}).get('comfyui_reference_audio'))
-                mappings = profile.get('mappings') or {}
-                audio_binding = mappings.get('audio') if isinstance(mappings, dict) else None
-                audio_shots = ([shot for shot in selected if shot.get('reference_audio_enabled', True)]
-                               if not use_h3_agent else [])
-                if use_reference_audio and audio_shots and not (isinstance(audio_binding, dict) and
-                                                audio_binding.get('node_id') and audio_binding.get('input_name')):
-                    raise ValueError('当前 ComfyUI 预设没有映射参考音频节点，请先在工作台配置“参考音频”')
-                if local_queue_append:
-                    added = _enqueue_local_videos(path, [shot['id'] for shot in selected])
-                    if not added:
-                        raise HTTPException(409, '所选镜头已在生成或等待队列中，无需重复添加')
-                    for shot_id in added:
-                        queued = catalog[shot_id]
-                        queued.update(video_status='pending', video_error='', video_terminal=False)
-                    record['logs'].append(
-                        f'已将 {len(added)} 个镜头追加到本地 ComfyUI 队列；当前镜头完成后将按点击顺序继续生成。')
-                else:
-                    record['logs'].append(
-                        f'用户确认处理 {len(selected)} 个动态镜头；使用本地 ComfyUI 预设“{profile.get("name") or profile_id}”，'
-                        f'{"启用 H3 提示词转换 Agent，" if use_h3_agent else ""}'
-                        f'{f"其中 {len(audio_shots)} 镜注入对应 TTS 参考音频，" if use_reference_audio and audio_shots else ""}为控制显存按镜头串行生成。'
-                    )
-                record.update(status='video_generating', error='', revision=record['revision'] + 1)
-                studio.save(path, record)
-                if not local_queue_append:
-                    _start_local_worker(path, record, [shot['id'] for shot in selected], user_id, profile_id,
-                                        use_h3_agent=use_h3_agent, use_reference_audio=use_reference_audio)
-            except (ValueError, OSError) as exc:
-                raise HTTPException(400, str(exc)) from exc
-            return record
+        profiles = {}
+        use_reference_audio = bool(record.get('creation_parameters', {}).get('comfyui_reference_audio'))
+        # Validate every selected configuration before invalidating any asset or starting work.
         try:
-            config = load_config()
-            if not str(config.get('api_key') or '').strip():
-                raise ValueError('请先保存视频 API 配置，或明确确认复用兼容的图像 API 密钥')
-            # Validate every selected shot before scheduling any paid work.
             for shot in selected:
-                state = _sync_identity(path, shot)
-                if state is not None:
-                    if shot.get('video_terminal'):
-                        if not data.retry_failed:
-                            raise ValueError('所选镜头有云端已确认失败的任务；请单独选择“重新付费生成”，不会自动重试')
-                    elif not state.get('task_id') and not shot.get('video_not_submitted'):
-                        raise ValueError('有提交结果未知且没有任务编号的镜头，请向服务商核实；禁止自动重新提交')
-                    else:
-                        validate_request(_request(path, shot))
-                        continue
-                elif shot.get('video_request'):
-                    validate_request(_request(path, shot))
-                    continue
+                options = resolved[shot['id']]
+                if local_queue_append and (shot['id'] == LOCAL_VIDEO_RUNNING.get(str(path)) or shot['id'] in LOCAL_VIDEO_QUEUES.get(str(path), [])):
+                    raise ValueError('此镜头已在生成队列中，不能修改配置或重复添加')
+                previous = shot.get('video_request') or {}
+                if previous and not data.regenerate_completed and not shot.get('video_terminal'):
+                    previous_backend = previous.get('backend') or shot.get('video_backend') or 'api'
+                    if previous_backend != options['backend']:
+                        raise ValueError('原任务尚未确认结束，请先查询原任务；不能更换配置后重复提交')
+                    explicit = data.options or data.shot_options.get(shot['id'])
+                    if explicit:
+                        if options['backend'] == 'comfyui':
+                            profile = video_profile(user_id, options['profile_id'])
+                            chosen = {**profile, **({'resolution_preset': options['resolution']} if options['resolution'] else {})}
+                            dimensions = ((options['width'], options['height']) if options['resolution'] == 'custom'
+                                          else _video_dimensions(chosen, record['settings'].get('ratio') or '16:9'))
+                            if previous.get('profile_id') != options['profile_id'] or (previous.get('width') and dimensions != (previous['width'], previous['height'])):
+                                raise ValueError('原任务尚未确认结束，不能更换配置后重复提交')
+                        elif previous.get('resolution') != (options['resolution'] or config['resolution']):
+                            raise ValueError('原任务尚未确认结束，不能更换分辨率后重复提交')
                 _inputs(path, record, shot)
-                validate_request(VideoGenerationRequest(str(shot.get('video_prompt') or ''),
-                    _inputs(path, record, shot), path / 'unused.mp4', shot.get('generation_duration'),
-                    record['settings'].get('ratio') or '16:9', config['resolution']))
-            for index, shot in enumerate(selected):
+                if not str(shot.get('video_prompt') or '').strip():
+                    raise ValueError(f'{shot["id"]} 的视频提示词为空')
+                if options['backend'] == 'comfyui':
+                    profile = profiles.setdefault(options['profile_id'], video_profile(user_id, options['profile_id']))
+                    binding = (profile.get('mappings') or {}).get('audio') or {}
+                    if use_reference_audio and not options['h3_prompt_agent'] and shot.get('reference_audio_enabled', True) and not (binding.get('node_id') and binding.get('input_name')):
+                        raise ValueError(f'{shot["id"]} 的工作流没有映射参考音频节点')
+                elif not previous or data.regenerate_completed or shot.get('video_terminal'):
+                    validate_request(VideoGenerationRequest(str(shot.get('video_prompt') or ''),
+                        _inputs(path, record, shot), path / 'unused.mp4', shot.get('generation_duration'),
+                        record['settings'].get('ratio') or '16:9', options['resolution'] or config['resolution']))
+                if options['backend'] == 'api' and not data.regenerate_completed and (not previous or previous.get('backend', shot.get('video_backend') or 'api') == 'api'):
+                    state = _sync_identity(path, shot)
+                    if state is not None and shot.get('video_terminal') and not data.retry_failed:
+                        raise ValueError('所选镜头有已确认失败的云端任务；请明确选择重新生成')
+                    if state is not None and not shot.get('video_terminal') and not state.get('task_id') and not shot.get('video_not_submitted'):
+                        raise ValueError('有提交结果未知的镜头，请先核实原任务')
+                    if previous and not shot.get('video_terminal'):
+                        validate_request(_request(path, shot))
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, _safe_message(exc, config)) from exc
+        execution_configs = {}
+        for index, shot in enumerate(selected):
+            options = resolved[shot['id']]
+            if data.regenerate_completed:
+                studio._invalidate_shot_video(record, shot, '用户要求重新生成本镜动态片段，保留本镜配置')
+            elif shot.get('video_request') and shot.get('video_terminal') and (shot['video_request'].get('backend') or shot.get('video_backend') or 'api') != options['backend']:
+                studio._invalidate_shot_video(record, shot, '用户切换本镜视频生成方式')
+            shot['video_generation_options'] = options
+            if options['backend'] == 'api':
+                per_shot = {**config, 'resolution': options['resolution'] or config['resolution']}
                 if not shot.get('video_request') or shot.get('video_terminal'):
-                    fresh_config = {**config, 'api_key': _account_slots(config)[index % len(_account_slots(config))]}
-                    _freeze_request(path, record, shot, fresh_config)
-                    # If preparing a later shot fails or the app closes, preserve
-                    # each already-frozen (not yet paid) request for the next click.
+                    fresh = {**per_shot, 'api_key': _account_slots(config)[index % len(_account_slots(config))]}
+                    _freeze_request(path, record, shot, fresh)
                     record['revision'] += 1
                     studio.save(path, record)
-            execution_configs = {shot['id']: _config_for_shot(config, shot, index)
-                                 for index, shot in enumerate(selected)}
-            record.update(status='video_generating', error='', revision=record['revision'] + 1)
-            record['logs'].append(f'用户确认处理 {len(selected)} 个动态镜头；按接口设置并行处理，遇到失败即停止尚未启动的镜头，完成项不重复生成。')
-            studio.save(path, record)
-            _start_worker(path, record, [shot['id'] for shot in selected], execution_configs)
-        except (ValueError, OSError) as exc:
-            raise HTTPException(400, _safe_message(exc, locals().get('config', {}))) from exc
+                execution_configs[shot['id']] = _config_for_shot(per_shot, shot, index)
+            if backend != 'api':
+                shot['video_queued'] = True
+        if local_queue_append:
+            added = _enqueue_local_videos(path, [shot['id'] for shot in selected])
+            for shot in selected:
+                shot.update(video_status='pending', video_error='', video_terminal=False)
+            record['logs'].append(f'已按各镜头保存的配置追加 {len(added)} 个镜头到本地队列。')
+        else:
+            record['logs'].append(f'按各镜头配置处理 {len(selected)} 个镜头；' +
+                                 ('视频 API 按接口并发运行。' if backend == 'api' else '本地或混合批次依次运行。'))
+        record.update(status='video_generating',
+                      active_video_backend=record.get('active_video_backend', backend) if local_queue_append else backend,
+                      error='', revision=record['revision'] + 1)
+        studio.save(path, record)
+        if not local_queue_append:
+            if backend == 'api':
+                _start_worker(path, record, [shot['id'] for shot in selected], execution_configs)
+            else:
+                local_options = next(options for options in resolved.values() if options['backend'] == 'comfyui')
+                kwargs = {'api_configs': execution_configs} if execution_configs else {}
+                _start_local_worker(path, record, [shot['id'] for shot in selected], user_id,
+                                    local_options['profile_id'], use_h3_agent=local_options['h3_prompt_agent'],
+                                    use_reference_audio=use_reference_audio, **kwargs)
         return record
 
 
@@ -879,7 +1004,7 @@ def stop(identity: str, request: Request):
             if event is not None:
                 event.set()
                 record.update(status='video_stopping', revision=record['revision'] + 1)
-                if record.get('creation_parameters', {}).get('video_generation_backend') == 'comfyui':
+                if (record.get('active_video_backend') or record.get('creation_parameters', {}).get('video_generation_backend')) == 'comfyui':
                     record['logs'].append('已请求停止本地 ComfyUI 当前任务，并且不再提交后续镜头。')
                 else:
                     record['logs'].append('已请求停止本地处理，不再提交后续镜头；已提交的云端付费任务不能保证撤销。')

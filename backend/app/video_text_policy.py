@@ -32,6 +32,13 @@ VISUAL_FIRST_CONTRACT = """【动态视频表达模式：画面优先·少字表
 若一个简短反应词、关键评价或必要标注比纯图案更直接准确，可以主动选用，不需要等用户逐字授权；
 但短句并不自动必要，保留的字应承担画面难以替代的信息，而不是重复观众已经看懂的动作。
 不把完整口播、长篇对白或整段旁白解释排进对话气泡、想象气泡、说明框或标题中；
+配音已经承担完整句子的解释；画面只补充可见信息。转述、比较、反问和评价优先用对应主体的
+动作、表情、具体物体或图案关系表达，不将引语原句写进气泡。图案须具体可绘制，不能仅写
+“抽象内容/报道剪影/思考图案”让下游猜测；例如媒体转述可用无字报纸版式、麦克风与报道对象
+的示意图，质疑可用人物对照观察和问号图形，不必再叠加完整提问。
+反应词通常2～4字即可；更长时先检查能否改为图案。不要机械截短原句造成歧义，也不要把
+长中文改成英文、拼音或多个短气泡。图案内的报纸、屏幕等只用无字线条和图形，除非原文
+或用户确实需要可读标签；菜单、店招等必要场景文字仍按下文规则保留。
 不要把同一段口播拆成多个短字气泡绕过这个要求，也不把带字气泡当默认表达工具。
 按当前语义选择尽量少、尽量简短且准确的文字，不按固定字数、固定气泡数或关键词模板机械裁切。
 若想象确实有助于表达，可以用少量有归属的图案气泡，内部写清实际要画的景观、场景或物体，
@@ -131,4 +138,17 @@ def visual_first_prompt_issues(prompt: str, plan: Any) -> list[str]:
         if text in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
             continue
         issues.append(f'擅自新增未入选的画中文字“{text}”；应改用动作、表情或具体图案')
+    return list(dict.fromkeys(issues))
+
+
+def visual_first_long_text_issues(prompt: str) -> list[str]:
+    """Check explicit visible prose even before a motion plan exists."""
+    issues = []
+    for match in _VISIBLE_TEXT_INSTRUCTION.finditer(str(prompt or '')):
+        if _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
+            continue
+        text = match.group('text').strip()
+        compact = re.sub(r'\s+', '', text)
+        if len(compact) > 10 or (len(compact) > 5 and re.search(r'[，。！？；：,.!?;:]', compact)):
+            issues.append(f'画中长句“{text}”建议改为具体无字图案、动作或必要短词；完整解释交给配音')
     return list(dict.fromkeys(issues))

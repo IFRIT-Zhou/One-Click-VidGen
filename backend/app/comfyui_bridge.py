@@ -13,6 +13,7 @@ import math
 import mimetypes
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -21,7 +22,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 import requests
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -222,6 +223,56 @@ def _video_dimensions(profile: dict[str, Any], ratio: str) -> tuple[int, int]:
     )
 
 
+def _available_resources() -> dict[str, float | None]:
+    """Read free capacity without contacting ComfyUI or allocating GPU memory."""
+    result: dict[str, float | None] = {"vram_free_gb": None, "ram_available_gb": None}
+    try:
+        import psutil
+        result["ram_available_gb"] = round(psutil.virtual_memory().available / 1024**3, 1)
+    except (ImportError, OSError):
+        pass
+    try:
+        probe = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3, check=True,
+        )
+        free_mib = float(probe.stdout.splitlines()[0].strip())
+        result["vram_free_gb"] = round(free_mib / 1024, 1)
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        pass
+    return result
+
+
+def _resource_estimate(profile: dict[str, Any], ratio: str, resolution: str, seconds: float,
+                       available: dict[str, float | None], dimensions: tuple[int, int] | None = None) -> dict[str, Any]:
+    """Conservative H3 planning heuristic, not a measured peak or admission guarantee."""
+    chosen = dict(profile)
+    if resolution in VIDEO_RESOLUTION_PRESETS:
+        chosen["resolution_preset"] = resolution
+    width, height = dimensions or _video_dimensions(chosen, ratio)
+    mappings = WorkflowMappings.model_validate(profile.get("mappings") or {})
+    frames = max(1, math.ceil(seconds * mappings.fps))
+    pixels = width * height / (1280 * 720)
+    workload = pixels * math.sqrt(frames / 240)
+    # 1080p / ~13 s must remain high-risk on a 24 GB card: this class of
+    # workflow has already exhausted such a device in normal OCV use.
+    vram_low = round(9 + 4.5 * workload, 1)
+    vram_high = round(11 + 7 * workload, 1)
+    raw_frames_gb = width * height * frames * 4 / 1024**3
+    ram_low = round(5 + raw_frames_gb * 2, 1)
+    ram_high = round(8 + raw_frames_gb * 5, 1)
+    vram_free, ram_free = available.get("vram_free_gb"), available.get("ram_available_gb")
+    risks = []
+    if vram_free is not None:
+        risks.append("high" if vram_free < vram_low + 2 else "caution" if vram_free < vram_high + 2 else "low")
+    if ram_free is not None:
+        risks.append("high" if ram_free < ram_low + 4 else "caution" if ram_free < ram_high + 4 else "low")
+    risk = max(risks, key={"low": 0, "caution": 1, "high": 2}.get) if risks else "unknown"
+    return {"width": width, "height": height, "frames": frames, "fps": mappings.fps,
+            "vram_estimate_gb": [vram_low, vram_high], "ram_estimate_gb": [ram_low, ram_high],
+            **available, "risk": risk, "heuristic": True}
+
+
 def _disconnect_optional_reference(graph: dict[str, Any], node_id: str) -> None:
     """Remove an unused loader and every graph input wired to its output."""
     node_id = str(node_id or "")
@@ -320,6 +371,25 @@ def _queued_prompt_ids(connection: dict[str, Any]) -> tuple[set[str], set[str]] 
     return identities(payload.get("queue_running")), identities(payload.get("queue_pending"))
 
 
+def _history_failure(history: dict[str, Any]) -> str:
+    """Only explicit terminal events end polling; incomplete is not failure."""
+    status = history.get('status') or {}
+    if not isinstance(status, dict):
+        return ''
+    for item in reversed(status.get('messages') or []):
+        if not isinstance(item, (list, tuple)) or not item:
+            continue
+        if item[0] == 'execution_interrupted':
+            detail = item[1] if len(item) > 1 and isinstance(item[1], dict) else {}
+            node = detail.get('node_type') or detail.get('node_id')
+            return 'ComfyUI 任务已中断' + (f'（节点：{node}）' if node else '') + '，不会再返回结果，请重新生成。'
+        if item[0] == 'execution_error':
+            return 'ComfyUI 执行失败：' + str(item[1] if len(item) > 1 else '服务端未提供详情')
+    if str(status.get('status_str') or '').lower() in {'error', 'failed', 'interrupted', 'cancelled', 'canceled'}:
+        return 'ComfyUI 任务已失败或中断，服务端未提供详细原因，请查看 ComfyUI 日志后重新生成。'
+    return ''
+
+
 def video_task_state(user_id: int, prompt_id: str) -> str:
     """Inspect a persisted local task without ever submitting a replacement.
 
@@ -339,9 +409,7 @@ def video_task_state(user_id: int, prompt_id: str) -> str:
         history = payload.get(prompt_id) if isinstance(payload, dict) else None
         if not isinstance(history, dict):
             return "absent"
-        status = history.get("status") or {}
-        messages = status.get("messages") or []
-        if any(isinstance(item, list) and item and item[0] == "execution_error" for item in messages):
+        if _history_failure(history):
             return "failed"
         if _find_output_file(history, ""):
             return "completed"
@@ -397,12 +465,20 @@ class ComfyUIStopped(RuntimeError):
 def run_video_profile(user_id: int, profile_id: str, *, prompt: str, image_path: Path,
                       duration: float, ratio: str, output_path: Path, progress=None,
                       should_stop=None, seed: int = -1, existing_prompt_id: str = '',
-                      on_submitted=None, audio_path: Path | None = None) -> None:
+                      on_submitted=None, audio_path: Path | None = None,
+                      resolution: str = '', dimensions: tuple[int, int] | None = None) -> None:
     """Run one configured video preset synchronously for a storyboard worker."""
     profile = video_profile(user_id, profile_id)
+    if resolution:
+        if resolution == 'custom':
+            if not dimensions or any(not isinstance(value, int) or value < 32 or value > 8192 for value in dimensions):
+                raise ValueError('请提供有效的自定义视频宽高（32–8192 像素）')
+        elif resolution not in VIDEO_RESOLUTION_PRESETS:
+            raise ValueError('不支持的视频分辨率')
+        profile = {**profile, 'resolution_preset': resolution}
     connection = _connection(user_id)
     mappings = WorkflowMappings.model_validate(profile.get("mappings") or {})
-    width, height = _video_dimensions(profile, ratio)
+    width, height = dimensions or _video_dimensions(profile, ratio)
     actual_seed = seed if seed >= 0 else uuid.uuid4().int % (2**63 - 1)
     prompt_id = str(existing_prompt_id or '').strip()
     if prompt_id:
@@ -433,7 +509,7 @@ def run_video_profile(user_id: int, profile_id: str, *, prompt: str, image_path:
         if on_submitted:
             on_submitted(prompt_id)
         if progress:
-            progress(f"ComfyUI 已接收任务 {prompt_id}，正在生成")
+            progress(f"ComfyUI 已接收任务 {prompt_id}，等待服务端结果（可能排队或生成中）")
     deadline = time.monotonic() + 7200
     interrupted = False
     timeout_notified = False
@@ -454,13 +530,13 @@ def run_video_profile(user_id: int, profile_id: str, *, prompt: str, image_path:
             continue
         history = payload.get(prompt_id) if isinstance(payload, dict) else None
         if isinstance(history, dict):
-            status = history.get("status") or {}
-            errors = [item for item in status.get("messages") or []
-                      if isinstance(item, list) and item and item[0] == "execution_error"]
-            if errors:
-                raise RuntimeError("ComfyUI 执行失败：" + str(errors[-1][1]))
+            failure = _history_failure(history)
+            if failure:
+                raise RuntimeError(failure)
             result = _find_output_file(history, mappings.output_node_id)
             if result:
+                if progress:
+                    progress("ComfyUI 已生成结果，正在下载视频")
                 downloaded = requests.get(_url(connection, connection["view_path"]),
                                           params=result, timeout=300)
                 downloaded.raise_for_status()
@@ -515,11 +591,9 @@ def _execute(user_id: int, job_id: str, profile: dict[str, Any], source: Path | 
                 continue
             history = payload.get(prompt_id) if isinstance(payload, dict) else None
             if isinstance(history, dict):
-                status = history.get("status") or {}
-                if status.get("status_str") == "error" or status.get("completed") is False and status.get("messages"):
-                    errors = [item for item in status.get("messages") or [] if isinstance(item, list) and item and item[0] == "execution_error"]
-                    if errors:
-                        raise RuntimeError("ComfyUI 执行失败：" + str(errors[-1][1]))
+                failure = _history_failure(history)
+                if failure:
+                    raise RuntimeError(failure)
                 output = _find_output_file(history, mappings.output_node_id)
                 if output:
                     downloaded = requests.get(_url(connection, connection["view_path"]), params=output, timeout=300)
@@ -543,6 +617,26 @@ def overview(request: Request) -> dict[str, Any]:
     connection = _connection(user_id)
     profiles = _profiles(user_id)
     return {"connection": connection, "profiles": [{**value, "workflow": None, "nodes": _node_summary(_api_graph(value["workflow"]))} for value in profiles]}
+
+
+@router.get("/resource-estimate")
+def resource_estimate(request: Request, profile_id: str = Query(min_length=1, max_length=80),
+                      ratio: Literal["16:9", "9:16"] = "16:9",
+                      resolution: str = Query(default="", max_length=12),
+                      seconds: float = Query(default=10, gt=0, le=120),
+                      width: int | None = Query(default=None, ge=32, le=8192),
+                      height: int | None = Query(default=None, ge=32, le=8192)) -> dict[str, Any]:
+    user_id = int(require_user(request)["id"])
+    if resolution and resolution not in {*VIDEO_RESOLUTION_PRESETS, 'custom'}:
+        raise HTTPException(422, "分辨率预设无效")
+    if resolution == 'custom' and not (width and height):
+        raise HTTPException(422, "请填写自定义宽度与高度")
+    try:
+        profile = video_profile(user_id, profile_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return _resource_estimate(profile, ratio, resolution, seconds, _available_resources(),
+                              (width, height) if resolution == 'custom' else None)
 
 
 @router.put("/connection")

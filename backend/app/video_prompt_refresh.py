@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from .gemini_client import generate_gemini_text, parse_json_response
-from .video_agents import ask_json, write_image_prompts, write_video_prompts
+from .video_agents import ask_json, design_core_images, direct_motion, write_image_prompts, write_video_prompts
 from .video_director_contracts import SPEECH_ATTRIBUTION_CONTRACT
 from .video_motion_plan import normalize_motion_plan, repair_generated_participant_membership
 from .video_text_policy import (VISUAL_FIRST, dynamic_text_mode, text_mode_contract,
@@ -152,8 +152,34 @@ refresh_basis=action 时按新动作重建图案、表情与必要短词表达�
 def refresh(context: dict, style: str, shot: dict, references: list[dict], *,
             basis: str, action: str, image_prompt: str, image_path: Path | None = None,
             force_vision: bool = False, image_analysis: dict | None = None,
-            action_only: bool = False) -> tuple[dict, dict | None]:
+            action_only: bool = False, scenes: list[dict] | None = None) -> tuple[dict, dict | None]:
     updated = copy.deepcopy(shot)
+    if basis == 'full':
+        # Old creative output must not constrain a fresh single-shot design.
+        for key in ('action', 'motion_plan', 'image_prompt', 'video_prompt',
+                    'visual_description', 'visual_design', 'progression_plan',
+                    'previous_designs', 'attribution_correction'):
+            updated.pop(key, None)
+        core = design_core_images(context, scenes or [], [copy.deepcopy(updated)], references)[0]
+        for key in ('visual_description', 'visual_design', 'reference_ids', 'semantic',
+                    'intent', 'progression_plan', 'attribution_correction'):
+            if key in core:
+                if key == 'semantic' and isinstance(core[key], dict):
+                    updated.setdefault('semantic', {}).update(copy.deepcopy(core[key]))
+                elif key not in {'intent', 'progression_plan'} or str(core[key] or '').strip():
+                    updated[key] = copy.deepcopy(core[key])
+        allowed = {item['id'] for item in references}
+        if not isinstance(updated.get('reference_ids', []), list) or any(
+                item not in allowed for item in updated.get('reference_ids', [])):
+            raise ValueError('本镜重规划返回了不存在的参考素材，请重试')
+        motion = direct_motion(context, [updated], references)[0]
+        updated.update(action=motion['action'], motion_plan=motion['motion_plan'])
+        for writer, field in ((lambda: write_image_prompts(context, style, [updated], references), 'image_prompt'),
+                              (lambda: write_video_prompts(context, [updated], references), 'video_prompt')):
+            row = writer()[0]
+            updated[field] = row[field]
+            updated[field + '_warnings'] = row.get(field + '_warnings', [])
+        return updated, None
     updated['action'] = action.strip()
     updated['image_prompt'] = image_prompt.strip()
     analysis = image_analysis if force_vision and image_analysis else (
@@ -172,6 +198,9 @@ def refresh(context: dict, style: str, shot: dict, references: list[dict], *,
     # now owns that relation; do not let finalizers revive automatic attribution.
     if isinstance(updated.get('semantic'), dict):
         updated['semantic'].pop('speech_turns', None)
+        updated['semantic'].pop('speech_mode', None)
+    context = copy.deepcopy(context)
+    context.pop('speech_attribution', None)
     updated['attribution_correction'] = ''
     if basis == 'action':
         image_rows = write_image_prompts(context, style, [updated], references)

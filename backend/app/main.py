@@ -1708,6 +1708,48 @@ def get_api_key_settings(request: Request) -> dict[str, Any]:
     return {"keys": _api_key_status()}
 
 
+from .language_presets import LanguagePreset, presets, save_preset, activate_preset, delete_preset, LOCK as LANGUAGE_PRESET_LOCK
+
+
+@app.get('/api/language-presets')
+def get_language_presets(request: Request):
+    require_user(request)
+    status = language_provider_status()
+    return {'presets': presets(), 'current': status}
+
+
+@app.put('/api/language-presets')
+def put_language_preset(payload: LanguagePreset, request: Request):
+    require_user(request)
+    try:
+        with LANGUAGE_PRESET_LOCK:
+            return {'preset': save_preset(payload)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post('/api/language-presets/{identity}/activate')
+def select_language_preset(identity: str, request: Request):
+    require_user(request)
+    from . import video_studio
+    with video_studio.LOCK, LANGUAGE_PRESET_LOCK:
+        if video_studio.ACTIVE or any(job['status'] == 'running' for job in store.active_job_summary()):
+            raise HTTPException(409, '有任务正在运行，请结束后切换全局语言模型')
+        try:
+            activate_preset(identity)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return get_language_presets(request)
+
+
+@app.delete('/api/language-presets/{identity}')
+def remove_language_preset(identity: str, request: Request):
+    require_user(request)
+    with LANGUAGE_PRESET_LOCK:
+        delete_preset(identity)
+    return get_language_presets(request)
+
+
 @app.put("/api/api-keys")
 def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> dict[str, Any]:
     require_user(request)

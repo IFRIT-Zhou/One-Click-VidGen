@@ -1394,6 +1394,10 @@ class VisualEditor:
     def _set_task(self, job_id: str, **changes: Any) -> None:
         with self._lock:
             task = dict(self._tasks.get(job_id) or {})
+            if changes.get('status') == 'running' and task.get('status') != 'running':
+                task.update(started_at=time.time(), finished_at=None)
+            elif changes.get('status') in {'completed', 'failed', 'stopped'}:
+                task['finished_at'] = time.time()
             task.update(changes)
             task["updated_at"] = time.time()
             self._tasks[job_id] = task
@@ -1401,6 +1405,10 @@ class VisualEditor:
     def _set_image_task(self, job_id: str, macro_id: str, **changes: Any) -> None:
         with self._lock:
             task = dict(self._image_tasks.setdefault(job_id, {}).get(macro_id) or {})
+            if changes.get('status') == 'running' and task.get('status') != 'running':
+                task.update(started_at=time.time(), finished_at=None)
+            elif changes.get('status') in {'completed', 'failed', 'stopped'}:
+                task['finished_at'] = time.time()
             task.update(changes)
             task["updated_at"] = time.time()
             self._image_tasks[job_id][macro_id] = task

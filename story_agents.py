@@ -466,6 +466,7 @@ def create_story_context(
     agent0_prompt_system: str = "",
     require_ai_success: bool = False,
     director_strategy: str = DIRECTOR_STRATEGY_STABLE,
+    speech_attribution: bool = False,
 ) -> dict[str, Any]:
     """Run Agent 0 once: full-text understanding without timing decisions."""
     content_mode = normalize_content_mode(content_mode)
@@ -500,6 +501,9 @@ def create_story_context(
             "也不得根据姓名刻板印象改变性别。"
         )
         system_prompt += "\n\n" + AGENT0_DEVICE_INFORMATION_CONTRACT
+        if speech_attribution:
+            from backend.app.video_speech import AGENT0_SPEECH_CONTRACT
+            system_prompt += "\n\n" + AGENT0_SPEECH_CONTRACT
         if normalize_director_strategy(director_strategy) == DIRECTOR_STRATEGY_ENHANCED:
             system_prompt += (
                 "\n【叙事增强：事实资料范围】区分现场、被讨论的经历、假设未来与抽象观点。"
@@ -551,6 +555,7 @@ def create_story_context(
                 )
                 if repaired is not None and not character_registry_issues(repaired.get("characters")):
                     context = repaired
+                    raw_context = parse_json_response(repaired_response)
                 else:
                     # Safe fallback: keep the story context, but drop ambiguous
                     # duplicate identities instead of sending conflicting cards downstream.
@@ -563,6 +568,9 @@ def create_story_context(
                             safe_characters.append(character)
                     context["characters"] = safe_characters
                     context["character_registry_warning"] = issues
+            if speech_attribution:
+                from backend.app.video_speech import normalize_attribution
+                context['speech_attribution'] = normalize_attribution(raw_context.get('speech_attribution'), full_text)
             context["generation_source"] = "gemini"
             context["source_fingerprint"] = story_context_fingerprint(
                 full_text,
