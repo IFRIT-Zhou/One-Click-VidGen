@@ -3569,6 +3569,8 @@ def restore_step_visual_runtime_checkpoint(job: Job) -> bool:
         "story_plan.json",
         "poster_mapping.json",
         "visual_prompt_plan.json",
+        "scene_reference_plan.json",
+        "scene_director_draft.json",
     ):
         source = checkpoint / name
         if source.is_file() and source.stat().st_size > 0:

@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.29.2",
-  "release_order": 2026092902,
-  "display_version": "2026.09.29 充值后图片重试修复",
+  "release_id": "2026.09.29.3",
+  "release_order": 2026092903,
+  "display_version": "2026.09.29 场景参考图续跑修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.29.2/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.29.2/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.09.29.3/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.29.3/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复动态模式图片生成遇到余额或算力不足后，充值仍无法重试的问题。重新生成场景参考、核心分镜或单镜重绘时重新向服务端核验，不再被旧的余额不足缓存拦截；保留正在运行的任务与已生成资产。包含此前动态视频与编辑体验更新。",
-  "content_fingerprint": "e35f8c303b41bb04ce33728e059fb4357784eced219b301dd79e203b35f8af36"
+  "notes": "修复叙事增强图文项目断点续跑丢失场景参考图、导致参考上传不完整或无法归档的问题。场景参考图与规划随任务检查点保存、恢复；旧任务优先找回原图，确实丢失时按原提示词补生成缺失参考图（产生对应图片费用），保留已完成配音、海报和镜头绑定。包含此前充值后图片重试修复。",
+  "content_fingerprint": "1540a03fb357a9c692853f53bab06ce6fe685076c74ae809eaf78d858c3efa39"
 }

@@ -181,6 +181,8 @@ def _sync_visual_checkpoint(*, asset: Path | None = None) -> None:
             POSTER_MAPPING_PATH,
             VISUAL_PROMPT_PLAN_PATH,
             CLOUD_RETRY_STATE_PATH,
+            VISUAL_DIR / "scene_reference_plan.json",
+            VISUAL_DIR / "scene_director_draft.json",
         ):
             if source.is_file():
                 shutil.copy2(source, checkpoint / source.name)
@@ -188,6 +190,12 @@ def _sync_visual_checkpoint(*, asset: Path | None = None) -> None:
             target_dir = checkpoint / "assets"
             target_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(asset, target_dir / asset.name)
+        # These paid assets are generated before ordinary poster workers run.
+        for reference in ASSETS_DIR.glob("scene_ref_*.jpg"):
+            if reference.is_file() and reference.stat().st_size > 0:
+                target_dir = checkpoint / "assets"
+                target_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(reference, target_dir / reference.name)
 
 
 def _restore_visual_checkpoint() -> bool:
@@ -201,6 +209,8 @@ def _restore_visual_checkpoint() -> bool:
         POSTER_MAPPING_PATH,
         VISUAL_PROMPT_PLAN_PATH,
         CLOUD_RETRY_STATE_PATH,
+        VISUAL_DIR / "scene_reference_plan.json",
+        VISUAL_DIR / "scene_director_draft.json",
     ):
         source = checkpoint / target.name
         if source.is_file() and source.stat().st_size > 0:
@@ -215,6 +225,49 @@ def _restore_visual_checkpoint() -> bool:
                 shutil.copy2(source, ASSETS_DIR / source.name)
                 restored = True
     return restored
+
+
+def _recover_missing_scene_references(mapping, provider_configs):
+    """Repair legacy checkpoints without changing shots or completed posters."""
+    recovered = {}
+    pool = None
+    for item in mapping:
+        reference = item.get("scene_reference")
+        if not isinstance(reference, dict):
+            continue
+        old_path = str(reference.get("path") or "")
+        if old_path and Path(old_path).is_file() and Path(old_path).stat().st_size > 0:
+            continue
+        scene_id = str(reference.get("scene_id") or "")
+        prompt = str(reference.get("prompt") or "").strip()
+        if not re.fullmatch(r"location_[a-zA-Z0-9_]+", scene_id) or not prompt:
+            raise ValueError("旧任务场景参考图缺失且没有可恢复的场景提示词，请重新规划场景参考")
+        paths = list(item.get("reference_image_paths") or [])
+        number = reference.get("input_number")
+        if type(number) is not int or not 1 <= number <= len(paths) or str(paths[number - 1]) != old_path:
+            raise ValueError("旧任务场景参考图编号与路径不一致，已停止恢复以防错图")
+        key = (scene_id, prompt)
+        if key not in recovered:
+            # A restored or moved package may still contain the original file.
+            candidate = ASSETS_DIR / Path(old_path).name
+            if not old_path or not candidate.is_file() or candidate.stat().st_size == 0:
+                print(f"断点续跑：旧任务场景参考 {scene_id} 已缺失，将按原提示词补生成一张参考图（产生图片费用），保留已完成海报。", flush=True)
+                if pool is None:
+                    pool = RunningHubAccountPool(provider_configs, per_key_concurrency=1)
+                candidate = _render_poster_with_retry({
+                    "macro_scene_id": "scene_ref_" + scene_id,
+                    "image_prompt": prompt + "\n纯场景资产，无人物、人体局部、人影或人形倒影。",
+                    "character_ids": [], "reference_image_ids": [],
+                }, pool)
+            recovered[key] = str(candidate.resolve())
+            _sync_visual_checkpoint(asset=candidate)
+        paths[number - 1] = recovered[key]
+        item["reference_image_paths"] = paths
+        item["scene_reference"] = {**reference, "path": recovered[key]}
+    if recovered:
+        _atomic_write_json(POSTER_MAPPING_PATH, mapping)
+        print(f"断点续跑：已恢复 {len(recovered)} 张场景参考图，保持原有镜头绑定。", flush=True)
+    return mapping
 
 
 def _record_partial_poster_success(
@@ -3789,6 +3842,7 @@ def run_online_poster_engine() -> None:
                         "character_ids": [], "reference_image_ids": [],
                     }
                     reference_paths[entry["scene_id"]] = _render_poster_with_retry(reference_macro, scene_pool)
+                    _sync_visual_checkpoint(asset=reference_paths[entry["scene_id"]])
                 mapping = bind_scene_references(mapping, scene_plan, reference_paths, _reference_image_catalog())
         else:
             from backend.app.reference_materials import bind_material_references
@@ -3799,6 +3853,8 @@ def run_online_poster_engine() -> None:
             encoding="utf-8",
         )
         print(f"最终画面提示词已保存: {POSTER_MAPPING_PATH}", flush=True)
+    if reuse_existing_mapping:
+        mapping = _recover_missing_scene_references(mapping, provider_configs)
     visual_prompt_plan = {
         "agent_version": VISUAL_PROMPT_AGENT_VERSION,
         "story_source_fingerprint": story_plan.get("source_fingerprint"),
