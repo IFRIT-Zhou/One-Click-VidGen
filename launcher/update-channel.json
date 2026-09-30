@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.09.29.3",
-  "release_order": 2026092903,
-  "display_version": "2026.09.29 场景参考图续跑修复",
+  "release_id": "2026.10.01.1",
+  "release_order": 2026100101,
+  "display_version": "2026.10.01 竖屏重绘比例修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.09.29.3/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.09.29.3/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.10.01.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.01.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复叙事增强图文项目断点续跑丢失场景参考图、导致参考上传不完整或无法归档的问题。场景参考图与规划随任务检查点保存、恢复；旧任务优先找回原图，确实丢失时按原提示词补生成缺失参考图（产生对应图片费用），保留已完成配音、海报和镜头绑定。包含此前充值后图片重试修复。",
-  "content_fingerprint": "1540a03fb357a9c692853f53bab06ce6fe685076c74ae809eaf78d858c3efa39"
+  "notes": "修复图文视频编辑模式竖屏 9:16 重绘时被图像接口或号池默认比例覆盖、误生成 2:1 横图的问题。",
+  "content_fingerprint": "404f3dfd0dc5dd1e433362872c7d073d01995622aa41d2a77b034fed1d2fda8c"
 }

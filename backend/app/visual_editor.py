@@ -1565,7 +1565,7 @@ class VisualEditor:
                 # the normal pipeline environment, so complete that project-level
                 # field here instead of indexing a missing ``ratio`` downstream.
                 provider_configs = [
-                    {**config, 'ratio': str(config.get('ratio') or target_ratio)}
+                    {**config, 'ratio': target_ratio}
                     for config in provider_configs
                 ]
                 if resolution:
