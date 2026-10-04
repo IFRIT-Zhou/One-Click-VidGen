@@ -12,7 +12,38 @@ def clean(text):
     return ''.join(c.lower() for c in str(text) if c.isalnum())
 
 
-def align_starts(texts, words, duration):
+def spoken_cues(texts, reading_text):
+    """Map display cue boundaries onto the actual TTS input, not old timings."""
+    values = [clean(text) for text in texts]
+    display = ''.join(values)
+    spoken = clean(reading_text)
+    if not spoken or spoken == display:
+        return values
+    opcodes = difflib.SequenceMatcher(None, display, spoken, autojunk=False).get_opcodes()
+
+    def boundary(position):
+        for tag, a, b, c, d in opcodes:
+            if tag == 'insert' and a == position:
+                return c
+            if a <= position < b:
+                if tag == 'equal':
+                    return c + position - a
+                return c + round((position - a) * (d - c) / (b - a))
+        return len(spoken)
+
+    cuts, cursor = [0], 0
+    for value in values[:-1]:
+        cursor += len(value)
+        cuts.append(boundary(cursor))
+    cuts.append(len(spoken))
+    if any(b <= a for a, b in zip(cuts, cuts[1:])):
+        raise ValueError('朗读文本删除了整条字幕，无法可靠定位字幕边界；请同步修改字幕后重试')
+    return [spoken[a:b] for a, b in zip(cuts, cuts[1:])]
+
+
+def align_starts(texts, words, duration, reading_text=None):
+    if reading_text is not None:
+        texts = spoken_cues(texts, reading_text)
     voiced = [w for w in words if clean(w['word']) and float(w['end']) > float(w['start'])]
     if any(float(b['start'])-float(a['end']) > 3.0 for a, b in zip(voiced, voiced[1:])):
         raise ValueError('新配音中存在超过 3 秒的无语音区间，可能是异常停顿或低频噪音；请试听后重配，未替换原配音')
@@ -53,7 +84,7 @@ def main():
     for item in request:
         segments, _, _ = transcribe_audio(Path(item['audio']), word_timestamps=True)
         words = [dict(word=w.word, start=w.start, end=w.end) for s in segments for w in (s.words or [])]
-        result.append(align_starts(item['texts'], words, item['duration']))
+        result.append(align_starts(item['texts'], words, item['duration'], item.get('reading_text')))
     Path(sys.argv[2]).write_text(json.dumps(result), encoding='utf-8')
 
 

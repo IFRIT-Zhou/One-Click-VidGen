@@ -35,7 +35,7 @@ TIMELINE_FILENAME = "画面时间线.json"
 TTS_HISTORY_LIMIT = 20
 
 
-def _speech_alignment(project_dir, segments, files, subtitle_updates=None):
+def _speech_alignment(project_dir, segments, files, subtitle_updates=None, reading_texts=None):
     """Recognize only changed segments before publishing any edited assets."""
     from .pipeline import resolve_asr_python
     entries = _srt_entries(project_dir / 'other' / SUBTITLE_FILENAME)
@@ -55,7 +55,9 @@ def _speech_alignment(project_dir, segments, files, subtitle_updates=None):
             raise ValueError(f'第 {index} 段没有可对齐的字幕，未替换现有配音')
         with wave.open(str(files[index]), 'rb') as stream:
             duration = stream.getnframes()/stream.getframerate()
-        requests.append(dict(audio=str(files[index]), texts=[r['text'] for r in rows], duration=duration))
+        reading_text = (reading_texts or {}).get(index) or item.get('tts_text') or item.get('text')
+        requests.append(dict(audio=str(files[index]), texts=[r['text'] for r in rows],
+                             duration=duration, reading_text=reading_text))
         groups.append((index, start, end, rows, duration))
     if not requests:
         return {}
@@ -1613,7 +1615,7 @@ class TtsEditor:
             _concat_wavs([generated_dir / str(generated[p]['filename']) for p in chunk_positions[index]], pending)
             pending_files[index] = pending
         self._set_task(job.id, status='running', progress=85, message='新配音已生成，正在按实际声音重新定位字幕边界')
-        alignment = _speech_alignment(project_dir, segments, pending_files, subtitle_updates)
+        alignment = _speech_alignment(project_dir, segments, pending_files, subtitle_updates, reading_texts)
         # Generation is complete and validated, but live audio has not been
         # replaced yet.  Capture the last good state at this exact boundary.
         self._snapshot_history(project_dir, manifest, indices, "重配选中句")
