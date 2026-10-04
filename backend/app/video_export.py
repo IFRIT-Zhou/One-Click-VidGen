@@ -53,6 +53,35 @@ def frame_filter(layout):
             f'y={h*layout["frame_y"]/100:.3f}-overlay_h/2:shortest=1,fps=30,format=yuv420p')
 
 
+def _video_duration(source):
+    """Use the video track, since container duration may belong to longer audio."""
+    result = subprocess.run([ffprobe_binary(), '-v', 'error', '-select_streams', 'v:0',
+                             '-show_entries', 'stream=duration', '-of', 'json', str(source)],
+                            capture_output=True, text=True, check=True)
+    streams = json.loads(result.stdout).get('streams', [])
+    if not streams:
+        raise ValueError(f'动态素材没有视频轨：{source.name}')
+    try:
+        duration = float(streams[0].get('duration', ''))
+        if duration > 0:
+            return duration
+    except (TypeError, ValueError):
+        pass
+    # Some containers (notably MKV) omit stream duration. Packet timestamps
+    # remain authoritative; do not silently revert to the audio/container.
+    result = subprocess.run([ffprobe_binary(), '-v', 'error', '-select_streams', 'v:0',
+                             '-show_packets', '-show_entries', 'packet=pts_time,duration_time',
+                             '-of', 'json', str(source)], capture_output=True, text=True, check=True)
+    spans = [(float(p['pts_time']), float(p.get('duration_time') or 0))
+             for p in json.loads(result.stdout).get('packets', []) if 'pts_time' in p]
+    if not spans:
+        raise ValueError(f'无法读取动态素材的视频时长：{source.name}')
+    duration = max(start + length for start, length in spans) - min(start for start, _ in spans)
+    if duration <= 0:
+        raise ValueError(f'动态素材视频时长无效：{source.name}')
+    return duration
+
+
 @router.post('/{identity}/layout-preview')
 def layout_preview(identity: str, data: LayoutPreviewRequest, request: Request):
     path = studio.directory(studio.require_user(request)['id'], identity)
@@ -178,7 +207,7 @@ def _render(path, record):
         vf = base_vf
         source_duration = duration
         if shot['kind'] == 'video':
-            source_duration = max(0.001, probe_media_duration(source))
+            source_duration = _video_duration(source)
             # Preserve natural speed when the source is long enough: -t below
             # simply cuts at the new narration boundary.  If the narration is
             # longer than the generated clip, uniformly slow the clip instead
