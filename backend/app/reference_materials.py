@@ -22,10 +22,22 @@ _CHARACTER_USE_RE = re.compile(
     r'(?:主角|讲解员|主持人|主播|人物|角色|男主|女主|男性|女性|男人|女人|男孩|女孩|少年|少女|老人|儿童|这是他|这是她)'
 )
 _EVERY_SHOT_RE = re.compile(
-    r'(?:每(?:一)?(?:张图|个画面|个镜头).{0,12}(?:都|要|需|必须|出现|出镜|使用|有)|'
-    r'(?:所有|全部)(?:图片|图像|画面|镜头).{0,12}(?:都|要|需|必须|出现|出镜|使用|有)|'
-    r'全程.{0,8}(?:出现|出镜|使用|保留))'
+    r'(?:每(?:一)?(?:张(?:图(?:片|像)?|分镜|画面)|个(?:画面|镜头|分镜)|幅(?:图(?:片)?|画面))'
+    r'|(?:所有|全部)(?:图片|图像|画面|镜头|分镜)|全程|贯穿全片)'
+    r'.{0,16}(?:出现|出镜|使用|保留|参考|有她|有他|有该人物)'
 )
+_OPTIONAL_SHOT_RE = re.compile(r'不必|不需要|无需|不用|不要求|不强制|不要|不能|禁止|不是|并非|不一定|未必|可以')
+_LIMITED_SHOT_RE = re.compile(r'(?:只|仅)(?:需|要)?(?:在|限)|(?:只|仅)(?:部分|某些|个别)|按需(?:出现|出镜|使用)|不(?:参考|使用|保留)(?:图中)?人物')
+
+
+def _required_every_shot(description: str) -> bool:
+    # Explicit partial-use restrictions outrank broad wording. Evaluate local
+    # clauses so "每张都出现，不要改变服装" is not treated as a negation.
+    if _LIMITED_SHOT_RE.search(description):
+        return False
+    clauses = re.split(r'[，,。；;！!？?\n]', description)
+    candidates = [clause for clause in clauses if _EVERY_SHOT_RE.search(clause)]
+    return bool(candidates) and not any(_OPTIONAL_SHOT_RE.search(clause) for clause in candidates)
 
 
 def analyze_reference(path: Path) -> dict:
@@ -77,7 +89,7 @@ def material_is_character(row: dict) -> bool:
 def required_every_shot_labels(rows: list[dict] | None = None, *, characters_only: bool = False) -> list[str]:
     rows = reference_metadata() if rows is None else rows
     return [str(row.get('label')) for row in rows
-            if row.get('label') and _EVERY_SHOT_RE.search(str(row.get('description') or ''))
+            if row.get('label') and _required_every_shot(str(row.get('description') or ''))
             and (not characters_only or material_is_character(row))]
 
 
