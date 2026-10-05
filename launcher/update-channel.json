@@ -1,17 +1,17 @@
 {
-  "release_id": "2026.10.05.1",
-  "release_order": 2026100501,
-  "display_version": "2026.10.05 配音修正与动态导出修复",
+  "release_id": "2026.10.06.1",
+  "release_order": 2026100601,
+  "display_version": "2026.10.06 人物参考绑定修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.10.05.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.05.1/One-Click-VidGen-main.zip",
+    "https://download.oneclickvidgen.com/releases/2026.10.06.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.06.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复单句重配使用朗读修正文本时，字幕对齐仍按原字幕校验导致的误拒绝；显示字幕保持不变。修复动态导出将音视频容器时长误当视频轨时长，导致短视频未正确适配配音、成片可能截短的问题。",
-  "content_fingerprint": "076fcb7cd5127758a9b0259b2c89e73d247502e38b56fb31212a6b17d7911f86"
+  "notes": "修复参考素材用途中‘每一张分镜出现’等明确全镜头要求未被识别、人物参考图漏绑的问题，同时区分否定、可选和局部使用说明。新规划生效；已保存的旧方案需重新规划，或补选人物参考后重绘。",
+  "content_fingerprint": "f8a373440256e4422e175b1b144515f2b2d831e3f65238ea1c0117b431ec78f0"
 }
