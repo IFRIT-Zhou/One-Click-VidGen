@@ -48,8 +48,17 @@ class AgentPlanningFatalError(RuntimeError):
     """The AI planning chain failed and image generation must not continue."""
 
 
+class BoundaryRefinementError(ValueError):
+    """A returned semantic boundary failed validation, rather than an API call."""
+
+
 def _planning_failure(stage: str, reason: object) -> AgentPlanningFatalError:
     detail = str(reason or "未知错误").strip()
+    if isinstance(reason, BoundaryRefinementError):
+        return AgentPlanningFatalError(
+            f"{stage} 分镜边界修订未通过，已在出图前停止；配音与字幕已保留。"
+            f"这是分镜划分问题，请保留任务并反馈错误详情，无需重新配音。详情：{detail}"
+        )
     return AgentPlanningFatalError(
         f"{stage} 语言模型规划失败，已在提交图像任务前安全终止；"
         f"配音与字幕已保留，可排除 API Key、余额、限流或上游服务问题后断点续跑。"
@@ -862,6 +871,7 @@ Agent 1 已经完成全文规划，但系统检测到少数 semantic_unit 过长
 semantic_units 每项必须包含 unit_id、start_slide_id、end_slide_id、purpose、visual_focus、visual_mode、setting_hint、novelty_anchor、visual_pacing、boundary_after、character_ids、device_shot_mode、device_type、screen_content。
 所有子单元必须首尾相接、完整覆盖父单元且不遗漏、不重叠。一个子单元应对应一个可独立理解的画面事件或完整论述步骤，而不是为了凑时长机械切句。
 通常以 6～14 秒为宜；结论收束、话题转折、因果转向、人物/地点/时间/视觉主体改变时应新起单元。作者段落边界 source_boundary_after=paragraph 是强提示，通常不应跨越；但两个极短且明显属于同一思想的相邻段落可以保留在同一单元。
+细分后的每个子单元至少覆盖2秒；不能把短促感叹、承接词或半句话孤立成一镜。依据前后语义调整相邻边界或并入相邻单元，不能修改时间戳来凑时长。
 禁止让一个子单元以前半句话结束，或以下半句、承接词孤立开始。若父单元确实是不可分割的同一连续事件，可以原样返回一个单元，并在 decision_reason 说明原因。
 设备画面的 screen_insert、device_interaction、none 必须按输入字幕的实际内容重新限定，不能让屏幕内容跨到已经转入其他话题的子单元。"""
 
@@ -949,6 +959,26 @@ def _candidate_refinement_is_safe(
     return True, "ok"
 
 
+def _boundary_repair_details(candidate, scenes, reason):
+    """Return compact, actionable feedback without splitting text in Python."""
+    positions = {str(scene.get('slide_id') or ''): i for i, scene in enumerate(scenes)}
+    short_units = []
+    for index, unit in enumerate(candidate):
+        start = positions.get(str(unit.get('start_slide_id') or ''))
+        end = positions.get(str(unit.get('end_slide_id') or ''))
+        if start is None or end is None or end < start:
+            continue
+        duration = float(scenes[end].get('end') or 0) - float(scenes[start].get('start') or 0)
+        if len(candidate) > 1 and duration < 2.0:
+            short_units.append({'index': index + 1, 'start_slide_id': unit.get('start_slide_id'),
+                'end_slide_id': unit.get('end_slide_id'), 'duration': round(duration, 3),
+                'text': ''.join(str(s.get('text_content') or '') for s in scenes[start:end + 1])})
+    return {'code': reason, 'minimum_subunit_seconds': 2.0, 'short_units': short_units,
+            'instruction': '仅修订当前父单元内部边界。通读时间轴及相邻上下文，按语义合并短单元或调整相邻切分，'
+                           '保留合法边界及事实，返回完整覆盖父单元的 semantic_units；不得改字幕、时间或其他父单元。'
+                           '若确为不可分割的连续事件，可原样返回父单元并说明 decision_reason。'}
+
+
 def refine_risky_semantic_units(
     units: list[dict[str, Any]],
     scenes: list[dict[str, Any]],
@@ -964,6 +994,7 @@ def refine_risky_semantic_units(
         "accepted_units": [],
         "unchanged_units": [],
         "failed_units": [],
+        "repair_attempts": [],
     }
     refined: list[dict[str, Any]] = []
     for unit in units:
@@ -1007,19 +1038,36 @@ def refine_risky_semantic_units(
             "risk_reasons": reasons,
         }
         try:
-            response = generate_gemini_text(
-                system_prompt=AGENT1B_BOUNDARY_REFINER_PROMPT + "\n\n" + DEVICE_SHOT_CONTRACT,
-                user_prompt=json.dumps(payload, ensure_ascii=False),
-                temperature=0.08,
-                response_mime_type="application/json",
-                max_output_tokens=6144,
-            )
-            parsed = parse_json_response(response)
-            raw_units = parsed.get("semantic_units") if isinstance(parsed, dict) else None
-            candidate = _normalize_semantic_units(raw_units, parent_scenes)
-            safe, reason = _candidate_refinement_is_safe(candidate, parent_scenes)
-            if not safe:
-                raise ValueError(f"边界验收失败: {reason}")
+            repair_payload = payload
+            # One initial proposal plus at most two targeted repairs. Transport
+            # failures do not enter this loop's repair path or cause extra POSTs.
+            for attempt in range(3):
+                response = generate_gemini_text(
+                    system_prompt=AGENT1B_BOUNDARY_REFINER_PROMPT + "\n\n" + DEVICE_SHOT_CONTRACT,
+                    user_prompt=json.dumps(repair_payload, ensure_ascii=False),
+                    temperature=0.08,
+                    response_mime_type="application/json",
+                    max_output_tokens=6144,
+                )
+                candidate = []
+                try:
+                    parsed = parse_json_response(response)
+                    raw_units = parsed.get("semantic_units") if isinstance(parsed, dict) else None
+                    candidate = _normalize_semantic_units(raw_units, parent_scenes)
+                    safe, reason = _candidate_refinement_is_safe(candidate, parent_scenes)
+                except (ValueError, TypeError) as exc:
+                    parsed = None
+                    safe, reason = False, 'invalid_response: ' + str(exc)[:300]
+                if safe:
+                    break
+                details = _boundary_repair_details(candidate, parent_scenes, reason)
+                diagnostics['repair_attempts'].append({'unit_id': unit_id, 'attempt': attempt + 1, **details})
+                if attempt == 2:
+                    locations = '；'.join(f"{u['start_slide_id']}～{u['end_slide_id']} {u['duration']:g}秒" for u in details['short_units'])
+                    raise BoundaryRefinementError(f"父单元 {unit_id}：{reason}" + (f"（{locations}）" if locations else '') + '；两次定点修订仍未通过')
+                print(f"Agent 1B：父单元 {unit_id} 边界验收发现 {reason}，正在定点修订 {attempt + 1}/2；配音与字幕保持不变。", flush=True)
+                repair_payload = {**payload, 'previous_result': parsed if isinstance(parsed, dict) else str(response)[:20000],
+                                  'validation_errors': [details]}
             parent_positions = {
                 str(scene.get("slide_id") or ""): scene for scene in parent_scenes
             }

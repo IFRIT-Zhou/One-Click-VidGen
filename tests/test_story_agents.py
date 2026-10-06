@@ -477,6 +477,68 @@ class StoryAgentsTest(unittest.TestCase):
                     require_ai_success=True,
                 )
 
+    def test_agent1b_repairs_short_subunit_using_same_parent_context(self) -> None:
+        scenes = sample_scenes()
+        scenes[0]['end'] = 1.2
+        scenes[1]['start'] = 1.2
+        units = [{'unit_id': 'broad', 'start_slide_id': 'scene_001', 'end_slide_id': 'scene_006',
+                  'purpose': '完整论述', 'boundary_after': 'hard'},
+                 {'unit_id': 'keep', 'start_slide_id': 'scene_007', 'end_slide_id': 'scene_008', 'purpose': '保持原样'}]
+        first = {'semantic_units': [
+            {'start_slide_id': 'scene_001', 'end_slide_id': 'scene_001'},
+            {'start_slide_id': 'scene_002', 'end_slide_id': 'scene_006'}]}
+        repaired = {'semantic_units': [
+            {'start_slide_id': 'scene_001', 'end_slide_id': 'scene_002', 'purpose': '完整首句'},
+            {'start_slide_id': 'scene_003', 'end_slide_id': 'scene_006', 'purpose': '后续论述'}]}
+        before = json.dumps(scenes, ensure_ascii=False)
+        with patch.object(story_agents, 'generate_gemini_text', side_effect=[json.dumps(first), json.dumps(repaired)]) as generate:
+            result, diagnostics = story_agents.refine_risky_semantic_units(units, scenes, {}, 'general', require_ai_success=True)
+        self.assertEqual(generate.call_count, 2)
+        original_payload = json.loads(generate.call_args_list[0].kwargs['user_prompt'])
+        retry_payload = json.loads(generate.call_args_list[1].kwargs['user_prompt'])
+        self.assertEqual(retry_payload['current_timeline'], original_payload['current_timeline'])
+        self.assertEqual(retry_payload['parent_semantic_unit'], units[0])
+        self.assertEqual(retry_payload['previous_result'], first)
+        issue = retry_payload['validation_errors'][0]
+        self.assertEqual(issue['code'], 'subunit_too_short')
+        self.assertEqual(issue['short_units'][0]['duration'], 1.2)
+        self.assertEqual(issue['short_units'][0]['text'], scenes[0]['text_content'])
+        self.assertEqual(result[0]['end_slide_id'], 'scene_002')
+        self.assertEqual({k:v for k,v in result[-1].items() if k != 'unit_id'}, {k:v for k,v in units[1].items() if k != 'unit_id'})
+        self.assertEqual(json.dumps(scenes, ensure_ascii=False), before)
+        self.assertEqual(len(diagnostics['repair_attempts']), 1)
+
+    def test_agent1b_repair_budget_reports_boundary_problem(self) -> None:
+        scenes = sample_scenes()
+        scenes[0]['end'] = 1.0; scenes[1]['start'] = 1.0
+        units = [{'unit_id': 'broad', 'start_slide_id': 'scene_001', 'end_slide_id': 'scene_008'}]
+        response = json.dumps({'semantic_units': [
+            {'start_slide_id': 'scene_001', 'end_slide_id': 'scene_001'},
+            {'start_slide_id': 'scene_002', 'end_slide_id': 'scene_008'}]})
+        with patch.object(story_agents, 'generate_gemini_text', return_value=response) as generate:
+            with self.assertRaises(story_agents.AgentPlanningFatalError) as caught:
+                story_agents.refine_risky_semantic_units(units, scenes, {}, 'general', require_ai_success=True)
+        self.assertEqual(generate.call_count, 3)
+        self.assertIn('分镜边界修订未通过', str(caught.exception))
+        self.assertIn('scene_001', str(caught.exception))
+        self.assertNotIn('API Key', str(caught.exception))
+
+    def test_agent1b_transport_failure_does_not_spend_repair_budget(self) -> None:
+        units = [{'unit_id': 'broad', 'start_slide_id': 'scene_001', 'end_slide_id': 'scene_008'}]
+        with patch.object(story_agents, 'generate_gemini_text', side_effect=story_agents.GeminiError('network unavailable')) as generate:
+            with self.assertRaises(story_agents.AgentPlanningFatalError):
+                story_agents.refine_risky_semantic_units(units, sample_scenes(), {}, 'general', require_ai_success=True)
+        generate.assert_called_once()
+
+    def test_agent1b_can_confirm_indivisible_parent_after_repair(self) -> None:
+        units = [{'unit_id': 'broad', 'start_slide_id': 'scene_001', 'end_slide_id': 'scene_008', 'purpose': '连续事件'}]
+        invalid = json.dumps({'semantic_units': [{'start_slide_id': 'scene_001', 'end_slide_id': 'scene_002'}]})
+        valid = json.dumps({'semantic_units': units, 'decision_reason': '同一不可分割的事件'})
+        with patch.object(story_agents, 'generate_gemini_text', side_effect=[invalid, valid]):
+            result, diagnostics = story_agents.refine_risky_semantic_units(units, sample_scenes(), {}, 'general', require_ai_success=True)
+        self.assertEqual(result, units)
+        self.assertEqual(diagnostics['unchanged_units'], ['broad'])
+
     def test_agent1_preserves_structured_broll_direction(self) -> None:
         scenes = sample_scenes()[:1]
         raw_units = [{
