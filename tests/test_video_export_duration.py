@@ -23,7 +23,7 @@ class ExportDurationTests(unittest.TestCase):
             root = Path(directory)
             source = root / 'source.mp4'
             # Comfy output: 2 seconds of video but 4 seconds of audio/container.
-            subprocess.run([shutil.which('ffmpeg'), '-y', '-f', 'lavfi', '-i',
+            subprocess.run([export.ffmpeg_binary(), '-y', '-f', 'lavfi', '-i',
                             'testsrc2=s=160x90:r=30:d=2', '-f', 'lavfi', '-i',
                             'anullsrc=r=48000:cl=stereo', '-t', '4', '-c:v', 'libx264',
                             '-c:a', 'aac', str(source)], check=True, capture_output=True)

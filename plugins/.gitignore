@@ -5,3 +5,12 @@
 !example_plugin/plugin.json
 !example_plugin/README.md
 !example_plugin/disabled
+!codex_bridge/
+!codex_bridge/plugin.json
+!codex_bridge/ocv_bridge.py
+!codex_bridge/README.md
+!codex_bridge/skills/
+!codex_bridge/skills/ocv-production-bridge/
+!codex_bridge/skills/ocv-production-bridge/SKILL.md
+!codex_bridge/skills/ocv-production-bridge/agents/
+!codex_bridge/skills/ocv-production-bridge/agents/openai.yaml

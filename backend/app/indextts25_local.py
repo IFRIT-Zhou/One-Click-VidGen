@@ -40,6 +40,9 @@ REQUIRED_MODEL_FILES = (
     "hf_cache/bigvgan/bigvgan_generator.pt",
     "hf_cache/w2v-bert-2.0/model.safetensors",
     "hf_cache/w2v-bert-2.0/conformer_shaw.pt",
+    "qwen0.6bemo4-merge/config.json",
+    "qwen0.6bemo4-merge/model.safetensors",
+    "qwen0.6bemo4-merge/tokenizer.json",
 )
 REQUIRED_MODEL_DIRS = (
     "qwen0.6bemo4-merge",
@@ -97,7 +100,7 @@ class IndexTTS25Config:
     def missing_model_resources(self) -> list[str]:
         missing: list[str] = []
         for relative in REQUIRED_MODEL_FILES:
-            if not (self.model_dir / relative).is_file():
+            if not (self.model_dir / relative).is_file() or (self.model_dir / relative).stat().st_size == 0:
                 missing.append(f"2.5 模型文件 {relative}")
         for relative in REQUIRED_MODEL_DIRS:
             if not (self.model_dir / relative).is_dir():
@@ -154,7 +157,15 @@ class IndexTTS25Config:
 def load_indextts25_config() -> IndexTTS25Config:
     load_project_env()
     root = _project_path(os.getenv("INDEXTTS25_ROOT", ""), PROJECT_ROOT / "tools" / "IndexTTS25")
-    model_dir = _project_path(os.getenv("INDEXTTS25_MODEL_DIR", ""), root / "checkpoints")
+    # Explicit configuration wins; older portable packages keep working until moved.
+    standard = PROJECT_ROOT / "models" / "tts" / "indextts25"
+    legacy = root / "checkpoints"
+    default_models = standard if (standard / "config.yaml").is_file() or not (legacy / "config.yaml").is_file() else legacy
+    model_dir = _project_path(os.getenv("INDEXTTS25_MODEL_DIR", ""), default_models)
+    # Previous portable .env templates explicitly wrote the old default. Once
+    # its models are moved, follow the new location instead of trapping users.
+    if model_dir == legacy.resolve() and not (legacy / "config.yaml").is_file() and (standard / "config.yaml").is_file():
+        model_dir = standard.resolve()
     examples_dir = _project_path(os.getenv("INDEXTTS25_EXAMPLES_DIR", ""), root / "examples")
     packages_dir = _project_path(os.getenv("INDEXTTS25_PACKAGES_DIR", ""), root / "python_packages")
     default_voice = os.getenv("INDEXTTS25_DEFAULT_VOICE", "voice_05.wav").strip()

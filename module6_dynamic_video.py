@@ -119,12 +119,12 @@ class VideoGenerationRequest:
 def validate_request(request: VideoGenerationRequest) -> None:
     if not request.prompt.strip() or len(request.prompt) > 20480:
         raise ValueError("视频提示词不能为空且不得超过 20480 字符")
-    if request.duration not in range(4, 16):
-        raise ValueError("视频生成时长只支持 4～15 秒")
+    if type(request.duration) is not int or request.duration < 4:
+        raise ValueError("视频生成时长必须是至少 4 秒的整数；最大时长取决于所选服务商和模型")
     if request.ratio not in {"16:9", "9:16", "4:3", "3:4", "1:1", "21:9"}:
         raise ValueError("视频比例不受支持")
-    if request.resolution not in {"480p", "720p"}:
-        raise ValueError("首版只允许模型原生的 480p 或 720p")
+    if request.resolution not in {"480p", "720p", "1080p"}:
+        raise ValueError("视频分辨率只支持 480p、720p 或 1080p")
     if not 1 <= len(request.image_paths) <= 9:
         raise ValueError("视频必须包含核心分镜图，图片总数为 1～9 张")
     for path in request.image_paths:

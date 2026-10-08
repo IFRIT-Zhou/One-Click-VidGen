@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from .gemini_client import GeminiError
 from .video_director_contracts import SEMANTIC_CONTRACT
+from .video_medical_director import is_medical, medical_contract
 
 
 MAX_VIDEO_DURATION = 15.0
@@ -44,7 +45,7 @@ def _duration(scenes):
     return round(float(scenes[-1]['end']) - float(scenes[0]['start']), 3)
 
 
-def legal_ranges(scenes):
+def legal_ranges(scenes, max_duration=MAX_VIDEO_DURATION):
     """All permitted consecutive ranges; the Agent does not calculate timing."""
     result = []
     compact = len(scenes) > 40
@@ -52,18 +53,18 @@ def legal_ranges(scenes):
     for first, scene in enumerate(scenes):
         if compact:
             furthest = max(first, furthest)
-            while furthest + 1 < len(scenes) and round(float(scenes[furthest + 1]['end']) - float(scene['start']), 3) <= MAX_VIDEO_DURATION:
+            while furthest + 1 < len(scenes) and round(float(scenes[furthest + 1]['end']) - float(scene['start']), 3) <= max_duration:
                 furthest += 1
             own_duration = _duration([scene])
-            end = first if own_duration > MAX_VIDEO_DURATION else furthest
+            end = first if own_duration > max_duration else furthest
             result.append(dict(first_slide_id=scene['slide_id'], last_slide_id=scenes[end]['slide_id'],
                                duration=round(float(scenes[end]['end']) - float(scene['start']), 3),
-                               required_kind='static' if own_duration > MAX_VIDEO_DURATION else 'video',
-                               range_mode='single_only' if own_duration > MAX_VIDEO_DURATION else 'any_end_up_to_last'))
+                               required_kind='static' if own_duration > max_duration else 'video',
+                               range_mode='single_only' if own_duration > max_duration else 'any_end_up_to_last'))
             continue
         for last in range(first, len(scenes)):
             duration = round(float(scenes[last]['end']) - float(scene['start']), 3)
-            if duration > MAX_VIDEO_DURATION:
+            if duration > max_duration:
                 if first == last:
                     result.append(dict(first_slide_id=scene['slide_id'], last_slide_id=scene['slide_id'],
                                        duration=duration, required_kind='static'))
@@ -73,7 +74,7 @@ def legal_ranges(scenes):
     return result
 
 
-def safe_partitions(scenes):
+def safe_partitions(scenes, max_duration=MAX_VIDEO_DURATION):
     """Minimize tiny clips/count, avoid unfinished punctuation, then balance lengths."""
     count = len(scenes)
     best = [None] * (count + 1)
@@ -81,13 +82,13 @@ def safe_partitions(scenes):
     best[count] = (0, 0, 0, 0.0)
     for first in range(count - 1, -1, -1):
         own_duration = _duration(scenes[first:first + 1])
-        if own_duration > MAX_VIDEO_DURATION:
+        if own_duration > max_duration:
             best[first] = best[first + 1]
             next_index[first] = first + 1
             continue
         for last in range(first, count):
             duration = round(float(scenes[last]['end']) - float(scenes[first]['start']), 3)
-            if duration > MAX_VIDEO_DURATION:
+            if duration > max_duration:
                 break
             tail_cost = best[last + 1]
             ending = str(scenes[last].get('text') or '').rstrip().rstrip('\"\'”’」』）)]】').rstrip()
@@ -125,7 +126,7 @@ def _semantic_child(row):
         raise ValueError('子镜事实属性无效')
 
 
-def _validate_children(response, scenes, dynamic):
+def _validate_children(response, scenes, dynamic, max_duration=MAX_VIDEO_DURATION):
     if not isinstance(response, dict):
         raise ValueError('局部分段未返回 JSON 对象')
     rows = response.get('shots')
@@ -134,9 +135,9 @@ def _validate_children(response, scenes, dynamic):
     for row in rows:
         local = [by_id[value] for value in row['slide_ids']]
         duration = _duration(local)
-        unavoidable_static = len(local) == 1 and duration > MAX_VIDEO_DURATION
-        if duration > MAX_VIDEO_DURATION and not unavoidable_static:
-            raise ValueError('子镜仍超过15秒，必须沿给定字幕边界继续拆分')
+        unavoidable_static = len(local) == 1 and duration > max_duration
+        if duration > max_duration and not unavoidable_static:
+            raise ValueError(f'子镜仍超过{max_duration}秒，必须沿给定字幕边界继续拆分')
         required_kind = 'static' if unavoidable_static or not dynamic else 'video'
         if row['kind'] != required_kind:
             raise ValueError('不能把可拆分的动态内容降为静态，单条超限字幕才单独静态')
@@ -148,9 +149,9 @@ def _validate_children(response, scenes, dynamic):
     return rows
 
 
-def _fallback_row(scenes, parent, dynamic):
+def _fallback_row(scenes, parent, dynamic, max_duration=MAX_VIDEO_DURATION):
     text = ''.join(str(scene['text']) for scene in scenes)
-    static = not dynamic or (len(scenes) == 1 and _duration(scenes) > MAX_VIDEO_DURATION)
+    static = not dynamic or (len(scenes) == 1 and _duration(scenes) > max_duration)
     old_semantic = parent.get('semantic') if isinstance(parent.get('semantic'), dict) else {}
     status = old_semantic.get('fact_status', '')
     # Keep a known factual/quoted framing, but never copy the parent's whole meaning.
@@ -166,7 +167,7 @@ def _fallback_row(scenes, parent, dynamic):
                               continuity_requirement=str(old_semantic.get('continuity_requirement') or '')[:10000]))
 
 
-def _decorate_children(children, parent, by_id, method, reason):
+def _decorate_children(children, parent, by_id, method, reason, max_duration=MAX_VIDEO_DURATION):
     result = []
     for index, child in enumerate(children):
         # Only grouping fields survive: pictures, motion plans and old assets are invalid after a split.
@@ -175,13 +176,13 @@ def _decorate_children(children, parent, by_id, method, reason):
         row['id'] = uuid.uuid4().hex[:12]
         row['parent_shot_id'] = parent['id']
         local = [by_id[value] for value in row['slide_ids']]
-        own_static = len(local) == 1 and _duration(local) > MAX_VIDEO_DURATION
+        own_static = len(local) == 1 and _duration(local) > max_duration
         actual_method = 'single_subtitle_static' if own_static else method
         row['duration_repair'] = dict(method=actual_method, parent_id=parent['id'],
                                      original_duration=_duration([by_id[value] for value in parent['slide_ids']]),
                                      part_index=index + 1, part_count=len(children), reason=reason)
         if own_static:
-            row['kind_adjustment'] = '单条字幕超过15秒，已独立保留为静态；配音和字幕不变'
+            row['kind_adjustment'] = f'单条字幕超过{max_duration}秒，已独立保留为静态；配音和字幕不变'
         elif method == 'boundary_fallback':
             row['kind_adjustment'] = '已按字幕边界安全拆分；可在分镜确认时调整表达'
         else:
@@ -195,6 +196,7 @@ def _decorate_children(children, parent, by_id, method, reason):
 
 def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_draft=None, narration_groups=()):
     """Repair invalid groups, optionally coordinating their unlocked neighbors."""
+    max_duration = 30 if context.get('dynamic_max_shot_duration') == 30 else 15
     validate_group_structure(rows, scenes)
     result = copy.deepcopy(rows)
     for row in result:
@@ -208,10 +210,10 @@ def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_dra
         parent = result[index]
         local = [by_id[value] for value in parent['slide_ids']]
         duration = _duration(local)
-        dynamic = parent['kind'] == 'video' or index < 2
-        own_static = len(local) == 1 and duration > MAX_VIDEO_DURATION
+        dynamic = parent['kind'] == 'video' or (index < 2 and not is_medical(context))
+        own_static = len(local) == 1 and duration > max_duration
         missing = _missing_fields(parent)
-        overlong = dynamic and duration > MAX_VIDEO_DURATION
+        overlong = dynamic and duration > max_duration
         # A saved, explained single-caption exception needs no repeated repair on resume.
         repair = parent.get('duration_repair')
         if own_static and parent['kind'] == 'static' and not missing and isinstance(repair, dict) and repair.get('method') == 'single_subtitle_static':
@@ -228,10 +230,10 @@ def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_dra
             progress(f'分镜时长协调：处理第{index + 1}镜（{duration:.2f}秒）')
         method, children = 'boundary_fallback', None
         if own_static:
-            children = [_fallback_row(local, parent, dynamic=True)]
+            children = [_fallback_row(local, parent, dynamic=True, max_duration=max_duration)]
         elif not dynamic:
             # Static metadata is safe to reconstruct directly from its own source text.
-            children = [_fallback_row(local, parent, dynamic=False)]
+            children = [_fallback_row(local, parent, dynamic=False, max_duration=max_duration)]
         else:
             # Give the director a bounded neighboring window when duration
             # pressure may strand a dependent sentence at either edge.
@@ -266,10 +268,12 @@ narration_groups 是配音语义线索而非强制切镜位置：默认尊重完
 不复制父镜全文的目的，不写构图、提示词或秒级动作。保持引用、假设、比喻和事实的原有属性。
 返回 {shots:[{slide_ids:[...],kind:"video|static",intent:"...",semantic:{message,source_basis,fact_status,progression,continuity_requirement},motion_basis:"...",progression_plan:"..."}]}。
 """ + SEMANTIC_CONTRACT
+            system = system.replace('15秒', f'{max_duration}秒')
+            system += medical_contract(context, 'groups')
             payload = dict(story_context=context, source_text='\n'.join(s['text'] for s in scenes),
                            narration_groups=narration_groups, parent_shot=copy.deepcopy(parent),
                            editable_shots=copy.deepcopy(window_rows), scenes=window_scenes,
-                           legal_ranges=legal_ranges(window_scenes), validation_errors=[reason],
+                           legal_ranges=legal_ranges(window_scenes, max_duration), validation_errors=[reason],
                            neighbors={side: {'intent': candidate.get('intent', ''),
                                             'subtitles': [by_id[sid] for sid in candidate.get('slide_ids', [])]}
                                       for side, candidate in (('previous', result[window_first - 1] if window_first else {}),
@@ -280,7 +284,7 @@ narration_groups 是配音语义线索而非强制切镜位置：默认尊重完
                 response = None
                 try:
                     response = ask(system, payload)
-                    candidate = _validate_children(response, window_scenes, dynamic=True)
+                    candidate = _validate_children(response, window_scenes, dynamic=True, max_duration=max_duration)
                 except (GeminiError, ValueError, TypeError) as exc:
                     payload['validation_errors'] = [str(exc)]
                     if isinstance(response, dict):
@@ -296,10 +300,10 @@ narration_groups 是配音语义线索而非强制切镜位置：默认尊重完
                             progress(f'Agent 1B：已按全文语义协调相邻 {len(window_rows)} 镜，重组为 {len(children)} 镜；窗口外分镜不变。')
                     break
             if children is None:
-                children = [_fallback_row(part, parent, dynamic=True) for part in safe_partitions(local)]
+                children = [_fallback_row(part, parent, dynamic=True, max_duration=max_duration) for part in safe_partitions(local, max_duration)]
                 if progress:
                     progress(f'第{index + 1}镜已按字幕边界安全拆分，继续规划；可在分镜确认时调整表达。')
-        replacements = _decorate_children(children, parent, by_id, method, reason)
+        replacements = _decorate_children(children, parent, by_id, method, reason, max_duration)
         replace_count = len(window_rows) if method == 'semantic' and dynamic and not own_static else 1
         result[index:index + replace_count] = replacements
         validate_group_structure(result, scenes)

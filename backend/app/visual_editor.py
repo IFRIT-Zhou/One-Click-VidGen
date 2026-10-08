@@ -278,6 +278,9 @@ class VisualEditor:
             item["reference_image_paths"] = [str((root / Path(p).name).resolve()) for p in item.get("reference_image_paths", [])]
             if isinstance(scene, dict):
                 scene["path"] = str((root / Path(str(scene.get("path") or "" )).name).resolve())
+                scene['reference_image_paths'] = [str((
+                    project_dir / 'other' / ('reference_images' if Path(p).name.startswith('uploaded_') else 'scene_references') / Path(p).name
+                ).resolve()) for p in scene.get('reference_image_paths', [])]
         return items
 
     @staticmethod
@@ -652,6 +655,12 @@ class VisualEditor:
 
     @staticmethod
     def _find_image(image_dir: Path, macro_id: str) -> Path:
+        if macro_id.startswith('scene_asset_'):
+            scene = next((row['scene_reference'] for row in VisualEditor._load_mapping(image_dir.parent)
+                          if (row.get('scene_reference') or {}).get('scene_id') == macro_id.removeprefix('scene_asset_')), None)
+            if scene and Path(scene['path']).is_file():
+                return Path(scene['path'])
+            raise FileNotFoundError('场景参考不存在')
         matches = [path for path in image_dir.glob(f"{macro_id}*") if path.suffix.lower() in IMAGE_EXTENSIONS]
         if not matches:
             raise FileNotFoundError(f"image for {macro_id} is missing")
@@ -1477,7 +1486,9 @@ class VisualEditor:
                 reference_paths = list(dict.fromkeys(reference_paths))[:4]
                 with self._mapping_lock:
                     mapping = self._load_mapping(project_dir)
-                    item = ({"macro_scene_id": macro_id, "character_ids": [], "reference_image_ids": []}
+                    item = ({"macro_scene_id": macro_id, "character_ids": [], "reference_image_ids": [],
+                             'reference_binding_version': 1,
+                             'reference_image_paths': scene_owner['scene_reference'].get('reference_image_paths', [])}
                             if scene_owner else next((entry for entry in mapping if str(entry.get("macro_scene_id")) == macro_id), None))
                     if item is None:
                         raise ValueError("image mapping was not found")
@@ -1487,6 +1498,8 @@ class VisualEditor:
                         for entry in mapping:
                             if (entry.get("scene_reference") or {}).get("scene_id") == scene_asset_id:
                                 entry["scene_reference"]["prompt"] = effective_prompt
+                                if reference_paths:
+                                    entry['scene_reference']['reference_image_paths'] = list(reference_paths)
                     self._save_mapping(project_dir, mapping)
                     image.with_suffix(".txt").write_text(effective_prompt, encoding="utf-8")
                 import module4_video_render as visual
@@ -1674,7 +1687,14 @@ class VisualEditor:
 
     def undo(self, *, job_id: str, user_id: int, macro_id: str) -> None:
         project_dir = self.output_dir(job_id, user_id)
-        image = self._find_image(project_dir / "image", macro_id)
+        if macro_id.startswith('scene_asset_'):
+            scene = next((row['scene_reference'] for row in self._load_mapping(project_dir)
+                          if (row.get('scene_reference') or {}).get('scene_id') == macro_id.removeprefix('scene_asset_')), None)
+            if not scene:
+                raise FileNotFoundError('场景参考不存在')
+            image = Path(scene['path'])
+        else:
+            image = self._find_image(project_dir / "image", macro_id)
         backups = sorted(self._backup_dir(project_dir).glob(f"{macro_id}.*{image.suffix.lower()}"))
         backups = [path for path in backups if ".original" not in path.name]
         if not backups:

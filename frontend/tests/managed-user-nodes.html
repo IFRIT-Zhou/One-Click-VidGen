@@ -1,0 +1,15 @@
+<!doctype html><html><meta charset="utf-8"><div id="app"></div><script type="module">
+import {createApp,h} from 'vue'
+import ManagedComfyUI from '../src/components/ManagedComfyUI.vue'
+import '../src/style.css'
+window.calls=[]
+window.fetch=async(url,options={})=>{
+ const path=new URL(url,location.href).pathname;window.calls.push({path,method:options.method||'GET'})
+ let value={}
+ if(path.endsWith('/managed'))value={installed:true,version:'test',state:'ready',models_ready:true,any_models_ready:true,active_tasks:0}
+ if(path.endsWith('/nodes'))value={directory:'OCV/comfyui_plugins',profiles:[{id:'fast',name:'高速采样',checked:true,missing_nodes:[]},{id:'aiwood',name:'aiwood',checked:true,missing_nodes:['SelfLiftH3Sampler']}]}
+ if(path.endsWith('/models'))value={items:[],profiles:[],runtime_missing:[],directory:'OCV/models/comfyui'}
+ return new Response(JSON.stringify(value),{status:200})
+}
+createApp({render:()=>h(ManagedComfyUI,{mode:'managed'})}).mount('#app')
+</script></html>

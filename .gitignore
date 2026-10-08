@@ -24,6 +24,7 @@ frontend/node_modules/
 frontend/dist/
 
 workspace/
+models/
 runtime/
 runtime_logs/
 Archives/
@@ -42,6 +43,9 @@ tools/*
 !tools/portable_release_audit.py
 !tools/publish_launcher_release.py
 !tools/deploy_indextts25.ps1
+!tools/build_comfyui_component.py
+!tools/validate_comfyui_component.py
+!tools/prepare_model_library.py
 Sound Material/
 测试文案/
 venv_audio_vedio/
@@ -79,3 +83,6 @@ launcher/ui-preview.png
 /更新日志_*.md
 /launcher/UPDATE_SOURCE_INTEGRATION.md
 /deploy/content_guard/
+
+# Maintainer-only optional director content.
+/plugins/private_*/

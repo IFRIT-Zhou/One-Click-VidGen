@@ -24,7 +24,6 @@ INTEGRITY_FILES = (
     "frontend/src/studio.css",
     "frontend/src/useStudio.js",
     "frontend/src/useWorkspace.js",
-    "frontend/src/cloudPoolPreference.js",
     "frontend/src/videoPresentation.js",
     "frontend/src/components/ImageProfileSelector.vue",
     "frontend/src/components/ImageStudio.vue",
@@ -52,7 +51,6 @@ INTEGRITY_FILES = (
     "backend/app/main.py",
     "backend/app/language_presets.py",
     "backend/app/gemini_client.py",
-    "backend/app/language_routing.py",
     "backend/app/image_profiles.py",
     "backend/app/indextts25_local.py",
     "backend/app/local_tts_component.py",
@@ -63,7 +61,6 @@ INTEGRITY_FILES = (
     "backend/app/subtitle_preview.cjs",
     "backend/app/subtitle_preview.py",
     "backend/app/tts_editor.py",
-    "backend/app/tts_alignment.py",
     "backend/app/tts_segmentation.py",
     "backend/app/tts_text_normalization.py",
     "backend/app/visual_editor.py",
@@ -83,7 +80,6 @@ INTEGRITY_FILES = (
     "backend/app/video_scene_references.py",
     "backend/app/video_sources.py",
     "backend/app/video_studio.py",
-    "backend/app/video_speech.py",
     "backend/app/video_text_policy.py",
     "director_prompt_editor.py",
     "scene_reference_coordinator.py",
@@ -98,9 +94,24 @@ INTEGRITY_FILES = (
     "launcher/update-sources.json",
     "tools/deploy_indextts25.ps1",
     "tools/portable_preflight.py",
+    "backend/app/codex_bridge.py",
+    "backend/app/managed_comfyui.py",
+    "backend/app/managed_comfyui_worker.py",
+    "backend/app/model_library.py",
+    "backend/app/model_sources.json",
+    "frontend/src/components/CodexBridgePanel.vue",
+    "frontend/src/components/ManagedComfyUI.vue",
+    "frontend/src/components/ModelInstallGuide.vue",
+    "frontend/src/components/ShotReferencePreview.vue",
+    "plugins/codex_bridge/plugin.json",
+    "plugins/codex_bridge/ocv_bridge.py",
+    "plugins/codex_bridge/README.md",
+    "plugins/codex_bridge/skills/ocv-production-bridge/SKILL.md",
+    "plugins/codex_bridge/skills/ocv-production-bridge/agents/openai.yaml",
+    "comfyui_plugins/README.md",
 )
 
-TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue"}
+TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue", ".md", ".yaml"}
 
 
 def validate_launcher_integrity_files(root: Path) -> None:

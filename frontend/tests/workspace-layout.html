@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>布局测试</title><div id="app"></div>
+<script type="module">
+import {createApp,h,ref} from 'vue'
+import ResizableShotWorkspace from '../src/components/ResizableShotWorkspace.vue'
+import WorkspacePanels from '../src/components/WorkspacePanels.vue'
+import '../src/style.css'
+const scope=new URLSearchParams(location.search).get('scope')||'layout-test'
+createApp({setup(){const draft=ref('修改中的提示词');return()=>h('main',{style:'max-width:1200px;margin:24px auto;padding:16px'},[
+ h('h2',scope==='illustrated-visuals'?'图文视频 · 画面与字幕':'动态分镜'),h(ResizableShotWorkspace,{scope},{sidebar:()=>h('aside',[h('h3','镜头列表'),...Array.from({length:6},(_,i)=>h('p','0'+(i+1)+' · 画面'))]),default:()=>h(WorkspacePanels,{scope,logCount:3},{preview:()=>h('div',{style:'height:230px;background:#283b36;border-radius:10px;display:grid;place-items:center'},'当前分镜图预览'),prompts:()=>h('textarea',{value:draft.value,onInput:e=>draft.value=e.target.value,style:'box-sizing:border-box;width:100%;min-height:130px'}),subtitles:()=>h('p','字幕与画面时序编辑区'),logs:()=>h('p','任务完成，核心分镜图已保存。')})})])}}).mount('#app')
+</script></html>

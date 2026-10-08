@@ -131,13 +131,13 @@ def verify_archive(archive: Path, expected_fingerprint: str) -> None:
             raise RuntimeError(f"更新包内容指纹不一致：{actual} != {expected_fingerprint}")
 
 
-def validate_committed_release(channel: dict[str, Any]) -> str:
+def validate_committed_release(channel: dict[str, Any], *, allow_release_branch: bool = False) -> str:
     validate_launcher_integrity_files(ROOT)
     dirty = run("git", "status", "--porcelain", "--untracked-files=no", capture=True)
     if dirty:
         raise RuntimeError("仍有未提交的已跟踪文件，禁止发布：\n" + dirty)
     branch = run("git", "branch", "--show-current", capture=True)
-    if branch != str(channel.get("branch") or "main"):
+    if branch != str(channel.get("branch") or "main") and not (allow_release_branch and branch.startswith('codex/')):
         raise RuntimeError(f"当前分支为 {branch!r}，清单要求 {channel.get('branch')!r}")
     actual, missing = fingerprint(ROOT)
     if missing:
@@ -149,6 +149,7 @@ def validate_committed_release(channel: dict[str, Any]) -> str:
 
 
 def sync_github() -> None:
+    assert_no_private_plugins('HEAD')
     print("[GitHub] 核对远端 main……", flush=True)
     run("git", "fetch", "origin")
     counts = run("git", "rev-list", "--left-right", "--count", "origin/main...HEAD", capture=True)
@@ -157,12 +158,13 @@ def sync_github() -> None:
         raise RuntimeError("origin/main 包含本地没有的提交，请先合并，禁止覆盖远端")
     if local_ahead:
         print(f"[GitHub] 本地领先 {local_ahead} 个提交，正在推送……", flush=True)
-        run("git", "push", "origin", "main")
+        run("git", "push", "origin", "HEAD:main")
     else:
         print("[GitHub] 已与本地 HEAD 一致。", flush=True)
 
 
 def build_archive(head: str, channel: dict[str, Any], output: Path) -> str:
+    assert_no_private_plugins(head)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
         output.unlink()
@@ -173,6 +175,13 @@ def build_archive(head: str, channel: dict[str, Any], output: Path) -> str:
     archive_hash = sha256(output)
     print(f"[制包] SHA-256={archive_hash}", flush=True)
     return archive_hash
+
+
+def assert_no_private_plugins(head: str) -> None:
+    paths = run('git', 'ls-tree', '-r', '--name-only', head, capture=True).splitlines()
+    private = [p for p in paths if p.startswith('plugins/private_')]
+    if private:
+        raise RuntimeError('拒绝公开发布：提交包含私有插件：' + ', '.join(private))
 
 
 def upload_modelscope(channel: dict[str, Any], archive: Path, repo_id: str) -> None:
@@ -241,6 +250,7 @@ def verify_public_release(channel: dict[str, Any], local_hash: str, release_dir:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepare-only", action="store_true", help="只制包和本地校验，不联网发布")
+    parser.add_argument("--allow-release-branch", action="store_true", help="允许从隔离的 codex/ 发布分支快进推送 main")
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID, help="魔搭模型仓库 ID")
     args = parser.parse_args()
 
@@ -248,7 +258,7 @@ def main() -> int:
     release_id = str(channel.get("release_id") or "").strip()
     if not release_id:
         raise RuntimeError("更新清单缺少 release_id")
-    head = validate_committed_release(channel)
+    head = validate_committed_release(channel, allow_release_branch=args.allow_release_branch)
     release_dir = ROOT / "runtime" / "temp" / "release_publish" / release_id
     archive = release_dir / "One-Click-VidGen-main.zip"
     archive_hash = build_archive(head, channel, archive)

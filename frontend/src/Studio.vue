@@ -53,6 +53,7 @@
    <ImageStudio v-else-if="studioPage==='images'" />
    <ComfyUIWorkbench v-else-if="studioPage==='comfyui'" />
    <section v-else-if="studioPage==='home'" class="content home">
+    <CodexBridgePanel compact @open-draft="openCodexDraft" @open-project="openCodexProject"/>
     <div class="page-heading"><div><p class="eyebrow">YOUR CREATIVE SPACE</p><h1>让想法，成为作品。</h1><p class="muted">从一段文字开始，继续上次的创作。</p></div><button class="primary" @click="newProject()">＋ 新建图文视频</button></div>
     <div v-if="!session.user" class="resume"><div><h3>连接你的工作空间</h3><p>登录本地工作台后，查看项目并开始创作。</p></div><button @click="studioDrawer='接口与服务'">打开登录与配置</button></div>
     <div v-if="studioDrafts.length" class="studio-drafts">
@@ -368,7 +369,7 @@
                     <strong>{{ plugin.name }}</strong>
                     <span>v{{ plugin.version }} · {{ plugin.author }}</span>
                   </div>
-                  <label class="inline-switch plugin-toggle" :title="plugin.valid ? '记录插件启用状态；当前框架不会执行插件代码' : '清单无效，无法启用'">
+                  <label class="inline-switch plugin-toggle" :title="plugin.valid ? (plugin.framework_only ? '仅记录启用状态' : '启用或停用此插件功能') : '清单无效，无法启用'">
                     <input :checked="plugin.enabled" type="checkbox" :disabled="!plugin.valid || pluginToggling === plugin.folder" @change="togglePlugin(plugin)" />
                     <span class="switch-track"><span></span></span>
                   </label>
@@ -377,10 +378,11 @@
                 <div class="plugin-meta">
                   <span>类型：{{ plugin.type }}</span>
                   <span v-if="plugin.ocv_version">OCV：{{ plugin.ocv_version }}</span>
-                  <span>{{ plugin.enabled ? '已启用（仅记录）' : '已停用' }}</span>
+                  <span>{{ plugin.enabled ? (plugin.framework_only ? '已启用（仅记录）' : '已启用') : '已停用' }}</span>
                 </div>
                 <div v-if="plugin.permissions?.length" class="plugin-permissions">声明权限：{{ plugin.permissions.join('、') }}</div>
                 <div v-if="plugin.issue" class="board-error">清单错误：{{ plugin.issue }}</div>
+                <CodexBridgePanel v-if="plugin.id==='codex_bridge' && plugin.enabled && plugin.valid" @open-draft="openCodexDraft" @open-project="openCodexProject"/>
               </article>
             </div>
 
@@ -545,6 +547,7 @@
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
      <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
+     <button v-if="codexBridgeAvailable && studioJob?.request?.dynamic_video && guidedStage==='audio_review' && !editingDynamicAudio" :disabled="studioBusy||guidedSubtitleSaving||ttsEditor.task?.status==='running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
      <div class="studio-audio-player"><audio v-if="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
      <div class="studio-audio-layout"><aside class="studio-sentence-list"><div class="list-heading">全部句子 <span>{{ttsEditor.segments.length}} 句</span></div><div v-for="segment in ttsEditor.segments" :key="segment.index" :class="{selected:studioSentence===segment.index}"><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="segment.index" :aria-label="'选中第'+segment.index+'句'"/><button @click="studioSentence=segment.index"><small>{{segment.index}}</small><span>{{segment.text}}</span><small>{{Number(segment.duration).toFixed(1)}}s</small></button></div></aside><div class="studio-sentence-detail"><section class="tts-segment-editor">
                 <div class="visual-timing-head">
@@ -667,14 +670,13 @@
     <template v-else-if="studioTab==='画面与字幕'">
      <OperationStatus title="画面处理状态" :task="visualEditor.has_active_image_tasks?{status:'running',message:'图片正在后台处理，可切换画面查看各图状态'}:visualEditor.task" :summary="`处理中 ${visualEditor.items.filter(item=>item.task?.status==='running').length} 张`"><button type="button" @click="openLogs()">查看详细日志</button></OperationStatus>
      <div v-if="!visualEditor.items.length" class="empty">{{visualEditor.task?.message||'画面生成后，将在这里显示可编辑内容。'}}</div>
-     <ResizableShotWorkspace v-else class="studio-visual-layout" scope="illustrated-visuals"><template #sidebar><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small></span></button></aside></template><div class="studio-shot-detail"><div class="visual-image-grid">
-                <SceneAssets v-if="visualEditorProjectId" :job-id="visualEditorProjectId" />
+     <ResizableShotWorkspace v-else class="studio-visual-layout" scope="illustrated-visuals"><template #sidebar><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="scene in studioSceneAssets" :key="scene.id" :class="{selected:studioSelectedImage?.id===scene.id}" @click="visualTimingSelectedId=scene.id"><img :src="scene.image_url" alt=""/><span><b>{{scene.display_name}}</b><small>参考资产 · 不占时长</small></span></button><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small></span></button></aside></template><div class="studio-shot-detail"><div class="visual-image-grid">
                 <article v-for="item in studioSelectedImage ? [studioSelectedImage] : []" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
                  <OperationStatus title="本图运行状态" :task="item.task"/>
                  <WorkspacePanels scope="illustrated-visuals" :log-count="studioTaskLogs.length">
                   <template #preview>
                   <div class="visual-image-actions">
-                    <strong>{{ item.id }}</strong>
+                    <strong>{{ item.display_name||item.id }}</strong>
                     <label class="visual-redraw-resolution" title="仅用于重绘本图，不改变接口服务中的全局分辨率">
                       <span>分辨率</span>
                       <select :value="item.redraw_resolution ?? ''" :disabled="item.task?.status === 'running'" :aria-label="item.id+' 重绘分辨率'" @change="item.redraw_resolution = $event.target.value">
@@ -698,11 +700,11 @@
                       ▣<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualReferenceImages($event, item.id)" />
                     </label>
                     <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
-                    <button type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
+                    <button v-if="!item.is_scene" type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
                     <label class="icon-action replace-action" title="替换本地图片" aria-label="替换本地图片">
                       ↕<input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualImage($event, item)" />
                     </label>
-                    <button type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
+                    <button v-if="!item.is_scene" type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
                   </div>
                   <div v-if="visualReferenceOwnerMacroId === item.id && (visualSelfReferenceMacroId || visualReferenceUploads.length)" class="visual-reference-summary">
                     <span class="visual-reference-title">本次重绘参考</span>
@@ -716,9 +718,10 @@
                     <small>取消勾选仅影响本次重绘；上传新的重绘参考图可替代原参考组合，不影响其他镜头。</small>
                   </div>
                   <div v-if="item.reference_materials?.length" class="visual-reference-summary">
-                    <span>本图使用的参考素材</span>
-                    <button v-for="reference in item.reference_materials" :key="reference.label" type="button" :title="reference.description" @click="visualPreviewItem={id:reference.label,image_url:reference.image_url}"><img :src="reference.image_url" :alt="reference.label" style="width:36px;height:28px;object-fit:contain"/>{{ reference.label }}</button>
+                    <span>本图使用的参考素材 · 按提交顺序</span>
+                    <button v-for="(reference,index) in item.reference_materials" :key="reference.label" type="button" :title="reference.description" @click="visualPreviewItem={id:reference.label,image_url:reference.image_url}"><img :src="reference.image_url" :alt="reference.label" style="width:100px;height:75px;object-fit:contain"/>图{{index+1}} · {{ reference.description||reference.label }}</button>
                   </div>
+                  <p v-if="!item.reference_materials?.length&&!item.scene_reference_url" class="muted">本图未记录参考素材，按提示词生成；旧项目可能未保存参考记录。</p>
                   <div class="visual-image-preview-shell">
                     <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
                       <img :src="item.image_url" :alt="item.id" />
@@ -736,12 +739,12 @@
                     <textarea v-model="item.prompt" rows="3" maxlength="12000"></textarea>
                   </label>
                   <label class="stack compact-stack">
-                    <span>对应文案（暂只读）</span>
+                    <span>{{item.is_scene?'场景说明':'对应文案（暂只读）'}}</span>
                     <textarea :value="item.text" rows="2" readonly></textarea>
                   </label>
                   </template>
                   <template #logs><TaskConsole :lines="studioTaskLogs" compact :diagnostic-available="!!studioJob" :diagnostic-exporting="diagnosticExporting" @export-diagnostic="exportDiagnosticPackage(studioJob)"/><p v-if="diagnosticMessage" class="muted" role="status">{{diagnosticMessage}}</p></template>
-                  <template #subtitles><section class="visual-timing-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
+                  <template #subtitles><section v-if="!item.is_scene" class="visual-timing-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
                 <div class="visual-timing-head">
                   <div>
                     <div class="eyebrow">画面时序</div>
@@ -784,7 +787,7 @@
                       :class="{ selected: visualTimingSelectedId === item.id }"
                       @click="visualTimingSelectedId = item.id"
                     >
-                      <strong>{{ item.id }}</strong>
+                      <strong>{{ item.display_name||item.id }}</strong>
                       <span>{{ formatTimingRange(item.timing) }}</span>
                       <small>{{ item.timing?.sentences?.length || 0 }} 句</small>
                     </button>
@@ -997,7 +1000,10 @@
               <button v-else-if="guidedStage === 'audio_setup'" class="primary-btn guided-primary-action" type="button" :disabled="!canSubmitGeneration" @click="submit">
                 {{ submitting ? '正在提交…' : '开始生成配音与字幕' }}
               </button>
-              <button v-else-if="guidedStage === 'audio_review' && studioJob?.request?.dynamic_video" class="primary-btn guided-primary-action" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="enterDynamicStoryboard">确认配音与字幕，进入动态分镜 →</button>
+              <div v-else-if="guidedStage === 'audio_review' && studioJob?.request?.dynamic_video" class="bridge-tools">
+                <button class="primary-btn guided-primary-action" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="enterDynamicStoryboard">确认配音与字幕，进入自动分镜 →</button>
+                <button v-if="codexBridgeAvailable" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
+              </div>
               <button v-else-if="guidedStage === 'audio_review'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="advanceGuidedWorkflow('confirm_audio')">
                 {{ guidedAdvancing ? '正在确认…' : '确认配音与字幕' }}
               </button>
@@ -1596,6 +1602,14 @@
                     <option value="custom">自定义</option>
                   </select>
                 </label>
+                <label v-if="form.dynamic_video" class="visual-pacing-select">
+                  <span>动态镜头规划上限</span>
+                  <select v-model.number="form.dynamic_max_shot_duration">
+                    <option :value="15">常规 · 15 秒</option>
+                    <option :value="30">长镜头 · 30 秒</option>
+                  </select>
+                  <small class="muted">上限不是目标时长。30 秒需视频模型支持，成本与本地显存占用可能增加；手动编辑不受强制拆分。</small>
+                </label>
                 <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
                   <label>
                     <span>最低停留（秒）</span>
@@ -1925,6 +1939,7 @@
           </div>
           <button class="ghost-btn compact-btn" type="button" @click="closeLocalTtsInstaller">关闭</button>
         </header>
+        <ModelInstallGuide kind="tts" />
         <div v-if="localTtsComponent.ready" class="local-tts-install-result success">
           <strong>本地语音模型已就绪</strong>
           <p>现在可以正常使用本地 GPU 配音，功能与完整整合包一致。</p>
@@ -2002,6 +2017,8 @@
 <script>
 import { useWorkspace } from './useWorkspace'
 import { useStudio } from './useStudio'
+import CodexBridgePanel from './components/CodexBridgePanel.vue'
+import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import { useStyleLibrary } from './useStyleLibrary'
 import { useAppearance } from './useAppearance'
 import TaskConsole from './components/TaskConsole.vue'
@@ -2024,7 +2041,7 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}

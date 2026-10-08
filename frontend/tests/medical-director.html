@@ -1,0 +1,25 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>医学导演界面测试</title><div id="app"></div>
+<script type="module">
+import {createApp,h} from 'vue'
+import VideoStudio from '../src/components/VideoStudio.vue'
+import '../src/style.css'
+import '../src/prototype/prototype.css'
+import '../src/studio.css'
+const record={id:'medical-ui-test',revision:1,status:'draft',settings:{name:'医学导演 · 界面测试',ratio:'16:9',style:'手绘风',characters:'',world:'',dynamic_text_mode:'visual_first'},creation_parameters:{dynamic_text_mode:'visual_first',dynamic_auto_advance:false},references:[],scenes:[{slide_id:'s1',text:'医学机制示意',start:0,end:8}],shots:[],logs:[]}
+window.testCalls=[]
+window.testDirectorEnabled=false
+window.fetch=async(url,options={})=>{
+ const route=new URL(url,location.href);window.testCalls.push({path:route.pathname,query:route.search,method:options.method||'GET'})
+ let result={}
+ if(route.pathname==='/api/video-studio/medical-ui-test')result=record
+ else if(route.pathname==='/api/director-profiles')result={profiles:window.testDirectorEnabled?[{id:'medical_paper',label:'医学文献',description:'测试专用可选导演；不代表已通过审核。'}]:[]}
+ else if(route.pathname==='/api/video-studio')result={items:[record]}
+ else if(route.pathname==='/api/language-presets')result={presets:[],current:{model:'测试语言模型',provider:'custom'}}
+ else if(route.pathname==='/api/comfyui')result={profiles:[]}
+ else if(route.pathname==='/api/video-model')result={source:'dedicated',has_api_key:false}
+ else if(route.pathname.endsWith('/plan'))return new Response(JSON.stringify({detail:'测试拦截：没有调用任何模型'}),{status:400})
+ return new Response(JSON.stringify(result),{status:200})
+}
+sessionStorage.setItem('ocv-video-open',record.id)
+createApp({render:()=>h('div',{class:'studio live-studio',style:'display:block'},[h(VideoStudio)])}).mount('#app')
+</script></html>

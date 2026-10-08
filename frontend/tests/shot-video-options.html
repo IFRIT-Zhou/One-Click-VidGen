@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>单镜生成设置测试</title><div id="app"></div>
+<script type="module">
+import {createApp,ref,h} from 'vue'
+import ShotVideoOptions from '../src/components/ShotVideoOptions.vue'
+import '../src/style.css'
+const imageSrc='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1000"><rect width="600" height="1000" fill="white"/></svg>')
+createApp({setup(){const options=ref({backend:'comfyui',profile_id:'h3',resolution:'',h3_prompt_agent:true}),profiles=[{id:'builtin',name:'OCV H3 · 高速采样',engine:'managed',resolution_preset:'720p',default_width:1280,default_height:720},{id:'h3',name:'H3 · 双阶段加速工作流',resolution_preset:'1080p',default_width:1920,default_height:1080},{id:'lite',name:'H3 · 低显存工作流',resolution_preset:'480p',default_width:854,default_height:480}];return ()=>h('main',{style:'max-width:960px;margin:32px auto;padding:16px'},[h('h2','第 03 镜 · 等待生成'),h('p','器械依次进入画面，镜头保持稳定。'),h(ShotVideoOptions,{modelValue:options.value,'onUpdate:modelValue':value=>options.value=value,profiles,apiReady:true,ratio:'9:16',imageSrc}),h('button','试生成当前镜头')])}}).mount('#app')
+</script></html>

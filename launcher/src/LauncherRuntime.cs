@@ -104,7 +104,6 @@ namespace OcvLauncher
             "frontend/src/studio.css",
             "frontend/src/useStudio.js",
             "frontend/src/useWorkspace.js",
-            "frontend/src/cloudPoolPreference.js",
             "frontend/src/videoPresentation.js",
             "frontend/src/components/ImageProfileSelector.vue",
               "frontend/src/components/ImageStudio.vue",
@@ -132,7 +131,6 @@ namespace OcvLauncher
               "backend/app/main.py",
               "backend/app/language_presets.py",
             "backend/app/gemini_client.py",
-            "backend/app/language_routing.py",
             "backend/app/image_profiles.py",
             "backend/app/indextts25_local.py",
             "backend/app/local_tts_component.py",
@@ -143,7 +141,6 @@ namespace OcvLauncher
             "backend/app/subtitle_preview.cjs",
             "backend/app/subtitle_preview.py",
             "backend/app/tts_editor.py",
-            "backend/app/tts_alignment.py",
             "backend/app/tts_segmentation.py",
             "backend/app/tts_text_normalization.py",
             "backend/app/visual_editor.py",
@@ -163,7 +160,6 @@ namespace OcvLauncher
             "backend/app/video_scene_references.py",
             "backend/app/video_sources.py",
             "backend/app/video_studio.py",
-            "backend/app/video_speech.py",
             "backend/app/video_text_policy.py",
             "director_prompt_editor.py",
             "scene_reference_coordinator.py",
@@ -177,7 +173,22 @@ namespace OcvLauncher
             "launcher/safe_update_helper.ps1",
             "launcher/update-sources.json",
             "tools/deploy_indextts25.ps1",
-            "tools/portable_preflight.py"
+            "tools/portable_preflight.py",
+            "backend/app/codex_bridge.py",
+            "backend/app/managed_comfyui.py",
+            "backend/app/managed_comfyui_worker.py",
+            "backend/app/model_library.py",
+            "backend/app/model_sources.json",
+            "frontend/src/components/CodexBridgePanel.vue",
+            "frontend/src/components/ManagedComfyUI.vue",
+            "frontend/src/components/ModelInstallGuide.vue",
+            "frontend/src/components/ShotReferencePreview.vue",
+            "plugins/codex_bridge/plugin.json",
+            "plugins/codex_bridge/ocv_bridge.py",
+            "plugins/codex_bridge/README.md",
+            "plugins/codex_bridge/skills/ocv-production-bridge/SKILL.md",
+            "plugins/codex_bridge/skills/ocv-production-bridge/agents/openai.yaml",
+            "comfyui_plugins/README.md"
         };
         private readonly string root;
 
@@ -989,7 +1000,7 @@ namespace OcvLauncher
             string extension = Path.GetExtension(path).ToLowerInvariant();
             bool isText = extension == ".bat" || extension == ".css" || extension == ".js"
                 || extension == ".cjs" || extension == ".json" || extension == ".ps1" || extension == ".py"
-                || extension == ".vue";
+                || extension == ".vue" || extension == ".md" || extension == ".yaml";
             if (!isText) return ComputeFileSha256(path);
 
             string text = File.ReadAllText(path, Encoding.UTF8)

@@ -29,6 +29,20 @@ def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> N
 
 
 class TtsSegmentEditorTest(unittest.TestCase):
+    def test_hidden_cues_remain_in_full_timeline_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            other = project / 'other'
+            other.mkdir()
+            rows = [{'text_content': '可见句', 'start': 0, 'end': 1},
+                    {'text_content': '隐藏句', 'start': 1, 'end': 2, 'subtitle_hidden': True}]
+            (other / '画面时间线.json').write_text(json.dumps(rows), encoding='utf-8')
+            (other / '最终字幕.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\n可见句\n', encoding='utf-8')
+            _commit_canonical_subtitle_timeline(project)
+            result = json.loads((other / '画面时间线.json').read_text(encoding='utf-8'))
+            self.assertEqual([r['text_content'] for r in result], ['可见句', '隐藏句'])
+            self.assertEqual([r['text'] for r in _srt_entries(other / '最终字幕.srt')], ['可见句'])
+
     def test_status_revision_reads_persisted_boundary_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

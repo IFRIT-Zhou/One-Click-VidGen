@@ -258,6 +258,7 @@ def _recover_missing_scene_references(mapping, provider_configs):
                     "macro_scene_id": "scene_ref_" + scene_id,
                     "image_prompt": prompt + "\n纯场景资产，无人物、人体局部、人影或人形倒影。",
                     "character_ids": [], "reference_image_ids": [],
+                    "reference_image_paths": reference.get('reference_image_paths', []), 'reference_binding_version': 1,
                 }, pool)
             recovered[key] = str(candidate.resolve())
             _sync_visual_checkpoint(asset=candidate)
@@ -3828,18 +3829,28 @@ def run_online_poster_engine() -> None:
             mapping = bind_material_references(mapping, _reference_image_catalog())
             from scene_reference_coordinator import plan_scene_references, bind_scene_references
             scene_cache = VISUAL_DIR / "scene_reference_plan.json"
+            from backend.app.reference_materials import reference_metadata
+            scene_catalog = _reference_image_catalog()
+            scene_metadata = {row.get('label'): row for row in reference_metadata()}
+            scene_source = {'subtitles': scenes, 'references': [
+                {**scene_metadata.get(label, {}), 'id': label} for label in scene_catalog]}
             scene_plan = plan_scene_references(
-                mapping, scenes, scene_cache, os.getenv("VISUAL_STYLE_PROMPT", "")
+                mapping, scene_source, scene_cache, os.getenv("VISUAL_STYLE_PROMPT", "")
             ) if os.getenv("OCV_SCENE_REFERENCES_ENABLED", "1") == "1" else {"scenes": []}
             reference_paths = {}
             if scene_plan["scenes"]:
                 print(f"场景参考：发现 {len(scene_plan['scenes'])} 个重复真实场景，将先生成无人参考图（产生额外图片费用，续跑复用）。", flush=True)
                 scene_pool = RunningHubAccountPool(provider_configs, per_key_concurrency=1)
                 for entry in scene_plan["scenes"]:
+                    ids = entry.get('reference_ids', [])
+                    if not isinstance(ids, list) or len(ids) > 3 or any(not isinstance(i, str) or i not in scene_catalog for i in ids) or len(set(ids)) != len(ids):
+                        raise ValueError('场景参考素材选择无效，请重新规划')
+                    entry['reference_image_paths'] = [scene_catalog[i] for i in ids]
                     reference_macro = {
                         "macro_scene_id": "scene_ref_" + entry["scene_id"],
                         "image_prompt": entry["reference_prompt"] + "\n纯场景资产，无人物、人体局部、人影或人形倒影。",
                         "character_ids": [], "reference_image_ids": [],
+                        "reference_image_paths": entry['reference_image_paths'], 'reference_binding_version': 1,
                     }
                     reference_paths[entry["scene_id"]] = _render_poster_with_retry(reference_macro, scene_pool)
                     _sync_visual_checkpoint(asset=reference_paths[entry["scene_id"]])

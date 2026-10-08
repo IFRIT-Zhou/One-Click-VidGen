@@ -47,7 +47,7 @@ class Create(BaseModel):
     characters: str = Field(default='', max_length=10000)
     world: str = Field(default='', max_length=10000)
     ratio: str = '16:9'
-    dynamic_text_mode: Literal['text_assisted', 'visual_first'] = 'text_assisted'
+    dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'text_assisted'
     scene_references_enabled: bool = True
 
 class Edit(BaseModel):
@@ -62,7 +62,7 @@ class ImportProject(BaseModel):
     world: str = Field(default='', max_length=10000)
     ratio: str = Field(default='16:9', pattern=r'^(16:9|9:16)$')
     from_audio_task: bool = False
-    dynamic_text_mode: Literal['text_assisted', 'visual_first'] = 'text_assisted'
+    dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'text_assisted'
     scene_references_enabled: bool = True
 
 class Structure(BaseModel):
@@ -79,7 +79,7 @@ class ProjectSettingsEdit(Review):
     style: str = Field(default='', max_length=10000)
     characters: str = Field(default='', max_length=10000)
     world: str = Field(default='', max_length=10000)
-    dynamic_text_mode: Literal['text_assisted', 'visual_first'] = 'visual_first'
+    dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'visual_first'
     scene_references_enabled: bool = True
     video_generation_backend: Literal['api', 'comfyui'] = 'api'
     comfyui_profile_id: str = Field(default='', max_length=80)
@@ -91,6 +91,7 @@ class ProjectSettingsEdit(Review):
 
 class StoryboardConfirmation(Review):
     regenerate_shot_id: str | None = Field(default=None, max_length=100)
+    confirm_adjusted_designs: bool = False
 
 class DesignConfirmation(Review):
     shot_id: str
@@ -112,6 +113,7 @@ class ShotPromptRefresh(Review):
 
 
 class ShotMotionEdit(Review):
+    intent: str | None = Field(default=None, max_length=20000)
     kind: Literal['static', 'video']
     action: str = Field(default='', max_length=20000)
     video_prompt: str = Field(default='', max_length=20000)
@@ -239,7 +241,22 @@ def _prepare_scene_assets(path, record, pool, cancelled):
         record['scene_references_status'] = 'planning'
         record['logs'].append('场景协调员：核对各核心分镜共用的空间，只绑定相关镜头。')
         save(path, record)
-    plan = scene_references.plan_references(path, record)
+    # Retrying images continues the accepted scene design. Shot prompt edits and
+    # uploaded replacements must not trigger new scene identities or paid images.
+    if record.get('scene_assets'):
+        indices = {shot['id']: index for index, shot in enumerate(record['shots'])}
+        plan = {'scenes': [{
+            'scene_id': asset.get('scene_id', asset['id']),
+            'name': asset.get('name', asset['id']),
+            'members': [indices[value] for value in asset.get('used_by', []) if value in indices],
+            'reference_prompt': asset.get('image_prompt', ''),
+            'reference_ids': asset.get('reference_ids', []),
+            'reason': asset.get('reason', ''), 'existing_asset_id': asset['id'],
+        } for asset in record['scene_assets']]}
+    elif isinstance(record.get('scene_reference_plan'), dict):
+        plan = record['scene_reference_plan']
+    else:
+        plan = scene_references.plan_references(path, record)
     if cancelled.is_set():
         raise PlanningStopped()
     existing = {asset['id']: asset for asset in record.get('scene_assets', [])}
@@ -248,13 +265,16 @@ def _prepare_scene_assets(path, record, pool, cancelled):
         used_by = [record['shots'][index]['id'] for index in entry['members']]
         fingerprint = hashlib.sha256(json.dumps({
             'prompt': entry['reference_prompt'], 'members': used_by,
+            'reference_ids': entry.get('reference_ids', []),
             'style': record['settings'].get('style', ''), 'world': record['settings'].get('world', ''),
             'ratio': record['settings'].get('ratio', '16:9')}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
-        identity = 'scene_ref_' + fingerprint
+        identity = entry.get('existing_asset_id') or 'scene_ref_' + fingerprint
         asset = existing.get(identity) or {
             'id': identity, 'asset_kind': 'scene_reference', 'image_status': 'pending',
             'image_prompt': (entry['reference_prompt'].strip() +
-                '\n纯场景资产：无人物、人体局部、人影或人形倒影；无字幕、对话气泡及临时特效。'),
+                '\n场景资产：不添加具体主角、字幕、对话气泡及临时特效；常驻群体仅在场景方案明确要求时保留。'),
+            'reference_ids': list(entry.get('reference_ids', [])),
+            'image_material_numbers_bound': True,
             'image': f'assets/scene_references/{identity}.jpg'}
         asset.update(scene_id=entry['scene_id'], name=entry.get('name') or entry['scene_id'],
                      used_by=used_by, reason=entry['reason'])
@@ -294,7 +314,8 @@ def _prepare_scene_assets(path, record, pool, cancelled):
             rendered = visual._render_poster_with_retry({
                 'macro_scene_id': asset['id'], 'progress_label': '场景参考 · ' + asset['name'],
                 'image_prompt': asset['image_prompt'], 'character_ids': [],
-                'reference_image_ids': [], 'reference_image_paths': [], 'reference_binding_version': 1,
+                'reference_image_ids': asset.get('reference_ids', []),
+                'reference_image_paths': _shot_reference_paths(path, record, asset), 'reference_binding_version': 1,
                 '_output_path': str(target.resolve())}, pool)
             if not rendered.is_file() or not rendered.stat().st_size:
                 raise ValueError('场景接口没有返回有效图片')
@@ -335,7 +356,17 @@ def _storyboard_image_path(path, shot):
 
 
 def _archive_storyboard_image(path, shot):
-    image = _storyboard_image_path(path, shot)
+    try:
+        image = _storyboard_image_path(path, shot)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        # New split shots have no original image to archive. Allocate their
+        # first image only when a render/upload is ready to be committed.
+        image = path / 'assets' / 'storyboards' / f'{uuid.uuid4().hex}.jpg'
+        image.parent.mkdir(parents=True, exist_ok=True)
+        shot['image'] = str(image.relative_to(path)).replace('\\', '/')
+        return image
     history_dir = path / 'assets' / 'storyboard_history' / str(shot['id'])
     history_dir.mkdir(parents=True, exist_ok=True)
     archived = history_dir / f'{time.time_ns()}{image.suffix.lower()}'
@@ -613,7 +644,8 @@ def planning_parameters(record):
 
 def remember_structure(record, label):
     entry = dict(shots=copy.deepcopy(record['shots']),
-                 manual_groups=copy.deepcopy(record.get('manual_groups')), label=label)
+                 manual_groups=copy.deepcopy(record.get('manual_groups')), label=label,
+                 status=record.get('status'))
     record['structure_history'] = (record.get('structure_history', []) + [entry])[-10:]
 
 
@@ -681,10 +713,25 @@ def _recover_replanned_image_cache(record):
     return True
 
 
+def _recover_uploaded_image_status(path, record):
+    changed = False
+    for item in record.get('shots', []) + record.get('scene_assets', []):
+        task = item.get('image_task') or {}
+        if (item.get('image_origin') == 'upload' and task.get('action') == 'upload'
+                and task.get('status') == 'completed' and item.get('image_status') != 'completed'):
+            image = path / str(item.get('image') or '')
+            if image.is_file() and image.stat().st_size and path.resolve() in image.resolve().parents:
+                item.update(image_status='completed', image_error='')
+                changed = True
+    return changed
+
+
 def read(path):
     if not (path / 'record.json').is_file():
         raise HTTPException(404, '视频草案不存在')
     record = json.loads((path / 'record.json').read_text(encoding='utf-8'))
+    if str(path) not in ACTIVE and _recover_uploaded_image_status(path, record):
+        save(path, record)
     if _recover_replanned_image_cache(record):
         save(path, record)
     if not project_has_image_edits(record['id']):
@@ -778,7 +825,7 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         visual_changed |= parameters.get('scene_references_enabled', True) != data.scene_references_enabled
         safe_parameter_keys = {
             'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration',
-            'visual_max_duration', 'visual_max_slides', 'image_profile_id',
+            'visual_max_duration', 'visual_max_slides', 'image_profile_id', 'dynamic_max_shot_duration',
             'image_resolution', 'visual_backend', 'video_orientation',
             'video_render_variant', 'subtitle_font', 'subtitle_size', 'subtitle_color',
             'subtitle_outline_color', 'subtitle_outline_width', 'subtitle_position',
@@ -1137,6 +1184,18 @@ def structure(identity: str, data: Structure, request: Request):
                     changed[index] = merged
                 else:
                     row.update(image_status='pending', video_status='pending')
+                    if data.action in {'split', 'insert'}:
+                        source = record['shots'][data.index]
+                        if source.get('image_status') == 'completed':
+                            source_image = _storyboard_image_path(path, source)
+                            destination = path / 'assets' / 'storyboards' / (row['id'] + '_' + uuid.uuid4().hex + source_image.suffix)
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(source_image, destination)
+                            row.update(image=destination.relative_to(path).as_posix(), image_status='completed',
+                                       image_version=uuid.uuid4().hex, inherited_image_from=source['id'])
+                            for key in ('video_generation_options', 'scene_reference_id', 'scene_reference_ids'):
+                                if key in source:
+                                    row[key] = copy.deepcopy(source[key])
             record.pop('export', None)
             record.pop('reedit_shot_id', None)
             record.pop('reedit_return_status', None)
@@ -1155,8 +1214,10 @@ def undo_structure(identity: str, data: Review, request: Request):
         path = directory(require_user(request)['id'], identity)
         record = read(path)
         editable(record, data.revision)
-        if record['status'] not in {'draft', 'storyboard_review'}:
-            raise HTTPException(409, '请在分镜确认前撤回结构调整')
+        asset_stage = record['status'] == 'image_review' or record['status'] in VIDEO_STAGE_STATUSES
+        if any(shot.get('video_request') and shot.get('video_status') in {'running', 'unknown'}
+               for shot in record['shots']):
+            raise HTTPException(409, '请先核实正在运行或状态未知的视频任务，再撤回分镜结构')
         history = record.get('structure_history', [])
         if not history:
             raise HTTPException(409, '没有可撤回的结构调整')
@@ -1167,7 +1228,13 @@ def undo_structure(identity: str, data: Review, request: Request):
         else:
             record.pop('manual_groups', None)
         discard_planning_resume(record)
-        record.update(revision=record['revision'] + 1, error='', status='storyboard_review')
+        record.pop('export', None)
+        record.pop('reedit_shot_id', None)
+        record.pop('reedit_return_status', None)
+        restored_status = snapshot.get('status')
+        if restored_status not in {'draft', 'storyboard_review', 'image_review', 'video_review', 'video_generation_ready'}:
+            restored_status = 'image_review' if asset_stage else 'storyboard_review'
+        record.update(revision=record['revision'] + 1, error='', status=restored_status)
         save(path, record)
         return record
 
@@ -1179,7 +1246,7 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
         path = directory(require_user(request)['id'], identity)
         record = read(path)
         editable(record, data.revision)
-        if record['status'] not in {'draft', 'storyboard_review'}:
+        if record['status'] not in {'draft', 'storyboard_review', 'image_review'}:
             raise HTTPException(409, '请在分镜确认前检查设计')
         shot = next((row for row in record['shots'] if row['id'] == data.shot_id), None)
         if shot is None:
@@ -1188,12 +1255,17 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
         for row in candidate:
             if row['id'] == data.shot_id:
                 row['design_needs_review'] = False
+                row['design_review_confirmed'] = True
         try:
             normalized = normalize_shots(candidate, record['scenes'], [r['id'] for r in record['references']])
             audit_storyboard([row for row in normalized if row['id'] == data.shot_id], {r['id'] for r in record['references']})
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        record['shots'] = normalized
+        # Normalization is a planning validator, not a runtime serializer:
+        # it deliberately omits media paths/history and generation settings.
+        # Confirmation changes only the selected shot's review flags.
+        shot['design_needs_review'] = False
+        shot['design_review_confirmed'] = True
         discard_planning_resume(record)
         record['revision'] += 1
         save(path, record)
@@ -1328,9 +1400,15 @@ async def upload_storyboard_reference(identity: str, request: Request, file: Upl
         return record
 
 
+def _scene_redraw_references(record):
+    return [{**row, 'file': row['image']} for row in record.get('scene_assets', [])
+            if row.get('image_status') == 'completed' and row.get('image')]
+
+
 def _redraw_reference_row(record, reference_id):
     for origin, rows in (('project', record.get('references', [])),
-                         ('uploaded', record.get('redraw_references', []))):
+                         ('uploaded', record.get('redraw_references', [])),
+                         ('scene', _scene_redraw_references(record))):
         row = next((item for item in rows if str(item.get('id')) == str(reference_id)), None)
         if row:
             return origin, row
@@ -1416,7 +1494,8 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
         if (shot.get('image_task') or {}).get('status') == 'running':
             raise HTTPException(409, '当前画面正在重绘，请等待完成')
         references = {str(row['id']): row for row in [*record.get('references', []),
-                                                       *record.get('redraw_references', [])]}
+                                                       *record.get('redraw_references', []),
+                                                       *_scene_redraw_references(record)]}
         if len(set(data.reference_ids)) != len(data.reference_ids) or any(value not in references for value in data.reference_ids):
             raise HTTPException(400, '重绘参考图选择无效')
         if len(data.reference_ids) + int(data.use_current_image) > 3:
@@ -1474,8 +1553,8 @@ async def replace_storyboard_image(identity: str, shot_id: str, request: Request
         temporary.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_bytes(content)
         try:
-            image = _archive_storyboard_image(path, shot)
             _normalize_rgb_image(temporary, strict=True)
+            image = _archive_storyboard_image(path, shot)
             shutil.copy2(temporary, image)
         except HTTPException:
             raise
@@ -1487,6 +1566,7 @@ async def replace_storyboard_image(identity: str, shot_id: str, request: Request
             shot['image_prompt'] = prompt.strip()
             shot['image_prompt_warnings'] = []
         shot['image_task'] = {'status': 'completed', 'action': 'upload', 'message': '已替换本地图片'}
+        shot.update(image_status='completed', image_error='')
         shot['image_origin'] = 'upload'
         shot['image_applied_prompt'] = prompt.strip() or shot.get('image_prompt', '')
         shot['image_prompt_out_of_sync'] = False
@@ -1565,9 +1645,12 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         shot = _find_shot(record, shot_id)
         if shot.get('asset_kind') == 'scene_reference':
             raise HTTPException(400, '场景参考不占用视频时间轴')
-        if data.kind == 'video' and float(shot['duration']) > 15:
-            raise HTTPException(400, '本镜超过15秒，请先调整分镜边界，不能直接转为动态')
         changed_kind = shot['kind'] != data.kind
+        if data.intent is not None and data.intent.strip() != shot.get('intent', ''):
+            shot['intent'] = data.intent.strip()
+            shot['user_intent'] = data.intent.strip()
+            shot['design_needs_review'] = True
+            shot['design_review_confirmed'] = False
         changed_motion = (shot.get('action', '') != data.action.strip() or
                           shot.get('video_prompt', '') != data.video_prompt.strip() or
                           bool(shot.get('reference_audio_enabled', True)) != data.reference_audio_enabled or
@@ -1577,6 +1660,8 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if shot.get('video_prompt', '') != data.video_prompt.strip():
             shot['video_prompt_warnings'] = []
         shot.update(kind=data.kind, action=data.action.strip(), video_prompt=data.video_prompt.strip(),
+                    warning=('本镜超过建议的 15 秒；可能增加显存占用与生成时间，建议拆分，也可按所选工作流继续尝试。'
+                             if data.kind == 'video' and float(shot['duration']) > 15 else ''),
                     reference_audio_enabled=data.reference_audio_enabled,
                     reference_audio_lipsync=data.reference_audio_lipsync,
                     generation_duration=max(4, math.ceil(shot['duration'])) if data.kind == 'video' else None)
@@ -1611,9 +1696,7 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
             image_path = _storyboard_image_path(path, shot)
             _normalize_rgb_image(image_path)
         legacy_edit = (shot.get('image_task') or {}).get('action') in {'redraw', 'upload'}
-        force_vision = data.basis == 'image' and image_path is not None and (
-            shot.get('image_origin') in {'reference_redraw', 'upload'} or
-            not shot.get('image_origin') and legacy_edit)
+        force_vision = data.basis == 'image' and image_path is not None
         cached_analysis = shot.get('image_analysis') if force_vision else None
         if not isinstance(cached_analysis, dict) or not image_path or cached_analysis.get('fingerprint') != hashlib.sha256(image_path.read_bytes()).hexdigest():
             cached_analysis = None
@@ -1650,6 +1733,9 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
         if not data.action_only:
             target.update(video_prompt=updated['video_prompt'],
                           video_prompt_warnings=updated.get('video_prompt_warnings', []))
+            # A successful user-requested prompt refresh uses the current
+            # subtitle range; do not retain the pre-edit design-review gate.
+            target['design_needs_review'] = False
         if isinstance(updated.get('semantic'), dict):
             target['semantic'] = copy.deepcopy(updated['semantic'])
         target['attribution_correction'] = ''
@@ -1696,7 +1782,7 @@ def reopen_shot_for_editing(identity: str, shot_id: str, data: Review, request: 
         record.update(status='image_review', reedit_shot_id=shot_id,
                       reedit_return_status=record['status'],
                       revision=record['revision'] + 1, error='')
-        record['logs'].append(f'{shot_id}：返回分镜编辑。未修改前保留现有核心图和动态片段。')
+        record['logs'].append(f'{shot_id}：返回完整分镜编辑，可连续调整多个镜头；未修改的核心图和动态片段保留。')
         save(path, record)
         return record
 
@@ -1719,6 +1805,26 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
                    if shot['kind'] == 'video' and not str(shot.get('video_prompt') or '').strip()]
         if missing:
             raise HTTPException(409, '请先补齐第 ' + '、'.join(missing) + ' 镜的视频提示词，可使用“按核心图更新视频提示词”')
+        unchecked = [str(i + 1) for i, shot in enumerate(record['shots']) if shot.get('design_needs_review')]
+        if unchecked and not data.confirm_adjusted_designs:
+            raise HTTPException(409, '请先更新或确认第 ' + '、'.join(unchecked) + ' 镜的设计，再统一确认分镜')
+        if unchecked:
+            from .video_agents import audit_storyboard
+            confirmed_candidates = [copy.deepcopy(shot) for shot in record['shots']
+                                    if shot.get('design_needs_review')]
+            for candidate in confirmed_candidates:
+                candidate['design_needs_review'] = False
+                candidate['design_review_confirmed'] = True
+            try:
+                audit_storyboard(confirmed_candidates,
+                                 {ref['id'] for ref in record.get('references', [])})
+            except ValueError as exc:
+                raise HTTPException(409, '现有设计不完整，无法沿用：' + str(exc)) from exc
+            for shot in record['shots']:
+                if shot.get('design_needs_review'):
+                    shot['design_review_confirmed'] = True
+                shot['design_needs_review'] = False
+            record['logs'].append('用户统一确认沿用已检查的第 ' + '、'.join(unchecked) + ' 镜设计；未调用生成 API。')
         if data.regenerate_shot_id:
             if data.regenerate_shot_id != record.get('reedit_shot_id'):
                 raise HTTPException(409, '只能重新生成当前返修的镜头')
@@ -1749,11 +1855,14 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
 
 @router.post('/{identity}/plan')
 def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool = False,
-         revision: int | None = None):
+         revision: int | None = None, regroup: bool = False,
+         expression_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] | None = None):
     user_id = int(require_user(request)['id'])
     with LOCK:
         path = directory(user_id, identity)
         record = read(path)
+        if (regroup or expression_mode is not None) and not fresh:
+            raise HTTPException(400, '切换表达模式或重新划分镜头，需要使用完整重新规划')
         if fresh:
             if revision is None:
                 raise HTTPException(400, '重新规划需要当前项目版本')
@@ -1770,7 +1879,14 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
             raise HTTPException(409, '已有视频草案正在规划，请稍后重试')
         previous_record = copy.deepcopy(record) if fresh else None
         if fresh:
-            lock_manual_groups(record)
+            if regroup:
+                record.pop('manual_groups', None)
+                record.setdefault('creation_parameters', {}).pop('_manual_shot_groups', None)
+            else:
+                lock_manual_groups(record)
+            if expression_mode is not None:
+                record.setdefault('settings', {})['dynamic_text_mode'] = expression_mode
+                record.setdefault('creation_parameters', {})['dynamic_text_mode'] = expression_mode
             discard_planning_resume(record)
             record.setdefault('creation_parameters', {})['dynamic_auto_advance'] = False
         # Older drafts imported SRT but discarded the confirmed narration groups.
@@ -1791,8 +1907,6 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
                 row['design_needs_review'] = True
             lock_manual_groups(record)
         fixed_shots = copy.deepcopy(record['shots']) if record.get('manual_groups') else None
-        if fixed_shots and any(row['kind'] == 'video' and row['duration'] > 15 for row in fixed_shots):
-            raise HTTPException(409, '手动动态镜头超过15秒，请调整边界或改为静态后再更新设计')
         ACTIVE.add(str(path))
         cancelled = threading.Event()
         CANCEL_EVENTS[str(path)] = cancelled
@@ -1851,7 +1965,9 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
                     record.pop('export', None)
                     record.pop('reedit_shot_id', None)
                     record.pop('reedit_return_status', None)
-                    record['logs'].append('已使用当前语言模型重新规划，保留配音与字幕分组。旧素材文件保留，新方案确认后再生成图片和视频。')
+                    record['logs'].append('已使用当前语言模型重新规划，保留配音与字幕时间轴。' +
+                        ('已按全文语义重新划分镜头。' if regroup else '已保留当前镜头边界。') +
+                        '旧素材文件保留，新方案确认后再生成图片和视频。')
                 discard_planning_resume(record)
         except PlanningStopped:
             with LOCK:

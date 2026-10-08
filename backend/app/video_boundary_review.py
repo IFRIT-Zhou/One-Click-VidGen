@@ -3,6 +3,7 @@ import copy
 import uuid
 
 from .gemini_client import GeminiError
+from .video_medical_director import medical_contract
 from .video_group_repair import validate_group_structure, legal_ranges, _missing_fields, _semantic_child
 
 
@@ -31,6 +32,7 @@ right:{intent,motion_basis,progression_plan,semantic:{message,source_basis,fact_
 
 
 def review_boundaries(context, scenes, rows, ask, *, narration_groups=(), progress=None, on_draft=None):
+    max_duration = 30 if context.get('dynamic_max_shot_duration') == 30 else 15
     validate_group_structure(rows, scenes)
     result = copy.deepcopy(rows)
     by_id = {s['slide_id']: s for s in scenes}
@@ -53,19 +55,19 @@ def review_boundaries(context, scenes, rows, ask, *, narration_groups=(), progre
             for cut in range(1, len(ids)):
                 a = round(by_id[ids[cut-1]]['end']-by_id[ids[0]]['start'], 3)
                 b = round(by_id[ids[-1]]['end']-by_id[ids[cut]]['start'], 3)
-                if (left['kind'] != 'video' or a <= 15) and (right['kind'] != 'video' or b <= 15):
+                if (left['kind'] != 'video' or a <= max_duration) and (right['kind'] != 'video' or b <= max_duration):
                     cuts.append(dict(after_slide_id=ids[cut-1], left_seconds=a, right_seconds=b))
             boundaries.append(dict(left_id=left['id'], right_id=right['id'],
                 left_slide_ids=left['slide_ids'], right_slide_ids=right['slide_ids'],
                 subtitles=[by_id[s] for s in ids], legal_cuts=cuts,
-                legal_ranges=legal_ranges([by_id[s] for s in ids]),
+                legal_ranges=legal_ranges([by_id[s] for s in ids], max_duration),
                 shots=[copy.deepcopy(left), copy.deepcopy(right)]))
         if not boundaries:
             continue
         if progress:
             progress(f'Agent 1C：核对相邻镜头语义归属 {offset+1}～{offset+len(boundaries)}')
         try:
-            response = ask(SYSTEM, dict(boundaries=boundaries, narration_groups=narration_groups,
+            response = ask(SYSTEM.replace('15秒', f'{max_duration}秒') + medical_contract(context, 'groups'), dict(boundaries=boundaries, narration_groups=narration_groups,
                                        source_text='\n'.join(s['text'] for s in scenes)))
             if not isinstance(response, dict) or not isinstance(response.get('moves', []), list) or not isinstance(response.get('repartitions', []), list):
                 raise ValueError('语义核对返回格式无效')
@@ -113,9 +115,9 @@ def review_boundaries(context, scenes, rows, ask, *, narration_groups=(), progre
                     for position, replacement in enumerate(replacements):
                         local = [by_id[sid] for sid in replacement['slide_ids']]
                         seconds = round(local[-1]['end']-local[0]['start'], 3)
-                        if replacement['kind']=='video' and seconds>15:
+                        if replacement['kind']=='video' and seconds>max_duration:
                             raise ValueError('重组后动态镜头超时')
-                        if replacement['kind']=='static' and dynamic_ids.intersection(replacement['slide_ids']) and not (len(local)==1 and seconds>15):
+                        if replacement['kind']=='static' and dynamic_ids.intersection(replacement['slide_ids']) and not (len(local)==1 and seconds>max_duration):
                             raise ValueError('不能以静态降级绕过时长限制')
                         if _missing_fields(replacement):
                             raise ValueError('缺少新镜头的完整表达目的')

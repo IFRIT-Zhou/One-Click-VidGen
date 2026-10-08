@@ -542,6 +542,7 @@ const form = reactive({
   comfyui_reference_audio: false,
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'standard',
+  dynamic_max_shot_duration: 15,
   visual_min_duration: 6,
   visual_target_duration: 8,
   visual_max_duration: 12,
@@ -2275,7 +2276,7 @@ async function togglePlugin(plugin) {
     const payload = await api.togglePlugin(plugin.folder)
     plugin.enabled = Boolean(payload.enabled)
     pluginMessage.value = plugin.enabled
-      ? `${plugin.name} 已标记为启用；当前预览框架仍不会执行插件代码。`
+      ? `${plugin.name} ${payload.framework_only ? '已记录启用状态；尚无可执行功能' : '已启用'}。`
       : `${plugin.name} 已停用。`
   } catch (error) {
     pluginMessage.value = error.message || '无法修改插件状态'
@@ -3011,7 +3012,7 @@ async function loadVisualEditor({ preservePage = false, hydrateBgm = false } = {
     if (hydrateBgm) hydrateVisualBgm(visualEditor.value.bgm)
     if (!preservePage) visualEditorPage.value = 1
     if (visualEditorPage.value > visualEditorPageCount.value) visualEditorPage.value = visualEditorPageCount.value
-    if (!visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
+    if (!String(visualTimingSelectedId.value||'').startsWith('scene_asset_') && !visualEditor.value.items.some((item) => item.id === visualTimingSelectedId.value)) {
       visualTimingSelectedId.value = visualEditor.value.items.find((item) => item.timing)?.id || ''
     }
     if (!visualEditor.value.timing_history?.some((item) => item.id === selectedVisualTimingHistory.value)) {
@@ -4424,6 +4425,7 @@ function guidedVisualParameters() {
     image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
     visual_pacing_preset: form.visual_pacing_preset,
+    dynamic_max_shot_duration: form.dynamic_max_shot_duration,
     visual_min_duration: form.visual_min_duration,
     visual_target_duration: form.visual_target_duration,
     visual_max_duration: form.visual_max_duration,

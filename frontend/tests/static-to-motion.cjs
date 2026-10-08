@@ -1,0 +1,24 @@
+const puppeteer=require('../../node_modules/puppeteer-core');
+const assert=require('node:assert/strict');
+(async()=>{const browser=await puppeteer.launch({executablePath:process.argv[2],headless:true,args:['--disable-gpu']});try{
+const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+await page.goto('http://127.0.0.1:5173/tests/static-to-motion.html');
+await page.waitForSelector('.video-row select');
+await page.evaluate(()=>{document.querySelector('.video-row select').id='kind-under-test'});
+await page.select('#kind-under-test','video');
+await page.waitForFunction(()=>window.record.shots[0].video_prompt.includes('按核心图生成'),{timeout:5000}).catch(async e=>{console.log(await page.evaluate(()=>({requests:window.requests,text:document.body.innerText})));throw e});
+let requests=await page.evaluate(()=>window.requests);
+assert.equal(requests.length,2);assert.equal(requests[1].body.basis,'image');assert.notEqual(requests[1].body.action_only,true);
+assert.equal(requests[1].body.revision,2);
+await page.waitForFunction(()=>!document.querySelector('#kind-under-test').disabled);
+await page.select('#kind-under-test','static');
+await page.waitForFunction(()=>window.record.shots[0].kind==='static');
+await page.waitForFunction(()=>!document.querySelector('#kind-under-test').disabled);
+await page.select('#kind-under-test','video');
+await page.waitForFunction(()=>window.requests.filter(r=>r.path.endsWith('/refresh-prompts')).length===2);
+requests=await page.evaluate(()=>window.requests);
+assert.equal(requests.length,5);assert.equal(requests[4].body.action,'衣袖随风摆动');
+assert.equal(requests.filter(r=>/generate|redraw/.test(r.path)).length,0);
+assert.equal(await page.evaluate(()=>window.record.shots[0].image_prompt),'核心图：山顶人物');
+assert.deepEqual(errors,[]);console.log('PASS: static→video updates action and final prompt; existing action retained; no media generation');
+}finally{await browser.close()}})().catch(e=>{console.error(e);process.exitCode=1});

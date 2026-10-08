@@ -1110,6 +1110,14 @@
                     <option value="custom">自定义</option>
                   </select>
                 </label>
+                <label v-if="form.dynamic_video" class="visual-pacing-select">
+                  <span>动态镜头规划上限</span>
+                  <select v-model.number="form.dynamic_max_shot_duration">
+                    <option :value="15">常规 · 15 秒</option>
+                    <option :value="30">长镜头 · 30 秒</option>
+                  </select>
+                  <small class="muted">上限不是目标时长。30 秒需视频模型支持，成本与本地显存占用可能增加；手动编辑不受强制拆分。</small>
+                </label>
                 <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
                   <label>
                     <span>最低停留（秒）</span>
@@ -1920,7 +1928,7 @@
                     <strong>{{ plugin.name }}</strong>
                     <span>v{{ plugin.version }} · {{ plugin.author }}</span>
                   </div>
-                  <label class="inline-switch plugin-toggle" :title="plugin.valid ? '记录插件启用状态；当前框架不会执行插件代码' : '清单无效，无法启用'">
+                  <label class="inline-switch plugin-toggle" :title="plugin.valid ? (plugin.framework_only ? '仅记录启用状态' : '启用或停用此插件功能') : '清单无效，无法启用'">
                     <input :checked="plugin.enabled" type="checkbox" :disabled="!plugin.valid || pluginToggling === plugin.folder" @change="togglePlugin(plugin)" />
                     <span class="switch-track"><span></span></span>
                   </label>
@@ -1929,7 +1937,7 @@
                 <div class="plugin-meta">
                   <span>类型：{{ plugin.type }}</span>
                   <span v-if="plugin.ocv_version">OCV：{{ plugin.ocv_version }}</span>
-                  <span>{{ plugin.enabled ? '已启用（仅记录）' : '已停用' }}</span>
+                  <span>{{ plugin.enabled ? (plugin.framework_only ? '已启用（仅记录）' : '已启用') : '已停用' }}</span>
                 </div>
                 <div v-if="plugin.permissions?.length" class="plugin-permissions">声明权限：{{ plugin.permissions.join('、') }}</div>
                 <div v-if="plugin.issue" class="board-error">清单错误：{{ plugin.issue }}</div>
@@ -2663,6 +2671,7 @@
             <div><strong>{{ localTtsComponent.message }}</strong><p v-if="localTtsComponent.installing || localTtsComponent.downloaded_bytes">已下载 {{ localTtsDownloadedGb }} / 约 {{ localTtsEstimatedGb }} GB；安装可在后台继续。</p></div>
           </article>
           <p v-if="localTtsInstallError" class="studio-notice error">{{ localTtsInstallError }}</p>
+          <ModelInstallGuide kind="tts" />
           <div class="preflight-actions">
             <button class="ghost-btn" type="button" @click="switchToClusterTts">改用集群 GPU</button>
             <button class="primary-btn" type="button" :disabled="localTtsInstallBusy || localTtsComponent.installing || localTtsComponent.ready || localTtsComponent.runtime_missing?.length" @click="startLocalTtsInstall">
@@ -2714,6 +2723,7 @@
 <script>
 import { useWorkspace } from './useWorkspace'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
+import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
-export default { components: { DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

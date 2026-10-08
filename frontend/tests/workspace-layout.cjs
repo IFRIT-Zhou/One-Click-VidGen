@@ -1,0 +1,43 @@
+const puppeteer=require('../../node_modules/puppeteer-core');
+const assert=require('node:assert/strict');
+(async()=>{
+ const browser=await puppeteer.launch({executablePath:process.argv[2],headless:true});
+ try{
+  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.setViewport({width:1280,height:900});
+  const url=(process.argv[3]||'http://127.0.0.1:5198')+'/tests/workspace-layout.html';
+  await page.goto(url);await page.waitForSelector('.workspace-divider');
+  await page.evaluate(()=>localStorage.removeItem('ocv.layout.v1.layout-test'));await page.reload();
+  const divider=await page.$('.workspace-divider'),box=await divider.boundingBox();
+  await page.mouse.move(box.x+box.width/2,box.y+40);await page.mouse.down();await page.mouse.move(box.x+box.width/2+92,box.y+40,{steps:8});await page.mouse.up();
+  assert.equal(await page.$eval('.workspace-divider',e=>e.getAttribute('aria-valuenow')),'340');
+  await page.click('.layout-toolbar button');
+  await page.click('[aria-label="上移提示词与画面设置"]');
+  assert.deepEqual(await page.$$eval('.layout-panel',es=>es.map(e=>e.dataset.panel)),['prompts','preview','logs']);
+  await page.$eval('textarea',e=>{e.value='编辑内容保留';e.dispatchEvent(new Event('input',{bubbles:true}))});
+  await page.click('[data-panel="prompts"] .panel-toggle');await page.click('[data-panel="prompts"] .panel-toggle');
+  assert.equal(await page.$eval('textarea',e=>e.value),'编辑内容保留');
+  await page.click('[data-panel="preview"] .panel-toggle');await page.reload();
+  assert.equal(await page.$eval('.workspace-divider',e=>e.getAttribute('aria-valuenow')),'340');
+  assert.equal(await page.$eval('.layout-panel',e=>e.dataset.panel),'prompts');
+  assert.equal(await page.$eval('[data-panel="preview"] .panel-toggle',e=>e.getAttribute('aria-expanded')),'false');
+  await page.click('.layout-toolbar button');
+  await page.evaluate(()=>{const transfer=new DataTransfer();document.querySelector('[data-panel="logs"] .drag-handle').dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));document.querySelector('[data-panel="prompts"]').dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:transfer}))});
+  assert.equal(await page.$eval('.layout-panel',e=>e.dataset.panel),'logs');
+  await page.click('.layout-toolbar button:last-child');
+  assert.deepEqual(await page.$$eval('.layout-panel',es=>es.map(e=>e.dataset.panel)),['preview','prompts','logs']);
+  assert.equal(await page.$eval('.workspace-divider',e=>e.getAttribute('aria-valuenow')),'248');
+  await page.screenshot({path:'runtime/temp/layout-desktop.png',fullPage:true});
+  await page.setViewport({width:390,height:850});
+  assert.equal(await page.$eval('.workspace-divider',e=>getComputedStyle(e).display),'none');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false);
+  await page.screenshot({path:'runtime/temp/layout-mobile.png',fullPage:true});
+  await page.goto(url+'?scope=illustrated-visuals');await page.waitForSelector('[data-panel="subtitles"]');
+  assert.deepEqual(await page.$$eval('.layout-panel',es=>es.map(e=>e.dataset.panel)),['preview','prompts','subtitles','logs']);
+  await page.click('[data-panel="subtitles"] .panel-toggle');await page.reload();
+  assert.equal(await page.$eval('[data-panel="subtitles"] .panel-toggle',e=>e.getAttribute('aria-expanded')),'false');
+  await page.click('.layout-toolbar button:last-child');
+  assert.equal(await page.$eval('[data-panel="subtitles"] .panel-toggle',e=>e.getAttribute('aria-expanded')),'true');
+  assert.deepEqual(errors,[]);console.log('PASS: resize, reorder, drag, collapse, draft retention, reload persistence, reset and mobile layout');
+ }finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});

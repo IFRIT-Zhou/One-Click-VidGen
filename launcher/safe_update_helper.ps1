@@ -82,14 +82,21 @@ function Test-ProtectedRelativePath {
     $protectedRoots = @(
         '.git', 'Archives', 'output', 'runtime', 'runtime_logs', 'Sound Material',
         'TTS_Output', 'tts_voices', 'Vocal', 'workspace', 'saved_parameters',
-        'saved_agent_prompts', 'node_modules'
+        'saved_agent_prompts', 'node_modules', 'models'
     )
     if ($protectedRoots -contains $first) { return $true }
+    if ($first -ieq 'comfyui_plugins') {
+        return -not (@('comfyui_plugins\.gitignore', 'comfyui_plugins\README.md') -contains $normalized)
+    }
     if ($first -ieq 'plugins') {
         $managedPluginFiles = @(
             'plugins\.gitignore', 'plugins\README.md',
             'plugins\example_plugin\plugin.json', 'plugins\example_plugin\README.md',
-            'plugins\example_plugin\disabled'
+            'plugins\example_plugin\disabled',
+            'plugins\codex_bridge\plugin.json', 'plugins\codex_bridge\ocv_bridge.py',
+            'plugins\codex_bridge\README.md',
+            'plugins\codex_bridge\skills\ocv-production-bridge\SKILL.md',
+            'plugins\codex_bridge\skills\ocv-production-bridge\agents\openai.yaml'
         )
         return -not ($managedPluginFiles -contains $normalized)
     }

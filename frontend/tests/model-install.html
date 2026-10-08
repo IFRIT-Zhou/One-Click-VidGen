@@ -1,0 +1,13 @@
+<!doctype html><html><meta charset="utf-8"><div id="app"></div><script type="module">
+import {createApp,h} from 'vue'
+import ModelInstallGuide from '../src/components/ModelInstallGuide.vue'
+import '../src/style.css'
+window.actions=[]
+window.fetch=async(url,options={})=>{
+ if(options.method==='POST'){window.actions.push(JSON.parse(options.body));return new Response('{}')}
+ const query=new URL(url,location.href).searchParams
+ const tts=query.get('kind')==='tts'
+ return new Response(JSON.stringify({title:'测试模型',kind:tts?'tts':'comfyui',directory:'G:/OCV/models/'+(tts?'tts/indextts25':'comfyui'),default_directory:'G:/OCV/models/'+(tts?'tts/indextts25':'comfyui'),runtime_missing:[],profiles:tts?[]:[{id:'fast',name:'高速采样'}],message:'下载后保留文件名和目录结构。',items:[{path:'vae/a.safetensors',name:'a.safetensors',bytes:1000,actual_bytes:0,ready:false,install_path:'G:/OCV/models/comfyui/vae/a.safetensors',download_url:'https://huggingface.co/Comfy-Org/MiniMax-H3'},{path:'vae/b.safetensors',name:'b.safetensors',bytes:1000,actual_bytes:1000,ready:true,install_path:'G:/OCV/models/comfyui/vae/b.safetensors',found_path:'G:/OCV/models/comfyui/vae/b.safetensors'}]}))
+}
+createApp({render:()=>h('main',{style:'max-width:700px;margin:20px auto'},[h(ModelInstallGuide),h(ModelInstallGuide,{kind:'tts'})])}).mount('#app')
+</script></html>

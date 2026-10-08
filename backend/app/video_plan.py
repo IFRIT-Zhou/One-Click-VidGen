@@ -11,6 +11,7 @@ from .video_director_contracts import VIDEO_DIRECTOR_REVISION
 from .video_text_policy import normalize_text_mode
 from .video_prompt_notices import has_prompt_warning
 from .video_speech import normalize_turns
+from .video_medical_director import MEDICAL_DESIGN_FIELDS, is_medical, medical_contract
 
 
 _DRAFT_FIELDS = ('id', 'slide_ids', 'kind', 'intent', 'action', 'image_prompt', 'video_prompt', 'visual_description')
@@ -79,8 +80,7 @@ def normalize_shots(raw, scenes, reference_ids=()):
         duration = round(end - start, 3)
         warning = ''
         if duration > 15 and kind == 'video':
-            kind = 'static'
-            warning = '超过 15 秒，暂用静态画面；可在字幕边界拆分后改为动态。'
+            warning = '本镜超过建议的 15 秒；可能增加显存占用与生成时间，建议拆分，也可按所选工作流继续尝试。'
         refs = row.get('reference_ids', [])
         if not isinstance(refs, list) or len(refs) > 8 or any(not isinstance(r, str) for r in refs) or len(set(refs)) != len(refs) or any(r not in reference_ids for r in refs):
             raise ValueError('参考素材选择无效，最多 8 张，另预留 1 张核心分镜图')
@@ -88,6 +88,7 @@ def normalize_shots(raw, scenes, reference_ids=()):
                      duration=duration, generation_duration=max(4, math.ceil(duration)) if kind == 'video' else None,
                      reference_ids=refs, warning=warning)
         clean['design_needs_review'] = bool(row.get('design_needs_review', False))
+        clean['design_review_confirmed'] = bool(row.get('design_review_confirmed', False)) and not clean['design_needs_review']
         clean['reference_audio_enabled'] = bool(row.get('reference_audio_enabled', True))
         clean['reference_audio_lipsync'] = bool(row.get('reference_audio_lipsync', True))
         history = row.get('previous_designs', [])
@@ -105,7 +106,7 @@ def normalize_shots(raw, scenes, reference_ids=()):
             if not isinstance(parent, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', parent):
                 raise ValueError('原镜头编号无效')
             clean['parent_shot_id'] = parent
-        for field in ('intent', 'action', 'image_prompt', 'video_prompt', 'visual_description',
+        for field in ('intent', 'user_intent', 'action', 'image_prompt', 'video_prompt', 'visual_description',
                       'motion_basis', 'progression_plan', 'planning_kind', 'kind_adjustment',
                       'attribution_correction'):
             value = row.get(field, '')
@@ -120,13 +121,15 @@ def normalize_shots(raw, scenes, reference_ids=()):
             clean[field] = list(warnings)
         for field, keys in (
             ('semantic', ('message', 'source_basis', 'fact_status', 'progression', 'continuity_requirement')),
-            ('visual_design', ('candidates', 'selection_reason', 'expression', 'human_presence', 'visible_evidence')),
+            ('visual_design', ('candidates', 'selection_reason', 'expression', 'human_presence', 'visible_evidence') + MEDICAL_DESIGN_FIELDS),
         ):
             value = row.get(field, {})
             if not isinstance(value, dict):
                 raise ValueError('镜头设计资料格式无效')
             clean[field] = {}
             for key in keys:
+                if key in MEDICAL_DESIGN_FIELDS and key not in value:
+                    continue
                 entry = value.get(key, [] if key == 'candidates' else '')
                 if key == 'candidates':
                     if not isinstance(entry, list) or len(entry) > 2 or any(not isinstance(v, str) or len(v) > 3000 for v in entry):
@@ -159,6 +162,7 @@ def edit_structure(shots, scenes, action, index, boundary=None, reference_ids=()
     def invalidate_phase_design(row):
         row.pop('motion_plan', None)
         row['design_needs_review'] = True
+        row['design_review_confirmed'] = False
         row.pop('duration_repair', None)
         row['image_prompt_warnings'] = []
         row['video_prompt_warnings'] = []
@@ -248,7 +252,7 @@ def planning_fingerprint(scenes, style, characters, world, references, parameter
 def plan_storyboard(scenes, style, characters, world, references, progress, parameters=None, checkpoint=None,
                     *, resume_state=None, save_state=None, fixed_shots=None, repair_only=False):
     parameters = parameters or {}
-    from story_agents import create_story_context
+    from story_agents import AGENT0_SYSTEM_PROMPT, create_story_context
     from .video_agents import (audit_storyboard, design_core_images, direct_motion, plan_groups,
                                write_image_prompts, write_video_prompts)
     fingerprint = planning_fingerprint(scenes, style, characters, world, references, parameters)
@@ -270,10 +274,15 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         progress('复用已保存的全文理解，继续未完成规划。')
     else:
         progress('Agent 0：通读全文与整理人物资料')
+        medical_context = {'video_direction': {'dynamic_text_mode': normalize_text_mode(parameters.get('dynamic_text_mode'))}}
+        agent0_options = ({'agent0_prompt_system': AGENT0_SYSTEM_PROMPT + medical_contract(medical_context, 'context')}
+                          if is_medical(medical_context) else {})
         context = create_story_context('\n'.join(s['text'] for s in scenes),
                                        content_mode=parameters.get('content_mode', 'general'),
                                        global_character_prompt=characters, world_prompt=world, require_ai_success=True,
-                                       director_strategy=parameters.get('director_strategy', 'stable'), speech_attribution=True)
+                                       director_strategy=parameters.get('director_strategy', 'stable'), speech_attribution=True,
+                                       **agent0_options)
+    context['dynamic_max_shot_duration'] = 30 if parameters.get('dynamic_max_shot_duration') == 30 else 15
     context['video_direction'] = {
         'director_revision': VIDEO_DIRECTOR_REVISION,
         'director_strategy': parameters.get('director_strategy', 'stable'),
@@ -284,7 +293,9 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
     }
     state['context'] = context
     persist_state('全文理解')
-    mode_label = '画面优先' if context['video_direction']['dynamic_text_mode'] == 'visual_first' else '文字辅助'
+    mode_label = {'visual_first': '画面优先', 'medical_paper': '医学文献', 'text_assisted': '文字辅助'}[context['video_direction']['dynamic_text_mode']]
+    if is_medical(context):
+        context['video_direction']['core_image_role'] = '选择最能交代医学主体与尺度关系的单张参考图，可为后段宽景；不是强制首帧，视频依次展开。'
     progress(f'动态视频表达模式：{mode_label}')
     # Older final gates invalidated all completed phases for cosmetic headings.
     # Re-audit the saved results before paying to rebuild them. The fingerprint
@@ -304,7 +315,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
             progress('已复核并恢复保存的完整提示词；标题排版差异不再阻断，无需重新调用 Agent。')
             return context, recovered
     arrangement = {key: parameters[key] for key in (
-        'director_strategy', 'video_orientation') if key in parameters}
+        'director_strategy', 'video_orientation', 'dynamic_max_shot_duration') if key in parameters}
     arrangement['narration_groups'] = parameters.get('_narration_groups', [])
     if arrangement['narration_groups']:
         progress(f'已读取 {len(arrangement["narration_groups"])} 段配音作为语义参考，不强制按配音段切镜；画面按全文语义划分，时长以字幕时间轴为准。')
@@ -320,7 +331,9 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
                               on_draft=preserve_groups, resume_rows=state.get('groups'), boundary_review=True)
         for shot in planned:
             shot['planning_kind'] = shot['kind']
-        shots = enforce_opening_motion(normalize_shots(planned, scenes))
+        shots = normalize_shots(planned, scenes)
+        if not is_medical(context):
+            shots = enforce_opening_motion(shots)
     completed = state.setdefault('completed', {})
     def pending(batch, phase):
         done = completed.get(phase, [])

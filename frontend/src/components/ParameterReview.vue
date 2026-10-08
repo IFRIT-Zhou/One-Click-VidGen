@@ -9,6 +9,7 @@ const referencePreview = ref(null)
 const kind = computed(()=>props.request.subtitle_only?'subtitle':props.request.module1_only?'audio':'video')
 const labels={indextts25:'本地 GPU · IndexTTS-2.5',indextts2:'本地 IndexTTS（历史记录）',cluster:'集群 GPU · IndexTTS-2.5',qwen:'Qwen TTS',api:'视频 API',comfyui:'本地 ComfyUI',urban_suspense:'都市惊悚',science_explainer:'口播科普',pure_science:'纯科普',general:'通用自定义',stable:'稳健还原',enhanced_beta:'叙事增强',auto:'按作品风格自动',slow:'舒缓',standard:'标准',fast:'紧凑',custom:'自定义',both:'双版本',raw:'无字幕',subtitles:'带字幕',preset:'预设音色',uploaded:'上传音色',happy:'开心',sad:'悲伤',angry:'生气',fear:'害怕',disgust:'厌恶',surprise:'惊讶',calm:'平静'}
 function value(key, empty='未单独指定（沿用任务默认处理）'){
+ if(key==='video_generation_backend'&&props.request[key]==='comfyui')return props.request.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'
  if(key==='dynamic_text_mode')return dynamicTextModeLabel(props.request.dynamic_text_mode)
  if(!Object.hasOwn(props.request,key))return '该任务未记录'
  const v=props.request[key]
@@ -33,6 +34,7 @@ const canReset = computed(()=>['failed','cancelled','completed'].includes(props.
 const arrangementFields = computed(()=>[
  [props.request.dynamic_video?'dynamic_text_mode':'director_strategy',props.request.dynamic_video?'动态画面表达':'导演策略'],
  ['visual_pacing_preset','节奏预设'],
+ ...(props.request.dynamic_video?[["dynamic_max_shot_duration","动态镜头规划上限（秒）"]]:[]),
  ...(props.request.dynamic_video?[["video_generation_backend","动态镜头生成"],["comfyui_h3_prompt_agent","H3 提示词转换 Agent"],["comfyui_reference_audio","本镜 TTS 参考音频"]]:[]),
 ])
 </script>

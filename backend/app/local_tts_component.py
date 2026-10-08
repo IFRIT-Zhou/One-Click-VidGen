@@ -124,6 +124,8 @@ def start_install() -> dict[str, Any]:
                     str(INSTALL_SCRIPT),
                     "-ProjectRoot",
                     str(PROJECT_ROOT),
+                    "-ModelDirectory",
+                    str(load_indextts25_config().model_dir),
                 ],
                 cwd=str(PROJECT_ROOT),
                 env=env,

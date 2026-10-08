@@ -1,6 +1,7 @@
 param(
     [string]$ProjectRoot = "",
-    [switch]$SkipModelDownload
+    [switch]$SkipModelDownload,
+    [string]$ModelDirectory = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,7 +43,7 @@ if ($missingPackages.Count -gt 0) {
 }
 
 if (-not $SkipModelDownload) {
-    $modelDir = Join-Path $engineRoot "checkpoints"
+    $modelDir = if ($ModelDirectory) { $ModelDirectory } else { Join-Path $ProjectRoot "models\tts\indextts25" }
     New-Item -ItemType Directory -Force $modelDir | Out-Null
     Write-Host "Downloading the optional IndexTTS-2.5 model (resume is supported)..."
     $downloadCode = @"

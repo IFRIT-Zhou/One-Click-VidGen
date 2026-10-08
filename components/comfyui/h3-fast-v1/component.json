@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "version": "h3-20260929-preview1",
+  "platform": "windows-nvidia",
+  "core": {
+    "commit": "830232b856045ca2892833212d7771078a13edd5",
+    "url": "https://github.com/Comfy-Org/ComfyUI.git"
+  },
+  "nodes": [
+    {
+      "name": "ComfyUI-SolAttn_triton",
+      "commit": "26d816ebd4f1e43a2c6e4d4759be3137f10a7a73",
+      "url": "https://github.com/kijai/ComfyUI-SolAttn_triton.git",
+      "license_files": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "comfyui-kjnodes",
+      "commit": "d3cfe21625e5170126ce06fbfcfe1d88108688c3",
+      "url": "https://github.com/kijai/ComfyUI-KJNodes.git",
+      "license_files": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "comfyui-videohelpersuite",
+      "tree_sha256": "0e9a078a48a2d7fbd1b6c57fbf85c6ba2250508a786a61187fecb3781f839d44",
+      "url": "",
+      "needs_source_audit": true,
+      "license_files": [
+        "LICENSE"
+      ]
+    },
+    {
+      "name": "comfyui_layerstyle",
+      "tree_sha256": "769025fd2b9c53e9ca7f318c6d8430a7b33d7a26c071618fcdf935094cf67ac9",
+      "url": "",
+      "needs_source_audit": true,
+      "license_files": [
+        "LICENSE"
+      ]
+    }
+  ],
+  "models": [
+    {
+      "path": "vae/minimax_h3_video_vae_fp16.safetensors",
+      "bytes": 5207808496
+    },
+    {
+      "path": "vae/minimax_h3_audio_vae_fp32.safetensors",
+      "bytes": 605254808
+    },
+    {
+      "path": "diffusion_models/minimaxH3/minimax_h3_fastvideo_vsa_datafree_1300step_4step_int8_convrot.safetensors",
+      "bytes": 22898594920
+    },
+    {
+      "path": "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "bytes": 15687142551
+    }
+  ],
+  "profile": "profile.json",
+  "redistribution_audited": false
+}

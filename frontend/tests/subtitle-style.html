@@ -10,6 +10,6 @@ createApp({setup(){
  const settings=reactive({video_orientation:'portrait',subtitle_layouts:{}}),variant=ref('both');
  window.testSettings=settings;window.testVariant=variant;
  return ()=>h('div',{class:'live-studio',style:'display:block;max-width:560px;padding:24px;margin:auto;background:#202526;color:#e7e9eb'},[
- h(SubtitleStyleEditor,{settings,variant:variant.value,'onUpdate:variant':v=>variant.value=v,orientationControl:true})]);
+ h(SubtitleStyleEditor,{settings,variant:variant.value,'onUpdate:variant':v=>variant.value=v,orientationControl:true,dynamic:true})]);
 }}).mount('#app');
 </script></body></html>

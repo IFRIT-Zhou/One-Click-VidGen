@@ -104,7 +104,7 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
     # a one-sentence no-subtitle project), so it cannot be the only source used
     # to seal a refined narration.  Prefer the complete timeline and rebuild a
     # canonical SRT from it; fall back to the SRT only for legacy projects.
-    entries = [
+    timeline_entries = [
         {
             "text": str(item.get("text_content") or item.get("text") or "").strip(),
             "start": float(item.get("start") or 0),
@@ -113,7 +113,12 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
         for item in old
         if str(item.get("text_content") or item.get("text") or "").strip()
         and float(item.get("end") or 0) > float(item.get("start") or 0)
-    ] or _srt_entries(subtitle_path)
+    ]
+    # A visible SRT is authoritative for legacy refinements that replaced its
+    # cues. Preserve the full timeline only when explicit hidden rows explain
+    # why the display SRT is incomplete.
+    entries = timeline_entries if any(item.get('subtitle_hidden') for item in old) else _srt_entries(subtitle_path)
+    entries = entries or timeline_entries
     if not entries:
         raise ValueError("精修后的完整字幕时间线为空，无法重建时间轴")
 
@@ -155,6 +160,7 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
     _write_srt_entries(subtitle_path, [
         {"text": item["text_content"], "start": item["start"], "end": item["end"]}
         for item in canonical
+        if not item.get('subtitle_hidden')
     ])
 
 
@@ -1073,14 +1079,25 @@ class TtsEditor:
         entries = _srt_entries(path)
         if not entries:
             return
-        affected = [i for i, item in enumerate(entries) if float(item["end"]) > old_start + 0.0005 and float(item["start"]) < old_end - 0.0005]
-        if not affected:
-            raise ValueError("无法在最终字幕中定位需要调整的句子")
-        first, last = affected[0], affected[-1]
-        preserved_text = "".join(str(entries[i]["text"]) for i in affected)
         compact = lambda value: re.sub(r"\s+", "", str(value or ""))
-        if compact(preserved_text) != compact("".join(requested_texts)):
+        expected = compact("".join(requested_texts))
+        # ASR subtitle boundaries can drift a few milliseconds from TTS segment
+        # boundaries. Match the unchanged words first, then use time to select
+        # the closest occurrence, so a neighbouring subtitle is not swallowed.
+        matches = [
+            (abs(float(entries[first]["start"]) - old_start) + abs(float(entries[last]["end"]) - old_end), first, last)
+            for first in range(len(entries))
+            for last in range(first, len(entries))
+            if compact("".join(str(entries[i]["text"]) for i in range(first, last + 1))) == expected
+        ]
+        if not matches:
             raise ValueError("最终字幕内容与断句文字不一致，已取消更新以避免错位")
+        _, first, last = min(matches)
+        # The old ASR timestamps are being replaced here. Their distance from
+        # the audio manifest is not evidence that a text-matched edit is wrong.
+        # Reject ambiguous repeated text instead of requiring 150 ms agreement.
+        if len(matches) > 1 and abs(sorted(matches)[1][0] - sorted(matches)[0][0]) < 0.001:
+            raise ValueError("字幕中存在无法区分的重复段落，请先核对要调整的配音段落")
         # The requested texts are the user's chosen boundary. Proportional
         # splitting silently moved that boundary even though audio was right.
         split_texts = [str(text) for text in requested_texts]
@@ -1093,7 +1110,16 @@ class TtsEditor:
         for item in following:
             item["start"] = float(item["start"]) + delta
             item["end"] = float(item["end"]) + delta
-        _write_srt_entries(path, [*entries[:first], *replacements, *following])
+        preceding = [dict(item) for item in entries[:first]]
+        if preceding:
+            if float(preceding[-1]["start"]) >= float(new_parts[0]["start"]):
+                raise ValueError("新断点超出上一段字幕范围，请核对配音段落顺序")
+            preceding[-1]["end"] = min(float(preceding[-1]["end"]), float(new_parts[0]["start"]))
+        if following:
+            following[0]["start"] = max(float(following[0]["start"]), float(new_parts[-1]["end"]))
+            if float(following[0]["end"]) <= float(following[0]["start"]):
+                raise ValueError("新断点超出下一段字幕范围，请核对配音段落顺序")
+        _write_srt_entries(path, [*preceding, *replacements, *following])
 
     @staticmethod
     def _warp_timeline_span(project_dir: Path, old_start: float, old_end: float, new_end: float) -> None:
@@ -1120,6 +1146,32 @@ class TtsEditor:
                 end = max(start + 0.001, warp(float(item.get("end") or 0)))
                 item["start"], item["end"] = round(start, 6), round(end, 6)
         path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _adopt_resegmented_subtitles(project_dir: Path) -> None:
+        """Carry a new sentence boundary into the canonical timeline too."""
+        path = project_dir / "other" / TIMELINE_FILENAME
+        if not path.is_file():
+            return
+        old = json.loads(path.read_text(encoding="utf-8"))
+        entries = _srt_entries(project_dir / "other" / SUBTITLE_FILENAME)
+        if not isinstance(old, list) or not entries:
+            return
+        compact = lambda value: re.sub(r"\s+", "", str(value or ""))
+        old_text = "".join(str(item.get("text_content") or item.get("text") or "") for item in old if isinstance(item, dict))
+        if compact(old_text) != compact("".join(str(item["text"]) for item in entries)):
+            return  # Hidden-subtitle projects keep the complete timeline authoritative.
+        updated = []
+        for entry in entries:
+            start, end = float(entry["start"]), float(entry["end"])
+            candidates = [
+                (max(0.0, min(end, float(item.get("end") or 0)) - max(start, float(item.get("start") or 0))), item)
+                for item in old if isinstance(item, dict)
+            ]
+            base = dict(max(candidates, key=lambda pair: pair[0])[1]) if candidates else {}
+            base.update(text_content=str(entry["text"]), start=start, end=end)
+            updated.append(base)
+        path.write_text(json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def resegment(
         self,
@@ -1208,6 +1260,7 @@ class TtsEditor:
                 manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 self._reshape_subtitles_for_span(project_dir, old_start, old_end, new_items, display_texts)
                 self._warp_timeline_span(project_dir, old_start, old_end, float(new_items[-1]["end"]))
+                self._adopt_resegmented_subtitles(project_dir)
                 temp_audio = project_dir / "input" / ".配音.boundary-edit.wav"
                 _concat_segment_wavs(updated, self._segment_dir(project_dir), temp_audio)
                 temp_audio.replace(project_dir / "input" / "配音.wav")

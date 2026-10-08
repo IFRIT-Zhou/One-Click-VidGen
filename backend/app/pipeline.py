@@ -3280,6 +3280,16 @@ def _copy_visual_segment(
             item = {**item, "reference_image_paths": archived_paths}
             if item.get('scene_reference'):
                 item['scene_reference'] = {**item['scene_reference'], 'path': archived_paths[-1]}
+                scene_inputs = []
+                for value in item['scene_reference'].get('reference_image_paths', []):
+                    source = Path(value)
+                    target = reference_dir / (hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12] + source.suffix)
+                    if not source.is_file():
+                        raise ValueError('场景使用的参考素材缺失，无法归档')
+                    if source.resolve() != target.resolve():
+                        shutil.copy2(source, target)
+                    scene_inputs.append(str(target.resolve()))
+                item['scene_reference']['reference_image_paths'] = scene_inputs
         archived_mapping.append({
             **item,
             "macro_scene_id": output_macro_id,
@@ -3493,6 +3503,28 @@ def validate_step_audio_snapshot(job: Job, *, require_revision: bool = True) -> 
     return revision
 
 
+def _segment_archives_match(source: Path, target: Path) -> bool:
+    """Avoid replacing an unchanged TTS directory (often still open on Windows)."""
+    if not source.is_dir() or not target.is_dir():
+        return False
+    source_files = {path.relative_to(source): path for path in source.rglob("*") if path.is_file()}
+    target_files = {path.relative_to(target): path for path in target.rglob("*") if path.is_file()}
+    if not source_files or source_files.keys() != target_files.keys():
+        return False
+    for name, source_file in source_files.items():
+        target_file = target_files[name]
+        if source_file.stat().st_size != target_file.stat().st_size:
+            return False
+        with source_file.open("rb") as left, target_file.open("rb") as right:
+            while True:
+                left_chunk = left.read(1024 * 1024)
+                if left_chunk != right.read(1024 * 1024):
+                    return False
+                if not left_chunk:
+                    break
+    return True
+
+
 def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any]:
     """Commit one coherent refined generation to output, workspace and job checkpoint."""
     revision = _step_audio_revision(project_dir)
@@ -3510,20 +3542,21 @@ def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any
         _copy_file_atomic(source, target)
     source_segments = project_dir / "other" / "tts_segments"
     target_segments = JOBS_DIR / job.id / "artifacts" / "tts_segments"
-    pending = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.tmp")
-    shutil.copytree(source_segments, pending)
-    backup = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.bak")
-    try:
-        if target_segments.exists():
-            os.replace(target_segments, backup)
-        os.replace(pending, target_segments)
-        shutil.rmtree(backup, ignore_errors=True)
-    except Exception:
-        if backup.exists() and not target_segments.exists():
-            os.replace(backup, target_segments)
-        raise
-    finally:
-        shutil.rmtree(pending, ignore_errors=True)
+    if not _segment_archives_match(source_segments, target_segments):
+        pending = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.tmp")
+        shutil.copytree(source_segments, pending)
+        backup = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.bak")
+        try:
+            if target_segments.exists():
+                os.replace(target_segments, backup)
+            os.replace(pending, target_segments)
+            shutil.rmtree(backup, ignore_errors=True)
+        except Exception:
+            if backup.exists() and not target_segments.exists():
+                os.replace(backup, target_segments)
+            raise
+        finally:
+            shutil.rmtree(pending, ignore_errors=True)
     _write_json_atomic(JOBS_DIR / job.id / "artifacts" / STEP_AUDIO_REVISION_FILENAME, revision)
     job.request["_step_audio_revision"] = revision["fingerprint"]
     job.request["_step_audio_sentence_count"] = revision["sentence_count"]

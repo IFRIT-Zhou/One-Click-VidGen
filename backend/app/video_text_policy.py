@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from .video_director_contracts import TEXT_CONTRACT
+from .video_medical_director import MEDICAL_PAPER, medical_contract
 
 
 TEXT_ASSISTED = 'text_assisted'
@@ -17,7 +18,7 @@ VISUAL_FIRST = 'visual_first'
 
 def normalize_text_mode(value: Any) -> str:
     """Read legacy/optional settings without silently switching their behavior."""
-    return value if isinstance(value, str) and value in (TEXT_ASSISTED, VISUAL_FIRST) else TEXT_ASSISTED
+    return value if isinstance(value, str) and value in (TEXT_ASSISTED, VISUAL_FIRST, MEDICAL_PAPER) else TEXT_ASSISTED
 
 
 def dynamic_text_mode(context: dict[str, Any]) -> str:
@@ -62,6 +63,8 @@ texts 与 reference_texts 只登记经过上述选择、实际需要显示的文
 
 def text_mode_contract(context: dict[str, Any]) -> str:
     """Return the original contract verbatim unless visual-first is selected."""
+    if dynamic_text_mode(context) == MEDICAL_PAPER:
+        return medical_contract(context, 'text')
     return VISUAL_FIRST_CONTRACT if dynamic_text_mode(context) == VISUAL_FIRST else TEXT_CONTRACT
 
 
@@ -120,7 +123,7 @@ def visual_first_plan_issues(plan: Any, *, inspect_reference: bool = True) -> li
 
 
 _VISIBLE_TEXT_INSTRUCTION = re.compile(
-    r'(?P<context>.{0,28}(?:对话气泡|想象气泡|文字气泡|标签气泡|说明框|标题|字幕条|画面文字|'
+    r'(?P<context>.{0,28}(?:对话气泡|想象气泡|文字气泡|标签气泡|标注|标签|说明框|标题|字幕条|画面文字|'
     r'speech bubble|thought bubble|text bubble|callout|caption|subtitle|title|label)'
     r'.{0,18}(?:显示|写着|写有|出现|浮现|变为|内容为|shows?|displays?|reads?|contains?)?\s*)'
     r'[“「『\"](?P<text>[^”」』\"\n]{1,120})[”」』\"]'
@@ -139,6 +142,19 @@ def visual_first_prompt_issues(prompt: str, plan: Any) -> list[str]:
             continue
         issues.append(f'擅自新增未入选的画中文字“{text}”；应改用动作、表情或具体图案')
     return list(dict.fromkeys(issues))
+
+
+def remove_unapproved_visible_text(prompt: str, plan: Any) -> str:
+    """On finalizer retry, turn invented displayed words into a non-text visual."""
+    allowed = set(approved_visible_texts(plan))
+
+    def replace(match: re.Match[str]) -> str:
+        text = match.group('text').strip()
+        if text in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
+            return match.group(0)
+        return match.group('context') + '无字图案'
+
+    return _VISIBLE_TEXT_INSTRUCTION.sub(replace, str(prompt or ''))
 
 
 def visual_first_long_text_issues(prompt: str) -> list[str]:

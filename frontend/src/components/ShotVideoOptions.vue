@@ -1,10 +1,21 @@
 <script setup>
 import {computed,ref,watch,onUnmounted} from 'vue'
 import {requestJSON} from '../api'
+import ModelInstallGuide from './ModelInstallGuide.vue'
 const props=defineProps({modelValue:{type:Object,required:true},profiles:{type:Array,default:()=>[]},disabled:Boolean,loading:Boolean,apiReady:Boolean,apiResolution:{type:String,default:'720p'},ratio:{type:String,default:'16:9'},seconds:{type:Number,default:10},imageSrc:{type:String,default:''},dirty:Boolean,saved:Boolean,saveDisabled:Boolean})
-const emit=defineEmits(['update:modelValue','refresh','save'])
+const emit=defineEmits(['update:modelValue','refresh','save','apply-all'])
 const local=computed(()=>props.modelValue.backend==='comfyui')
 const profile=computed(()=>props.profiles.find(item=>item.id===props.modelValue.profile_id))
+const managedProfiles=computed(()=>props.profiles.filter(item=>item.engine==='managed'))
+const externalProfiles=computed(()=>props.profiles.filter(item=>item.engine!=='managed'))
+const generationRoute=computed(()=>!local.value?'api':profile.value?.engine==='managed'?'managed':'external')
+const routeProfiles=computed(()=>generationRoute.value==='managed'?managedProfiles.value:externalProfiles.value)
+function chooseRoute(value){
+ if(value==='api'){backend('api');return}
+ const items=value==='managed'?managedProfiles.value:externalProfiles.value
+ const selected=items.find(item=>item.id===props.modelValue.profile_id)||items[0]
+ update({backend:'comfyui',profile_id:selected?.id||'',resolution:'',...(value==='managed'?{h3_prompt_agent:true}:{})})
+}
 const sourceSize=ref(null),lockRatio=ref(true)
 const aspect=computed(()=>sourceSize.value?sourceSize.value[0]/sourceSize.value[1]:props.ratio==='9:16'?9/16:16/9)
 watch(()=>props.imageSrc,(src,old,onCleanup)=>{
@@ -66,13 +77,15 @@ const dimensions=computed(()=>{
 
 <template>
  <section class="shot-video-options" aria-label="本镜生成设置">
-  <div class="options-heading"><strong>本镜生成设置</strong><span role="status">{{dirty?'有未保存配置':saved?'已保存 · 下次生成使用':'沿用项目或上次生成配置'}}</span><button type="button" class="refresh-options" :disabled="disabled||saveDisabled||(!dirty&&saved)" @click="emit('save')">保存配置</button></div>
+  <div class="options-heading"><strong>本镜生成设置</strong><span role="status">{{dirty?'有未保存配置':saved?'已保存 · 下次生成使用':'沿用项目或上次生成配置'}}</span><button type="button" class="refresh-options" :disabled="disabled||saveDisabled||(!dirty&&saved)" @click="emit('save')">保存配置</button><button type="button" class="refresh-options" :disabled="disabled||saveDisabled" @click="emit('apply-all')">应用到全部动态镜头</button></div>
   <div class="options-fields">
-   <label><span>生成方式</span><select :value="modelValue.backend" :disabled="disabled" @change="backend($event.target.value)"><option value="comfyui">本地 ComfyUI</option><option value="api">视频 API</option></select></label>
-   <label v-if="local" class="workflow-field"><span>工作流</span><select :value="modelValue.profile_id" :disabled="disabled||loading" @change="update({profile_id:$event.target.value,resolution:''})"><option value="">{{loading?'正在读取…':'请选择工作流'}}</option><option v-for="item in profiles" :key="item.id" :value="item.id">{{item.name}}</option></select></label>
+   <label><span>生成方式</span><select :value="generationRoute" :disabled="disabled||loading" @change="chooseRoute($event.target.value)"><option value="managed" :disabled="!managedProfiles.length">OCV 内置 ComfyUI{{managedProfiles.length?'':'（未就绪，请刷新）'}}</option><option value="external">外部 ComfyUI</option><option value="api">视频 API</option></select></label>
+   <label v-if="local" class="workflow-field"><span>工作流</span><select :value="modelValue.profile_id" :disabled="disabled||loading" @change="update({profile_id:$event.target.value,resolution:''})"><option value="">{{loading?'正在读取…':'请选择工作流'}}</option><option v-for="item in routeProfiles" :key="item.id" :value="item.id">{{item.name}}</option></select></label>
    <label><span>分辨率</span><select :value="modelValue.resolution" :disabled="disabled" @change="chooseResolution($event.target.value)"><option value="">{{local?'跟随工作流':'跟随接口设置'}}</option><option value="480p">480P · 轻量</option><option value="720p">720P · 标准</option><option v-if="local" value="1080p">1080P · 高清</option><option v-if="local" value="custom">自定义尺寸</option></select></label>
    <button v-if="local" type="button" class="refresh-options" :disabled="loading||disabled" title="刷新已保存的工作流" @click="emit('refresh')">刷新</button>
   </div>
+  <p v-if="local" role="status">{{generationRoute==='managed'?'由 OCV 自动启动内置引擎，无需另开 ComfyUI；首次生成需要加载模型。':'使用你配置的外部 ComfyUI 地址，请先自行启动对应服务；不会启动 OCV 内置引擎。'}}</p>
+  <ModelInstallGuide v-if="generationRoute==='managed'" :profile-id="modelValue.profile_id" />
   <div v-if="local&&modelValue.resolution==='custom'" class="custom-size">
    <label>宽度 · px<input type="number" min="32" max="8192" step="1" :value="modelValue.width" :disabled="disabled" @change="changeDimension('width',$event)"></label>
    <span class="size-cross">×</span>
@@ -96,5 +109,5 @@ const dimensions=computed(()=>{
 .shot-video-options{padding:14px 16px;margin:0 0 16px;border:1px solid var(--border,#35423f);border-radius:12px;background:color-mix(in srgb,var(--accent,#81d9bd) 5%,var(--panel,#1e2625))}.options-heading{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:13px}.options-heading span,.options-footer,.shot-video-options p{color:var(--muted,#aab8b3);font-size:12px}.options-fields{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}.options-fields label{display:grid;gap:6px;flex:1 1 140px;margin:0;font-size:12px}.options-fields .workflow-field{flex:2 1 230px;min-width:0}.options-fields select{width:100%;min-width:0;height:40px}.refresh-options{height:40px;font-size:12px}.options-footer{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px}.options-footer .h3-toggle{display:flex;align-items:center;gap:7px;margin:0}.h3-toggle input{width:15px;height:15px;margin:0;accent-color:var(--accent,#81d9bd)}.shot-video-options p{margin:10px 0 0;line-height:1.6}@media(max-width:600px){.options-fields label,.options-fields .workflow-field{flex-basis:100%}.refresh-options{margin-left:auto}}
 .refresh-options{padding:0 12px;border:1px solid var(--border,#35423f);border-radius:8px;background:var(--panel,#1e2625);color:var(--text,#e7eeeb);cursor:pointer}.refresh-options:disabled{opacity:.5;cursor:default}
 .resource-estimate{margin-top:12px;padding:10px 12px;border:1px solid var(--border,#35423f);border-radius:8px;display:flex;gap:7px 16px;flex-wrap:wrap;font-size:12px}.resource-estimate>span{color:var(--text,#e7eeeb)}.resource-estimate small{flex-basis:100%;color:var(--muted,#aab8b3)}.resource-estimate.high{border-color:#b87568;background:rgba(180,70,50,.09)}.resource-estimate.caution{border-color:#ad985b;background:rgba(190,150,40,.06)}.resource-title{display:flex;justify-content:space-between;align-items:center;flex-basis:100%}.resource-title button{background:none;border:0;color:var(--accent,#81d9bd);cursor:pointer;font-size:12px}.resource-title button:disabled{opacity:.5}
-.options-heading{flex-wrap:wrap}.options-heading .refresh-options{margin-left:auto;flex-shrink:0}
+.options-heading{flex-wrap:wrap}.options-heading .refresh-options{margin-left:0;flex-shrink:0}.options-heading .refresh-options:first-of-type{margin-left:auto}
 </style>

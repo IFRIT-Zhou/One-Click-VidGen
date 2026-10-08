@@ -91,6 +91,30 @@ export function useStudio(w) {
     saveDraft()
   }
   function duplicateStudioProject() { return createStudioProjectFromRequest() }
+  async function openCodexDraft(draft) {
+    const id = 'codex-' + draft.id
+    const local = studioDrafts.value.find(row => row.id === id)
+    if (local && !window.confirm('本机已有这份草稿。确定：重新载入 Codex 服务器版本；取消：保留并打开本机编辑。')) {
+      newProject('dynamic', local); return
+    }
+    try {
+      const assets = await api.editorUploads()
+      w.editorAssets.value = assets.assets || []
+      const form = {...JSON.parse(JSON.stringify(creationDefaults)), tts_engine:w.ttsEngine.value, ...draft.parameters,
+        reference_image_ids:draft.parameters.reference_image_ids||[],
+        reference_image_notes:draft.parameters.reference_image_notes||{},
+        reference_image_labels:draft.parameters.reference_image_labels||{},
+        reference_image_kinds:draft.parameters.reference_image_kinds||{},
+        source_audio_id:'', skip_tts:false, dynamic_video:true, dynamic_auto_advance:false, step_mode:true,
+        use_cloud_image_pool:w.form.use_cloud_image_pool}
+      newProject('dynamic', {id, form, subtitle:{...subtitleDefaults}, engine:form.tts_engine||'indextts25'})
+      studioSaveState.value = 'Codex 草稿已载入并保存到本机；请核对参数后手动生成配音'
+    } catch (e) { studioError.value = e.message }
+  }
+  function openCodexProject(id) {
+    saveDraft(); sessionStorage.setItem('ocv-video-open',id); sessionStorage.removeItem('ocv-video-autoplan')
+    studioPage.value='videos'
+  }
   function resetStudioProject() {
     if (!['failed', 'cancelled', 'completed'].includes(studioJob.value?.status)) return
     if (!window.confirm('重置后将以当前项目参数创建一份未运行草稿；进度、已生成内容和断点不会带入。原项目会保留，可随时返回查看。是否继续？')) return
@@ -101,6 +125,21 @@ export function useStudio(w) {
   function closeServices(){studioPage.value=servicesReturnPage}
   watch(studioDrawer, value=>{if(value==='接口与服务'){servicesReturnPage=studioPage.value==='services'?servicesReturnPage:studioPage.value;saveDraft();studioDrawer.value='';studioPage.value='services'}},{flush:'sync'})
   const studioKind = ref('video'), studioError = ref(''), studioBusy = ref(false)
+  const codexBridgeAvailable = ref(false)
+  watch(()=>[w.session.value.user?.id, studioPage.value], async()=>{
+    try { await requestJSON('/api/codex-bridge/info'); codexBridgeAvailable.value=true }
+    catch { codexBridgeAvailable.value=false }
+  }, {immediate:true})
+  async function handoffToCodex() {
+    if (studioBusy.value || !studioJob.value?.id) return
+    if (!window.confirm('请确认配音与字幕已核查。将保存现有配音并交给 Codex 规划，不运行自动分镜、不生成图片或视频。')) return
+    studioBusy.value=true; studioError.value=''
+    try {
+      const result=await requestJSON('/api/codex-bridge/from-audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:studioJob.value.id,audio_confirmed:true})})
+      openCodexProject(result.id)
+    } catch(e) { studioError.value=e.message }
+    finally { studioBusy.value=false }
+  }
   const dynamicAudioProjectId = ref(''), dynamicAudioBaselineRevision = ref(0)
   const editingDynamicAudio = computed(()=>Boolean(dynamicAudioProjectId.value))
   function clearDynamicAudioContext(){dynamicAudioProjectId.value='';dynamicAudioBaselineRevision.value=0;sessionStorage.removeItem('ocv-video-audio-edit')}
@@ -120,7 +159,21 @@ export function useStudio(w) {
   const studioLiveJobs = computed(()=>w.jobs.value.filter(j=>['queued','running'].includes(j.status)))
   const studioJobs = computed(()=>w.jobs.value.filter(j=>(studioFilter.value==='all'||typeOf(j)===studioFilter.value)&&String(j.request?.project_name||j.id).toLowerCase().includes(studioSearch.value.toLowerCase())))
   const studioTabs = computed(()=>studioKind.value==='audio'?['文案','配音','导出','参数回顾']:studioKind.value==='subtitle'?['素材','字幕','导出','参数回顾']:['文案','配音','画面与字幕','导出','参数回顾'])
-  const studioSelectedImage = computed(()=>w.visualEditor.value.items.find(i=>i.id===w.visualTimingSelectedId.value)||w.visualEditor.value.items[0])
+  const studioSceneAssets=ref([])
+  let scenePoll=null
+  async function refreshSceneAssets(){
+    const id=w.visualEditorProjectId.value
+    if(!id)return
+    try{const data=await requestJSON(`/api/jobs/${id}/scene-assets`);if(id!==w.visualEditorProjectId.value)return
+      studioSceneAssets.value=(data.items||[]).map((item,index)=>{
+        const old=studioSceneAssets.value.find(row=>row.id===item.id)
+        return Object.assign(old||{},item,{is_scene:true,display_name:`场景 ${index+1} · ${item.name}`,reference_materials:item.references||[],prompt:old?.prompt??item.prompt,image_url:item.image_url+'?v='+encodeURIComponent(item.task?.updated_at||0),text:'场景参考，不占用视频时长',timing:{}})
+      })
+    }catch{}
+  }
+  watch(()=>w.visualEditorProjectId.value,()=>{studioSceneAssets.value=[];clearInterval(scenePoll);refreshSceneAssets();scenePoll=setInterval(refreshSceneAssets,4000)},{immediate:true})
+  onBeforeUnmount(()=>clearInterval(scenePoll))
+  const studioSelectedImage = computed(()=>studioSceneAssets.value.find(i=>i.id===w.visualTimingSelectedId.value)||w.visualEditor.value.items.find(i=>i.id===w.visualTimingSelectedId.value)||w.visualEditor.value.items[0])
   const studioSelectedImageIndex = computed(()=>w.visualEditor.value.items.findIndex(i=>i.id===studioSelectedImage.value?.id))
   const canSelectPreviousImage = computed(()=>studioSelectedImageIndex.value>0)
   const canSelectNextImage = computed(()=>studioSelectedImageIndex.value>=0&&studioSelectedImageIndex.value<w.visualEditor.value.items.length-1)
@@ -416,5 +469,5 @@ export function useStudio(w) {
     try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
     catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
   }
-return {closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
+return {studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

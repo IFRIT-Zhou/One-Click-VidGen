@@ -12,6 +12,13 @@ $package = Join-Path $packageDir 'update.zip'
 try {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     New-Item -ItemType Directory -Path $fakeRoot, $sourceRoot, $packageDir -Force | Out-Null
+    # These projects are disposable fixtures; an unrelated live OCV instance
+    # must not prevent exercising file backup/update/rollback logic here.
+    $fixtureHelper = Join-Path $fixture 'fixture_update_helper.ps1'
+    $helperSource = Get-Content -LiteralPath $helper -Raw
+    $helperSource = [regex]::Replace($helperSource, '(?s)function Assert-OcvServicesStopped \{.*?\r?\n\}\r?\n\r?\nfunction Invoke-Git', 'function Assert-OcvServicesStopped {}' + "`r`n`r`nfunction Invoke-Git")
+    Set-Content -LiteralPath $fixtureHelper -Value $helperSource -Encoding UTF8
+    $helper = $fixtureHelper
 
     New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'runtime'), (Join-Path $fakeRoot 'output'), (Join-Path $fakeRoot 'workspace'), (Join-Path $fakeRoot 'launcher'), (Join-Path $fakeRoot 'plugins\community_demo') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $fakeRoot 'app.txt') -Value 'old-source' -Encoding UTF8
@@ -20,6 +27,9 @@ try {
     Set-Content -LiteralPath (Join-Path $fakeRoot 'output\video.mp4') -Value 'output-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'workspace\job.json') -Value 'workspace-keep' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $fakeRoot 'plugins\community_demo\plugin.json') -Value 'user-plugin-keep' -Encoding UTF8
+    New-Item -ItemType Directory -Path (Join-Path $fakeRoot 'plugins\codex_bridge'), (Join-Path $fakeRoot 'comfyui_plugins\user_node') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $fakeRoot 'plugins\codex_bridge\disabled') -Value 'disabled-keep' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $fakeRoot 'comfyui_plugins\user_node\__init__.py') -Value 'user-node-keep' -Encoding UTF8
     @{
         release_id = 'smoke-baseline-1'
         release_order = 1
@@ -35,6 +45,11 @@ try {
     Set-Content -LiteralPath (Join-Path $sourceRoot 'output\video.mp4') -Value 'output-overwrite-attempt' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\README.md') -Value 'managed-plugin-readme' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\community_demo\plugin.json') -Value 'plugin-overwrite-attempt' -Encoding UTF8
+    New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'plugins\codex_bridge'), (Join-Path $sourceRoot 'comfyui_plugins\user_node') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\codex_bridge\plugin.json') -Value 'public-bridge-installed' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'plugins\codex_bridge\disabled') -Value 'overwrite-attempt' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'comfyui_plugins\README.md') -Value 'node-guide-installed' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot 'comfyui_plugins\user_node\__init__.py') -Value 'overwrite-attempt' -Encoding UTF8
     @{
         release_id = 'smoke-release-1'
         release_order = 2
@@ -44,7 +59,7 @@ try {
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sourceRoot 'launcher\update-channel.json') -Encoding UTF8
 
     Compress-Archive -LiteralPath $sourceRoot -DestinationPath $package -CompressionLevel Fastest
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+    & $helper `
         -Mode portable `
         -ProjectRoot $fakeRoot `
         -LauncherPid 999999 `
@@ -54,6 +69,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Update helper exited with code $LASTEXITCODE" }
 
     $assertions = @(
+        @{ Name = 'bridge installed'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\codex_bridge\plugin.json') -Raw).Trim() -eq 'public-bridge-installed') },
+        @{ Name = 'bridge disable choice preserved'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\codex_bridge\disabled') -Raw).Trim() -eq 'disabled-keep') },
+        @{ Name = 'user ComfyUI node preserved'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'comfyui_plugins\user_node\__init__.py') -Raw).Trim() -eq 'user-node-keep') },
+        @{ Name = 'node guide installed'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'comfyui_plugins\README.md') -Raw).Trim() -eq 'node-guide-installed') },
         @{ Name = 'source updated'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'app.txt') -Raw).Trim() -eq 'new-source') },
         @{ Name = '.env protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot '.env') -Raw).Trim() -eq 'SECRET=keep-me') },
         @{ Name = 'runtime protected'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'runtime\model.bin') -Raw).Trim() -eq 'model-keep') },
@@ -80,7 +99,7 @@ try {
         portable_overlay_safe = $false
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $legacyRoot 'launcher\update-channel.json') -Encoding UTF8
     Compress-Archive -LiteralPath $sourceRoot -DestinationPath $legacyPackage -CompressionLevel Fastest
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+    & $helper `
         -Mode portable `
         -ProjectRoot $legacyRoot `
         -LauncherPid 999999 `
@@ -112,7 +131,7 @@ try {
         portable_overlay_safe = $true
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $failureSource 'launcher\update-channel.json') -Encoding UTF8
     Compress-Archive -LiteralPath $failureSource -DestinationPath $failurePackage -CompressionLevel Fastest
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+    & $helper `
         -Mode portable `
         -ProjectRoot $failureRoot `
         -LauncherPid 999999 `
@@ -145,7 +164,7 @@ try {
     & git.exe -C $gitRoot commit --quiet -m 'new'
     $expectedCommit = (& git.exe -C $gitRoot rev-parse HEAD).Trim()
     & git.exe -C $gitRoot checkout --quiet $baseBranch
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper `
+    & $helper `
         -Mode git `
         -ProjectRoot $gitRoot `
         -LauncherPid 999999 `
@@ -174,6 +193,12 @@ try {
     Write-Host 'PASS dirty Git worktree was rejected without modification'
     Write-Host 'SAFE_UPDATE_SMOKE=PASS'
     exit 0
+}
+catch {
+    Get-ChildItem -LiteralPath $fixture -Recurse -Filter launcher_update.log -ErrorAction SilentlyContinue | ForEach-Object {
+        Get-Content -LiteralPath $_.FullName -Tail 12
+    }
+    throw
 }
 finally {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }

@@ -14,9 +14,10 @@ from .video_director_examples import (CORE_DESIGN_EXAMPLE, MOTION_DESIGN_EXAMPLE
 from .video_motion_plan import normalize_motion_plan, prompt_plan_issues, render_motion_action, restore_reference_draft
 from .video_text_policy import (VISUAL_FIRST, dynamic_text_mode, text_mode_contract,
                                 visual_first_plan_issues, visual_first_prompt_issues,
-                                visual_first_long_text_issues)
+                                visual_first_long_text_issues, remove_unapproved_visible_text)
 from .video_image_prompt import assemble_image_body, without_leading_intent
 from .video_prompt_notices import prompt_notice_level
+from .video_medical_director import (is_medical, medical_contract, medical_design_issues, medical_example)
 from .video_speech import (inherit_attribution, reconcile_core_attribution,
                            plan_owner_issues, prompt_owner_issues)
 
@@ -100,12 +101,20 @@ narration_groups 是配音生产/编辑单元，作为强语义线索，但不�
 引用、想象、刻板印象始终保持其主观属性，不能画成对现实的事实断言。
 返回 {shots:[{slide_ids:[...],kind:"static|video",intent:"...",semantic:{...},motion_basis:"...",progression_plan:"..."}]}。
 """ + SEMANTIC_CONTRACT
+    if is_medical(context):
+        system = system.replace('纯信息展示或运动没有表达增益时使用 static，不因一句短就为它单独建镜。开头两个镜头承担观众留存，必须规划为 video，\n并控制在15秒以内；可在字幕边界合理缩短分组。单条字幕自身超过15秒才允许受限为 static，不能私自拆句。',
+                                '纯信息展示或运动没有表达增益时使用 static，不因一句短就为它单独建镜。动态镜头控制在15秒以内，不能私自拆字幕句。')
+        system += medical_contract(context, 'groups')
+    max_duration = 30 if arrangement.get('dynamic_max_shot_duration') == 30 else 15
+    context = {**context, 'dynamic_max_shot_duration': max_duration}
+    system = system.replace('15秒', f'{max_duration}秒')
+    system += '\n时长上限不是目标时长；优先完整语义和合理节奏，不为用满上限延长镜头。'
     video_arrangement = {k:v for k,v in arrangement.items() if k not in {
         'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration', 'visual_max_duration', 'visual_max_slides',
         'narration_groups'}}
     payload = {"story_context": context, "scenes": scenes,
                "narration_groups": arrangement.get('narration_groups', []),
-               "arrangement": {**video_arrangement, "opening_motion_shots": 2, "max_video_duration": 15}}
+               "arrangement": {**video_arrangement, "opening_motion_shots": 0 if is_medical(context) else 2, "max_video_duration": max_duration}}
     from .video_group_repair import repair_groups, validate_group_structure
     def finish(rows):
         rows = repair_groups(context, scenes, rows, ask, progress=progress, on_draft=on_draft,
@@ -155,6 +164,7 @@ def design_core_images(context: dict[str, Any], scenes: list[dict[str, Any]], sh
     expected = [shot["id"] for shot in shots]
     system = """你是核心画面导演 Agent 2，只设计已分组镜头的核心画面与按需参考素材。
 不得改变镜头id、顺序、字幕分组或kind。不设计动态过程或视频提示词。
+若 user_intent 非空，这是用户主动编辑的本镜表达要求，应结合当前字幕优先落实，不得被历史画面或旧主题覆盖。
 通常保留intent；若 design_needs_review=true，说明用户调整了字幕归属：以新的source_subtitles为准，
 先重新理解本镜含义并返回新的intent和semantic，再设计核心画面。旧提示词与previous_designs仅供风格、
 人物与表达手段延续参考，不得把已移出的字幕内容继续塞入本镜；必须表达新移入的补充说明。
@@ -173,10 +183,13 @@ method_example 是一个独立方法示例，当前任务的事实、角色、�
 返回 {shots:[{id,visual_description,visual_design:{...},reference_ids:[],semantic:{speech_turns:[]},
 intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅纠正错归属时填写",attribution_correction:"仅纠正错归属时填写依据"}]}。
 未调整的镜头除有原文依据的归属纠正外，不改写既定 intent。""" + VISUAL_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
+    system += medical_contract(context, 'core', include_common=False)
     payload = {"story_context": context, "scenes": scenes, "shots": shots, "references": references,
                "method_example": (VISUAL_FIRST_CORE_DESIGN_EXAMPLE
                                   if dynamic_text_mode(context) == VISUAL_FIRST else CORE_DESIGN_EXAMPLE)}
     system += '\n严格输出一个 JSON 对象，顶层唯一字段为 "shots"，其值为对象数组；不得返回说明、方法示例或单个设计对象。数组必须包含以下全部镜头 id，且顺序一致：' + json.dumps(expected, ensure_ascii=False)
+    if is_medical(context):
+        payload['method_example'] = medical_example('core')
     response = ask(system, payload)
     available_reference_ids = {item['id'] for item in references}
     for attempt in range(2):
@@ -193,6 +206,9 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
                                      + ('本任务没有上传参考素材，必须填 []。' if not references else
                                         '不可使用角色名、图号、示例或不存在的素材 id。'))
                 row['reference_ids'] = selected
+                medical_issues = medical_design_issues(context, row)
+                if medical_issues:
+                    raise ValueError(f"镜头 {row['id']}：" + '；'.join(medical_issues))
                 reconcile_core_attribution(original, row)
                 if dynamic_text_mode(context) == VISUAL_FIRST:
                     issues = visual_first_long_text_issues(row.get('visual_description', ''))
@@ -202,7 +218,7 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
         except ValueError as exc:
             if attempt:
                 raise
-            response = ask(system + '\n只修复 validation_errors 指出的参考素材选择、格式、归属或画中长句问题；保持镜头顺序、事实和表达目标。没有可用素材时清空 reference_ids，使用文字描述人物，不编造参考图。长句改为同一主体承载的具体无字图案或动作，不机械截字。必须返回对象 {shots:[...]}。',
+            response = ask(system + '\n只修复 validation_errors 指出的参考素材选择、格式、归属、医学设计交接或画中长句问题；保持镜头顺序、事实和表达目标。没有可用素材时清空 reference_ids，使用文字描述人物，不编造参考图。长句改为同一主体承载的具体无字图案或动作，不机械截字。必须返回对象 {shots:[...]}。',
                            {**payload, 'previous_result': response, 'validation_errors': [str(exc)]})
     for row in rows:
         if not isinstance(row.get('visual_description'), str) or not row['visual_description'].strip():
@@ -247,6 +263,7 @@ semantic.speech_turns 用于核对谁说/想，不能把它打印成提示词的
 下列规则的标题（例如“画面文字与归属”）是内部工作说明，不是输出分节；选定的短文字与归属自然写入 scene。
 只返回 {shots:[{id,image_sections:{characters_and_style:"人物与画风正文",scene:"画面内容正文",constraints:"必要限制正文或空字符串"}}]}，
 顺序不变。不要另写 image_prompt，程序负责拼出可直接提交图像模型的最终提示词。""" + text_mode_contract(context) + SPEECH_HANDOFF_CONTRACT
+    system += medical_contract(context, 'image', include_common=False)
     payload = {"story_context": context, "global_style": style, "shots": shots, "references": references}
     by_id = {shot['id']: shot for shot in shots}
     def present(rows):
@@ -320,9 +337,12 @@ reference_participants:["核心图中实际可见主体"],
 reference_texts:[{text:"参考图实际短字",owner:"核心图主体名或画面标注",container:"容器"}]}}]}。
 id及顺序保持不变，不输出多格数量、面板或额外镜头。
 若提供 validation_errors，只修复指出的方案交接问题，保持原文、既定表达与顺序，返回完整 shots。""" + MOTION_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
+    system += medical_contract(context, 'motion', include_common=False)
     payload = {'story_context': context, 'shots': prepared,
                'method_example': (VISUAL_FIRST_MOTION_DESIGN_EXAMPLE
                                   if dynamic_text_mode(context) == VISUAL_FIRST else MOTION_DESIGN_EXAMPLE)}
+    if is_medical(context):
+        payload['method_example'] = medical_example('motion')
     for attempt in range(2):
         response = ask(system, payload)
         try:
@@ -400,6 +420,7 @@ beat_prompts 必须按 beats 原顺序一一对应，不省略任何阶段，也
 反应与图文变化。使用连贯简洁的句子，图案写具体景物，不能只写“展示对应内容”。
 旧 version=1 或无 motion_plan 的镜头仍返回 {id,video_prompt:"..."}。
 顶层统一返回 {shots:[...]}，镜头顺序不变。""" + text_mode_contract(context) + SPEECH_HANDOFF_CONTRACT
+    system += medical_contract(context, 'video', include_common=False)
     def present(rows):
         result = []
         for row in rows:
@@ -456,6 +477,10 @@ def _finalize_prompts(system, payload, shots, field, medium, expected, ask, asse
                 if not content:
                     problems.append(f"{shot['id']} 缺少实际画面内容，不能只有表达目的")
                     continue
+                if (attempt and medium == 'video'
+                        and dynamic_text_mode(payload.get('story_context') or {}) == VISUAL_FIRST):
+                    content = remove_unapproved_visible_text(content, shot.get('motion_plan'))
+                    row[field] = content
                 row[field + '_warnings'] = prompt_plan_issues(content, shot.get('motion_plan'), medium)
                 plan_attribution_notes = plan_owner_issues(shot, shot.get('motion_plan'))
                 row[field + '_warnings'].extend(plan_attribution_notes)
@@ -468,7 +493,8 @@ def _finalize_prompts(system, payload, shots, field, medium, expected, ask, asse
                         visual_first_plan_issues(inspected) + visual_first_long_text_issues(content)]
                     row[field + '_warnings'].extend(text_density_notes)
                 row[field + '_warnings'] = list(dict.fromkeys(row[field + '_warnings']))
-                if dynamic_text_mode(payload.get('story_context') or {}) == VISUAL_FIRST:
+                if (dynamic_text_mode(payload.get('story_context') or {}) == VISUAL_FIRST
+                        or (is_medical(payload.get('story_context') or {}) and shot.get('kind') == 'video')):
                     # Unlike lexical handoff notices, this is an actionable
                     # policy violation: Agent 5 invented visible dialogue that
                     # the structured motion director never selected.
@@ -525,10 +551,8 @@ def audit_storyboard(shots: list[dict[str, Any]], reference_ids: set[str]) -> li
                 problems.append("动态镜头缺少视频提示词")
             elif not re.search(r"(?:参考)?图\s*1", video_prompt):
                 problems.append("视频提示词没有说明图1核心分镜参考")
-            if not 4 <= int(shot.get("generation_duration") or 0) <= 15:
-                problems.append("视频请求时长不在4～15秒")
-            if float(shot.get("duration") or 0) > 15:
-                problems.append("动态镜头可用时长超过15秒")
+            if int(shot.get("generation_duration") or 0) < max(4, float(shot.get("duration") or 0)):
+                problems.append("视频请求时长小于字幕跨度或最低4秒")
         elif shot.get("action") or shot.get("video_prompt"):
             problems.append("静态镜头残留动态指令")
         audited = dict(shot)

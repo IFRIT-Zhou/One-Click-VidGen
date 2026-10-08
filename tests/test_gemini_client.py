@@ -236,6 +236,7 @@ class GeminiClientTest(unittest.TestCase):
         with patch.dict("os.environ", {
             "LANGUAGE_PROVIDER": "qwen",
             "GEMINI_API_KEY": "shared-relay-key",
+            "GEMINI_API_BASE": "https://llm.runninghub.ai/v1",
             "QWEN_MODEL": "qwen/qwen3.8-max",
         }, clear=False):
             status = gemini_client.language_provider_status()

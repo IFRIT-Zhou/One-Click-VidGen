@@ -1,0 +1,41 @@
+const puppeteer=require('../../node_modules/puppeteer-core');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+(async()=>{
+ const browser=await puppeteer.launch({executablePath:process.argv[2],headless:true,args:['--disable-gpu'],timeout:15000});
+ console.log('browser launched');
+ try{
+  const page=await browser.newPage(),errors=[];
+  page.on('pageerror',e=>{errors.push(e.message);console.error('page error:',e.message)});
+  let confirmed='';page.on('dialog',async dialog=>{confirmed=dialog.message();await dialog.accept()});
+  await page.setViewport({width:1280,height:1000});
+  await page.goto((process.argv[3]||'http://127.0.0.1:5173')+'/tests/medical-director.html',{waitUntil:'domcontentloaded'});
+  console.log('fixture loaded');
+  await page.waitForSelector('.replan-options');
+  assert.equal(await page.$eval('.replan-options',e=>e.open),false);
+  await page.click('.replan-options summary');
+  await page.waitForFunction(()=>window.testCalls.some(c=>c.path==='/api/director-profiles'));
+  assert.equal(await page.$$eval('.replan-options .director-strategy-options button',e=>e.length),2);
+  await page.evaluate(()=>{window.testDirectorEnabled=true;window.dispatchEvent(new Event('focus'))});
+  await page.waitForSelector('.replan-options .director-strategy-options button:nth-child(3)');
+  assert.equal(await page.$eval('.replan-regroup input',e=>e.checked),false);
+  await page.click('.replan-options .director-strategy-options button:nth-child(3)');
+  assert.match(await page.$eval('.replan-options summary',e=>e.innerText),/医学文献/);
+  assert.match(await page.$eval('.director-strategy-hint',e=>e.innerText),/不代表已通过审核/);
+  assert.equal(await page.evaluate(()=>window.testCalls.filter(c=>c.method==='POST').length),0);
+  await page.click('.replan-regroup input');
+  console.log('mode selected');
+  await page.screenshot({path:path.resolve(__dirname,'../../runtime/temp/medical-director-desktop.png'),fullPage:true,timeout:10000});
+  await page.setViewport({width:390,height:850});
+  assert.equal(await page.$eval('.replan-options',e=>e.scrollWidth>e.clientWidth+1),false);
+  assert.equal(await page.$eval('.director-strategy-options',e=>e.scrollWidth>e.clientWidth+1),false);
+  await page.screenshot({path:path.resolve(__dirname,'../../runtime/temp/medical-director-mobile.png'),fullPage:true});
+  await page.click('.preset-actions > button');
+  await page.waitForFunction(()=>window.testCalls.some(c=>c.path.endsWith('/plan')));
+  const submit=await page.evaluate(()=>window.testCalls.find(c=>c.path.endsWith('/plan')));
+  assert.match(submit.query,/regroup=true/);assert.match(submit.query,/expression_mode=medical_paper/);
+  assert.match(confirmed,/镜头编号、数量和动静类型可能变化/);
+  assert.deepEqual(errors,[]);
+  console.log('medical-director UI: passed; no real model/media calls');
+ }finally{await browser.close()}
+})().catch(error=>{console.error(error);process.exitCode=1});

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from backend.app.tts_alignment import align_starts, spoken_cues
+from backend.app.tts_alignment import align_starts, spoken_cues, clean
 
 
 def words(*values):
@@ -27,7 +27,7 @@ class ReadingAlignmentTests(unittest.TestCase):
     def test_unchanged_and_legacy_input(self):
         texts = ['第一句话', '第二句话']
         self.assertEqual(align_starts(texts, words(*texts), 2), [0, 1])
-        self.assertEqual(spoken_cues(texts, '第一句话，第二句话'), texts)
+        self.assertEqual(spoken_cues(texts, '第一句话，第二句话'), [clean(text) for text in texts])
 
     def test_real_omission_still_rejected(self):
         with self.assertRaises(ValueError):

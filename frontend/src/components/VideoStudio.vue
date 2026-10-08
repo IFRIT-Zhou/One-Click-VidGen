@@ -10,26 +10,28 @@ import ResizableShotWorkspace from './ResizableShotWorkspace.vue'
 import WorkspacePanels from './WorkspacePanels.vue'
 import DynamicTextModeSelector from './DynamicTextModeSelector.vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
-import { normalizeDynamicTextMode } from '../dynamicTextMode'
+import ShotReferencePreview from './ShotReferencePreview.vue'
+import { normalizeDynamicTextMode, dynamicTextModeLabel } from '../dynamicTextMode'
 import { shotPromptNotes, shotHasPromptWarning, promptWarningRows } from '../videoPromptWarnings'
 const emit=defineEmits(['new-project','duplicate-config','edit-audio','edit-config'])
 const items=ref([]), project=ref(null), selected=ref(0), error=ref(''), busy=ref(false), dirty=ref(false)
 const view=ref('storyboard')
+watch(view,value=>{if(value!=='storyboard'&&selected.value<0)selected.value=0})
 const exportPreview=ref('raw')
 const workspaceTitles={audio:'配音与字幕',storyboard:'动态分镜',motions:'动态镜头',export:'合成与导出',parameters:'参数回顾'}
 const workspaceHints={audio:'试听配音、核对字幕；需要调整时进入配音精修。',storyboard:'逐镜确认画面与提示词，再将核心图制作成动态片段。',motions:'逐镜试看、重新生成或替换本地视频，满意后合成成片。',export:'预览和下载成片；合成选项可随时调整，不必重新生成镜头。',parameters:'查看本项目保存的配置，也可以用相同配置新建作品。'}
 function moveShot(delta){selected.value=Math.max(0,Math.min((project.value?.shots.length||1)-1,selected.value+delta));boundary.value=1;closeBoundaryEditor()}
 const motionDrafts=ref({})
-function rememberMotionDraft(shot){if(project.value?.status==='image_review'){motionDrafts.value[shot.id]={kind:shot.kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false};dirty.value=true}else dirty.value=true}
+function rememberMotionDraft(shot){if(project.value?.status==='image_review'){motionDrafts.value[shot.id]={intent:shot.intent||'',kind:shot.kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false};dirty.value=true}else dirty.value=true}
 async function saveMotionDrafts(){for(const [id,fields] of Object.entries(motionDrafts.value)){const updated=await call('/'+project.value.id+'/shots/'+encodeURIComponent(id)+'/motion','POST',{revision:project.value.revision,...fields});delete motionDrafts.value[id];acceptImageUpdate(updated)}dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))}
 const autoMotionBusy=ref(false)
 async function autoFillMotion(shot){
  autoMotionBusy.value=true
  videoLogsOpen.value=true
  const shotNumber=project.value.shots.findIndex(row=>row.id===shot.id)+1
- project.value.logs.push(`第 ${String(shotNumber).padStart(2,'0')} 镜：正在调用 Agent 自动补写动态表达…`)
- try{acceptImageUpdate(await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/refresh-prompts','POST',{revision:project.value.revision,basis:'image',action_only:true,action:'',image_prompt:shot.image_prompt||''}))}
- catch(e){project.value.logs.push(`第 ${String(shotNumber).padStart(2,'0')} 镜：自动补写动态表达失败：${e.message}`);throw e}
+ project.value.logs.push(`第 ${String(shotNumber).padStart(2,'0')} 镜：正在按核心图规划动态表达与视频模型最终提示词…`)
+ try{acceptImageUpdate(await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/refresh-prompts','POST',{revision:project.value.revision,basis:'image',action:shot.action||'',image_prompt:shot.image_prompt||''}))}
+ catch(e){project.value.logs.push(`第 ${String(shotNumber).padStart(2,'0')} 镜：动态表达与视频提示词更新失败：${e.message}`);throw e}
  finally{autoMotionBusy.value=false}
 }
 async function changeShotKind(shot,event){
@@ -40,9 +42,9 @@ async function changeShotKind(shot,event){
    acceptImageUpdate(await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/motion','POST',{revision:project.value.revision,kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false}))
   }else{shot.kind=kind;dirty.value=true;await save()}
   const current=project.value.shots.find(row=>row.id===shot.id)
-  if(wasStatic&&kind==='video'&&!current.action?.trim()){
+  if(wasStatic&&kind==='video'){
    try{await autoFillMotion(current)}
-   catch(e){throw new Error('已切换为动态，但自动补写动态表达失败：'+e.message+'。可手动填写，或点击“自动补写动态表达”重试。')}
+   catch(e){throw new Error('已切换为动态，但动态表达与视频提示词未更新成功：'+e.message+'。请点击“按核心图更新视频提示词”重试。')}
   }
  })
  event.target.value=project.value.shots.find(row=>row.id===shot.id)?.kind||shot.kind
@@ -63,14 +65,29 @@ function optionsFor(shot,includeDraft=true){
 const normalizedOptions=value=>({backend:value.backend,profile_id:value.backend==='comfyui'?value.profile_id:'',resolution:value.resolution||'',h3_prompt_agent:value.backend==='comfyui'&&Boolean(value.h3_prompt_agent),...(value.resolution==='custom'?{width:value.width,height:value.height}:{})})
 const selectedOptionsDirty=computed(()=>Boolean(selectedShot.value)&&JSON.stringify(normalizedOptions(optionsFor(selectedShot.value)))!==JSON.stringify(normalizedOptions(optionsFor(selectedShot.value,false))))
 async function saveShotOptions(){const shot=selectedShot.value;if(!shot)return;await run(async()=>{project.value=await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/generation-options','PUT',{revision:project.value.revision,options:normalizedOptions(optionsFor(shot))});delete shotOptionDrafts.value[project.value.id+':'+shot.id]})}
-function generationSummary(shot){const options=optionsFor(shot),profile=comfyProfiles.value.find(item=>item.id===options.profile_id);return (options.backend==='comfyui'?'ComfyUI · '+(profile?.name||'未选择工作流'):'视频 API')+' · '+(options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||videoModel.value?.resolution||'跟随设置')}
+async function applyAllShotOptions(){const shot=selectedShot.value;if(!shot)return;const shots=dynamicShots.value;if(!confirm('将当前设置应用到全部 '+shots.length+' 个动态镜头？\n'+generationSummary(shot)+'\n会覆盖各镜头的生成配置；现有素材保留，点击不会开始生成。'))return;await run(async()=>{project.value=await call('/'+project.value.id+'/generation-options','PUT',{revision:project.value.revision,options:normalizedOptions(optionsFor(shot))});for(const item of shots)delete shotOptionDrafts.value[project.value.id+':'+item.id]})}
+function generationSummary(shot){const options=optionsFor(shot),profile=comfyProfiles.value.find(item=>item.id===options.profile_id);return (options.backend==='comfyui'?(profile?.engine==='managed'?'OCV 内置 ComfyUI · ':'外部 ComfyUI · ')+(profile?.name||'未选择工作流'):'视频 API')+' · '+(options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||videoModel.value?.resolution||'跟随设置')}
 const shotConfigured=shot=>{const options=optionsFor(shot);return options.backend==='comfyui'?comfyProfiles.value.some(item=>item.id===options.profile_id):Boolean(apiVideoReady.value)}
+function confirmLongApiShots(shots){
+ const longShots=shots.filter(shot=>optionsFor(shot).backend==='api'&&Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))>15)
+ if(!longShots.length)return true
+ const lines=longShots.map(shot=>'第 '+String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0')+' 镜：请求 '+Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))+' 秒')
+ return confirm('长镜头 API 兼容性提醒\n\n'+lines.join('\n')+'\n\n以上镜头超过建议的 15 秒。不同服务商／模型的时长上限不同，请确认当前视频 API 支持这些请求时长。\nOCV 将按原时长提交，不会自动裁短；不支持时可能失败，费用以服务商规则为准。\n\n确认支持并继续？取消后可拆分镜头或更换模型。')
+}
 async function submitVideoBatch(shots,{automated=false,regenerate=false}={}){
  if(!shots.length)return
+ const unchecked=shots.filter(shot=>shot.design_needs_review)
+ if(unchecked.length){
+  const numbers=unchecked.map(shot=>String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0'))
+  error.value='第 '+numbers.join('、')+' 镜字幕范围调整后，设计尚未更新确认。请返回分镜编辑，完整重规划本镜或按核心图更新视频提示词后再生成；本次未提交生成任务。'
+  selected.value=project.value.shots.findIndex(item=>item.id===unchecked[0].id)
+  return
+ }
  if(shots.some(shot=>!shotConfigured(shot))){error.value='部分镜头尚未配置工作流或视频 API，请逐镜检查生成设置。';return}
+ if(!confirmLongApiShots(shots))return
  const lines=shots.map(shot=>'第 '+String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0')+' 镜：'+generationSummary(shot))
  const paid=shots.filter(shot=>optionsFor(shot).backend==='api').length
- if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'全部使用本地 ComfyUI。')+'\n是否开始？'))return
+ if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'全部使用 ComfyUI，内置／外部引擎按各镜头工作流执行。')+'\n是否开始？'))return
  const shot_options=Object.fromEntries(shots.map(shot=>[shot.id,normalizedOptions(optionsFor(shot))]))
  await run(async()=>{project.value=await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:shots.map(shot=>shot.id),shot_options,regenerate_completed:regenerate});for(const shot of shots)delete shotOptionDrafts.value[project.value.id+':'+shot.id];view.value='motions';videoLogsOpen.value=true})
 }
@@ -146,12 +163,14 @@ async function generateVideos(shots,retryFailed=false,automated=false,singleShot
   await run(async()=>{project.value=await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:shots.map(shot=>shot.id),retry_failed:retryFailed,...optionsPayload});view.value='motions';videoLogsOpen.value=true});return
  }
  if(!apiVideoReady.value){error.value='请先到“接口与服务”保存视频 API 配置，再开始生成。';return}
+ if(!confirmLongApiShots(shots))return
  const lines=shots.map(shot=>{const index=project.value.shots.findIndex(item=>item.id===shot.id)+1;return '第 '+String(index).padStart(2,'0')+' 镜：'+requestedSeconds(shot)+' 秒 · '+(options?.resolution||shot.video_request?.resolution||videoModel.value.resolution)+(shot.video_resume_available&&shot.video_task_id&&!retryFailed?' · 查询原任务，不重新提交':shot.video_not_submitted&&!retryFailed?' · 继续首次付费生成（尚未提交）':' · 新的付费生成')})
  const message=(retryFailed?'云端已确认上次任务失败。本操作会提交新的付费请求，服务商可能再次扣费。':'推荐先试生成 1～2 镜，确认效果后再生成其余镜头。')+'\n\n'+lines.join('\n')+'\n\n静音生成，仅上传本镜已选参考图；费用以你的服务商实际计费为准。是否继续？'
  if(!automated&&!confirm(message))return
  await run(async()=>{project.value=await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:shots.map(shot=>shot.id),retry_failed:retryFailed,...optionsPayload});view.value='motions';videoLogsOpen.value=true})
 }
 async function regenerateVideo(shot){
+ if(!confirmLongApiShots([shot]))return
  const audioNote=optionsFor(shot).backend==='comfyui'&&!optionsFor(shot).h3_prompt_agent&&project.value.creation_parameters?.comfyui_reference_audio&&shot.reference_audio_enabled!==false
   ?'本镜将继续注入对应 TTS 参考音频'+(shot.reference_audio_lipsync!==false?'并要求人物对口型。':'，但不要求人物对口型。')
   :'本镜不会注入参考音频。'
@@ -165,17 +184,20 @@ async function regenerateAllVideos(){
 }
 async function stopVideos(){if(!confirm('停止后不再提交后续镜头。已经提交的云端任务可能继续执行及计费，停止不会取消扣费；可稍后继续查询原任务。确定停止？'))return;await run(async()=>{project.value=await call('/'+project.value.id+'/videos/stop','POST');videoLogsOpen.value=true})}
 async function reopenShot(shot){
- if(!confirm('返回当前镜头的分镜编辑界面？现有图片和已付费动态片段会先保留；只有实际修改本镜内容后，才需要重新生成这一镜。'))return
+ if(!confirm('返回完整分镜编辑界面？可连续调整所有镜头，未修改的图片和动态片段保留。编辑完成后统一确认返回；此操作不会生成或扣费。'))return
  await run(async()=>{stopMotionPreviewAudio();project.value=await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/reopen','POST',{revision:project.value.revision});view.value='storyboard';await nextTick();document.querySelector('.video-detail')?.scrollIntoView({behavior:'smooth',block:'start'})})
 }
 const input=ref({name:'动态视频草案',srt:'',style:'生动清晰的简笔画风格',characters:'',world:'',ratio:'16:9',dynamic_text_mode:'visual_first',scene_references_enabled:true})
-const boundary=ref(1),boundaryEditor=ref({open:false,mode:'split'}),sourceAudio=ref(null)
+const boundary=ref(1),boundaryEditor=ref({open:false,mode:'split'}),sourceAudio=ref(null),boundaryAudio=ref(null)
 const motionAudio=ref(null),previewNarration=ref(true)
 let boundaryStopTimer=null
 const redrawReferenceIds=ref([]),useCurrentReference=ref(false),useSceneReference=ref(true),redrawResolution=ref('')
 const imagePromptDrafts=ref({}),submittedImagePrompts=ref({})
 const sceneAssets=computed(()=>project.value?.scene_assets||[])
 const selectedShot=computed(()=>project.value?.shots?.[selected.value]||null)
+const storyboardRows=computed(()=>[...(project.value?.scene_assets||[]).map((shot,index)=>({shot,i:-index-1})),...(project.value?.shots||[]).map((shot,i)=>({shot,i}))])
+const selectedStoryboardAsset=computed(()=>storyboardRows.value.find(row=>row.i===selected.value)?.shot)
+watch(()=>selectedStoryboardAsset.value?.id,()=>hydrateRedrawSelection(selectedStoryboardAsset.value))
 const historyPreviewIndex=ref(null)
 const selectedVideoHistory=computed(()=>((selectedShot.value?.video_history)||[])
  .map((entry,index)=>({entry,index}))
@@ -249,6 +271,11 @@ const warnedShots=computed(()=>warnedShotRows.value.length)
 async function showWarning(index){selected.value=index;boundary.value=1;closeBoundaryEditor();await nextTick();const details=document.querySelector('.current-shot-warning');if(details){details.open=true;details.scrollIntoView({behavior:'smooth',block:'center'})}}
 const planningCanResume=computed(()=>Boolean(project.value?.planning_resume_available)&&!dirty.value)
 const planningButtonLabel=computed(()=>planningCanResume.value?'继续未完成规划':project.value?.shots?.length?'重新规划':'重试规划')
+const replanMode=ref('text_assisted'),replanRegroup=ref(false)
+watch(()=>[project.value?.id,project.value?.creation_parameters?.dynamic_text_mode,project.value?.settings?.dynamic_text_mode],()=>{
+ replanMode.value=normalizeDynamicTextMode(project.value?.creation_parameters?.dynamic_text_mode??project.value?.settings?.dynamic_text_mode)
+ replanRegroup.value=false
+})
 const sources=ref([]),sourceId=ref(''),importName=ref('')
 const newVisual=ref({style:'生动清晰的简笔画风格',characters:'',world:'',ratio:'16:9',dynamic_text_mode:'visual_first',scene_references_enabled:true})
 function chooseSource(){const source=sources.value.find(item=>item.id===sourceId.value);importName.value=source?source.name.slice(0,90)+' · 动态版':''}
@@ -269,7 +296,12 @@ async function plan(automated=false){
  await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/plan','POST');dirty.value=false})
 }
 async function save(){if(project.value.status==='image_review'){await saveMotionDrafts();return}project.value=await call('/'+project.value.id,'PUT',{revision:project.value.revision,shots:project.value.shots});dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))}
-async function replanWithCurrentModel(){if(!confirm('使用当前全局语言模型重新规划全部镜头？保留配音、字幕时间轴和当前分镜边界；重新生成画面设计与提示词，消耗语言模型额度。成功后需重新确认方案并生成图片、视频，不自动出图或出视频。失败则保留原方案。'))return;await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/plan?fresh=true&revision='+project.value.revision,'POST');dirty.value=false;view.value='storyboard'})}
+async function replanWithCurrentModel(){
+ const mode=replanMode.value,regroup=replanRegroup.value
+ const grouping=regroup?'按全文语义重新划分全部镜头，镜头编号、数量和动静类型可能变化；':'保留当前分镜边界与动静类型；'
+ if(!confirm(`使用当前语言服务，以「${dynamicTextModeLabel(mode)}」重新规划？\n保留配音、字幕文字与时间轴。${grouping}重新设计画面与提示词，消耗语言模型额度。\n成功后需确认新方案，再生成图片和视频，不自动调用素材生成。失败则保留原方案。`))return
+ await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/plan?fresh=true&revision='+project.value.revision+'&regroup='+regroup+'&expression_mode='+encodeURIComponent(mode),'POST');dirty.value=false;view.value='storyboard'})
+}
 function previewSides(left,right){
  const side=rows=>({rows,text:rows.map(row=>row.text).join('\n'),start:Number(rows[0]?.start||0),end:Number(rows.at(-1)?.end||0)})
  const a=side(left),b=side(right)
@@ -277,12 +309,12 @@ function previewSides(left,right){
 }
 function openBoundaryEditor(mode){stopBoundaryPreview();mode=mode||(selected.value<project.value.shots.length-1?'boundary':'split');boundaryEditor.value={open:true,mode};if(mode==='boundary')boundary.value=selectedShot.value.slide_ids.length;else if(mode==='split')boundary.value=Math.min(Math.max(1,Number(boundary.value)||1),Math.max(1,(selectedShot.value?.slide_ids?.length||1)-1))}
 async function repairDesigns(){if(!confirm('保留当前字幕分组，仅更新受影响镜头的设计，会调用语言 API。继续？'))return;closeBoundaryEditor();await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/plan?repair_only=true','POST')})}
-async function confirmDesign(){await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/design/confirm','POST',{revision:project.value.revision,shot_id:selectedShot.value.id})})}
+async function confirmDesign(){if(!confirm('确认本镜的核心图、动态表达与视频提示词已检查完毕并沿用？此操作不生成、不扣费。'))return;await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/design/confirm','POST',{revision:project.value.revision,shot_id:selectedShot.value.id})})}
 async function undoStructure(){if(!confirm('撤回最近一次结构调整，恢复调整前的镜头与提示词；当前未保存修改会被放弃。继续？'))return;await run(async()=>{project.value=await call('/'+project.value.id+'/structure/undo','POST',{revision:project.value.revision});dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id));selected.value=Math.min(selected.value,project.value.shots.length-1);closeBoundaryEditor()})}
 function closeBoundaryEditor(){stopBoundaryPreview();boundaryEditor.value.open=false}
 function stopBoundaryPreview(){
  if(boundaryStopTimer){clearTimeout(boundaryStopTimer);boundaryStopTimer=null}
- const audio=sourceAudio.value;if(audio){audio.pause();audio.ontimeupdate=null}
+ const audio=boundaryAudio.value;if(audio){audio.pause();audio.ontimeupdate=null}
 }
 function stopMotionPreviewAudio(){const audio=motionAudio.value;if(audio)audio.pause()}
 async function syncMotionPreview(event,phase){
@@ -302,10 +334,10 @@ async function syncMotionPreview(event,phase){
  if(phase==='play'&&audio.paused){try{await audio.play()}catch{error.value='镜头可以播放，但浏览器阻止了配音同步。请再次点击播放，或检查浏览器声音权限。'}}
 }
 async function playBoundaryRange(start,end){
- const audio=sourceAudio.value;if(!audio||!Number.isFinite(Number(start))||!Number.isFinite(Number(end))||Number(end)<=Number(start)){error.value='当前任务没有可试听的配音。';return}
- stopBoundaryPreview();audio.currentTime=Math.max(0,Number(start));const finish=()=>{if(audio.currentTime>=Number(end)-.03)stopBoundaryPreview()};audio.ontimeupdate=finish
- boundaryStopTimer=setTimeout(stopBoundaryPreview,Math.max(500,(Number(end)-Number(start)+.3)*1000))
- try{await audio.play()}catch{stopBoundaryPreview();error.value='配音暂时无法播放，请检查音频文件或浏览器播放权限。'}
+ const audio=boundaryAudio.value;if(!audio||!project.value?.audio){error.value='当前任务没有可试听的配音。';return}
+ if(!Number.isFinite(Number(start))||!Number.isFinite(Number(end))||Number(end)<=Number(start)){error.value='当前字幕试听范围无效，请重新选择切口。';return}
+ error.value='';stopBoundaryPreview();sourceAudio.value?.pause();stopMotionPreviewAudio();audio.currentTime=Math.max(0,Number(start));const finish=()=>{if(audio.currentTime>=Number(end)-.03)stopBoundaryPreview()};audio.ontimeupdate=finish
+ try{await audio.play();if(audio.ontimeupdate===finish)boundaryStopTimer=setTimeout(stopBoundaryPreview,Math.max(500,(Number(end)-Number(start)+.3)*1000))}catch{stopBoundaryPreview();error.value='配音暂时无法播放，请检查音频文件或浏览器播放权限。'}
 }
 function playBoundaryPart(part){const preview=boundaryPreview.value;if(!preview)return;const side=preview[part];playBoundaryRange(side.start,side.end)}
 function playBoundaryEdge(part){const preview=boundaryPreview.value;if(!preview)return;const point=preview.boundary;if(part==='left')playBoundaryRange(Math.max(preview.left.start,point-5),point);else if(part==='right')playBoundaryRange(point,Math.min(preview.right.end,point+5));else playBoundaryRange(Math.max(preview.left.start,point-3),Math.min(preview.right.end,point+3))}
@@ -314,7 +346,11 @@ async function structure(action){if(action==='delete'&&!confirm('删除此画面
 async function review(){await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/review','POST',{revision:project.value.revision});project.value=await call('/'+project.value.id+'/images/generate','POST',{revision:project.value.revision})})}
 async function generateImages(){await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/images/generate','POST',{revision:project.value.revision})})}
 async function stopImages(){await run(async()=>{project.value=await call('/'+project.value.id+'/images/stop','POST')})}
-async function confirmImages(regenerateShotId=''){await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/images/confirm','POST',{revision:project.value.revision,...(regenerateShotId?{regenerate_shot_id:regenerateShotId}:{})});view.value='motions';videoLogsOpen.value=true})}
+async function confirmImages(regenerateShotId=''){
+ const unchecked=project.value.shots.map((shot,index)=>shot.design_needs_review?String(index+1).padStart(2,'0'):null).filter(Boolean)
+ if(unchecked.length&&!confirm('第 '+unchecked.join('、')+' 镜的字幕范围曾调整。\n\n如果你已检查现有核心图、动态表达与视频提示词，确认后将统一沿用这些设计，返回动态镜头页。\n不会重新规划、生成或扣费。若尚未检查，请取消并继续编辑。\n\n确认沿用并返回？'))return
+ await run(async()=>{if(dirty.value)await save();project.value=await call('/'+project.value.id+'/images/confirm','POST',{revision:project.value.revision,confirm_adjusted_designs:Boolean(unchecked.length),...(regenerateShotId?{regenerate_shot_id:regenerateShotId}:{})});view.value='motions';videoLogsOpen.value=true})
+}
 async function finishShotReedit(shot){
  let reroll=''
  if(shot.kind==='video'&&shot.video_status==='completed'){
@@ -332,10 +368,17 @@ const projectRedrawReferences=computed(()=>(project.value?.references||[]).map((
 const uploadedRedrawReferences=computed(()=>redrawReferences.value.map((asset,index)=>({
  ...asset,origin:'uploaded',displayName:asset.name||`新增参考图 ${index+1}`
 })))
-const redrawReferenceGallery=computed(()=>[...projectRedrawReferences.value,...uploadedRedrawReferences.value])
+const sceneRedrawReferences=computed(()=>(project.value?.scene_assets||[]).filter(asset=>asset.image_status==='completed').map(asset=>({...asset,origin:'scene',displayName:asset.name||'场景图'})))
+const redrawReferenceGallery=computed(()=>[...projectRedrawReferences.value,...sceneRedrawReferences.value,...uploadedRedrawReferences.value])
 const redrawReferenceUrl=asset=>base+'/'+project.value.id+'/redraw-references/'+encodeURIComponent(asset.id)+'?v='+project.value.revision
 const imageEditRunning=computed(()=>sceneReferencesBusy.value||allImageAssets.value.some(asset=>asset.image_task?.status==='running'))
 const imageAssetRunning=asset=>asset?.image_task?.status==='running'
+function sceneReferenceIds(asset){return asset.redraw_selection?.reference_ids??asset.reference_ids??[]}
+function toggleSceneMaterial(asset,id){
+ const ids=sceneReferenceIds(asset)
+ if(!ids.includes(id)&&ids.length>=3){error.value='场景图最多使用 3 张参考素材。';return}
+ asset.redraw_selection={...(asset.redraw_selection||{}),reference_ids:ids.includes(id)?ids.filter(value=>value!==id):[...ids,id]}
+}
 function hydrateRedrawSelection(shot){
  if(!shot)return
  const saved=shot.redraw_selection
@@ -358,7 +401,7 @@ async function clearUploadedRedrawReferences(){
  if(!uploadedRedrawReferences.value.length||!confirm(`清空本项目后加的 ${uploadedRedrawReferences.value.length} 张参考图？创建任务时上传的原始素材不会删除。`))return
  await run(async()=>{acceptImageUpdate(await requestJSON(base+'/'+project.value.id+'/redraw-references?revision='+encodeURIComponent(project.value.revision),{method:'DELETE'}));const originals=new Set(projectRedrawReferences.value.map(asset=>asset.id));redrawReferenceIds.value=redrawReferenceIds.value.filter(id=>originals.has(id))})
 }
-async function redrawShot(shot){if(!shot.image_prompt?.trim()){error.value='请先填写图片提示词。';return}await run(async()=>{rememberImagePrompt(shot);const sceneAsset=isSceneAsset(shot),submittedPrompt=shot.image_prompt;const updated=await call('/'+project.value.id+'/images/'+encodeURIComponent(shot.id)+'/redraw','POST',{revision:project.value.revision,prompt:submittedPrompt,reference_ids:sceneAsset?[]:redrawReferenceIds.value,use_current_image:sceneAsset?false:useCurrentReference.value,use_scene_reference:sceneAsset?false:useSceneReference.value,image_resolution:redrawResolution.value||null});submittedImagePrompts.value[shot.id]=submittedPrompt;acceptImageUpdate(updated);dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))})}
+async function redrawShot(shot){if(!shot.image_prompt?.trim()){error.value='请先填写图片提示词。';return}await run(async()=>{rememberImagePrompt(shot);const sceneAsset=isSceneAsset(shot),submittedPrompt=shot.image_prompt;const updated=await call('/'+project.value.id+'/images/'+encodeURIComponent(shot.id)+'/redraw','POST',{revision:project.value.revision,prompt:submittedPrompt,reference_ids:redrawReferenceIds.value,use_current_image:useCurrentReference.value,use_scene_reference:sceneAsset?false:useSceneReference.value,image_resolution:redrawResolution.value||null});submittedImagePrompts.value[shot.id]=submittedPrompt;acceptImageUpdate(updated);dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))})}
 async function replaceShotImage(event,shot){const file=event.target.files?.[0];event.target.value='';if(!file)return;await run(async()=>{const data=new FormData();data.append('revision',String(project.value.revision));data.append('prompt',shot.image_prompt||'');data.append('file',file);acceptImageUpdate(await requestJSON(base+'/'+project.value.id+'/images/'+encodeURIComponent(shot.id)+'/upload',{method:'POST',body:data}),[shot.id]);dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))})}
 async function undoShot(shot){await run(async()=>{acceptImageUpdate(await call('/'+project.value.id+'/images/'+encodeURIComponent(shot.id)+'/undo','POST',{revision:project.value.revision}),[shot.id]);dirty.value=false})}
 async function resetShotPrompt(shot){await run(async()=>{acceptImageUpdate(await call('/'+project.value.id+'/images/'+encodeURIComponent(shot.id)+'/reset-prompt','POST',{revision:project.value.revision}),[shot.id]);dirty.value=false})}
@@ -497,7 +540,14 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </section>
  <LanguageModelPresets v-if="project&&view==='storyboard'" :disabled="busy||!canEditStructure" :cloud-pool="Boolean(project.creation_parameters?.use_cloud_image_pool)">
   <template #actions="{unavailable,pendingSwitch}">
-   <div class="replan-description"><strong>重新规划画面</strong><small class="muted">保留配音与分镜边界，重新设计画面和提示词。确认方案后再生成素材。</small><small v-if="pendingSwitch" class="muted">请先点击“使用此模型”，再重新规划。</small></div>
+   <div class="replan-description"><strong>重新规划画面</strong><small class="muted">保留配音与字幕时间轴。确认新方案后再生成素材，不自动重做。</small><small v-if="pendingSwitch" class="muted">请先点击“使用此模型”，再重新规划。</small>
+    <details class="replan-options"><summary>规划选项 · {{ dynamicTextModeLabel(replanMode) }} · {{ replanRegroup?'重新划分镜头':'保留镜头边界' }}</summary>
+     <fieldset :disabled="busy||!canEditStructure||unavailable"><DynamicTextModeSelector v-model="replanMode" />
+      <label class="replan-regroup"><input type="checkbox" v-model="replanRegroup">同时重新划分镜头</label>
+      <small class="muted">仅重规划时生效。勾选后不保留手动分组，按完整语义重新选择边界和动静类型；配音、字幕不变。未勾选时，如需把动态循环改为静态，可单独修改镜头类型。</small>
+     </fieldset>
+    </details>
+   </div>
    <button type="button" :disabled="busy||!canEditStructure||unavailable" @click="replanWithCurrentModel">重新规划</button>
   </template>
  </LanguageModelPresets>
@@ -506,7 +556,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  <div class="video-start">
   <section class="video-card"><h2>新建视频任务</h2><p class="muted">可借用已有作品的配音、字幕和时间戳。画面从头设计，不导入旧图、参考图、画风、人物或旧分镜。</p><label>配音与字幕来源<select v-model="sourceId" @change="chooseSource"><option value="">请选择已完成的项目</option><option v-for="source in sources" :key="source.id" :value="source.id">{{source.name}}</option></select></label><p v-if="!sources.length" class="muted">暂无可导入项目，需要项目已完成，且配音与最终字幕文件完整。</p><label>新项目名称<input v-model="importName" maxlength="100" placeholder="自动填写，可修改"></label><label>新视频比例<select v-model="newVisual.ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option></select></label>
    <DynamicTextModeSelector v-model="newVisual.dynamic_text_mode" />
-   <label class="dynamic-scene-reference-toggle"><input type="checkbox" v-model="newVisual.scene_references_enabled">启用场景参考</label><p class="muted">两种表达方式均可使用；为重复场景额外生成参考图并计费，关闭后不生成。</p>
+   <label class="dynamic-scene-reference-toggle"><input type="checkbox" v-model="newVisual.scene_references_enabled">启用场景参考</label><p class="muted">所有表达方式均可使用；为重复场景额外生成参考图并计费，关闭后不生成。</p>
    <details open><summary>新任务画面设定（不继承来源项目）</summary><label>统一画风<textarea v-model="newVisual.style" rows="2"/></label><label>人物设定<textarea v-model="newVisual.characters" rows="2" placeholder="例如：主讲人是红色身体、戴红围巾的火柴人"/></label><label>世界与场景<textarea v-model="newVisual.world" rows="2"/></label></details><button class="primary-btn" :disabled="busy||!sourceId" @click="importProject">新建任务并导入配音字幕</button><p class="muted">独立保存，不影响原作品。直接从文案／音频开始的完整入口将在后续接入。</p></section>
   <section class="video-card"><h2>继续编辑</h2><p class="muted" v-if="!items.length">还没有视频分镜草案。</p><button class="video-record" v-for="item in items" :key="item.id" @click="open(item.id)"><strong>{{item.settings.name}}</strong><span>{{item.scenes.length}} 条字幕 · {{item.shots.length}} 个镜头</span></button></section>
  </div>
@@ -514,7 +564,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  <div class="video-start">
   <section class="video-card"><h2>新建分镜草案</h2><label>项目名称<input v-model="input.name" maxlength="100"></label><label>视频比例<select v-model="input.ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option></select></label>
    <DynamicTextModeSelector v-model="input.dynamic_text_mode" />
-   <label class="dynamic-scene-reference-toggle"><input type="checkbox" v-model="input.scene_references_enabled">启用场景参考</label><p class="muted">两种表达方式均可使用；为重复场景额外生成参考图并计费，关闭后不生成。</p>
+   <label class="dynamic-scene-reference-toggle"><input type="checkbox" v-model="input.scene_references_enabled">启用场景参考</label><p class="muted">所有表达方式均可使用；为重复场景额外生成参考图并计费，关闭后不生成。</p>
    <label>导入已校对字幕<input type="file" accept=".srt" @change="loadSrt"></label><textarea v-model="input.srt" rows="4" placeholder="粘贴 SRT（保留时间戳），或选择字幕文件"/><details><summary>画风与人物设定</summary><label>统一画风<textarea v-model="input.style" rows="2"/></label><label>人物设定<textarea v-model="input.characters" rows="2"/></label><label>世界与场景<textarea v-model="input.world" rows="2"/></label></details><button class="primary-btn" :disabled="busy||!input.srt" @click="create">创建草案</button></section>
  </div>
  </details>
@@ -532,12 +582,12 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <p v-if="!videoStageReady" class="studio-notice">请先在“动态分镜”阶段完成并确认核心分镜图。此处不会自动提交视频生成。</p>
   <template v-else>
    <audio v-if="project.audio" ref="motionAudio" :key="narrationUrl" preload="auto" :src="narrationUrl" class="motion-narration-audio"/>
-   <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{localVideo?'本地 ComfyUI':'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
+   <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{localVideo?(project.creation_parameters.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'):'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
    <p v-if="videoModelError&&dynamicShots.some(shot=>optionsFor(shot).backend==='api')" class="studio-notice error">{{videoModelError}}</p>
    <div v-if="dynamicShots.length" class="motion-generation-bar">
     <div><strong>{{videoRunning?(project.status==='video_stopping'?'正在安全停止…':'正在生成动态镜头…'):completedVideos===dynamicShots.length?'动态片段已准备完成':'先试一镜，再决定是否批量生成'}}</strong><p class="muted">{{videoRunning?'按照“接口与服务”中的并发设置处理，实时进度见日志。停止不会撤销云端已提交或已计费的任务。':'只有点击生成并确认后才调用视频 API；已完成片段不会重复提交，失败镜头不会自动重新扣费。'}}</p></div>
     <button v-if="videoRunning" type="button" class="primary-btn" :disabled="busy||project.status==='video_stopping'" @click="stopVideos">{{project.status==='video_stopping'?'正在停止…':'停止生成'}}</button>
-   <div v-else class="motion-batch-actions"><button type="button" class="primary-btn" :disabled="busy||videoRunning||!dynamicShots.length" @click="regenerateAllVideos">全部重新生成（{{dynamicShots.length}}）</button><button type="button" class="primary-btn" :disabled="busy||!pendingVideos.length" @click="generateVideos(pendingVideos)">生成全部未完成（{{pendingVideos.length}}）</button></div>
+   <div v-else class="motion-batch-actions"><button type="button" :disabled="busy||videoRunning||!selectedShot" @click="reopenShot(selectedShot)">重新编辑分镜</button><button type="button" class="primary-btn" :disabled="busy||videoRunning||!dynamicShots.length" @click="regenerateAllVideos">全部重新生成（{{dynamicShots.length}}）</button><button type="button" class="primary-btn" :disabled="busy||!pendingVideos.length" @click="generateVideos(pendingVideos)">生成全部未完成（{{pendingVideos.length}}）</button></div>
    </div>
    <div v-if="allVideosReady&&!videoRunning" class="video-next-stage"><div><strong>{{dynamicShots.length?'全部动态片段已完成':'全部静态画面已就绪'}}</strong><p>{{dynamicShots.length?'镜头素材已就绪，可以进入最终合成。':'本项目不需要生成动态片段，可直接用图片与配音合成。'}}</p></div><button type="button" class="primary-btn" @click="view='export'">下一步：合成与导出</button></div>
    <p v-if="dynamicShots.some(shot=>shot.video_status!=='completed'&&(shot.video_terminal||shot.video_status==='failed'||(shot.video_status==='unknown'&&!shot.video_resume_available)))" class="duration-repair-note needs-review">批量处理会跳过失败或状态待核实的镜头，请在左侧选择相应镜头查看原因。确认失败的任务需单独点击“重新付费生成”。</p>
@@ -549,7 +599,8 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <div class="shot-local-navigation"><strong>镜头 {{String(selected+1).padStart(2,'0')}} <span>/ {{project.shots.length}}</span></strong><div><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
      <details open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in selectedShot.slide_ids" :key="id">{{scenesById[id]?.text}}</p></details>
      <div class="motion-shot-heading"><div><h3>第 {{String(selected+1).padStart(2,'0')}} 镜 · {{videoStatusLabel(selectedShot)}}</h3><p class="muted">{{selectedShot.intent}}</p></div><div class="motion-heading-actions"><span v-if="selectedShot.kind==='video'" class="readonly-badge">使用 {{selectedShot.duration}} 秒 · 请求 {{requestedSeconds(selectedShot)}} 秒 · {{requestedResolution(selectedShot)}}</span><label v-if="selectedShot.kind==='video'" class="motion-upload-button" :class="{disabled:busy||videoRunning}">上传本地视频替换<input type="file" accept="video/mp4,.mp4" :disabled="busy||videoRunning" @change="uploadReplacementVideo(selectedShot,$event)"></label><button type="button" :disabled="busy||videoRunning" @click="reopenShot(selectedShot)">重新编辑本镜</button></div></div>
-     <ShotVideoOptions v-if="selectedShot.kind==='video'" v-model="selectedOptions" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="shotOptionsLocked" :dirty="selectedOptionsDirty" :saved="Boolean(selectedShot.video_generation_options)" :save-disabled="busy||videoRunning" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="requestedSeconds(selectedShot)" :image-src="imageUrl(selectedShot)" @refresh="loadComfyProfiles" @save="saveShotOptions"/>
+     <div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure" @click="undoStructure">撤回结构调整</button><button v-if="project.status==='image_review'&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div>
+     <ShotVideoOptions v-if="selectedShot.kind==='video'" v-model="selectedOptions" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="shotOptionsLocked" :dirty="selectedOptionsDirty" :saved="Boolean(selectedShot.video_generation_options)" :save-disabled="busy||videoRunning" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="requestedSeconds(selectedShot)" :image-src="imageUrl(selectedShot)" @refresh="loadComfyProfiles" @save="saveShotOptions" @apply-all="applyAllShotOptions"/>
      <p v-if="selectedShot.video_request" class="muted">当前片段实际使用：{{selectedShot.video_request.backend==='comfyui'?'ComfyUI · '+(comfyProfiles.find(item=>item.id===selectedShot.video_request.profile_id)?.name||selectedShot.video_request.profile_id):'视频 API'}} · {{requestedResolution(selectedShot)}}。上方修改在下次生成时生效。</p>
      <p v-if="selectedLocalVideo&&comfyError" class="studio-notice error">工作流读取失败：{{comfyError}}</p>
      <div v-if="selectedShot.kind==='video'&&(!videoRunning||(localQueueRunning&&selectedLocalVideo&&!['running','unknown'].includes(selectedShot.video_status)))" class="motion-shot-actions">
@@ -621,38 +672,19 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <details v-if="promptWarnings.length" :key="selected" class="shot-subtitles current-shot-warning"><summary>第 {{String(selected+1).padStart(2,'0')}} 镜{{shotHasPromptWarning(selectedShot)?'核对详情':'措辞比对记录'}} · {{promptWarnings.length}} 条</summary><p class="muted">以下来自字面比对，不是语义判定。称呼、说法或气泡名称不同，不一定影响画面；请结合实际提示词判断。</p><p v-for="(note,i) in promptWarnings" :key="i" :class="{'prompt-note-warning':note.severity==='warning'}"><span class="prompt-note-level">{{note.severity==='warning'?'建议核对':'措辞记录'}}</span>{{note.label}}</p></details>
   <details v-if="project.planning_recovery&&project.shots[selected]?.visual_description&&!project.shots[selected]?.image_prompt" open class="shot-subtitles"><summary>当前镜头已保存的核心画面草案（尚未定稿）</summary><p>{{project.shots[selected].visual_description}}</p><p class="muted">可参考此草案，在下方补齐核心分镜图提示词和视频提示词；保存并确认前不会生成图片。</p></details>
   <details v-if="project.logs.length&&!project.shots.length" class="planning-log" open><summary>任务日志 <span class="muted">{{project.logs.length}} 条</span></summary><div class="video-logs" role="log" aria-live="polite"><div v-for="(line,i) in project.logs" :key="i">{{line}}</div></div></details>
-  <details v-if="sceneReferencesEnabled||sceneAssets.length" class="scene-reference-assets" :open="sceneReferencesBusy||project.scene_references_status==='failed'||(project.status==='image_review'&&sceneReferencesBlockConfirm)">
-   <summary><strong>场景参考资产</strong><span class="muted">{{sceneAssets.length}} 张 · {{sceneReferencesBusy?'正在准备场景参考':project.scene_references_status==='failed'?'需要重试':sceneReferencesBlockConfirm?'场景参考尚未准备完成':'仅用于相关镜头，不占用视频时间轴'}}</span></summary>
-   <div class="scene-reference-heading">
-    <div><p class="muted">先固定场景中的空间布局、家具和道具，再将场景图提供给相关分镜。修改场景后，已有核心图需逐张重绘才会采用新版。</p><p v-if="sceneReferencesBusy" class="image-edit-status running" role="status">{{project.scene_references_status==='planning'?'正在规划需要共用的场景…':'正在生成场景参考图…'}}</p><p v-else-if="sceneReferenceMessage" class="image-edit-status" :class="project.scene_references_status==='failed'?'failed':''">{{sceneReferenceMessage}}</p><p v-else-if="!sceneAssets.length" class="muted">{{project.scene_references_status==='completed'?'本次规划没有需要共用的场景。':project.status==='image_review'?'这个任务尚未生成场景参考。可手动补充，完成后选择相关核心图重绘。':'已启用场景参考，生成核心分镜图时会先规划和生成场景。'}}</p></div>
-    <button v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" type="button" :disabled="busy||imageEditRunning" @click="generateSceneReferences">{{project.scene_references_status==='failed'||sceneAssets.length?'重试场景参考（调用 API）':'补充场景参考（调用 API）'}}</button>
-   </div>
-   <p v-if="project.status==='image_review'&&sceneReferencesBlockConfirm" class="studio-notice">本任务已启用场景参考，场景准备尚未完成，暂不能确认进入下一阶段。请先补充或重试场景参考；完成后可按需重绘关联核心图。</p>
-   <p v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" class="muted scene-cost-note">将调用语言与图像 API；已有核心分镜图保留，完成后可按需重绘相关镜头。</p>
-   <div class="scene-assets-grid">
-    <details v-for="asset in sceneAssets" :key="asset.id" class="scene-asset-card">
-     <summary><img v-if="asset.image_status==='completed'" :src="imageUrl(asset)" :alt="asset.name||'场景参考'"><span v-else class="scene-thumbnail-placeholder">{{asset.image_status==='failed'?'未完成':'场景'}}</span><span><strong>{{asset.name||asset.id}}</strong><small class="muted">用于镜头 {{sceneUsedByLabel(asset)}}</small></span><span class="scene-asset-state">{{asset.image_task?.status==='running'?'正在重绘':asset.image_status==='completed'?'已生成':asset.image_status==='failed'?'生成失败':'等待生成'}}</span></summary>
-     <div v-if="asset.image_status==='completed'" class="storyboard-result"><img :src="imageUrl(asset)" :alt="asset.name||'场景参考'"></div>
-     <p v-if="asset.image_error" class="image-edit-status failed">{{asset.image_error}}</p>
-     <label>场景参考图提示词<textarea v-model="asset.image_prompt" rows="4" :disabled="busy||imageEditRunning||project.status!=='image_review'" @input="rememberImagePrompt(asset)"/></label>
-     <p v-if="asset.image_task?.message" class="image-edit-status" :class="asset.image_task.status">{{asset.image_task.message}}</p>
-     <div v-if="project.status==='image_review'&&asset.image_status==='completed'" class="storyboard-edit-actions">
-      <button class="primary-btn" type="button" :disabled="busy||imageEditRunning||!asset.image_prompt?.trim()" @click="redrawShot(asset)">重绘场景图</button>
-      <label class="file-action">替换本地图片<input type="file" accept="image/jpeg,image/png,image/webp" :disabled="busy||imageEditRunning" @change="replaceShotImage($event,asset)"></label>
-      <button type="button" :disabled="busy||imageEditRunning||!asset.image_history?.length" @click="undoShot(asset)">撤回上一版</button>
-      <button type="button" :disabled="busy||imageEditRunning||!asset.baseline_image_prompt" @click="resetShotPrompt(asset)">恢复初始提示词</button>
-     </div>
-    </details>
-   </div>
-  </details>
-  <ResizableShotWorkspace class="video-editor" v-if="project.shots.length" scope="dynamic-storyboard"><template #sidebar><VideoShotNavigator :shots="project.shots" :selected="selected" :image-url="imageUrl" :has-warning="shotHasPromptWarning" @select="selected=$event;boundary=1;closeBoundaryEditor()" /></template>
-   <div v-for="(shot,i) in project.shots" :key="shot.id" v-show="i===selected" class="video-detail">
-    <div class="shot-local-navigation"><strong>镜头 {{String(i+1).padStart(2,'0')}} <span>/ {{project.shots.length}}</span></strong><div><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
-    <p v-if="storyboardLocked" class="readonly-stage-note">{{project.status==='image_review'?'字幕分组与时长已经确认；你仍可切换动静态、修改本镜提示词、重绘或替换图片。切换类型自动保存，不会重新生成图片。':'本阶段已经确认，以下内容仅供回顾，不会提供修改入口。'}}</p>
-    <div @input="!storyboardLocked&&(dirty=true)">
+  <p v-if="sceneReferencesBusy||project.scene_references_status==='failed'" class="studio-notice">{{sceneReferenceMessage||'正在准备场景参考…'}}</p>
+  <button v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" :disabled="busy||imageEditRunning" @click="generateSceneReferences">补充 / 重试场景参考（调用 API）</button>
+  <ResizableShotWorkspace class="video-editor" v-if="project.shots.length" scope="dynamic-storyboard"><template #sidebar><VideoShotNavigator :shots="project.shots" :selected="selected" :image-url="imageUrl" :has-warning="shotHasPromptWarning" :scene-assets="sceneAssets" @select="selected=$event;boundary=1;closeBoundaryEditor()" /></template>
+   <template v-if="selected>=0&&selectedShot"><div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure" @click="undoStructure">撤回结构调整</button><button v-if="project.status==='image_review'&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div></template>
+   <div v-for="{shot,i} in storyboardRows" :key="shot.id" v-show="i===selected" class="video-detail">
+    <div class="shot-local-navigation"><strong>{{i<0?'场景 '+(-i):'镜头 '+String(i+1).padStart(2,'0')}} <span v-if="i>=0">/ {{project.shots.length}}</span></strong><div v-if="i>=0"><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
+    <p v-if="i>=0&&storyboardLocked" class="readonly-stage-note">{{project.status==='image_review'?'字幕分组与时长已经确认；你仍可切换动静态、修改本镜提示词、重绘或替换图片。切换类型自动保存，不会重新生成图片。':'本阶段已经确认，以下内容仅供回顾，不会提供修改入口。'}}</p>
+    <p v-if="i<0" class="readonly-stage-note">场景参考 · 用于镜头 {{sceneUsedByLabel(shot)}}。不占用视频时长；相关镜头下次重绘才采用新版场景。</p>
+    <div @input="i>=0&&!storyboardLocked&&(dirty=true)">
      <WorkspacePanels scope="dynamic-storyboard" :log-count="project.logs.length">
       <template #preview><fieldset :disabled="busy||['planning','stopping'].includes(project.status)">
-     <details open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in shot.slide_ids" :key="id">{{project.scenes.find(s=>s.slide_id===id)?.text}}</p></details>
+     <details v-if="i>=0" open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in shot.slide_ids" :key="id">{{project.scenes.find(s=>s.slide_id===id)?.text}}</p></details>
+     <ShotReferencePreview :shot="shot" :references="project.references||[]" :scene="sceneAssetFor(shot)" :scene-enabled="sceneReferencesEnabled" :reference-url="redrawReferenceUrl" :image-url="imageUrl" />
      <div v-if="shot.image_status" class="storyboard-result" :class="shot.image_status"><img v-if="shot.image_status==='completed'" :src="imageUrl(shot)" :alt="'核心分镜图 '+(i+1)"><div v-else><strong>{{shot.image_status==='running'?'正在生成核心分镜图':shot.image_status==='failed'?'生成失败':'等待生成'}}</strong><p v-if="shot.image_error">{{shot.image_error}}</p></div></div>
      <div v-if="sceneAssetFor(shot)" class="shot-scene-reference">
       <img v-if="sceneAssetFor(shot).image_status==='completed'" :src="imageUrl(sceneAssetFor(shot))" :alt="sceneAssetFor(shot).name||'场景参考'">
@@ -660,16 +692,16 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      </div>
       </fieldset></template>
       <template #prompts><fieldset :disabled="busy||['planning','stopping'].includes(project.status)">
-     <label>这一镜头想表达什么<input v-model="shot.intent" :disabled="storyboardLocked"></label>
-     <div class="video-row"><label>画面类型<select :value="shot.kind" @change="changeShotKind(shot,$event)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"><option value="static">静态画面</option><option value="video" :disabled="shot.duration>15">动态视频</option></select></label><div v-if="shot.kind==='video'&&projectReferenceAudio" class="shot-audio-settings"><span>参考音频</span><label><input type="checkbox" :checked="shot.reference_audio_enabled!==false" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @change="shot.reference_audio_enabled=$event.target.checked;rememberMotionDraft(shot)">本镜启用</label><label :class="{disabled:shot.reference_audio_enabled===false}"><input type="checkbox" :checked="shot.reference_audio_lipsync!==false" :disabled="shot.reference_audio_enabled===false||imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @change="shot.reference_audio_lipsync=$event.target.checked;rememberMotionDraft(shot)">人物对口型</label></div><p class="muted">使用 {{shot.duration}} 秒<span v-if="shot.kind==='video'"> · 请求 {{Math.max(4,Math.ceil(shot.duration))}} 秒</span></p></div>
+     <label v-if="i>=0">这一镜头想表达什么<input v-model="shot.intent" :disabled="busy||imageEditRunning||(storyboardLocked&&project.status!=='image_review')" @input="rememberMotionDraft(shot)"></label>
+     <div v-if="i>=0" class="video-row"><label>画面类型<select :value="shot.kind" @change="changeShotKind(shot,$event)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"><option value="static">静态画面</option><option value="video">动态视频</option></select></label><div v-if="shot.kind==='video'&&projectReferenceAudio" class="shot-audio-settings"><span>参考音频</span><label><input type="checkbox" :checked="shot.reference_audio_enabled!==false" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @change="shot.reference_audio_enabled=$event.target.checked;rememberMotionDraft(shot)">本镜启用</label><label :class="{disabled:shot.reference_audio_enabled===false}"><input type="checkbox" :checked="shot.reference_audio_lipsync!==false" :disabled="shot.reference_audio_enabled===false||imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @change="shot.reference_audio_lipsync=$event.target.checked;rememberMotionDraft(shot)">人物对口型</label></div><p class="muted">使用 {{shot.duration}} 秒<span v-if="shot.kind==='video'"> · 请求 {{Math.max(4,Math.ceil(shot.duration))}} 秒</span></p></div>
      <p v-if="shot.audio_timing_adjustment&&!shot.design_needs_review" class="image-edit-status completed">新配音时长已同步：已有动态片段继续复用；导出时会自动裁切较长片段，或匀速放慢较短片段以贴合本镜配音。</p>
      <p v-if="shot.duration_repair?.note" class="duration-repair-note" :class="{'needs-review':['boundary_fallback','single_subtitle_static'].includes(shot.duration_repair.method)}">{{shot.duration_repair.note}}</p>
      <p v-if="shot.warning" class="studio-notice">{{shot.warning}}</p>
      <label v-if="shot.kind==='video'" class="motion-field">动态表达<textarea v-model="shot.action" rows="3" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"/></label>
-     <label class="image-prompt-field">核心分镜图提示词 <small v-if="project.status==='image_review'" class="muted">修改后点击“按当前提示词重绘”提交，当前图片不会自动变化。</small><textarea v-model="shot.image_prompt" rows="4" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @input="project.status==='image_review'&&rememberImagePrompt(shot)"/></label>
+     <label class="image-prompt-field">{{i<0?'场景图提示词':'核心分镜图提示词'}} <small v-if="project.status==='image_review'" class="muted">修改后点击“按当前提示词重绘”提交，当前图片不会自动变化。</small><textarea v-model="shot.image_prompt" rows="4" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @input="project.status==='image_review'&&rememberImagePrompt(shot)"/></label>
      <label v-if="shot.kind==='video'" class="video-prompt-field">视频模型最终提示词<textarea v-model="shot.video_prompt" rows="5" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"/></label>
-     <p v-if="autoMotionBusy" role="status" class="muted">正在调用语言模型，为本镜自动补写动态表达…不会生成图片或视频。</p>
-     <button v-if="project.status==='image_review'&&shot.kind==='video'&&!shot.action?.trim()" type="button" :disabled="busy||imageEditRunning||autoMotionBusy" @click="run(()=>autoFillMotion(shot))">自动补写动态表达</button>
+     <p v-if="autoMotionBusy" role="status" class="muted">正在按核心图规划动态表达与视频模型最终提示词…不会生成图片或视频。</p>
+     <button v-if="project.status==='image_review'&&shot.kind==='video'&&!shot.action?.trim()" type="button" :disabled="busy||imageEditRunning||autoMotionBusy" @click="run(()=>autoFillMotion(shot))">自动补写动态表达与视频提示词</button>
      <button v-if="project.status==='image_review'&&Object.keys(motionDrafts).length" type="button" :disabled="busy||imageEditRunning" @click="run(save)">保存动态表达与视频提示词</button>
      <p v-if="project.status==='image_review'&&shot.kind==='video'&&!shot.video_prompt?.trim()" class="muted">本镜尚未填写视频提示词。可直接按核心图生成，或先填写动态表达，再更新两个提示词；不会自动重绘图片。</p>
      <p v-if="shot.prompt_refresh_note" class="image-edit-status completed">{{shot.prompt_refresh_note}}</p>
@@ -678,10 +710,6 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
       <template #logs><div v-if="i===selected" class="video-logs" role="log" aria-live="polite"><div v-for="(line,index) in project.logs" :key="index">{{line}}</div><p v-if="!project.logs.length">暂无任务日志</p></div></template>
      </WorkspacePanels>
     </div>
-    <section v-if="project.status==='image_review'&&project.reedit_shot_id===shot.id" class="shot-reedit-next video-next-stage" role="status">
-     <div><strong>正在返修第 {{String(i+1).padStart(2,'0')}} 镜</strong><p>修改和重绘完成后，从这里返回同一镜头的动态生成页。若本镜内容发生变化，只会要求重新生成这一镜；点击这里不会自动调用视频 API 或扣费。</p></div>
-     <button type="button" class="primary-btn" :disabled="busy||imageEditRunning||sceneReferencesBlockConfirm||project.shots.some(s=>s.image_status!=='completed')||(shot.kind==='video'&&!shot.video_prompt?.trim())" @click="finishShotReedit(shot)">{{shot.kind==='video'?'完成本镜返修，进入动态重生成':'完成本镜返修，返回动态镜头页'}}</button>
-    </section>
     <section v-if="shot.kind==='video'&&['storyboard_review','image_review'].includes(project.status)" class="single-shot-refresh">
      <div><strong>重新规划本镜</strong><p class="muted">完整重规划从字幕与项目设定重新设计；局部更新沿用当前编辑内容。均不改变字幕、时长或其他镜头。</p></div>
      <button type="button" :disabled="busy||imageEditRunning" @click="refreshShotPrompts(shot,'full')">完整重规划本镜</button>
@@ -689,16 +717,16 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <button type="button" :disabled="busy||imageEditRunning||!shot.image_prompt?.trim()" @click="refreshShotPrompts(shot,'image')">按核心图更新视频提示词</button>
      <p v-if="shot.image_origin==='reference_redraw'||shot.image_origin==='upload'" class="muted">当前图片来自{{shot.image_origin==='upload'?'本地替换':'参考模式重绘'}}；第二个按钮会先识别最终图片，再更新视频提示词。</p>
     </section>
-    <section v-if="project.status==='image_review'&&shot.image_status==='completed'" class="storyboard-edit-tools">
-     <div class="storyboard-edit-heading"><div><strong>修正这张核心分镜图</strong><p class="muted">提示词修改只在点击重绘时提交；参考图最多 3 张，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务分辨率</option><option value="1k">1K</option><option value="2k">2K</option><option value="4k">4K</option></select></div>
+    <section v-if="project.status==='image_review'" class="storyboard-edit-tools">
+     <div class="storyboard-edit-heading"><div><strong>{{i<0?'修正这张场景图':'修正这张核心分镜图'}}</strong><p class="muted">提示词修改只在点击重绘时提交；参考图最多 3 张，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务分辨率</option><option value="1k">1K</option><option value="2k">2K</option><option value="4k">4K</option></select></div>
      <div class="storyboard-reference-library">
       <div class="reference-library-heading"><div><strong>本次重绘参考图</strong><p class="muted">点击图片选择或取消；绿色卡片会按图号顺序传给图像模型。</p></div><div><label class="file-action">＋ 上传新参考图<input type="file" accept="image/jpeg,image/png,image/webp" multiple :disabled="busy||imageEditRunning" @change="uploadRedrawReferences"></label><button v-if="uploadedRedrawReferences.length" type="button" :disabled="busy||imageEditRunning" @click="clearUploadedRedrawReferences">清空新增图</button></div></div>
       <div class="storyboard-reference-grid">
-       <article class="reference-image-card" :class="{active:useCurrentReference}">
+       <article v-if="shot.image_status==='completed'" class="reference-image-card" :class="{active:useCurrentReference}">
         <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="toggleCurrentReference"><img :src="imageUrl(shot)" alt="当前核心分镜图"><span><b>当前核心图</b><small>重绘前的本图</small></span><em>{{useCurrentReference?'图1 · 正在使用':'未选择'}}</em></button>
        </article>
        <article v-for="asset in redrawReferenceGallery" :key="asset.origin+':'+asset.id" class="reference-image-card" :class="{active:redrawReferenceIds.includes(asset.id)}">
-        <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="toggleRedrawReference(asset.id)"><img :src="redrawReferenceUrl(asset)" :alt="asset.displayName"><span><b>{{asset.displayName}}</b><small>{{asset.origin==='project'?'创建任务时上传':'本页后来上传'}}</small></span><em>{{redrawReferenceIds.includes(asset.id)?'图'+redrawReferenceNumber(asset.id)+' · 正在使用':'未选择'}}</em></button>
+        <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="toggleRedrawReference(asset.id)"><img :src="redrawReferenceUrl(asset)" :alt="asset.displayName"><span><b>{{asset.displayName}}</b><small>{{asset.origin==='project'?'创建任务时上传':asset.origin==='scene'?'项目场景资产':'本页后来上传'}}</small></span><em>{{redrawReferenceIds.includes(asset.id)?'图'+redrawReferenceNumber(asset.id)+' · 正在使用':'未选择'}}</em></button>
         <button v-if="asset.origin==='uploaded'" type="button" class="reference-card-delete" :disabled="busy||imageEditRunning" title="删除这张新增参考图" @click.stop="deleteRedrawReference(asset)">删除</button>
        </article>
        <p v-if="!redrawReferenceGallery.length" class="reference-library-empty">创建任务时没有上传参考图；可在右上角补充新图片。</p>
@@ -717,31 +745,49 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <template v-if="shot.design_needs_review"><p>字幕范围已调整，原提示词保留为草稿，请按新字幕更新设计，或检查修改后确认沿用。</p><button :disabled="busy" @click="repairDesigns">只更新受影响镜头设计</button><button :disabled="busy" @click="confirmDesign">确认沿用当前设计</button></template>
      <details v-if="shot.previous_designs?.length"><summary>查看调整前的设计</summary><article v-for="(old,index) in shot.previous_designs" :key="index"><b>{{old.intent}}</b><p>{{old.action}}</p><p>{{old.image_prompt}}</p><p>{{old.video_prompt}}</p></article></details>
     </section>
-    <section v-if="canEditStructure&&boundaryEditor.open&&boundaryPreview" class="video-boundary-editor">
-     <header><div><strong>调整分镜</strong><p class="muted">只调整画面覆盖范围，配音不变。原设计保留，支持撤回。</p></div><button type="button" @click="closeBoundaryEditor">关闭</button></header>
-     <div class="boundary-modes" role="group" aria-label="选择分镜调整方式">
-      <button type="button" :aria-pressed="boundaryEditor.mode==='boundary'" :class="{active:boundaryEditor.mode==='boundary'}" :disabled="busy||i===project.shots.length-1" @click="openBoundaryEditor('boundary')">移动边界</button>
-      <button type="button" :aria-pressed="boundaryEditor.mode==='split'" :class="{active:boundaryEditor.mode==='split'}" :disabled="busy||shot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆成两镜</button>
-      <button type="button" :aria-pressed="boundaryEditor.mode==='merge'" :class="{active:boundaryEditor.mode==='merge'}" :disabled="busy||i===project.shots.length-1" @click="openBoundaryEditor('merge')">合为一镜</button>
-     </div>
-     <p class="boundary-mode-help muted">{{boundaryEditor.mode==='boundary'?'在当前镜头与后一个镜头之间移动字幕，镜头数量不变。':boundaryEditor.mode==='split'?'在当前镜头内选择字幕切口，一个镜头拆成两个。':'将当前镜头与后一个镜头合并，以下显示合并前的两段内容。'}}</p>
-     <label v-if="boundaryEditor.mode!=='merge'" class="video-boundary-slider"><span>{{boundaryEditor.mode==='boundary'?'调整相邻镜头边界':'选择切口'}}：第 {{boundary}} 条字幕之后 · {{boundaryPreview.boundary.toFixed(2)}} 秒</span><input v-model.number="boundary" type="range" min="1" :max="shot.slide_ids.length+(boundaryEditor.mode==='boundary'?(project.shots[i+1]?.slide_ids.length||0):0)-1" step="1"></label>
-     <div class="video-boundary-grid">
-      <article><div><b>{{boundaryEditor.mode==='split'?'拆分后的前镜头':'当前镜头'}}</b><span>{{(boundaryPreview.left.end-boundaryPreview.left.start).toFixed(2)}} 秒</span></div><p v-for="row in boundaryPreview.left.rows" :key="row.slide_id">{{row.text}}</p><button type="button" @click="playBoundaryPart('left')">▶ 试听整段</button></article>
-      <article><div><b>{{boundaryEditor.mode==='split'?'拆分后的后镜头':'后一镜头'}}</b><span>{{(boundaryPreview.right.end-boundaryPreview.right.start).toFixed(2)}} 秒</span></div><p v-for="row in boundaryPreview.right.rows" :key="row.slide_id">{{row.text}}</p><button type="button" @click="playBoundaryPart('right')">▶ 试听整段</button></article>
-     </div>
-     <div class="video-boundary-listen"><button type="button" @click="playBoundaryEdge('left')">▶ 试听前段末尾</button><button type="button" @click="playBoundaryEdge('right')">▶ 试听后段开头</button><button type="button" @click="playBoundaryEdge('continuous')">▶ 连续试听交界</button><span>共同边界 {{boundaryPreview.boundary.toFixed(2)}} 秒</span></div>
-     <p v-if="boundaryEditor.mode==='merge'&&boundaryPreview.combinedDuration>15" class="duration-repair-note needs-review">合并后共 {{boundaryPreview.combinedDuration.toFixed(2)}} 秒；若设为动态视频会超过 15 秒，请确认是否确实需要合并。</p>
-     <footer><button type="button" @click="closeBoundaryEditor">取消</button><button class="primary-btn" type="button" :disabled="busy" @click="applyBoundaryEdit">{{boundaryEditor.mode==='boundary'?'确认调整边界':boundaryEditor.mode==='split'?'确认拆成两个镜头':'确认合并镜头'}}</button></footer>
-    </section>
-    <div v-if="canEditStructure" class="video-actions"><button v-if="!storyboardLocked" class="primary-btn" :disabled="busy||!dirty||['planning','stopping'].includes(project.status)" @click="run(save)">保存镜头修改</button><button :disabled="busy||(shot.slide_ids.length<2&&i===project.shots.length-1)||['planning','stopping'].includes(project.status)" @click="openBoundaryEditor()">调整分镜…</button><button v-if="!storyboardLocked&&project.structure_history?.length" :disabled="busy||['planning','stopping'].includes(project.status)" @click="undoStructure">撤回结构调整</button><button :disabled="busy||shot.slide_ids.length<2||['planning','stopping'].includes(project.status)" @click="structure('insert')">新增分镜（拆出后半段）</button><button :disabled="busy||project.shots.length<2||['planning','stopping'].includes(project.status)" @click="structure('delete')">删除画面并合并字幕</button></div>
+    <div v-if="i>=0&&canEditStructure" class="video-actions"><button v-if="!storyboardLocked" class="primary-btn" :disabled="busy||!dirty||['planning','stopping'].includes(project.status)" @click="run(save)">保存镜头修改</button><button :disabled="busy||(shot.slide_ids.length<2&&i===project.shots.length-1)||['planning','stopping'].includes(project.status)" @click="openBoundaryEditor()">调整分镜…</button><button v-if="!storyboardLocked&&project.structure_history?.length" :disabled="busy||['planning','stopping'].includes(project.status)" @click="undoStructure">撤回结构调整</button><button :disabled="busy||shot.slide_ids.length<2||['planning','stopping'].includes(project.status)" @click="openBoundaryEditor('split')">新增分镜（选择字幕切口）</button><button :disabled="busy||project.shots.length<2||['planning','stopping'].includes(project.status)" @click="structure('delete')">删除画面并合并字幕</button></div>
     <p v-if="structureFeedback" class="studio-notice" :class="{error:!!error}" role="status">{{structureFeedback}}</p>
    </div>
   </ResizableShotWorkspace>
  </section>
 </section>
+ <Teleport to="body">
+  <div v-if="boundaryEditor.open&&project&&selectedShot" class="structure-overlay" @click.self="!busy&&closeBoundaryEditor()">
+   <audio v-if="project.audio" ref="boundaryAudio" :key="narrationUrl" :src="narrationUrl" preload="metadata" />
+    <section v-if="selected>=0&&boundaryEditor.open&&boundaryPreview" class="video-boundary-editor structure-dialog" role="dialog" aria-modal="true" aria-label="调整字幕与分镜">
+     <header><div><strong>调整字幕与分镜 · 第 {{String(selected+1).padStart(2,'0')}} 镜</strong><p class="muted">按现有字幕切口调整。配音保持连续；受影响镜头需检查设计与素材，其他镜头保留。</p></div><button type="button" @click="closeBoundaryEditor">关闭</button></header>
+     <div class="boundary-modes" role="group" aria-label="选择分镜调整方式">
+      <button type="button" :aria-pressed="boundaryEditor.mode==='boundary'" :class="{active:boundaryEditor.mode==='boundary'}" :disabled="busy||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">调整字幕归属</button>
+      <button type="button" :aria-pressed="boundaryEditor.mode==='split'" :class="{active:boundaryEditor.mode==='split'}" :disabled="busy||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button>
+      <button type="button" :aria-pressed="boundaryEditor.mode==='merge'" :class="{active:boundaryEditor.mode==='merge'}" :disabled="busy||selected===project.shots.length-1" @click="openBoundaryEditor('merge')">合为一镜</button>
+     </div>
+     <p class="boundary-mode-help muted">{{boundaryEditor.mode==='boundary'?'在当前镜头与后一个镜头之间移动字幕，镜头数量不变。':boundaryEditor.mode==='split'?'在当前镜头内选择字幕切口，一个镜头拆成两个。':'将当前镜头与后一个镜头合并，以下显示合并前的两段内容。'}}</p>
+     <label v-if="boundaryEditor.mode!=='merge'" class="video-boundary-slider"><span>{{boundaryEditor.mode==='boundary'?'调整相邻镜头边界':'选择切口'}}：第 {{boundary}} 条字幕之后 · {{boundaryPreview.boundary.toFixed(2)}} 秒</span><input v-model.number="boundary" type="range" min="1" :max="selectedShot.slide_ids.length+(boundaryEditor.mode==='boundary'?(project.shots[selected+1]?.slide_ids.length||0):0)-1" step="1"></label>
+     <div class="video-boundary-grid">
+      <article><div><b>{{boundaryEditor.mode==='split'?'拆分后的前镜头':'当前镜头'}}</b><span>{{(boundaryPreview.left.end-boundaryPreview.left.start).toFixed(2)}} 秒</span></div><p v-for="row in boundaryPreview.left.rows" :key="row.slide_id">{{row.text}}</p><button type="button" @click="playBoundaryPart('left')">▶ 试听整段</button></article>
+      <article><div><b>{{boundaryEditor.mode==='split'?'拆分后的后镜头':'后一镜头'}}</b><span>{{(boundaryPreview.right.end-boundaryPreview.right.start).toFixed(2)}} 秒</span></div><p v-for="row in boundaryPreview.right.rows" :key="row.slide_id">{{row.text}}</p><button type="button" @click="playBoundaryPart('right')">▶ 试听整段</button></article>
+     </div>
+     <div class="video-boundary-listen"><button type="button" @click="playBoundaryEdge('left')">▶ 试听前段末尾</button><button type="button" @click="playBoundaryEdge('right')">▶ 试听后段开头</button><button type="button" @click="playBoundaryEdge('continuous')">▶ 连续试听交界</button><span>共同边界 {{boundaryPreview.boundary.toFixed(2)}} 秒</span></div>
+     <p v-if="boundaryEditor.mode==='merge'&&boundaryPreview.combinedDuration>15" class="duration-repair-note needs-review">合并后共 {{boundaryPreview.combinedDuration.toFixed(2)}} 秒，超过建议的 15 秒；建议拆分，也可保留并按工作流能力尝试。</p>
+     <p v-else-if="boundaryEditor.mode!=='merge'&&(boundaryPreview.left.end-boundaryPreview.left.start>15||boundaryPreview.right.end-boundaryPreview.right.start>15)" class="duration-repair-note needs-review">调整后仍有镜头超过建议的 15 秒，可能增加资源占用；你可以继续保留，也可保存后拆分。</p>
+     <p class="muted">保存后返回动态分镜检查：受影响的现有图片保留，新镜头需要生成图片；受影响视频存入历史，需按新字幕范围重新生成。此操作不调用生成 API。</p>
+     <p v-if="error" class="studio-notice error" role="alert">{{error}}</p><footer><button type="button" @click="closeBoundaryEditor">取消</button><button class="primary-btn" type="button" :disabled="busy||!canEditStructure" @click="applyBoundaryEdit">{{boundaryEditor.mode==='boundary'?'确认调整边界':boundaryEditor.mode==='split'?'确认拆成两个镜头':'确认合并镜头'}}</button></footer>
+    </section>
+  </div>
+ </Teleport>
 </template>
 <style scoped>
+.structure-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px;margin:12px 0;border:1px solid var(--border,#35423f);border-radius:10px}.structure-toolbar strong{margin-right:8px}.structure-overlay{position:fixed;inset:0;z-index:2000;background:#000a;display:flex;align-items:center;justify-content:center;padding:20px}.structure-dialog{width:min(940px,100%);max-height:90vh;overflow:auto;box-sizing:border-box;background:var(--panel,#1e2625);color:var(--text,#eef3f1);padding:24px;border:1px solid var(--border,#35423f);border-radius:16px}.structure-dialog button{cursor:pointer}.structure-dialog button:disabled{opacity:.45;cursor:default}.structure-dialog footer{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.motion-batch-actions button:first-child:not(.primary-btn){color:var(--accent);border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel));font-weight:650}
+.motion-batch-actions button:first-child:not(.primary-btn):hover:not(:disabled){background:color-mix(in srgb,var(--accent) 30%,var(--panel));box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent)}
+.motion-batch-actions button:first-child:not(.primary-btn):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.replan-description{flex:1}
+.replan-options{margin-top:8px;max-width:780px}
+.replan-options summary{cursor:pointer;font-size:13px;line-height:1.7}
+.replan-options fieldset{border:0;padding:14px 0 0;margin:0;min-width:0}
+.replan-options fieldset:disabled{opacity:.6}
+.replan-options .replan-regroup{display:flex;align-items:center;gap:8px;margin:16px 0 6px;font-size:13px}
+.replan-regroup input{width:16px;height:16px;margin:0;accent-color:var(--accent,#81d9bd)}
 .export-layout-panel{margin:18px 0;padding:16px 20px;border:1px solid var(--line,#394440);border-radius:14px;background:#19211f}.export-layout-panel>summary{cursor:pointer;font-weight:600;display:flex;gap:12px;flex-wrap:wrap;align-items:center}.export-layout-panel>summary span{font-size:12px;font-weight:400}.export-layout-content{max-width:760px;margin:24px auto 8px;display:grid;gap:20px}.export-layout-context{display:grid;gap:10px;border-bottom:1px solid #394440;padding-bottom:16px}.export-layout-context label{display:grid;gap:8px}.export-layout-context select{width:100%;min-width:0}.export-layout-context p{font-size:13px;line-height:1.7}
 .prompt-note-level{display:inline-block;margin-right:8px;color:var(--muted,#aab8b3);font-size:12px}.prompt-note-warning .prompt-note-level{color:#e6ba62}.current-shot-warning p{overflow-wrap:anywhere}
 .video-card label.dynamic-scene-reference-toggle{display:flex;align-items:center;gap:8px;margin-top:14px}.video-card .dynamic-scene-reference-toggle input{width:16px;height:16px;margin:0;accent-color:var(--accent,#81d9bd)}.video-card :deep(.dynamic-text-mode-row){grid-template-columns:1fr}.video-card :deep(.dynamic-text-mode-row .director-strategy-options){justify-self:start}

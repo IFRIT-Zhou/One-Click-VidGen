@@ -5,7 +5,7 @@ module4_video_render.ENHANCED_DIRECTOR_AGENT2_CONTRACT. Keep the image
 pipeline independent: video timing and motion contracts differ.
 """
 
-VIDEO_DIRECTOR_REVISION = 'single_core_v2_20260926_semantic_boundaries'
+VIDEO_DIRECTOR_REVISION = 'single_core_v2_20261003_medical_direction'
 
 # Verified opening from the user's September 17 single-reference video test.
 # Assemble before saving the editable prompt, never at provider submission time.
@@ -116,6 +116,9 @@ TEXT_CONTRACT = """【画面文字与归属】
 字幕条和无关水印。无文字方案则无需添加文字。不得同时要求显示必要短字又全面禁止文字。"""
 
 MOTION_CONTRACT = """【共享阶段方案 v2】
+每个机制、互动或状态变化应有可辨认的初态、动作和结果，不能仅写“逐渐变化、轻微移动”。
+动作幅度与速度以原文和理解需求为准，不为了动态夸大事实。运镜应揭示空间关系或变化结果，
+不靠全片无目的微推代替叙事；固定镜头可以，只要动作或递进内容足够清楚。
 基于 Agent2 的场景、主体和具体表达设计 motion_plan，负责把它变成可执行的过程，保持场景与
 表达手段。只因动作需要调整局部站位、视线与构图，不重新选全局场景、隐喻或剧情，不迁移发言/想法归属。
 按 semantic.speech_turns 与原文核对提问方、回应方和引用观点持有者；核心图中的归属应延续到动态。

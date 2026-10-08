@@ -8,6 +8,7 @@ not the complete prompt graph expected by ComfyUI's ``/prompt`` endpoint.
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import math
 import mimetypes
@@ -32,9 +33,11 @@ from .auth import require_user
 router = APIRouter(prefix="/api/comfyui")
 ROOT = Path(__file__).resolve().parents[2] / "workspace" / "comfyui"
 LOCK = threading.RLock()
+CONNECTION_CONTEXT = threading.local()
 
 
 DEFAULT_CONNECTION = {
+    "mode": "external",
     "name": "本机 ComfyUI",
     "base_url": "http://127.0.0.1:8188",
     "websocket_url": "",
@@ -47,6 +50,7 @@ DEFAULT_CONNECTION = {
 
 
 class ConnectionRequest(BaseModel):
+    mode: Literal["external", "managed"] = "external"
     name: str = Field(default="本机 ComfyUI", min_length=1, max_length=80)
     base_url: str = Field(default="http://127.0.0.1:8188", min_length=1, max_length=2048)
     websocket_url: str = Field(default="", max_length=2048)
@@ -81,6 +85,7 @@ class ProfileRequest(BaseModel):
     id: str = Field(default="", max_length=80)
     name: str = Field(min_length=1, max_length=100)
     kind: Literal["image", "video", "upscale", "custom"] = "custom"
+    engine: Literal["external", "managed"] = "external"
     workflow: dict[str, Any]
     mappings: WorkflowMappings = Field(default_factory=WorkflowMappings)
     resolution_preset: Literal["480p", "720p", "1080p", "custom"] = "720p"
@@ -109,8 +114,47 @@ def _write_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
-def _connection(user_id: int) -> dict[str, Any]:
+def _saved_connection(user_id: int) -> dict[str, Any]:
     return {**DEFAULT_CONNECTION, **_read_json(_user_root(user_id) / "connection.json", {})}
+
+
+def _connection(user_id: int) -> dict[str, Any]:
+    captured = getattr(CONNECTION_CONTEXT, "value", None)
+    if captured and captured[0] == user_id:
+        return captured[1]
+    value = _saved_connection(user_id)
+    if value.get("mode") == "managed":
+        from .managed_comfyui import status
+        state = status()
+        if state["state"] != "ready":
+            raise RuntimeError("内置视频引擎尚未启动；点击生成会自动启动，也可在 ComfyUI 工作台手动启动。")
+        return {**DEFAULT_CONNECTION, "mode": "managed", "name": "OCV 内置 ComfyUI", "base_url": state["base_url"]}
+    return value
+
+
+def _managed_execution(function):
+    @functools.wraps(function)
+    def wrapped(user_id, *args, **kwargs):
+        profile = (args[1] if len(args) > 1 and isinstance(args[1], dict) else
+                   video_profile(user_id, args[0] if args else kwargs["profile_id"]))
+        previous = getattr(CONNECTION_CONTEXT, "value", None)
+        if profile.get("engine", "external") != "managed":
+            CONNECTION_CONTEXT.value = (user_id, {**_saved_connection(user_id), "mode": "external"})
+            try:
+                return function(user_id, *args, **kwargs)
+            finally:
+                CONNECTION_CONTEXT.value = previous
+        from .managed_comfyui import execution_lease
+        if callable(kwargs.get("progress")):
+            kwargs["progress"]("正在检查并启动 OCV 内置视频引擎")
+        with execution_lease(required_models=profile.get("required_models"),
+                             required_nodes={n['class_type'] for n in profile.get('workflow', {}).values()}) as url:
+            CONNECTION_CONTEXT.value = (user_id, {**DEFAULT_CONNECTION, "mode": "managed", "base_url": url})
+            try:
+                return function(user_id, *args, **kwargs)
+            finally:
+                CONNECTION_CONTEXT.value = previous
+    return wrapped
 
 
 def _validate_connection(value: dict[str, Any]) -> dict[str, Any]:
@@ -138,7 +182,16 @@ def _url(connection: dict[str, Any], path: str) -> str:
 
 def _profiles(user_id: int) -> list[dict[str, Any]]:
     values = _read_json(_user_root(user_id) / "profiles.json", [])
-    return values if isinstance(values, list) else []
+    values = values if isinstance(values, list) else []
+    from .managed_comfyui import builtin_profiles, maintenance_enabled
+    builtins = builtin_profiles()
+    managed = []
+    for builtin in builtins:
+        saved = next((item for item in values if item.get("id") == builtin["id"]), None)
+        current = {**saved, "engine": "managed", "managed_builtin": True} if saved and maintenance_enabled() else builtin
+        managed.append(current)
+    builtin_ids = {item["id"] for item in builtins}
+    return [*managed, *[item for item in values if item.get("id") not in builtin_ids]]
 
 
 def video_profile(user_id: int, profile_id: str) -> dict[str, Any]:
@@ -336,6 +389,11 @@ def _history_payload(connection: dict[str, Any], prompt_id: str) -> dict[str, An
     offloading models. Once ``prompt_id`` is known, retrying the status GET is
     safe while resubmitting the workflow is not.
     """
+    if connection.get("mode") == "managed":
+        from .managed_comfyui import status
+        state = status()
+        if state["state"] != "ready":
+            raise RuntimeError(state.get("error") or "内置引擎已停止，当前任务无法继续；请检查引擎日志后重新生成。")
     history_path = connection["history_path"].replace("{prompt_id}", prompt_id)
     try:
         response = requests.get(_url(connection, history_path), timeout=(5, 30))
@@ -390,7 +448,7 @@ def _history_failure(history: dict[str, Any]) -> str:
     return ''
 
 
-def video_task_state(user_id: int, prompt_id: str) -> str:
+def video_task_state(user_id: int, prompt_id: str, profile_id: str = "") -> str:
     """Inspect a persisted local task without ever submitting a replacement.
 
     ``missing`` is returned only after the task is absent from history and both
@@ -401,7 +459,18 @@ def video_task_state(user_id: int, prompt_id: str) -> str:
     prompt_id = str(prompt_id or "").strip()
     if not prompt_id:
         return "missing"
-    connection = _connection(user_id)
+    if profile_id:
+        profile = video_profile(user_id, profile_id)
+        if profile.get("engine", "external") == "managed":
+            from .managed_comfyui import status
+            state = status()
+            if state["state"] != "ready":
+                return "missing"
+            connection = {**DEFAULT_CONNECTION, "mode": "managed", "base_url": state["base_url"]}
+        else:
+            connection = {**_saved_connection(user_id), "mode": "external"}
+    else:
+        connection = _connection(user_id)
 
     def history_state(payload: dict[str, Any] | None) -> str:
         if payload is None:
@@ -462,6 +531,7 @@ class ComfyUIStopped(RuntimeError):
     pass
 
 
+@_managed_execution
 def run_video_profile(user_id: int, profile_id: str, *, prompt: str, image_path: Path,
                       duration: float, ratio: str, output_path: Path, progress=None,
                       should_stop=None, seed: int = -1, existing_prompt_id: str = '',
@@ -553,6 +623,18 @@ def run_video_profile(user_id: int, profile_id: str, *, prompt: str, image_path:
 
 def _execute(user_id: int, job_id: str, profile: dict[str, Any], source: Path | None,
              audio_source: Path | None, values: dict[str, Any]) -> None:
+    try:
+        _execute_with_engine(user_id, job_id, profile, source, audio_source, values)
+    except Exception as exc:
+        path = _job_path(user_id, job_id)
+        record = _read_json(path / "record.json", {})
+        record.update(status="failed", message=str(exc))
+        _save_job(path, record)
+
+
+@_managed_execution
+def _execute_with_engine(user_id: int, job_id: str, profile: dict[str, Any], source: Path | None,
+             audio_source: Path | None, values: dict[str, Any]) -> None:
     path = _job_path(user_id, job_id)
     record = _read_json(path / "record.json", {})
     try:
@@ -614,9 +696,10 @@ def _execute(user_id: int, job_id: str, profile: dict[str, Any], source: Path | 
 @router.get("")
 def overview(request: Request) -> dict[str, Any]:
     user_id = int(require_user(request)["id"])
-    connection = _connection(user_id)
+    connection = _saved_connection(user_id)
     profiles = _profiles(user_id)
-    return {"connection": connection, "profiles": [{**value, "workflow": None, "nodes": _node_summary(_api_graph(value["workflow"]))} for value in profiles]}
+    from .managed_comfyui import maintenance_enabled
+    return {"connection": connection, "managed_maintenance": maintenance_enabled(), "profiles": [{**value, "workflow": None, "nodes": _node_summary(_api_graph(value["workflow"]))} for value in profiles]}
 
 
 @router.get("/resource-estimate")
@@ -651,6 +734,12 @@ def save_connection(payload: ConnectionRequest, request: Request) -> dict[str, A
 def test_connection(payload: ConnectionRequest, request: Request) -> dict[str, Any]:
     require_user(request)
     value = _validate_connection(payload.model_dump())
+    if value.get("mode") == "managed":
+        from .managed_comfyui import ensure_ready
+        try:
+            value = {**DEFAULT_CONNECTION, "base_url": ensure_ready()}
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc)) from exc
     started = time.monotonic()
     try:
         response = requests.get(_url(value, "/system_stats"), timeout=8)
@@ -666,6 +755,10 @@ def test_connection(payload: ConnectionRequest, request: Request) -> dict[str, A
 @router.put("/profiles")
 def save_profile(payload: ProfileRequest, request: Request) -> dict[str, Any]:
     user_id = int(require_user(request)["id"])
+    from .managed_comfyui import builtin_profiles, maintenance_enabled
+    builtin_ids = {item["id"] for item in builtin_profiles()}
+    if not maintenance_enabled() and (payload.engine == "managed" or payload.id in builtin_ids):
+        raise HTTPException(403, "内置视频工作流由 OCV 维护，请通过 Launcher 更新；自定义工作流请使用外部 ComfyUI。")
     try:
         graph = _api_graph(payload.workflow)
     except ValueError as exc:
@@ -725,6 +818,8 @@ def capture_latest(request: Request) -> dict[str, Any]:
 def delete_profile(profile_id: str, request: Request) -> dict[str, bool]:
     user_id = int(require_user(request)["id"])
     values = _profiles(user_id)
+    if any(item.get("id") == profile_id and item.get("managed_builtin") for item in values):
+        raise HTTPException(403, "内置工作流由 OCV 维护，无需删除；可选择其他生成方式。")
     remaining = [value for value in values if value.get("id") != profile_id]
     if len(remaining) == len(values):
         raise HTTPException(404, "工作流预设不存在")

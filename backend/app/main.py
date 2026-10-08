@@ -210,13 +210,14 @@ class GenerateRequest(BaseModel):
     # Keep the same persisted, resumable stage workflow while allowing OCV to
     # accept each successful review gate on the user's behalf.
     dynamic_auto_advance: bool = False
-    dynamic_text_mode: Literal['text_assisted', 'visual_first'] = 'text_assisted'
+    dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'text_assisted'
     video_generation_backend: Literal['api', 'comfyui'] = 'api'
     comfyui_profile_id: str = Field(default='', max_length=80)
     comfyui_h3_prompt_agent: bool = False
     comfyui_reference_audio: bool = False
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
+    dynamic_max_shot_duration: Literal[15, 30] = 15
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
     visual_target_duration: float | None = Field(default=None, ge=5, le=30)
     visual_max_duration: float | None = Field(default=None, ge=6, le=40)
@@ -470,8 +471,12 @@ from .image_studio import router as image_studio_router
 app.include_router(image_studio_router)
 from .comfyui_bridge import router as comfyui_bridge_router
 app.include_router(comfyui_bridge_router)
+from .managed_comfyui import router as managed_comfyui_router
+app.include_router(managed_comfyui_router)
 from .video_studio import router as video_studio_router
 app.include_router(video_studio_router)
+from .codex_bridge import router as codex_bridge_router
+app.include_router(codex_bridge_router)
 from .video_model_config import router as video_model_config_router
 from .video_generation import router as video_generation_router
 from .video_export import reconcile_completed_projects, router as video_export_router
@@ -593,7 +598,17 @@ def _plugin_manifest_items() -> list[dict[str, Any]]:
                     "valid": True,
                 }
             )
-        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            if record['type'] == 'director_profile':
+                from .director_extensions import read_profile
+                read_profile(resolved_folder)
+                record['framework_only'] = False
+            elif record['type'] == 'production_bridge':
+                from .codex_bridge import plugin_valid
+                if not plugin_valid(resolved_folder):
+                    raise ValueError('未识别的制作桥插件；不执行任意插件代码')
+                record['framework_only'] = False
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, TypeError, AttributeError) as exc:
+            record['valid'] = False
             record["issue"] = str(exc)
         items.append(record)
     return items
@@ -661,10 +676,18 @@ def list_plugins(request: Request) -> dict[str, Any]:
     return {
         "plugins": plugins,
         "directory": str(PLUGINS_DIR.resolve()),
-        "framework_only": True,
+        "framework_only": not any(p['valid'] and not p['framework_only'] for p in plugins),
         "execution_enabled": False,
-        "notice": "当前版本只读取插件清单，不会导入或执行第三方插件代码。",
+        "notice": "支持可选导演配置与 Codex 制作桥；仅使用宿主提供的受控接口，不执行任意第三方代码。",
     }
+
+
+@app.get("/api/director-profiles")
+def director_profiles(request: Request) -> dict[str, Any]:
+    require_user(request)
+    from .director_extensions import profiles
+    return {'profiles': [{key: value[key] for key in ('id', 'label', 'description')}
+                         for value in profiles(PLUGINS_DIR).values()]}
 
 
 @app.post("/api/plugins/{folder_name}/toggle")
@@ -687,7 +710,8 @@ def toggle_plugin(folder_name: str, request: Request) -> dict[str, Any]:
     else:
         marker.write_text("OCV plugin disabled by user.\n", encoding="utf-8")
         enabled = False
-    return {"ok": True, "folder": folder_name, "enabled": enabled, "framework_only": True}
+    item = next((item for item in _plugin_manifest_items() if item['folder'] == folder_name), {})
+    return {"ok": True, "folder": folder_name, "enabled": enabled, "framework_only": item.get('framework_only', True)}
 
 
 @app.post("/api/plugins/open-folder")
@@ -2463,7 +2487,7 @@ def advance_step_workflow(
             "content_mode", "director_strategy", "scene_references_enabled", "auto_split_long_text", "split_text_threshold",
             "visual_backend", "use_cloud_image_pool", "image_profile_id", "image_resolution", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
-            "visual_max_duration", "visual_max_slides", "visual_style_prompt",
+            "visual_max_duration", "visual_max_slides", "visual_style_prompt", "dynamic_max_shot_duration",
             "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt",
             "visual_prompt_system", "agent0_prompt_system", "agent1_prompt_system",
             "agent2_director_theme",
@@ -3038,6 +3062,7 @@ def get_scene_assets(job_id: str, request: Request) -> dict[str, Any]:
         if not sid:
             continue
         asset = assets.setdefault(sid, {"id": "scene_asset_" + sid, "name": scene.get("name") or sid,
+            "references": [{'label': f'图{index+1}', 'image_url': f'/api/jobs/{job_id}/reference-material/scene_asset_{sid}/{index}'} for index, _ in enumerate(scene.get('reference_image_paths') or [])],
             "prompt": scene.get("prompt") or "", "image_url": f"/api/jobs/{job_id}/scene-reference/{item['macro_scene_id']}", "used_by": []})
         asset["used_by"].append(item["macro_scene_id"])
     with visual_editor._lock:
@@ -3053,6 +3078,10 @@ def get_reference_material(job_id: str, macro_id: str, index: int, request: Requ
     project = visual_editor.output_dir(job_id, user_id)
     mapping = visual_editor._load_mapping(project)
     item = next((row for row in mapping if row.get('macro_scene_id') == macro_id), {})
+    if macro_id.startswith('scene_asset_'):
+        scene = next((row.get('scene_reference') for row in mapping if (row.get('scene_reference') or {}).get('scene_id') == macro_id.removeprefix('scene_asset_')), {})
+        item = {'reference_image_paths': scene.get('reference_image_paths', []),
+                'reference_materials': scene.get('reference_image_paths', [])}
     paths = item.get('reference_image_paths') or []
     if index < 0 or index >= len(item.get('reference_materials') or []) or index >= len(paths):
         raise HTTPException(status_code=404, detail='reference material not found')

@@ -1,0 +1,40 @@
+const puppeteer=require('../../node_modules/puppeteer-core');
+const assert=require('node:assert/strict');
+const path=require('node:path');
+(async()=>{
+ const browser=await puppeteer.launch({executablePath:process.argv[2],headless:true});
+ try{
+  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.setViewport({width:1100,height:720});
+  await page.goto((process.argv[3]||'http://127.0.0.1:5173')+'/tests/shot-video-options.html');
+  await page.waitForSelector('.shot-video-options select');
+  assert.match(await page.$eval('.options-footer',e=>e.innerText),/1080 × 1920/);
+  await page.select('.options-fields label:last-of-type select','720p');
+  assert.match(await page.$eval('.options-footer',e=>e.innerText),/720 × 1280/);
+  await page.select('.workflow-field select','lite');
+  assert.match(await page.$eval('.options-footer',e=>e.innerText),/480 × 854/);
+  await page.select('.options-fields label:last-of-type select','custom');
+  await page.$eval('.custom-size input[type=number]',e=>{e.value='900';e.dispatchEvent(new Event('change',{bubbles:true}))});
+  assert.deepEqual(await page.$$eval('.custom-size input[type=number]',es=>es.map(e=>Number(e.value))),[900,1500]);
+  await page.$eval('.custom-size label:nth-of-type(2) input',e=>{e.value='1440';e.dispatchEvent(new Event('change',{bubbles:true}))});
+  assert.deepEqual(await page.$$eval('.custom-size input[type=number]',es=>es.map(e=>Number(e.value))),[864,1440]);
+  await page.select('.options-fields label:first-child select','api');
+  assert.equal(await page.$('.workflow-field'),null);assert.equal(await page.$('.h3-toggle'),null);
+  assert.match(await page.$eval('.options-footer',e=>e.innerText),/720 × 1280/);
+  assert.equal(await page.$eval('.options-fields label:last-of-type select',e=>[...e.options].some(x=>x.value==='1080p')),false);
+  await page.select('.options-fields label:first-child select','external');
+  await page.select('.options-fields label:last-of-type select','custom');
+  await page.screenshot({path:path.resolve(__dirname,'../../runtime/temp/shot-options-desktop.png'),fullPage:true});
+  await page.setViewport({width:390,height:800});
+  assert.equal(await page.$eval('.shot-video-options',e=>e.scrollWidth>e.clientWidth+1),false);
+  await page.screenshot({path:path.resolve(__dirname,'../../runtime/temp/shot-options-mobile.png'),fullPage:true});
+  assert.deepEqual(errors,[]);console.log('PASS: backend switching, workflow defaults, resolution, portrait dimensions and responsive layout');
+  await page.select('.options-fields label:first-child select','managed');
+  assert.deepEqual(await page.$$eval('.workflow-field option',es=>es.map(e=>e.value)),['','builtin']);
+  assert.equal(await page.$eval('.workflow-field select',e=>e.value),'builtin');
+  assert.match(await page.$eval('.shot-video-options',e=>e.innerText),/自动启动内置引擎/);
+  await page.select('.options-fields label:first-child select','external');
+  assert.equal(await page.$eval('.workflow-field select',e=>e.value),'h3');
+  assert.deepEqual(await page.$$eval('.workflow-field option',es=>es.map(e=>e.value)),['','h3','lite']);
+ }finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});

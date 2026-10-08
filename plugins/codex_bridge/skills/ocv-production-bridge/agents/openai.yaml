@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCV 制作桥"
+  short_description: "连接 OCV，填写动态视频草稿并按真实配音规划、校验和导入分镜"
+  default_prompt: "使用 $ocv-production-bridge 连接我的 OCV，按当前制作阶段填写初始草稿或接手已确认配音后的分镜规划，不启动素材生成。"

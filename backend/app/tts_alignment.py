@@ -5,11 +5,74 @@ import difflib
 import json
 import re
 import sys
+import os
+import ctypes
 from pathlib import Path
 
 
+_NUMBER = re.compile(r'[零〇○一二两三四五六七八九十百千万亿]+|[0-9]+')
+_DIGITS = dict(zip('零〇○一二两三四五六七八九', (0, 0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9)))
+
+
+def _simplified(text):
+    # Portable OCV targets Windows: use its Unicode conversion table rather
+    # than introducing another model/runtime dependency.
+    if os.name != 'nt' or not text:
+        return text
+    target = ctypes.create_unicode_buffer(len(text) + 1)
+    count = ctypes.windll.kernel32.LCMapStringW(0x0804, 0x02000000, text,
+                                               len(text), target, len(target))
+    return target.value if count else text
+
+
+def _number(value):
+    if value.isascii():
+        return value
+    if not any(c in '十百千万亿' for c in value):
+        return ''.join(str(_DIGITS[c]) for c in value)
+    total, section, digit = 0, 0, 0
+    for char in value:
+        if char in _DIGITS:
+            digit = _DIGITS[char]
+        elif char in '十百千':
+            section += (digit or 1) * {'十': 10, '百': 100, '千': 1000}[char]
+            digit = 0
+        else:
+            section += digit
+            if char == '万':
+                total += (section or 1) * 10000
+            else:
+                total = (total + section or 1) * 100000000
+            section, digit = 0, 0
+    return str(total + section + digit)
+
+
+def _canonical(text, spans=None):
+    result, times, cursor = [], [], 0
+    for match in _NUMBER.finditer(text):
+        result.append(text[cursor:match.start()])
+        if spans is not None:
+            times.extend(spans[cursor:match.start()])
+        value = _number(match.group())
+        result.append(value)
+        if spans is not None:
+            for index in range(len(value)):
+                offset = match.start() + min(match.end() - match.start() - 1,
+                                            index * (match.end() - match.start()) // len(value))
+                times.append(spans[offset])
+        cursor = match.end()
+    result.append(text[cursor:])
+    if spans is not None:
+        times.extend(spans[cursor:])
+    return ''.join(result), times
+
+
+def _characters(text):
+    return ''.join(c.lower() for c in _simplified(str(text)) if c.isalnum())
+
+
 def clean(text):
-    return ''.join(c.lower() for c in str(text) if c.isalnum())
+    return _canonical(_characters(text))[0]
 
 
 def spoken_cues(texts, reading_text):
@@ -49,13 +112,14 @@ def align_starts(texts, words, duration, reading_text=None):
         raise ValueError('新配音中存在超过 3 秒的无语音区间，可能是异常停顿或低频噪音；请试听后重配，未替换原配音')
     chars, spans = [], []
     for word in words:
-        value = clean(word['word'])
+        value = _characters(word['word'])
         start, end = float(word['start']), float(word['end'])
         for index, char in enumerate(value):
             chars.append(char)
             spans.append((start + (end-start)*index/len(value), end))
+    recognized, spans = _canonical(''.join(chars), spans)
     expected = ''.join(clean(text) for text in texts)
-    matcher = difflib.SequenceMatcher(None, expected, ''.join(chars), autojunk=False)
+    matcher = difflib.SequenceMatcher(None, expected, recognized, autojunk=False)
     mapping = {}
     for block in matcher.get_matching_blocks():
         for offset in range(block.size):

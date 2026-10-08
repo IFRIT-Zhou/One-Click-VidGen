@@ -19,6 +19,10 @@ reference_prompt:"无人场景参考图提示词",reason:"同一场景的依据"
 参考图清楚展示空间布局、家具和关键物件；无人、无人影、无人形倒影，不添加原文没有的剧情证据或精确数字。
 不强制照搬角度，不把同一关键词视为同一场景。可以返回空列表。最多四个重复场景。
 参考图提示词必须保留用户画风，描述背景资产而非人物动作。"""
+CONTRACT += """\nsource.references 为上传素材目录。每个场景返回 reference_ids 数组（最多三张），
+选择场景中需要保持外观的器械、设备、物件、空间或画风参考，不需要则为空。
+专用器械存在对应参考时应使用；人物照片不应导致场景出现具体主角。
+reference_prompt 按所选数组顺序使用图1、图2、图3，不能沿用目录原编号。"""
 
 
 def assign_scene_ids(raw):
@@ -145,6 +149,8 @@ def bind_scene_references(mapping, plan, paths, catalog):
             selected.append(str(path.resolve()))
             item["reference_image_paths"] = selected
             item["scene_reference"] = {"scene_id": scene["scene_id"], "name": scene.get("name", ""),
+                                       "reference_ids": scene.get('reference_ids', []),
+                                       "reference_image_paths": scene.get('reference_image_paths', []),
                                        "prompt": scene["reference_prompt"],
                                        "path": str(path.resolve()), "input_number": len(selected)}
             item["image_prompt"] += f"\n【场景参考】图{len(selected)}仅用于保持同一空间的布局、家具与关键物件外观；以本镜头动作和构图为准，不照搬视角，不引入参考图之外的人物。"

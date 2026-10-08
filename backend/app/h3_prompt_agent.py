@@ -36,6 +36,12 @@ _TIME_RANGE = re.compile(
 _SYSTEM = r"""You are OCV H3 Prompt Agent. Your only job is to convert one already-approved,
 model-neutral video prompt into the official MiniMax H3 full-reference (Ref2VA) prompt format.
 Do not redesign the storyboard, alter narration boundaries, add new facts, or change the core image.
+The model_neutral_video_prompt is the sole approved creative instruction, including manual edits.
+The attached image supplies visual reference, not permission to override explicit source instructions.
+Preserve explicitly specified clothing, props, actions, framing and camera movement. Do not infer
+extra props or actions from a character's identity. Do not restore older storyboard concepts.
+When image details conflict with explicit source instructions, describe the requested result;
+retain only compatible image details. Never invent split screens, time periods or extra characters.
 
 Follow the official h3-prompt-writing skill contract:
 1. Write exactly these six sections, in exactly this order:
@@ -48,7 +54,10 @@ Follow the official h3-prompt-writing skill contract:
    anchor. It may be a near-opening image, but it is not a command to keep every depicted element
    visible at once or to return to the same composition at the end.
 4. Use concrete chronological stages with [Shot N] and [HH:MM-HH:MM]. The final timestamp must
-   exactly equal requested_duration_seconds, which is always 4-15 seconds.
+   exactly equal requested_duration_seconds. Normally 4-15 seconds is recommended;
+   a user-selected longer duration must be preserved exactly.
+   A continuous source shot stays one [Shot 1] spanning the full duration. Chronological phases
+   are not camera cuts. Add cuts or new framing only when explicitly requested in the source.
 5. Describe composition, subjects, positions, environment, actions/state changes, camera motion,
    physical sound, and exactly when referenced content appears. Prefer specific observable actions.
 6. Do not introduce unresolved reference labels. Define any <Subject N> before using it.
@@ -96,7 +105,7 @@ Follow the official h3-prompt-writing skill contract:
    or the single camera movement already approved by the source prompt.
 16. Use concrete physical verbs, materials, directions, speeds, amplitudes and screen positions.
    Avoid empty adjectives such as cinematic, atmospheric, stunning, or dramatic. Aim for roughly
-   250-500 English words when the approved action has enough events, but never pad a short 4-15 second
+   250-500 English words when the approved action has enough events, but never pad a short
    shot or schedule more actions than can visibly finish.
 
 Return only a JSON object: {"h3_prompt":"..."}. The h3_prompt value contains the six sections.
@@ -135,6 +144,18 @@ def _repair_section_structure(prompt: str) -> str:
         words = re.escape(name).replace(r"_", r"[\s_-]+")
         pattern = rf"(?im)^\s*(?:[#>*-]+\s*)?(?:\*\*)?{words}(?:\*\*)?\s*:?[ \t]*$"
         prompt = re.sub(pattern, f"{name}:", prompt)
+    # Some providers put all six headings and their bodies on one line.
+    # Recognize those before filling missing sections, otherwise valid bodies
+    # become trapped in subject_definitions and duplicate placeholders appear.
+    headings = '|'.join(re.escape(name).replace('_', r'[ \t_-]+') for name in _SECTIONS)
+    prompt = re.sub(
+        rf'(?i)(?<![\w])\s*(?:\*\*)?({headings})(?:\*\*)?[ \t]*:\s*',
+        lambda match: '\n\n' + re.sub(r'[ \t-]+', '_', match.group(1).lower()) + ':\n',
+        prompt,
+    ).strip()
+    for name in _SECTIONS:
+        if len(re.findall(rf'(?im)^\s*{name}\s*:', prompt)) > 1:
+            raise ValueError(f'H3 转换结果包含重复的 {name} 段落，请重新转换')
     defaults = {
         "subject_definitions": "<Picture 1> is the supplied core storyboard image and visual anchor.",
         "summary": "Create the approved target-video action using <Picture 1> as the visual anchor.",
@@ -357,24 +378,22 @@ def _validate(prompt: str, duration: int, *, reference_audio: bool = False,
     # Prevent a malformed response from silently becoming an expensive GPU run.
     if len(prompt) < 500 or len(prompt) > 16000:
         raise ValueError("H3 转换结果长度异常")
-    if not 4 <= duration <= 15:
-        raise ValueError("H3 仅接受 4～15 秒的镜头提示词")
-    return prompt
+    if duration < 4:
+        raise ValueError("H3 镜头请求至少需要4秒")
+    return _repair_section_structure(prompt)
 
 
 def source_fingerprint(shot: dict[str, Any], duration: int, *, reference_audio: bool = False,
                        lipsync: bool = False, image_digest: str = '') -> str:
     source = {
-        "intent": str(shot.get("intent") or ""),
-        "action": str(shot.get("action") or ""),
-        "image_prompt": str(shot.get("image_prompt") or ""),
         "video_prompt": str(shot.get("video_prompt") or ""),
+        "approved_visible_texts": approved_visible_texts(shot.get("motion_plan")),
         "duration": duration,
         "reference_audio": reference_audio,
         "reference_audio_lipsync": lipsync,
         "core_image_digest": image_digest,
         "skill": H3_SKILL_SOURCE,
-        "contract": 11,
+        "contract": 12,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -393,9 +412,6 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         raise ValueError("通用视频提示词为空，无法转换为 H3 提示词")
     payload = {
         "requested_duration_seconds": duration,
-        "storyboard_intent": str(shot.get("intent") or ""),
-        "approved_dynamic_expression": str(shot.get("action") or ""),
-        "core_image_prompt_for_context": str(shot.get("image_prompt") or ""),
         "model_neutral_video_prompt": generic,
         "approved_visible_texts": approved_visible_texts(shot.get("motion_plan")),
         "reference_audio_supplied": reference_audio,

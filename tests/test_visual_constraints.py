@@ -60,7 +60,7 @@ class VisualConstraintsTest(unittest.TestCase):
             saved = json.loads((project / "other" / "画面映射.json").read_text(encoding="utf-8"))
             self.assertEqual(saved[0]["image_prompt"], "新提示词")
 
-    def test_portrait_redraw_uses_project_ratio_even_when_provider_defaults_to_landscape(self) -> None:
+    def test_portrait_redraw_overrides_provider_landscape_ratio(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
             (project / "image").mkdir()
@@ -92,7 +92,52 @@ class VisualConstraintsTest(unittest.TestCase):
                 patch.object(visual, "_render_poster_with_retry", side_effect=render),
                 patch("backend.app.visual_editor.JOBS_DIR", project / "jobs"),
             ):
-                editor.redraw(job=job, prompt="竖屏提示词", macro_id="poster_008")
+                editor.redraw(job=job, prompt="竖屏新提示词", macro_id="poster_008")
+                for _ in range(100):
+                    status = editor.status(job.id)["image_tasks"].get("poster_008", {})
+                    if status.get("status") != "running":
+                        break
+                    time.sleep(0.01)
+
+            self.assertEqual(status.get("status"), "completed")
+            self.assertEqual(submitted_configs[0]["ratio"], "9:16")
+
+    def test_portrait_cloud_pool_redraw_overrides_default_landscape_ratio(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "image").mkdir()
+            (project / "other").mkdir()
+            (project / "image" / "poster_008.jpg").write_bytes(b"old")
+            (project / "other" / "画面映射.json").write_text(json.dumps([{
+                "macro_scene_id": "poster_008", "includes_slides": ["scene_001"],
+                "image_prompt": "旧提示词", "character_ids": [], "reference_image_ids": [],
+            }], ensure_ascii=False), encoding="utf-8")
+            editor = VisualEditor()
+            job = SimpleNamespace(id="portrait-cloud-redraw", user_id=1, request={
+                "video_orientation": "portrait", "use_cloud_image_pool": True,
+            })
+            submitted_configs = []
+            cloud = SimpleNamespace(
+                image_pool_runtime=lambda: {"base_url": "https://cloud.test", "access_token": "token", "refresh_token": "refresh"},
+                adopt_image_pool_runtime=lambda _runtime: None,
+            )
+
+            def render(item, _pool):
+                target = Path(item["_output_path"])
+                target.write_bytes(b"portrait image")
+                return target
+
+            with (
+                patch.object(editor, "output_dir", return_value=project),
+                patch.object(editor, "_log"),
+                patch("backend.app.cloud_client.cloud_client_for", return_value=cloud),
+                patch.dict(os.environ, {"RUNNINGHUB_TARGET_RATIO": "2:1"}, clear=False),
+                patch.object(visual, "shared_runninghub_account_pool",
+                             side_effect=lambda configs, **_kwargs: submitted_configs.extend(configs) or object()),
+                patch.object(visual, "_render_poster_with_retry", side_effect=render),
+                patch("backend.app.visual_editor.JOBS_DIR", project / "jobs"),
+            ):
+                editor.redraw(job=job, prompt="竖屏新提示词", macro_id="poster_008")
                 for _ in range(100):
                     status = editor.status(job.id)["image_tasks"].get("poster_008", {})
                     if status.get("status") != "running":
