@@ -5,15 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="One-Click VidGen 云端 GPU 配音、音色管理、任务调度及积分计费服务介绍。" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260810.1" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
     <title>产品与服务｜One-Click VidGen</title>
+    <link rel="stylesheet" href="/assets/public-nav.css?v=20260930-nav1" />
+    <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
   </head>
   <body data-page="services">
     <header class="site-header">
       <div class="shell header-inner">
         <a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a>
-        <nav class="nav" aria-label="主导航"><a href="/">首页</a><a class="active" href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a href="/recharge/">积分充值</a></nav>
-        <a class="header-action" href="/studio/">开始创作</a>
+        <nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/studio/">开始创作</a><a href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a><a href="/contact/">联系我们</a></nav>
+        <button class="header-action header-button" id="header-account" data-account-trigger type="button">登录账户</button>
       </div>
     </header>
 
@@ -82,7 +84,9 @@
       <section class="section shell"><div class="cta-panel"><div><span>START CREATING</span><h2>现在就可以连接云端服务</h2><p>使用同一账户登录网页工作台或 One-Click VidGen 客户端，音色、积分和任务状态保持同步。</p></div><div class="cta-actions"><a class="button light" href="/studio/">进入云端工作台</a><a class="text-link" href="/recharge/">选择积分套餐 →</a></div></div></section>
     </main>
 
-    <footer class="site-footer"><div class="shell footer-grid"><div class="footer-brand"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><p>面向视频创作者的云端 GPU 配音与任务加速服务。</p></div><div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a href="/recharge/">积分充值</a></div><div><strong>服务状态</strong><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div></div><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><span>服务域名：oneclickvidgen.com</span></div></footer>
-    <script src="/assets/site.js?v=20260808.4" defer></script>
+    <footer class="site-footer"><div class="shell footer-grid"><div class="footer-brand"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><p>面向视频创作者的云端 GPU 配音与任务加速服务。</p></div><div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">开始创作</a><a href="/projects/">我的作品</a><a href="/recharge/">积分充值</a></div><div><strong>联系与支持</strong><a href="/contact/">联系我们</a><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div></div><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">渝ICP备2026017349号-1</a><span>服务域名：oneclickvidgen.com</span></div></footer>
+    <script src="/assets/session-refresh.js?v=20260930-account1" defer></script>
+    <script src="/assets/site.js?v=20260930-account1" defer></script>
+    <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
   </body>
 </html>

@@ -1815,6 +1815,7 @@
           <form v-else class="cloud-auth-form" @submit.prevent="loginCloud">
             <label><span>邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" placeholder="请输入注册邮箱" required /></label>
             <label><span>密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" required /></label>
+            <a class="cloud-auth-recovery" href="https://oneclickvidgen.com/forgot-password/" target="_blank" rel="noopener noreferrer">忘记密码？通过邮箱找回</a>
             <button class="primary-btn cloud-auth-submit" type="submit" :disabled="cloudBusy">
               {{ cloudBusy ? '正在登录…' : '登录' }}
             </button>

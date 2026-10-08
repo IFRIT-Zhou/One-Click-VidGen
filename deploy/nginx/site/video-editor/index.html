@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#092f2b">
+  <meta name="description" content="One-Click VidGen 视频编辑器：预览裁剪、混音、字幕与镜头片段版本。">
+  <title>视频编辑器｜One-Click VidGen</title>
+  <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png">
+  <link rel="stylesheet" href="/assets/video-editor.css?v=20260930-ux4">
+  <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+</head>
+<body>
+  <header class="editor-header">
+    <a class="brand" href="/projects/" aria-label="我的作品"><img src="/one-click-vidgen-logo.png" alt=""><span><strong>One-Click VidGen</strong><small>VIDEO EDITOR</small></span></a>
+    <div class="project-heading"><span>项目视频工作台</span><strong id="project-title">正在读取项目…</strong></div>
+    <div class="header-actions"><span class="save-state" id="save-state"><i></i>已保存到本机</span><a class="ghost-button" id="back-project" href="/projects/">返回当前项目</a><details class="editor-more"><summary>更多</summary><button class="quiet-button" id="export-manifest" type="button">下载项目编辑备份</button></details><button class="primary-button" id="primary-export" type="button">导出项目视频</button></div>
+  </header>
+
+  <main class="editor-shell">
+    <section class="notice hidden" id="page-notice" role="status"></section>
+    <section class="editor-intro"><h1>预览与导出</h1><p>选择制作方式，完成素材和设置后导出。</p><div class="editor-modes" role="tablist" aria-label="视频制作方式"><button id="mode-project" role="tab" aria-controls="project-mode-panel" aria-selected="true" type="button">制作项目视频</button><button id="mode-existing" role="tab" aria-controls="existing-mode-panel" aria-selected="false" tabindex="-1" type="button">剪辑已有视频</button></div></section>
+    <div id="project-mode-panel" role="tabpanel" aria-labelledby="mode-project" data-editor-mode="project">
+    <section class="clips-panel timeline-panel"><div class="section-heading"><div><h2>制作项目视频</h2><p>按分镜顺序合成画面、配音和字幕。配音较长时会自动延长镜头。</p></div><button class="ghost-button" id="timeline-refresh" type="button">重新检查素材</button></div><div id="timeline-readiness" class="readiness-panel" role="status"></div><div id="timeline-scenes" class="timeline-scenes"></div><div class="timeline-options"><label><input id="timeline-retime" type="checkbox" checked> 字幕跟随配音时间</label><label>项目配乐（最多 3 首）<input id="timeline-bgm" type="file" accept="audio/*" multiple></label><label>默认配乐音量 <input id="timeline-bgm-volume" type="number" min="0" max="2" step="0.05" value="0.35"></label><label>输出版本 <select id="timeline-output"><option value="subtitles">字幕版</option><option value="clean">纯净版（不加字幕）</option></select></label></div><div id="timeline-music-list" class="timeline-scenes"></div><div class="preview-actions"><button class="primary-button" id="timeline-export" type="button">导出项目视频</button><button class="ghost-button hidden" id="timeline-clean" type="button" tabindex="-1">导出纯净版</button></div><div id="timeline-pending" class="pending-notice hidden"><p>上次提交还没有确认结果。请先查看云端任务，避免重复导出。</p><button class="ghost-button" id="timeline-check-pending" type="button">查看上次任务</button><button class="quiet-button hidden" id="timeline-clear-pending" type="button">未找到任务，允许重新提交</button></div><p id="timeline-message" role="status"></p></section>
+    </div>
+    <div id="existing-mode-panel" role="tabpanel" aria-labelledby="mode-existing" data-editor-mode="existing" class="hidden">
+    <section class="top-grid">
+      <div class="preview-panel">
+        <div class="panel-heading"><div><span>PROGRAM MONITOR</span><h1>成片预览</h1></div><span class="source-pill" id="source-pill">未载入视频</span></div>
+        <div class="video-stage" id="video-stage">
+          <video id="video-preview" controls playsinline preload="metadata"></video>
+          <div class="video-empty" id="video-empty"><span>▶</span><strong>载入视频开始编辑</strong><small>选择文件后可本机预览，点击导出才会上传编码。</small></div>
+          <div class="safe-area" aria-hidden="true"></div>
+        </div>
+        <div class="playback-strip"><span id="timecode">00:00.000 / 00:00.000</span><span id="selection-duration">选区 00:00.000</span></div>
+      </div>
+
+      <aside class="media-panel">
+        <div class="panel-heading"><div><span>LOCAL MEDIA</span><h2>本地素材</h2></div></div>
+        <label class="media-upload"><input id="video-input" type="file" accept="video/*"><span>▰</span><div><strong>主视频</strong><small id="video-file-name">选择 MP4、WebM 或浏览器支持的视频</small></div><b>选择</b></label>
+        <label class="media-upload"><input id="bgm-input" type="file" accept="audio/*"><span>♫</span><div><strong>背景音乐</strong><small id="bgm-file-name">可选，本地实时混音预听</small></div><b>选择</b></label>
+        <label class="media-upload"><input id="subtitle-input" type="file" accept=".srt,.vtt,.ass,text/vtt,application/x-subrip,text/plain"><span>字</span><div><strong>字幕文件</strong><small id="subtitle-file-name">SRT / VTT / ASS；未选择则使用项目字幕</small></div><b>选择</b></label>
+        <div class="media-clear"><button class="quiet-button" id="remove-bgm" type="button">移除配乐</button><button class="quiet-button" id="remove-subtitles" type="button">移除字幕文件</button></div>
+        <audio id="bgm-preview" preload="metadata"></audio>
+        <div class="privacy-note"><i></i><span><strong>本机预览</strong><small>导出时才上传文件。下次打开需重新选择本地文件。</small></span></div>
+      </aside>
+    </section>
+
+    <section class="control-grid">
+      <div class="settings-panel">
+        <div class="panel-heading"><div><span>EDIT PARAMETERS</span><h2>裁剪与混音</h2></div><button class="quiet-button" id="reset-settings" type="button">恢复默认</button></div>
+        <div class="settings-grid">
+          <label class="setting"><span><strong>裁剪起点</strong><output id="trim-start-output">00:00.000</output></span><input id="trim-start" type="range" min="0" max="1" step="0.01" value="0"></label>
+          <label class="setting"><span><strong>裁剪终点</strong><output id="trim-end-output">00:00.000</output></span><input id="trim-end" type="range" min="0" max="1" step="0.01" value="1"></label>
+          <label class="setting"><span><strong>原声音量</strong><output id="source-volume-output">100%</output></span><input id="source-volume" type="range" min="0" max="1" step="0.01" value="1"></label>
+          <label class="setting"><span><strong>BGM 音量</strong><output id="bgm-volume-output">35%</output></span><input id="bgm-volume" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+          <label class="setting"><span><strong>BGM 延迟</strong><output id="bgm-delay-output">0.0 秒</output></span><input id="bgm-delay" type="range" min="0" max="30" step="0.1" value="0"></label>
+          <label class="setting"><span><strong>BGM 渐弱</strong><small>末尾秒数，导出时生效</small></span><input id="bgm-fade" type="number" min="0" max="10" step="0.1" value="1"></label>
+          <label class="toggle-setting"><span><strong>循环背景音乐</strong><small>播放至选区结束</small></span><input id="bgm-loop" type="checkbox" checked><i></i></label>
+          <label class="toggle-setting"><span><strong>显示字幕</strong><small>预览时启用已解析字幕轨</small></span><input id="subtitle-enabled" type="checkbox" checked><i></i></label>
+        </div>
+        <div class="preview-actions"><button class="primary-button" id="play-selection" type="button">▶ 预览选区</button><button class="ghost-button" id="set-start" type="button">当前帧设为起点</button><button class="ghost-button" id="set-end" type="button">当前帧设为终点</button></div>
+      </div>
+
+      <aside class="export-panel">
+        <span>EXPORT</span><h2>导出与交付</h2><p>把裁剪、配乐和字幕编码成可直接发布的 MP4。支持字幕版与纯净版，结果保留 24 小时。</p>
+        <button class="export-video" id="export-video" type="button"><b>导出 MP4 成片</b><small>上传素材并在云端编码</small></button>
+        <button class="manifest-button" id="export-manifest-secondary" type="button">下载当前编辑备份</button>
+        <div class="inline-notice" id="export-message" role="status"></div>
+      </aside>
+    </section>
+
+    </div>
+    <section class="clips-panel" id="export-history"><div class="section-heading"><div><span>RENDER HISTORY</span><h2>云端导出记录</h2><p>展示当前登录账号最近的导出。任务提交后可关闭页面，成片请及时下载。</p></div><button class="ghost-button" id="reload-exports" type="button">刷新导出记录</button></div><div id="export-jobs" aria-live="polite">登录后可查询云端导出记录。</div></section>
+
+    <section class="clips-panel" data-editor-mode="project">
+      <div class="section-heading"><div><span>SHOT CLIPS</span><h2>逐镜片段版本</h2><p>每个镜头可上传多个本地视频片段，并选择当前采用版本。</p></div><span class="count-pill" id="clip-count">0 镜</span></div>
+      <div class="clip-grid" id="clip-grid"></div>
+    </section>
+  </main>
+
+  <dialog id="export-dialog">
+    <div class="dialog-content"><span class="dialog-icon">⇧</span><h2>导出当前选区</h2><p>将主视频、配乐及选用的字幕上传到云端，按当前设置生成 MP4。主视频最多 200 MiB，配乐最多 30 MiB，字幕最多 1 MiB，导出时长不超过 10 分钟。字幕时间按原片时间轴处理。</p><p id="export-dialog-message" role="status"></p><div class="export-dialog-actions"><button class="ghost-button" id="close-export-dialog" type="button">继续编辑</button><button class="ghost-button" id="start-clean-export" type="button">导出纯净版</button><button class="primary-button" id="start-export" type="button">按当前设置导出</button></div></div>
+  </dialog>
+
+  <script src="/assets/session-refresh.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-store.js?v=20260930-ux4" defer></script>
+  <script src="/assets/voice-cloud.js?v=20260930-ux4" defer></script>
+  <script src="/assets/video-editor.js?v=20260930-ux4" defer></script>
+  <script src="/assets/timeline-editor.js?v=20260930-ux4" defer></script>
+  <script src="/assets/project-cloud.js?v=20260930-ux4" defer></script>
+</body>
+</html>

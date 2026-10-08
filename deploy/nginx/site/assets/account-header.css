@@ -1,0 +1,25 @@
+.site-header .header-inner { gap: 24px; }
+.site-header .public-account { position: relative; flex: 0 0 184px; min-width: 0; margin-left: 0; }
+.site-header .public-account .header-action { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; width: 100%; min-height: 48px; margin: 0; padding: 8px 14px; border: 0; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; }
+.public-account .header-action span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-account .header-action small { font-size: 11px; font-weight: 500; opacity: .85; }
+.public-account [hidden] { display: none !important; }
+.account-popover { position: absolute; top: calc(100% + 10px); right: 0; width: 268px; max-width: calc(100vw - 28px); padding: 18px; border: 1px solid #d7e7e2; border-radius: 14px; background: #fff; color: #123f43; box-shadow: 0 12px 36px #08262d26; z-index: 100; }
+.account-popover strong { display: block; overflow-wrap: anywhere; font-size: 14px; }
+.account-popover p { margin: 10px 0; font-size: 13px; }
+.account-popover button, .account-popover a { display: block; width: 100%; border: 0; border-radius: 6px; background: #eff6f4; color: #155954; text-align: left; font: inherit; font-size: 13px; padding: 10px; margin-top: 6px; cursor: pointer; text-decoration: none; }
+.public-register { margin: 18px 0 0; font-size: 13px; text-align: center; }
+@media (max-width: 980px) {
+  .site-header .header-inner { column-gap: 10px; row-gap: 0; }
+  .site-header .public-account { margin-left: auto; flex-basis: 152px; }
+}
+@media (max-width: 420px) {
+  .site-header .public-account { flex-basis: 132px; }
+  .site-header .brand { gap: 6px; }
+  .site-header .brand strong { font-size: 12px; }
+  .site-header .brand img { width: 32px; height: 32px; }
+}
+
+.forgot-password-link { margin: 12px 0; text-align: right; font-size: 13px; }
+.forgot-password-link a { color: #007f78; font-weight: 650; text-decoration: none; }
+.forgot-password-link a:hover { text-decoration: underline; }

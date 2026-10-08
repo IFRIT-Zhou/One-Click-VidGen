@@ -1,0 +1,6 @@
+@media (max-width: 980px) {
+  .site-header .header-inner { flex-wrap: wrap; column-gap: 16px; row-gap: 0; padding-top: 10px; }
+  .site-header .header-inner .header-action { margin-left: auto; }
+  .site-header .header-inner .nav { display: flex; order: 3; flex: 1 0 100%; justify-content: space-between; gap: 8px; margin-left: 0; }
+  .site-header .header-inner .nav a { min-height: 44px; font-size: 12px; white-space: nowrap; }
+}
