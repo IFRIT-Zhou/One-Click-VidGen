@@ -106,7 +106,7 @@ export function useStudio(w) {
         reference_image_labels:draft.parameters.reference_image_labels||{},
         reference_image_kinds:draft.parameters.reference_image_kinds||{},
         source_audio_id:'', skip_tts:false, dynamic_video:true, dynamic_auto_advance:false, step_mode:true,
-        use_cloud_image_pool:w.form.use_cloud_image_pool}
+        use_cloud_image_pool:w.form.use_cloud_image_pool, method:w.form.method, size:w.form.size}
       newProject('dynamic', {id, form, subtitle:{...subtitleDefaults}, engine:form.tts_engine||'indextts25'})
       studioSaveState.value = 'Codex 草稿已载入并保存到本机；请核对参数后手动生成配音'
     } catch (e) { studioError.value = e.message }
@@ -364,7 +364,7 @@ export function useStudio(w) {
         const changed=key=>JSON.stringify(w.form[key]??null)!==JSON.stringify(base[key]??null)
         const ttsChanged=JSON.stringify(rerunTtsSnapshot())!==JSON.stringify(w.form._rerun_tts_baseline||rerunTtsSnapshot())
         if(!ttsChanged){
-          const visualKeys=['visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
+          const visualKeys=['method','size','use_cloud_image_pool','visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
           const parameters={};for(const key of visualKeys)if(Object.hasOwn(w.form,key)&&changed(key))parameters[key]=w.form[key]
           const payload={revision:Number(w.form._rerun_source_revision||0),name:w.form.project_name||'',style:w.form.visual_style_prompt||'',characters:w.form.global_character_prompt||'',world:w.form.story_environment_prompt||'',dynamic_text_mode:w.form.dynamic_text_mode||'visual_first',scene_references_enabled:w.form.scene_references_enabled!==false,video_generation_backend:w.form.video_generation_backend||'api',comfyui_profile_id:w.form.comfyui_profile_id||'',comfyui_h3_prompt_agent:Boolean(w.form.comfyui_h3_prompt_agent),comfyui_reference_audio:Boolean(w.form.comfyui_reference_audio),dynamic_auto_advance:Boolean(w.form.dynamic_auto_advance),parameters}
           const updated=await requestJSON('/api/video-studio/'+encodeURIComponent(sourceId)+'/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})

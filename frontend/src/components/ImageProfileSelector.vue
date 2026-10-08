@@ -1,4 +1,5 @@
 <script setup>
+import CloudImageQuality from './CloudImageQuality.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 
@@ -13,7 +14,7 @@ const resolutions = computed(() => selected.value?.resolutions || ['1k','2k','4k
 
 function reset(profile=null){Object.assign(draft,profile?{...profile,api_key:'',resolutions:[...(profile.resolutions||['1k','2k','4k'])]}:{id:'',name:'',protocol:'async_task',base_url:'',model_id:'',text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query',resolutions:['1k','2k','4k'],reference_images:true,api_key:''});editing.value=true}
 async function load(){try{profiles.value=(await api.imageProfiles()).profiles||[];if(!profiles.value.some(x=>x.id===props.form.image_profile_id))props.form.image_profile_id=profiles.value.find(x=>x.configured)?.id||'';syncResolution()}catch(e){message.value=e.message}}
-function syncResolution(){if(!resolutions.value.includes(props.form.image_resolution))props.form.image_resolution=resolutions.value[0]||'1k'}
+function syncResolution(){if(props.form.use_cloud_image_pool)return;if(!resolutions.value.includes(props.form.image_resolution))props.form.image_resolution=resolutions.value[0]||'1k'}
 async function save(){saving.value=true;message.value='';try{const payload={...draft,resolutions:[...draft.resolutions]};if(!payload.api_key.trim())delete payload.api_key;const result=await api.saveImageProfile(payload);message.value=result.message;await load();props.form.image_profile_id=result.profile.id;editing.value=false}catch(e){message.value=e.message}finally{saving.value=false}}
 async function remove(profile){if(!confirm(`删除“${profile.name}”？`))return;try{await api.deleteImageProfile(profile.id);await load()}catch(e){message.value=e.message}}
 function toggleResolution(value){const list=draft.resolutions;const index=list.indexOf(value);if(index>=0&&list.length>1)list.splice(index,1);else if(index<0)list.push(value)}
@@ -22,8 +23,9 @@ onMounted(load)
 </script>
 
 <template>
- <section class="image-profile-selector" :class="{manager:manage,disabled:form.use_cloud_image_pool}">
-  <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{form.use_cloud_image_pool?'号池模型由云端统一管理':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'仅影响本任务；不会改动接口与服务中的配置。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button></div>
+ <section class="image-profile-selector" :class="{manager:manage}">
+  <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{form.use_cloud_image_pool?'选择本任务的云端图片渠道':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'仅影响本任务；不会改动接口与服务中的配置。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button></div>
+  <div v-if="form.use_cloud_image_pool" class="profile-select-row"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">RunningHub</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
   <template v-if="!form.use_cloud_image_pool">
    <div v-if="!manage||!editing" class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>

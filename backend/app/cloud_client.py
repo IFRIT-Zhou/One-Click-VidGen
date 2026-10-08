@@ -414,9 +414,12 @@ class CloudClient:
             "refresh_token": session.refresh_token,
         }
 
-    def image_pool_status(self) -> dict[str, Any]:
+    def image_pool_status(self, method: str = "running") -> dict[str, Any]:
         """Verify that the deployed cloud-api exposes the image-pool proxy."""
-        return self._json_request("POST", "/image-pool/account-status", json={})
+        from .cloud_image_channel import image_provider
+        provider = image_provider(method)
+        path = "/image-pool/account-status" + ("?provider=ican" if provider == "ican" else "")
+        return self._json_request("POST", path, json={})
 
     def model_pool_status(self) -> dict[str, Any]:
         """Verify that the deployed cloud-api exposes the text-model proxy."""

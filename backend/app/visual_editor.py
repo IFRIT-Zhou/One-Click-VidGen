@@ -1551,19 +1551,20 @@ class VisualEditor:
                     cloud_pool_client = cloud_client_for(int(job.user_id))
                     runtime = cloud_pool_client.image_pool_runtime()
                     base_url = runtime["base_url"].rstrip("/")
-                    provider_configs = [{
+                    from .cloud_image_channel import configure_channel
+                    provider_configs = [configure_channel({
                         "endpoint": f"{base_url}/image-pool/generate",
                         "query_url": f"{base_url}/image-pool/query",
                         "upload_url": f"{base_url}/image-pool/media/upload",
                         "account_url": f"{base_url}/image-pool/account-status",
-                        "resolution": os.getenv("RUNNINGHUB_RESOLUTION", "1k").strip(),
-                        "ratio": os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+                        "resolution": (job.request or {}).get("image_resolution") or "1k",
+                        "ratio": "9:16" if (job.request or {}).get("video_orientation") == "portrait" else "16:9",
                         "api_key": runtime["access_token"],
                         "refresh_token": runtime["refresh_token"],
                         "cloud_base_url": base_url,
                         "account_label": "云端号池",
                         "cloud_pool": "1",
-                    }]
+                    }, (job.request or {}).get("method", "running"), (job.request or {}).get("size", "2560x1440"))]
                     self._log(job, f"{macro_id} 使用云端图像号池重绘，费用由账户积分结算。")
                 else:
                     image_snapshot = (job.request or {}).get("image_profile_snapshot")
