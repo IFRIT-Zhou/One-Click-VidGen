@@ -50,7 +50,7 @@ _REFERENCE_UPLOAD_LOCK = threading.Lock()
 _CLOUD_TOKEN_REFRESH_LOCK = threading.Lock()
 _CLOUD_RETRY_STATE_LOCK = threading.Lock()
 _VISUAL_CHECKPOINT_LOCK = threading.Lock()
-_REFERENCE_IMAGE_URLS: dict[tuple[str, str], str] = {}
+_REFERENCE_IMAGE_URLS: dict[tuple[str, ...], str] = {}
 # v17: stable directing now records explicit human presence, rejects visibly
 # contradictory shot instructions, and emits readable per-shot character cards.
 VISUAL_PROMPT_AGENT_VERSION = 17
@@ -907,6 +907,8 @@ def shared_runninghub_account_pool(
             str(config.get("endpoint") or ""),
             str(config.get("ratio") or ""),
             str(config.get("resolution") or ""),
+            str(config.get("method") or "running"),
+            str(config.get("size") or ""),
             str(_positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)),
         )
         for config in configs
@@ -958,19 +960,20 @@ def _provider_configs() -> list[dict[str, str]]:
         access_token = os.getenv("CLOUD_IMAGE_POOL_ACCESS_TOKEN", "").strip()
         if not base_url or not access_token:
             raise RuntimeError("云端号池运行凭据缺失，请重新登录云端账户后重试")
-        return [{
+        from backend.app.cloud_image_channel import configure_channel
+        return [configure_channel({
             "endpoint": f"{base_url}/image-pool/generate",
             "query_url": f"{base_url}/image-pool/query",
             "upload_url": f"{base_url}/image-pool/media/upload",
             "account_url": f"{base_url}/image-pool/account-status",
             "resolution": os.getenv("CLOUD_IMAGE_POOL_RESOLUTION", "1k").strip(),
-            "ratio": '9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
+            "ratio": os.getenv("CLOUD_IMAGE_POOL_RATIO", "").strip() or ('9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip()),
             "api_key": access_token,
             "refresh_token": os.getenv("CLOUD_IMAGE_POOL_REFRESH_TOKEN", "").strip(),
             "cloud_base_url": base_url,
             "account_label": "云端号池",
             "cloud_pool": "1",
-        }]
+        }, os.getenv("CLOUD_IMAGE_POOL_METHOD", "running"), os.getenv("CLOUD_IMAGE_POOL_SIZE", "2560x1440"))]
     # A task-selected image profile is injected by the parent process. Reloading
     # the global .env here would silently replace that per-task model choice.
     if os.getenv("OCV_IMAGE_PROFILE_ACTIVE", "").strip() != "1":
@@ -3166,6 +3169,8 @@ def _submit_poster_request(
         endpoint = str(config.get("reference_endpoint") or "").strip() or \
             os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip() or \
             str(config["endpoint"]).replace("/text-to-image", "/image-to-image")
+    from backend.app.cloud_image_channel import generation_payload
+    payload = generation_payload(payload, config)
     if config.get("cloud_pool") == "1":
         payload["clientJobId"] = _cloud_client_job_id(macro, payload)
     response = _request_with_cloud_refresh(
@@ -3917,7 +3922,7 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
     path = Path(raw_path)
     if not raw_path or not path.is_file():
         return None
-    cache_key = (config["api_key"], str(path.resolve()))
+    cache_key = (config["api_key"], config.get("method", "running"), config.get("upload_url", ""), str(path.resolve()))
     with _REFERENCE_UPLOAD_LOCK:
         cached = _REFERENCE_IMAGE_URLS.get(cache_key)
         if cached:
@@ -3967,6 +3972,10 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
         if response is not None:
             response.close()
         if not url:
+            if config.get("cloud_pool") == "1" and config.get("method") == "ican":
+                raise RunningHubReferenceUploadError(
+                    "ICAN 参考图上传失败，已停止生成；请重新上传后重试"
+                ) from upload_error
             # Standard-model resource fields such as ``imageUrls`` accept a
             # Base64 Data URI as well as a public URL. Some RunningHub account
             # types return a successful upload envelope without ``download_url``;

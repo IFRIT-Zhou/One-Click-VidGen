@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Zhou Ruoyu and He Yun
 # AGPL-3.0 Section 7 terms: ../../ADDITIONAL_TERMS.md
 
+from .cloud_image_channel import ImageSize
 import json
 import os
 import re
@@ -196,6 +197,8 @@ class GenerateRequest(BaseModel):
     visual_style: str = "video-edit-agent"
     visual_backend: str | None = "poster"
     use_cloud_image_pool: bool = False
+    method: Literal["running", "ican"] = "running"
+    size: ImageSize = "2560x1440"
     image_profile_id: str | None = Field(default=None, max_length=80)
     image_resolution: Literal["1k", "2k", "4k"] | None = None
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
@@ -1632,7 +1635,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                     try:
                         account = client.account_summary()
                         client.model_pool_status()
-                        client.image_pool_status()
+                        client.image_pool_status(data.get("method", "running"))
                         credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
                         available = float(credits.get("available") or 0)
                         pool_status = "passed" if available > 0 else "error"
@@ -2291,7 +2294,7 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
         try:
             account = client.account_summary()
             client.model_pool_status()
-            client.image_pool_status()
+            client.image_pool_status(data.get("method", "running"))
             credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
             if float(credits.get("available") or 0) <= 0:
                 raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")
@@ -2485,7 +2488,7 @@ def advance_step_workflow(
         "start_visual": {
             "video_orientation",
             "content_mode", "director_strategy", "scene_references_enabled", "auto_split_long_text", "split_text_threshold",
-            "visual_backend", "use_cloud_image_pool", "image_profile_id", "image_resolution", "visual_prompt_mode",
+            "visual_backend", "use_cloud_image_pool", "method", "size", "image_profile_id", "image_resolution", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
             "visual_max_duration", "visual_max_slides", "visual_style_prompt", "dynamic_max_shot_duration",
             "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt",
@@ -2564,7 +2567,7 @@ def advance_step_workflow(
             try:
                 account = client.account_summary()
                 client.model_pool_status()
-                client.image_pool_status()
+                client.image_pool_status(job.request.get("method", "running"))
                 credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
                 if float(credits.get("available") or 0) <= 0:
                     raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")

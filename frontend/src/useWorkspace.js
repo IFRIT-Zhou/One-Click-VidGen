@@ -3,6 +3,7 @@ import { api } from './api'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 import { normalizeDynamicTextMode } from './dynamicTextMode'
 import { readCloudPoolPreference, saveCloudPoolPreference, workspaceParameters } from './cloudPoolPreference'
+import { imageChoice, imageSize } from './icanImageSizes'
 
 // Shared task state: each mounted workspace owns one polling lifecycle.
 export function useWorkspace() {
@@ -523,6 +524,8 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   use_cloud_image_pool: readCloudPoolPreference(),
+  method: 'running',
+  size: '2560x1440',
   image_profile_id: '',
   image_resolution: '1k',
   video_render_variant: 'both',
@@ -4421,6 +4424,8 @@ function guidedVisualParameters() {
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,
     use_cloud_image_pool: form.use_cloud_image_pool,
+    method: form.method,
+    size: form.size,
     image_profile_id: form.image_profile_id,
     image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
@@ -5207,7 +5212,14 @@ watch(() => form.use_cloud_image_pool, (enabled) => {
   saveCloudPoolPreference(enabled)
 }, { flush: 'sync' })
 
+watch(() => form.video_orientation, (orientation) => {
+  if (form.use_cloud_image_pool && form.method === 'ican') {
+    form.size = imageSize(orientation === 'portrait' ? '9:16' : '16:9', imageChoice(form.size).quality)
+  }
+}, { flush: 'sync' })
+
 watch(() => form.image_profile_id, () => {
+  if (form.use_cloud_image_pool) return
   const resolutions = selectedImageProfile.value?.resolutions || ['1k', '2k', '4k']
   if (!resolutions.includes(form.image_resolution)) form.image_resolution = resolutions[0] || '1k'
 })

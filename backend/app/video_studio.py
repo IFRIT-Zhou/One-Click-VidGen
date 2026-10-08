@@ -15,6 +15,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from .auth import require_user
+from .cloud_image_channel import ImageSize
 from .video_plan import parse_srt, normalize_shots, edit_structure, plan_storyboard, planning_fingerprint
 from .video_sources import list_sources, source_project, copy_assets, narration_groups
 from . import video_scene_references as scene_references
@@ -103,6 +104,7 @@ class StoryboardRedraw(BaseModel):
     use_current_image: bool = False
     use_scene_reference: bool = True
     image_resolution: str | None = Field(default=None, pattern=r'^(1k|2k|4k)$')
+    size: ImageSize | None = None
 
 
 class ShotPromptRefresh(Review):
@@ -165,7 +167,8 @@ def _image_configs(record, user_id=None):
                 raise ValueError('missing runtime')
         except Exception as exc:
             raise ValueError('云端图像号池登录状态不可用，请检查云端连接并重新登录；未改用个人 API。') from exc
-        configs = [{
+        from .cloud_image_channel import configure_channel
+        configs = [configure_channel({
             'endpoint': base + '/image-pool/generate',
             'query_url': base + '/image-pool/query',
             'upload_url': base + '/image-pool/media/upload',
@@ -173,7 +176,7 @@ def _image_configs(record, user_id=None):
             'resolution': str(parameters.get('image_resolution') or '1k'),
             'api_key': token, 'refresh_token': runtime.get('refresh_token', ''),
             'cloud_base_url': base, 'account_label': '云端号池', 'cloud_pool': '1',
-        }]
+        }, parameters.get('method', 'running'), parameters.get('size', '2560x1440'))]
     elif isinstance(snapshot, dict):
         from .image_profiles import profile_provider_configs
         configs = profile_provider_configs(snapshot)
@@ -832,6 +835,14 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
             'subtitle_margin_bottom',
         }
         safe_parameters = {key: value for key, value in data.parameters.items() if key in safe_parameter_keys}
+        from pydantic import TypeAdapter, ValidationError
+        from .cloud_image_channel import ImageMethod, ImageSize
+        try:
+            for key, kind in [('method', ImageMethod), ('size', ImageSize), ('use_cloud_image_pool', bool)]:
+                if key in data.parameters:
+                    safe_parameters[key] = TypeAdapter(kind).validate_python(data.parameters[key])
+        except ValidationError as exc:
+            raise HTTPException(422, '图片渠道或尺寸参数无效') from exc
         planning_parameter_keys = safe_parameter_keys - {
             'video_render_variant', 'subtitle_font', 'subtitle_size', 'subtitle_color',
             'subtitle_outline_color', 'subtitle_outline_width', 'subtitle_position',
@@ -1523,6 +1534,8 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
             raise HTTPException(400, str(exc)) from exc
         if data.image_resolution:
             configs = [{**config, 'resolution': data.image_resolution} for config in configs]
+        if data.size:
+            configs = [{**config, 'size': data.size} if config.get('method') == 'ican' else config for config in configs]
         data = data.model_copy(update={'prompt': prompt})
         record['revision'] += 1
         _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
