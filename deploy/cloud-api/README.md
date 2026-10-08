@@ -4,7 +4,7 @@
 
 ## 邮箱找回密码
 
-- 官网入口：`/forgot-password/`；桌面端云端登录窗口也提供入口。
+- 官网入口：`/forgot-password/`；桌面端云端登录窗口内提供完整邮箱验证和密码重置表单，通过本机 `/api/cloud/auth/password-reset/*` 转发，不再跳转官网。
 - `POST /api/v1/auth/password-reset/request`：`{"email":"user@example.com"}`。
 - `POST /api/v1/auth/password-reset/confirm`：`{"email":"user@example.com","code":"123456","password":"new-password"}`。
 - 6 位随机验证码，生成后 30 分钟有效，只能使用一次；重发替换旧码。

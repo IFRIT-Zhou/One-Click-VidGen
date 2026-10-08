@@ -413,7 +413,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=1, max_length=128)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class CloudRegisterRequest(BaseModel):
@@ -425,6 +425,15 @@ class CloudRegisterRequest(BaseModel):
 class CloudLoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+
+
+class CloudRecoveryEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class CloudRecoveryConfirmRequest(CloudRecoveryEmailRequest):
+    code: str = Field(pattern=r"^[0-9]{6}$")
+    password: str = Field(min_length=10, max_length=200)
 
 
 class CloudRechargeRequest(BaseModel):
@@ -787,6 +796,7 @@ def _cloud_error(exc: CloudApiError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
         detail=f"{exc}{suffix}{request_id}",
+        headers={"Retry-After": exc.retry_after} if exc.retry_after else None,
     )
 
 
@@ -815,6 +825,24 @@ def cloud_login(payload: CloudLoginRequest, request: Request) -> dict[str, Any]:
     _user, client = _cloud_for_request(request)
     try:
         return client.login(str(payload.email), payload.password)
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/auth/password-reset/request")
+def cloud_recovery_request(payload: CloudRecoveryEmailRequest, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.request_password_reset(str(payload.email))
+    except CloudApiError as exc:
+        raise _cloud_error(exc) from exc
+
+
+@app.post("/api/cloud/auth/password-reset/confirm")
+def cloud_recovery_confirm(payload: CloudRecoveryConfirmRequest, request: Request) -> dict[str, Any]:
+    _user, client = _cloud_for_request(request)
+    try:
+        return client.confirm_password_reset(str(payload.email), payload.code, payload.password)
     except CloudApiError as exc:
         raise _cloud_error(exc) from exc
 

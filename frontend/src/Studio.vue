@@ -1789,12 +1789,13 @@
           <div class="cloud-auth-dialog-head">
             <div>
               <span class="cluster-card-kicker">ONE-CLICK VIDGEN CLOUD</span>
-              <h2 id="cloud-auth-title">{{ cloudSession.authenticated ? '云端账户' : '登录云端服务' }}</h2>
+              <h2 id="cloud-auth-title">{{ cloudRecoveryOpen ? '忘记密码' : cloudSession.authenticated ? '云端账户' : '登录云端服务' }}</h2>
             </div>
             <button class="cloud-auth-close" type="button" aria-label="关闭登录窗口" @click="cloudLoginOpen = false">×</button>
           </div>
 
-          <div v-if="!cloudSession.configured" class="cluster-notice warning">
+          <CloudPasswordRecovery v-if="cloudRecoveryOpen" :initial-email="cloudLoginForm.email" @back="closeCloudRecovery" @reset="onCloudPasswordReset" />
+          <div v-else-if="!cloudSession.configured" class="cluster-notice warning">
             云端服务正在部署中，登录入口已经准备完毕。服务上线后会由程序自动连接，无需用户填写服务器地址。
           </div>
           <template v-else-if="cloudSession.authenticated">
@@ -1815,7 +1816,7 @@
           <form v-else class="cloud-auth-form" @submit.prevent="loginCloud">
             <label><span>邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" placeholder="请输入注册邮箱" required /></label>
             <label><span>密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" required /></label>
-            <a class="cloud-auth-recovery" href="https://oneclickvidgen.com/forgot-password/" target="_blank" rel="noopener noreferrer">忘记密码？通过邮箱找回</a>
+            <button class="ghost-btn cloud-auth-recovery" type="button" @click="openCloudRecovery">忘记密码？通过邮箱找回</button>
             <button class="primary-btn cloud-auth-submit" type="submit" :disabled="cloudBusy">
               {{ cloudBusy ? '正在登录…' : '登录' }}
             </button>
@@ -2017,6 +2018,7 @@
  </div>
 </template>
 <script>
+import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
 import CloudImageQuality from './components/CloudImageQuality.vue'
 import { useWorkspace } from './useWorkspace'
 import { useStudio } from './useStudio'
@@ -2044,7 +2046,7 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}

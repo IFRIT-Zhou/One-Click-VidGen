@@ -48,6 +48,7 @@ export async function requestJSON(url, options = {}) {
     }
     const error = new Error(readableError(message, `Request failed with ${response.status}`))
     error.status = response.status
+    error.retryAfter = response.headers.get("Retry-After")
     throw error
   }
   return response.json()
