@@ -140,8 +140,8 @@
             <span class="switch-track"><span></span></span>
           </label>
         </div>
-        <p class="cloud-pool-price-note">无需自行配置语言和图像 API；OCV 仅收取 5% 服务费。RunningHub 每张图片约 0.105 元，ICAN 每张 0.03675 积分；每 1000 字文案的 LLM 消耗通常约 0.1 元，实际费用会随模型、输出长度及重试次数略有浮动。</p>
-        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">RunningHub</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
+        <p class="cloud-pool-price-note">无需自行配置语言和图像 API；其他云端服务收取 5% 服务费；ICAN 按原价向上取整到分计费。平价gpt image2.5 每张图片约 0.105 元，ICAN 每张 0.04 元（0.04 积分）；每 1000 字文案的 LLM 消耗通常约 0.1 元，实际费用会随模型、输出长度及重试次数略有浮动。</p>
+        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">平价gpt image2.5</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
         <div v-if="form.use_cloud_image_pool" class="cloud-pool-status" :class="cloudSession.authenticated ? 'ready' : 'warning'">
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>

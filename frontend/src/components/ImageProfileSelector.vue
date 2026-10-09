@@ -25,7 +25,7 @@ onMounted(load)
 <template>
  <section class="image-profile-selector" :class="{manager:manage}">
   <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{form.use_cloud_image_pool?'选择本任务的云端图片渠道':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'仅影响本任务；不会改动接口与服务中的配置。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button></div>
-  <div v-if="form.use_cloud_image_pool" class="profile-select-row"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">RunningHub</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
+  <div v-if="form.use_cloud_image_pool" class="profile-select-row"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">平价gpt image2.5</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
   <template v-if="!form.use_cloud_image_pool">
    <div v-if="!manage||!editing" class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>

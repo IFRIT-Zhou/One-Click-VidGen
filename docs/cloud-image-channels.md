@@ -30,3 +30,8 @@ submission retries.
 
 Selections are retained in task parameters, including existing-project edits
 and redraws. Switching channels does not replace already generated images.
+
+ICAN retail pricing rounds the upstream cost in CNY up to 0.01 per image,
+without an additional percentage markup. The current 0.035 CNY cost becomes
+0.04 credits per image for all seven regular sizes. Existing jobs retain
+their saved price; video jobs reserve the sum of per-image rounded prices.

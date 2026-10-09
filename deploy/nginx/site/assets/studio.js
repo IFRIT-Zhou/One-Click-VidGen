@@ -394,7 +394,7 @@
     const choices = ican ? Object.keys(icanVideoSizes[ratio.value]) : ["1k", "2k", "4k"];
     quality.replaceChildren(...choices.map(value => new Option(value.toUpperCase(), value)));
     quality.value = choices.includes(previous) ? previous : (ican && choices.includes("2.5k") ? "2.5k" : choices[0]);
-    element("#image-channel-hint").textContent = ican ? "ICAN 使用 GPT Image 2.5；横屏和竖屏默认 2.5K，方形支持 1K。" : "RunningHub 支持 1K、2K、4K 图片清晰度。";
+    element("#image-channel-hint").textContent = ican ? "ICAN 使用 GPT Image 2.5，0.04 元/张（0.04 积分）；横屏和竖屏默认 2.5K，方形支持 1K。" : "平价gpt image2.5 支持 1K、2K、4K 图片清晰度。";
   }
   function imageChannelPayload() {
     const method = element("#image-method").value;

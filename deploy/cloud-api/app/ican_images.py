@@ -47,10 +47,10 @@ def price_quote(model, size):
         raise ServiceError("ICAN_MODEL_SIZE_NOT_CONFIGURED", "该模型或尺寸尚未配置价格", 422)
     base = Decimal(str(spec["sizes"][size]))
     credits = base * (settings.billing_usd_to_cny_rate if spec["currency"] == "USD" else 1)
-    credits = (credits * Decimal(100 + settings.ican_image_markup_percent) / 100).quantize(
-        Decimal("0.000001"), rounding=ROUND_CEILING)
+    # ICAN retail price rounds the upstream CNY cost up to one fen per image.
+    credits = credits.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
     return {"upstream_price": str(base), "currency": spec["currency"], "credits": str(credits),
-            "markup_percent": settings.ican_image_markup_percent,
+            "markup_percent": 0, "rounding": "ceil_cent",
             "usd_to_cny_rate": str(settings.billing_usd_to_cny_rate)}
 
 
