@@ -61,6 +61,17 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "NVIDIA 显卡或驱动"):
                 _run_and_stream(["python"], cwd=Path("."), env={})
 
+    def test_index_tts_dll_failure_has_runtime_repair_instructions(self):
+        process = SimpleNamespace(stdout=[
+            'OSError: [WinError 126] Error loading "torch/lib/c10.dll" or one of its dependencies.\n'
+        ], wait=lambda: 1)
+        with patch("module1_agent_director.subprocess.Popen", return_value=process):
+            with self.assertRaises(RuntimeError) as raised:
+                _run_and_stream(["python"], cwd=Path("."), env={})
+        self.assertIn('Visual C++ x64', str(raised.exception))
+        self.assertIn('vc_redist.x64.exe', str(raised.exception))
+        self.assertIn('尚未开始配音', str(raised.exception))
+
     def test_tts_subtitle_sync_maps_by_time_not_sentence_number(self):
         with tempfile.TemporaryDirectory() as temporary:
             project_dir = Path(temporary)

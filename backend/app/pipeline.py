@@ -98,6 +98,14 @@ class GenerationPaused(RuntimeError):
     """A step-mode checkpoint deliberately stopped the pipeline."""
 
 
+class CommandExecutionError(RuntimeError):
+    """Keep the child's exit status available for narrowly scoped recovery."""
+
+    def __init__(self, message: str, return_code: int):
+        super().__init__(message)
+        self.return_code = return_code
+
+
 def default_project_name() -> str:
     return f"项目_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:4].upper()}"
 
@@ -1622,12 +1630,14 @@ def resolve_asr_python() -> str:
     if configured:
         detail = f": {last_error}" if last_error else ""
         raise RuntimeError(
-            f"ASR_PYTHON 不可用或缺少 faster-whisper/ctranslate2: {configured}{detail}"
+            f"字幕识别运行环境检查未通过: {configured}{detail}。"
+            "配音检查点已保留；若首次加载超时，可稍后断点续跑。"
         )
     raise RuntimeError(
         "未找到可运行 Faster-Whisper 的 Python。请安装 requirements.txt，"
         "或通过 ASR_PYTHON 指定已有环境。已检查: "
         + ", ".join(checked)
+        + (f"；检查详情：{last_error}" if last_error else "")
     )
 
 
@@ -1718,9 +1728,39 @@ def run_command(
     store.raise_if_cancelled(job)
     if return_code != 0:
         if fatal_error:
-            raise RuntimeError(fatal_error)
-        raise RuntimeError(f"{label} 失败，退出码 {return_code}")
+            raise CommandExecutionError(fatal_error, return_code)
+        raise CommandExecutionError(f"{label} 失败，退出码 {return_code}", return_code)
     store.log(job, f"完成: {label}")
+
+
+def run_asr_stage(job: Job, store: JobStore, asr_python: str) -> None:
+    """Recover native GPU crashes in a new CPU process, once, in auto mode."""
+    command = [asr_python, "module2_scene_director.py"]
+    try:
+        run_command(job, store, command, STEPS[1][1])
+    except CommandExecutionError as exc:
+        requested_device = os.getenv("ASR_DEVICE", "auto").strip().lower()
+        windows_native = exc.return_code & 0xFFFFFFFF
+        native_crash = windows_native in {
+            0xC0000005,  # access violation
+            0xC000001D,  # illegal instruction
+            0xC0000374,  # heap corruption
+            0xC0000409,  # native fail-fast
+        } or exc.return_code in {-11, -6, -4}
+        if requested_device != "auto" or not native_crash:
+            raise
+        store.raise_if_cancelled(job)
+        store.log(job, f"字幕识别进程发生原生崩溃（退出码 {exc.return_code}），自动改用 CPU / int8 重试一次；已生成配音保持不变。")
+        store.update(job, message="字幕识别正在转用 CPU，速度可能稍慢")
+        try:
+            run_command(job, store, command, STEPS[1][1] + "（CPU 回退）",
+                        extra_env={"ASR_DEVICE": "cpu"})
+        except CommandExecutionError as cpu_error:
+            raise RuntimeError(
+                f"字幕识别自动转 CPU 后仍未完成：{cpu_error}。"
+                "已有配音已保留；请检查运行环境或导出新的问题诊断包。"
+            ) from cpu_error
+        store.log(job, "CPU 字幕识别已完成，继续后续步骤；未重新生成配音。")
 
 
 def copy_artifacts(job: Job) -> dict[str, str]:
@@ -4796,12 +4836,7 @@ def run_pipeline(job: Job, store: JobStore, *, resume: bool = False) -> None:
         store.update(job, step="scene", progress=32, message=STEPS[1][1])
         asr_python = resolve_asr_python()
         store.log(job, f"ASR Python: {asr_python}")
-        run_command(
-            job,
-            store,
-            [asr_python, "module2_scene_director.py"],
-            STEPS[1][1],
-        )
+        run_asr_stage(job, store, asr_python)
 
     if request.get("subtitle_only"):
         store.raise_if_cancelled(job)

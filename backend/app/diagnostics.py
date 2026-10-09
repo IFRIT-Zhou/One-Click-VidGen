@@ -78,7 +78,7 @@ def _command_version(command: list[str]) -> str:
 
 def _package_versions() -> dict[str, str]:
     result: dict[str, str] = {}
-    for package in ("fastapi", "uvicorn", "pydantic", "requests", "torch", "transformers", "faster-whisper"):
+    for package in ("fastapi", "uvicorn", "pydantic", "requests", "torch", "transformers", "faster-whisper", "ctranslate2"):
         try:
             result[package] = metadata.version(package)
         except metadata.PackageNotFoundError:
@@ -156,7 +156,17 @@ def create_diagnostic_package(job: Any) -> Path:
             "nvidia_smi": _command_version(["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]),
         },
         "packages": _package_versions(),
+        "asr_settings": {
+            key: redact_text(os.getenv(key, default))
+            for key, default in (("ASR_DEVICE", "auto"), ("ASR_MODEL", "base"),
+                                 ("ASR_PYTHON", sys.executable))
+        },
     }
+    try:
+        channel = json.loads((PROJECT_ROOT / "launcher/update-channel.json").read_text(encoding="utf-8-sig"))
+        system_report["release"] = {key: channel.get(key) for key in ("release_id", "release_order")}
+    except (OSError, ValueError):
+        system_report["release"] = {"release_id": "unknown"}
     with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
             "README.txt",

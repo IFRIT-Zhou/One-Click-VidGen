@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.09.1",
-  "release_order": 2026100901,
-  "display_version": "2026.10.09 可选组件与讲解模式正式更新",
+  "release_id": "2026.10.09.2",
+  "release_order": 2026100902,
+  "display_version": "2026.10.09 字幕识别与配音诊断修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.09.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.09.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "制作桥和内置引擎管理正式更新；统一 comfyui/、tts/、models/ 可选组件目录，兼容旧目录。新增讲解员参考音频对口型，修复人物参考图、候选规划和重配对齐；同步云端号池、质量设置与密码找回。保留用户组件和素材；本更新不含引擎运行包、模型、SelfLift 或私有医学插件。",
-  "content_fingerprint": "8d073b18ea912bf6b63f1a8bfad86029e0aa25ddf4ffba06c0619aa6accc3168"
+  "notes": "修复自动字幕识别原生崩溃后的恢复：仅重试 CPU 识别并复用已保存配音。改善 IndexTTS 缺失 DLL 与识别环境检查提示，扩充诊断信息。兼容旧组件目录，保留用户配置、模型、插件及素材；不包含引擎运行包、模型、SelfLift 或私有医学插件。",
+  "content_fingerprint": "d69a5e795aca2cff97fc89d8554facec874cf8a99967c7451643497d32c09454"
 }

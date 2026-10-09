@@ -461,6 +461,15 @@ def _run_and_stream(
     return_code = process.wait()
     if return_code != 0:
         failure_text = "\n".join(diagnostic_tail).lower()
+        if (any(message in failure_text for message in ("winerror 126", "winerror 127", "dll load failed"))
+                and any(message in failure_text for message in ("torch", "c10.dll", "fbgemm.dll"))):
+            raise RuntimeError(
+                "本地 IndexTTS 的 PyTorch 运行库加载失败，尚未开始配音。"
+                "请先安装或修复微软 Visual C++ x64 运行库："
+                "https://aka.ms/vc14/vc_redist.x64.exe ，然后重启 OCV；"
+                "若仍失败，请检查本地 TTS 功能包是否完整、DLL 是否被安全软件隔离。"
+                "本地 GPU 配音还需要可用的 NVIDIA 显卡及驱动；也可切换集群/API 配音。"
+            )
         if any(message in failure_text for message in (
             "found no nvidia driver",
             "nvidia driver on your system is too old",
