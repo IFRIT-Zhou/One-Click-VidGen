@@ -33,6 +33,7 @@ class PortableOptionalTtsTest(unittest.TestCase):
             with (
                 patch.object(portable_preflight, "PROJECT_ROOT", root),
                 patch.object(portable_preflight, "MODEL_DIR", model_dir),
+                patch.object(portable_preflight, "TTS_ROOT", root / "tools" / "IndexTTS25"),
                 patch.object(
                     portable_preflight,
                     "WHISPER_MODEL_DIR",

@@ -17,6 +17,7 @@ One-Click VidGen 自研代码使用 `AGPL-3.0-only`。项目依赖的第三方�
 | FastAPI | https://github.com/fastapi/fastapi | 依上游许可证 |
 | PyTorch / Torchaudio | https://github.com/pytorch/pytorch | 依上游许可证 |
 | Faster-Whisper | https://github.com/SYSTRAN/faster-whisper | 依上游许可证 |
+| pypinyin 0.55.0 | https://github.com/mozillazg/python-pinyin | MIT；未修改的离线包位于 `backend/vendor/`，完整许可证随包保留 |
 | CTranslate2 | https://github.com/OpenNMT/CTranslate2 | 依上游许可证 |
 | Transformers | https://github.com/huggingface/transformers | 依上游许可证 |
 | IndexTTS / IndexTTS-2.5 | https://github.com/index-tts/index-tts | 代码与模型权重分别依上游条款 |

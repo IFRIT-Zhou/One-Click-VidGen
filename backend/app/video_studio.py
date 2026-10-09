@@ -873,7 +873,7 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         # an older audio-enabled profile must not require an audio node.
         parameters['comfyui_reference_audio'] = effective_reference_audio
         from .presenter_mode import presenter_config
-        record.setdefault('context', {}).setdefault('video_direction', {})['presenter'] = presenter_config(parameters, record['references'])
+        record.setdefault('context', {}).setdefault('video_direction', {})['presenter'] = presenter_config(parameters, record.get('references', []))
         if visual_changed:
             for shot in record['shots']:
                 _invalidate_shot_video(record, shot, '全局画面设定已调整')

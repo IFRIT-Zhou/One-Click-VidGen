@@ -1,0 +1,4 @@
+bin/
+pypinyin-0.55.0.dist-info/*
+!pypinyin-0.55.0.dist-info/METADATA
+!pypinyin-0.55.0.dist-info/licenses/

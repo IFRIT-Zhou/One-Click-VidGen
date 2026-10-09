@@ -127,7 +127,17 @@ def align_starts(texts, words, duration, reading_text=None):
         try:
             from pypinyin import lazy_pinyin, Style
         except ImportError:
-            raise original
+            # Existing portable installations do not run pip during safe updates.
+            # The unmodified pure-Python package includes its upstream MIT license.
+            vendor = Path(__file__).resolve().parents[1] / 'vendor'
+            if not (vendor / 'pypinyin' / '__init__.py').is_file():
+                raise original
+            if str(vendor) not in sys.path:
+                sys.path.append(str(vendor))
+            try:
+                from pypinyin import lazy_pinyin, Style
+            except ImportError:
+                raise original
         def phonemes(text):
             return [lazy_pinyin(c, style=Style.NORMAL)[0] if '\u4e00' <= c <= '\u9fff' else c
                     for c in text]

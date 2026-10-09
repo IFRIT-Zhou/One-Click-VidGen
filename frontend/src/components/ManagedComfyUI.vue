@@ -25,7 +25,7 @@ onMounted(()=>{refresh(true);checkNodes()});onBeforeUnmount(()=>{disposed=true;c
 
 <template>
  <article class="managed-engine">
-  <header><div><h2>OCV 内置视频引擎 <span>预览版</span></h2><p>独立 Python 环境，由 OCV 启动；外部 ComfyUI 配置会保留。</p></div><b class="state">{{!state?'检查中':!state.installed?'未安装':({stopped:'未启动',starting:'正在启动',ready:'已就绪',failed:'启动异常'})[state.state]}}</b></header>
+  <header><div><h2>OCV 内置视频引擎 <span>可选组件</span></h2><p>独立 Python 环境，由 OCV 启动；外部 ComfyUI 配置会保留。</p></div><b class="state">{{!state?'检查中':!state.installed?'未安装':({stopped:'未启动',starting:'正在启动',ready:'已就绪',failed:'启动异常'})[state.state]}}</b></header>
   <template v-if="state?.installed">
    <div class="engine-summary"><span>版本 {{state.version}}</span><span>{{state.models_ready?'所需模型已齐备':'模型尚未齐备'}}</span><span>{{mode==='managed'?'工作台连接：内置引擎':'工作台连接：外部 ComfyUI'}}</span></div>
    <div class="engine-actions">

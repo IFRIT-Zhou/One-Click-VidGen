@@ -2,7 +2,7 @@ const puppeteer=require('../../node_modules/puppeteer-core');
 const assert=require('node:assert/strict');
 (async()=>{const browser=await puppeteer.launch({executablePath:process.argv[2],headless:true,args:['--disable-gpu']});try{
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('http://127.0.0.1:5173/tests/presenter-mode.html');
+ await page.goto(`${process.env.OCV_TEST_BASE_URL || 'http://127.0.0.1:5173'}/tests/presenter-mode.html`);
  await page.waitForSelector('.presenter-settings input');
  await page.click('.presenter-settings input');
  await page.select('.presenter-settings select','person');

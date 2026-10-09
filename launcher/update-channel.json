@@ -1,17 +1,16 @@
 {
-  "release_id": "2026.10.08.1",
-  "release_order": 2026100801,
-  "display_version": "2026.10.08 制作桥与分镜返修更新",
+  "release_id": "2026.10.09.1",
+  "release_order": 2026100901,
+  "display_version": "2026.10.09 可选组件与讲解模式正式更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://download.oneclickvidgen.com/releases/2026.10.08.1/One-Click-VidGen-main.zip",
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.08.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.09.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增通用 Codex 制作桥与局部返修、动态分镜拆分和字幕调整、单镜及批量确认、15/30秒规划。修复场景与参考图、H3提示词转换。增加内置引擎和模型管理、comfyui_plugins用户节点目录。普通更新不含独立引擎运行环境、模型或SelfLift；用户素材与私人插件保留。",
-  "content_fingerprint": "54f52869299b3cc7b99439a9330abe0e50de71e800a94ba1e8c4e0edad089bda"
+  "notes": "制作桥和内置引擎管理正式更新；统一 comfyui/、tts/、models/ 可选组件目录，兼容旧目录。新增讲解员参考音频对口型，修复人物参考图、候选规划和重配对齐；同步云端号池、质量设置与密码找回。保留用户组件和素材；本更新不含引擎运行包、模型、SelfLift 或私有医学插件。",
+  "content_fingerprint": "8d073b18ea912bf6b63f1a8bfad86029e0aa25ddf4ffba06c0619aa6accc3168"
 }

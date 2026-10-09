@@ -58,6 +58,14 @@ try {
         portable_overlay_min_order = 1
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sourceRoot 'launcher\update-channel.json') -Encoding UTF8
 
+    $optionalProtected = @('comfyui\engine\python.exe', 'comfyui\custom_nodes\user_node\__init__.py', 'tts\python\python.exe', 'models\comfyui\model.bin', 'models\tts\model.bin')
+    foreach ($relative in $optionalProtected) {
+        foreach ($base in @($fakeRoot, $sourceRoot)) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $base $relative)) -Force | Out-Null
+        }
+        Set-Content -LiteralPath (Join-Path $fakeRoot $relative) -Value 'optional-user-keep' -Encoding UTF8
+        Set-Content -LiteralPath (Join-Path $sourceRoot $relative) -Value 'must-not-overwrite' -Encoding UTF8
+    }
     Compress-Archive -LiteralPath $sourceRoot -DestinationPath $package -CompressionLevel Fastest
     & $helper `
         -Mode portable `
@@ -87,6 +95,12 @@ try {
         Write-Host "PASS $($assertion.Name)"
     }
 
+    foreach ($relative in $optionalProtected) {
+        if ((Get-Content -LiteralPath (Join-Path $fakeRoot $relative) -Raw).Trim() -ne 'optional-user-keep') {
+            throw "Optional component was overwritten: $relative"
+        }
+        Write-Host "PASS optional component protected: $relative"
+    }
     $legacyRoot = Join-Path $fixture 'legacy-project'
     $legacyPackageDir = Join-Path $legacyRoot 'runtime\temp\ocv-updates'
     $legacyPackage = Join-Path $legacyPackageDir 'update.zip'

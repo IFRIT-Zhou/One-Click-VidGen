@@ -182,6 +182,17 @@ def assert_no_private_plugins(head: str) -> None:
     private = [p for p in paths if p.startswith('plugins/private_')]
     if private:
         raise RuntimeError('拒绝公开发布：提交包含私有插件：' + ', '.join(private))
+    forbidden = []
+    for path in paths:
+        lower = path.lower()
+        if (lower.startswith(('runtime/', 'models/', 'workspace/', 'output/', 'archives/', '.codex/'))
+                or lower.startswith(('comfyui/', 'tts/')) and lower not in ('comfyui/readme.md', 'tts/readme.md')
+                or 'selflift' in lower
+                or lower == '.env'
+                or lower.endswith(('.safetensors', '.ckpt', '.pth', '.pt'))):
+            forbidden.append(path)
+    if forbidden:
+        raise RuntimeError('拒绝公开发布：包含本地数据、权重或未纳入公共分发的节点：' + ', '.join(forbidden))
 
 
 def upload_modelscope(channel: dict[str, Any], archive: Path, repo_id: str) -> None:
