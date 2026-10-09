@@ -3569,6 +3569,35 @@ def _segment_archives_match(source: Path, target: Path) -> bool:
     return True
 
 
+def _sync_segment_archive_files(source: Path, target: Path) -> None:
+    """Publish files without renaming a directory Windows readers may still hold.
+
+    Keep a rollback copy and publish the manifest last. The checkpoint revision
+    is written by the caller only after every file has been committed.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    backup = target.with_name(f".{target.name}.{uuid.uuid4().hex}.bak")
+    shutil.copytree(target, backup)
+    files = sorted((p for p in source.rglob("*") if p.is_file()),
+                   key=lambda p: (p.name == "manifest.json", str(p)))
+    published = []
+    try:
+        for path in files:
+            relative = path.relative_to(source)
+            _copy_file_atomic(path, target / relative)
+            published.append(relative)
+    except Exception:
+        for relative in reversed(published):
+            old = backup / relative
+            if old.is_file():
+                _copy_file_atomic(old, target / relative)
+            else:
+                (target / relative).unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any]:
     """Commit one coherent refined generation to output, workspace and job checkpoint."""
     revision = _step_audio_revision(project_dir)
@@ -3587,20 +3616,7 @@ def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any
     source_segments = project_dir / "other" / "tts_segments"
     target_segments = JOBS_DIR / job.id / "artifacts" / "tts_segments"
     if not _segment_archives_match(source_segments, target_segments):
-        pending = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.tmp")
-        shutil.copytree(source_segments, pending)
-        backup = target_segments.with_name(f".{target_segments.name}.{uuid.uuid4().hex}.bak")
-        try:
-            if target_segments.exists():
-                os.replace(target_segments, backup)
-            os.replace(pending, target_segments)
-            shutil.rmtree(backup, ignore_errors=True)
-        except Exception:
-            if backup.exists() and not target_segments.exists():
-                os.replace(backup, target_segments)
-            raise
-        finally:
-            shutil.rmtree(pending, ignore_errors=True)
+        _sync_segment_archive_files(source_segments, target_segments)
     _write_json_atomic(JOBS_DIR / job.id / "artifacts" / STEP_AUDIO_REVISION_FILENAME, revision)
     job.request["_step_audio_revision"] = revision["fingerprint"]
     job.request["_step_audio_sentence_count"] = revision["sentence_count"]

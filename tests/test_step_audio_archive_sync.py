@@ -3,10 +3,49 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.app.pipeline import Job, _segment_archives_match, sync_refined_step_audio_assets
+from backend.app.pipeline import Job, _segment_archives_match, _sync_segment_archive_files, sync_refined_step_audio_assets
 
 
 class StepAudioArchiveSyncTest(unittest.TestCase):
+    def test_changed_archive_never_renames_open_directory(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source, target = root / 'source', root / 'target'
+            source.mkdir(); target.mkdir()
+            for path, content in ((source, b'new'), (target, b'old')):
+                (path / 'segment.wav').write_bytes(content)
+                (path / 'manifest.json').write_bytes(content)
+            real_replace = os.replace
+            def deny_directory_replace(src, dst):
+                if Path(src).is_dir():
+                    raise PermissionError(5, 'directory in use')
+                return real_replace(src, dst)
+            with patch('backend.app.pipeline.os.replace', side_effect=deny_directory_replace):
+                _sync_segment_archive_files(source, target)
+            self.assertEqual((target / 'segment.wav').read_bytes(), b'new')
+            self.assertEqual((target / 'manifest.json').read_bytes(), b'new')
+
+    def test_failed_commit_restores_old_checkpoint(self):
+        import backend.app.pipeline as pipeline
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source, target = root / 'source', root / 'target'
+            source.mkdir(); target.mkdir()
+            for path, content in ((source, b'new'), (target, b'old')):
+                (path / 'segment.wav').write_bytes(content)
+                (path / 'manifest.json').write_bytes(content)
+            original = pipeline._copy_file_atomic
+            def fail_manifest(src, dst):
+                if src == source / 'manifest.json':
+                    raise PermissionError(5, 'busy')
+                original(src, dst)
+            with patch('backend.app.pipeline._copy_file_atomic', side_effect=fail_manifest):
+                with self.assertRaises(PermissionError):
+                    _sync_segment_archive_files(source, target)
+            self.assertEqual((target / 'segment.wav').read_bytes(), b'old')
+            self.assertEqual((target / 'manifest.json').read_bytes(), b'old')
+
     def test_identical_archive_is_not_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

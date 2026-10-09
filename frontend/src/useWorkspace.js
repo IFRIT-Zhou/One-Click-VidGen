@@ -184,6 +184,30 @@ const ttsSegmentIsPlaying = ref(false)
 const ttsSegmentCurrentTime = ref(0)
 const ttsSegmentDuration = ref(0)
 let ttsSegmentAudio = null
+let suspendedTtsPlayers = []
+
+function releaseTtsPreviewPlayers() {
+  suspendedTtsPlayers = []
+  for (const player of document.querySelectorAll('audio')) {
+    const source = player.getAttribute('src')
+    player.pause()
+    if (source) {
+      suspendedTtsPlayers.push({ player, source })
+      player.removeAttribute('src')
+      player.load()
+    }
+  }
+}
+
+function restoreTtsPreviewPlayers() {
+  for (const { player, source } of suspendedTtsPlayers) {
+    if (player.isConnected && !player.getAttribute('src')) {
+      player.src = source
+      player.load()
+    }
+  }
+  suspendedTtsPlayers = []
+}
 const visualSelfReferenceMacroId = ref('')
 const visualReferenceUploads = ref([])
 const visualReferenceUploading = ref(false)
@@ -3515,6 +3539,7 @@ async function pollTtsEditorStatus() {
           await Promise.all([loadTtsEditor(), loadVisualEditor({ preservePage: true })])
         }
       }
+      restoreTtsPreviewPlayers()
     }
   } catch {
     // Main job log remains visible if one polling request fails.
@@ -3556,6 +3581,16 @@ async function regenerateSelectedTtsSegments() {
     ? `\n其中 ${subtitleSyncCount} 句会在重配成功后同步修改并保存字幕。`
     : ''
   if (!window.confirm(`重新生成选中的 ${count} 句配音？${pronunciationNotice}${subtitleSyncNotice}\n\n完成后整条音频、字幕时间戳和画面时间线会自动更新，现有视频需点击“重新渲染”才能应用。`)) return
+  // Release preview requests before the backend commits replacement audio.
+  resetTtsSegmentAudio()
+  if (ttsBoundaryPreviewAudio) {
+    ttsBoundaryPreviewAudio.onended = null
+    ttsBoundaryPreviewAudio.pause()
+    ttsBoundaryPreviewAudio.removeAttribute('src')
+    ttsBoundaryPreviewAudio.load()
+    ttsBoundaryPreviewAudio = null
+  }
+  releaseTtsPreviewPlayers()
   try {
     const refineSettings = {
       tts_speed: ttsRefineForm.tts_speed,
@@ -3584,6 +3619,7 @@ async function regenerateSelectedTtsSegments() {
     startTtsEditorPolling()
   } catch (error) {
     ttsEditor.value.task = { status: 'failed', message: error.message || '无法启动单句重配音' }
+    restoreTtsPreviewPlayers()
   }
 }
 

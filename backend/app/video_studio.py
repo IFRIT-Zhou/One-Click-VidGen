@@ -761,6 +761,11 @@ def read(path):
         from .video_generation import recover_interrupted
         recover_interrupted(path, record)
         save(path, record)
+    elif record['status'] == 'exporting' and str(path) not in ACTIVE:
+        message = '上次导出合成已中断；已生成素材保留，请重新点击导出合成。'
+        record.update(status='export_failed', error=message, revision=record['revision'] + 1)
+        record.setdefault('logs', []).append(message)
+        save(path, record)
     if record['status'] == 'video_review':
         from .video_generation import recover_missing_clips
         if recover_missing_clips(path, record):

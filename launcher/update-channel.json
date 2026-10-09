@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.09.2",
-  "release_order": 2026100902,
-  "display_version": "2026.10.09 字幕识别与配音诊断修复",
+  "release_id": "2026.10.09.3",
+  "release_order": 2026100903,
+  "display_version": "2026.10.09 导出恢复与重配修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.09.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.09.3/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复自动字幕识别原生崩溃后的恢复：仅重试 CPU 识别并复用已保存配音。改善 IndexTTS 缺失 DLL 与识别环境检查提示，扩充诊断信息。兼容旧组件目录，保留用户配置、模型、插件及素材；不包含引擎运行包、模型、SelfLift 或私有医学插件。",
-  "content_fingerprint": "d69a5e795aca2cff97fc89d8554facec874cf8a99967c7451643497d32c09454"
+  "notes": "修复后台重启后动态导出一直忙碌：重新打开项目即可重试合成，保留已生成素材。修复试听后单句重配的 Windows 目录提交错误，自动释放播放器并安全同步配音检查点。保留用户配置、模型、插件及素材。",
+  "content_fingerprint": "f033985f3541c0e8ed7b285f1d0db7b97551fd2f6899671b6fff9dbcdf503719"
 }
