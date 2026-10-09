@@ -306,12 +306,13 @@
           <div class="cloud-auth-dialog-head">
             <div>
               <span class="cluster-card-kicker">ONE-CLICK VIDGEN CLOUD</span>
-              <h2 id="cloud-auth-title">{{ cloudSession.authenticated ? '云端账户' : '登录云端服务' }}</h2>
+              <h2 id="cloud-auth-title">{{ cloudRecoveryOpen ? '忘记密码' : cloudSession.authenticated ? '云端账户' : '登录云端服务' }}</h2>
             </div>
             <button class="cloud-auth-close" type="button" aria-label="关闭登录窗口" @click="cloudLoginOpen = false">×</button>
           </div>
 
-          <div v-if="!cloudSession.configured" class="cluster-notice warning">
+          <CloudPasswordRecovery v-if="cloudRecoveryOpen" :initial-email="cloudLoginForm.email" @back="closeCloudRecovery" @reset="onCloudPasswordReset" />
+          <div v-else-if="!cloudSession.configured" class="cluster-notice warning">
             云端服务正在部署中，登录入口已经准备完毕。服务上线后会由程序自动连接，无需用户填写服务器地址。
           </div>
           <template v-else-if="cloudSession.authenticated">
@@ -332,6 +333,7 @@
           <form v-else class="cloud-auth-form" @submit.prevent="loginCloud">
             <label><span>邮箱</span><input v-model.trim="cloudLoginForm.email" type="email" autocomplete="email" placeholder="请输入注册邮箱" required /></label>
             <label><span>密码</span><input v-model="cloudLoginForm.password" type="password" autocomplete="current-password" placeholder="请输入密码" required /></label>
+            <button class="ghost-btn cloud-auth-recovery" type="button" @click="openCloudRecovery">忘记密码？通过邮箱找回</button>
             <button class="primary-btn cloud-auth-submit" type="submit" :disabled="cloudBusy">
               {{ cloudBusy ? '正在登录…' : '登录' }}
             </button>
@@ -2218,6 +2220,7 @@
                         <label><span>云端密码</span><input v-model="cloudLoginForm.password" type="password" /></label>
                         <button class="primary-btn" type="button" :disabled="cloudBusy" @click="loginCloud">登录集群</button>
                       </div>
+                      <button class="ghost-btn cloud-auth-recovery" type="button" @click="openCloudRecovery">忘记密码？通过邮箱找回</button>
                     </template>
                     <small v-if="cloudError" class="script-upload-error">{{ cloudError }}</small>
                   </div>
@@ -2722,10 +2725,11 @@
 </template>
 
 <script>
+import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
 import CloudImageQuality from './components/CloudImageQuality.vue'
 import { useWorkspace } from './useWorkspace'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
 import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
-export default { components: { CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

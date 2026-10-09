@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="集中管理 One-Click VidGen 视频项目、脚本、镜头与制作进度。" />
+    <meta name="theme-color" content="#08262d" />
+    <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
+    <link rel="stylesheet" href="/assets/projects.css?v=20260930-ux4" />
+    <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+    <title>我的作品｜One-Click VidGen</title>
+    <link rel="stylesheet" href="/assets/public-nav.css?v=20260930-nav1" />
+    <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+  </head>
+  <body class="projects-body" data-page="projects">
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="/" aria-label="One-Click VidGen 首页"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a>
+        <nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/studio/">开始创作</a><a class="active" aria-current="page" href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a><a href="/contact/">联系我们</a></nav>
+        <button class="header-action header-button" id="header-account" data-account-trigger type="button">登录账户</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="project-hero">
+        <div class="shell project-hero-inner">
+          <div class="project-hero-copy">
+            <div class="eyebrow"><span></span>PROJECT LIBRARY</div>
+            <h1>我的作品</h1>
+            <p>从这里继续编辑已有作品。新创作从文案开始，已保存的草稿、镜头和素材记录随时可回来完善。</p>
+            <div class="hero-actions"><a class="button primary" href="/studio/">开始创作 <span>＋</span></a><button class="button secondary" id="import-project" type="button">导入项目备份</button><input id="project-file" type="file" accept="application/json,.json" hidden /></div>
+          </div>
+          <div class="project-hero-board" aria-hidden="true">
+            <div class="board-glow"></div>
+            <div class="board-head"><span><i></i> CREATIVE WORKSPACE</span><b>自动保存</b></div>
+            <div class="board-content">
+              <div class="board-title"><small>正在制作</small><strong>城市夜行 · 品牌短片</strong></div>
+              <div class="board-rail"><span class="done">脚本</span><i></i><span class="active">镜头</span><i></i><span>字幕</span><i></i><span>成片</span></div>
+              <div class="board-scenes"><span><b>01</b><i></i></span><span><b>02</b><i></i></span><span><b>03</b><i></i></span></div>
+            </div>
+            <div class="board-foot"><span>8 个镜头</span><span>01:24</span><span>16:9</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="project-library shell" aria-labelledby="library-title">
+        <div class="library-head">
+          <div><span class="section-kicker">YOUR CREATIONS</span><h2 id="library-title">本机作品</h2><p id="project-summary">你的项目只保存在当前浏览器中。</p></div>
+          <div class="library-tools"><label class="search-box" for="project-search"><span aria-hidden="true">⌕</span><input id="project-search" type="search" placeholder="搜索项目或脚本" autocomplete="off" /></label><select id="project-sort" aria-label="项目排序"><option value="updated">最近更新</option><option value="created">创建时间</option><option value="title">项目名称</option></select></div>
+        </div>
+        <div class="project-grid" id="project-grid" aria-live="polite"></div>
+        <div class="empty-projects" id="empty-projects" hidden>
+          <div class="empty-mark"><span></span><i></i><b>＋</b></div>
+          <h2>还没有保存的作品</h2><p>开始创作后，文案会自动保留为草稿。随时回来继续编辑。</p><a class="button primary" href="/studio/">开始创作</a>
+        </div>
+      </section>
+      <section class="cloud-project-library shell" id="cloud-projects" aria-labelledby="cloud-project-title">
+        <h2 id="cloud-project-title">已同步的作品</h2>
+        <p>查看当前账号的作品。下载会创建本机副本，保留现有编辑；素材引用随作品保存，原始媒体请单独备份。</p>
+        <div class="cloud-project-toolbar"><button type="button" id="cloud-project-refresh">刷新作品</button><a href="/studio/">登录 / 切换账户</a><button type="button" id="cloud-project-previous" disabled>上一页</button><button type="button" id="cloud-project-next" disabled>下一页</button></div>
+        <p id="cloud-project-message" role="status" aria-live="polite">点击“读取云端项目”查看当前账户的项目。本机作品不会自动上传。</p>
+        <div id="cloud-project-list"></div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><a href="/projects/">我的作品</a><span>本地自动保存</span></div></footer>
+
+    <dialog class="project-dialog" id="project-dialog" aria-labelledby="project-dialog-title">
+      <form method="dialog" id="project-form">
+        <div class="dialog-accent"></div>
+        <div class="dialog-heading"><div><span>NEW PROJECT</span><h2 id="project-dialog-title">开始一个新项目</h2><p>先给灵感一个名字，脚本可以稍后继续完善。</p></div><button class="dialog-close" id="project-dialog-close" type="button" aria-label="关闭">×</button></div>
+        <label class="project-field"><span>项目名称</span><input id="project-title" maxlength="80" placeholder="例如：城市夜行品牌短片" required /></label>
+        <label class="project-field"><span>初始脚本 <small>选填</small></span><textarea id="project-script" maxlength="20000" rows="6" placeholder="粘贴文案，稍后可在项目工作台继续修改…"></textarea></label>
+        <div class="dialog-actions"><button class="button secondary" id="cancel-project" type="button">取消</button><button class="button primary" type="submit">创建并打开</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="delete-dialog" aria-labelledby="delete-title">
+      <form method="dialog"><div class="confirm-icon">!</div><h2 id="delete-title">删除这个项目？</h2><p id="delete-copy">项目及其镜头、字幕和素材记录将从当前浏览器移除。</p><div class="dialog-actions"><button class="button secondary" id="cancel-delete" type="button">保留项目</button><button class="button danger" id="confirm-delete" type="button">确认删除</button></div></form>
+    </dialog>
+
+    <div class="project-toast" id="project-toast" role="status" aria-live="polite"></div>
+    <script src="/assets/session-refresh.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
+    <script src="/assets/projects.js?v=20260930-ux4" defer></script>
+    <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+  </body>
+</html>

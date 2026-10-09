@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="One-Click VidGen 逐句配音编辑器，独立调整朗读文本、语速、停顿与情绪。" />
+    <meta name="theme-color" content="#082f32" />
+    <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/voice-editor.css?v=20260930-ux4" />
+    <title>逐句配音｜One-Click VidGen</title>
+    <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+</head>
+  <body>
+    <a class="skip-link" href="#voice-list">跳到配音句段</a>
+    <header class="topbar">
+      <a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>逐句配音工作台</small></span></a>
+      <div class="project-heading"><span>当前项目</span><strong id="project-name">正在读取…</strong></div>
+      <div class="top-actions">
+        <span class="save-state" id="save-state" role="status" aria-live="polite">已保存到本机</span>
+        <a class="button ghost" id="back-project" href="/projects/">返回当前项目</a>
+        <button class="button ghost save-retry" id="save-project" type="button" hidden>重试保存</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="side-panel">
+        <section class="side-intro"><span class="eyebrow">VOICE DIRECTOR</span><h1>逐句控制<br />声音的节奏</h1><p>字幕负责观众看到什么，朗读文本决定声音说什么。两者可以独立调整，修改会自动保存到本机。</p></section>
+        <section class="side-block">
+          <h2>全局设置</h2>
+          <label class="field"><span>默认语速 <output id="global-speed-value">1.00×</output></span><input id="global-speed" type="range" min="0.5" max="2" step="0.05" value="1" /></label>
+          <label class="field"><span>默认句后停顿</span><select id="global-pause"><option value="0">不留停顿</option><option value="200">0.2 秒</option><option value="400" selected>0.4 秒</option><option value="700">0.7 秒</option><option value="1000">1.0 秒</option></select></label>
+          <label class="field"><span>默认情绪</span><select id="global-emotion"><option value="natural">自然</option><option value="calm">平静</option><option value="happy">愉快</option><option value="sad">悲伤</option></select></label>
+          <button class="wide-button" id="apply-global" type="button">应用到全部句段</button>
+        </section>
+        <section class="side-block"><h2>云端音色</h2><label class="field"><span>本句生成使用的音色</span><select id="cloud-voice" aria-label="云端音色"><option value="">请先登录</option></select></label><button class="wide-button" id="reload-voices" type="button">刷新音色与任务</button><p id="cloud-state" role="status">登录后自动返回当前作品。</p><a class="cloud-login" href="/studio/">登录账号</a><p class="cloud-hint">停顿保存在项目中，供合成使用。语速与情绪用于云端生成；本机试听只供校对，不代表云端音色。</p></section>
+        <section class="side-block stats-card"><h2>配音进度</h2><div class="progress-track"><i id="progress-bar"></i></div><strong id="progress-text">0 / 0 已生成配音</strong><p>每句可独立生成、试听和下载；修改文本后保留上一版音频。</p></section>
+        <section class="browser-voice"><span>LOCAL PREVIEW</span><strong>浏览器试听</strong><p>试听使用设备内置语音，仅用于校对，不代表最终云端音色效果。</p><button id="stop-preview" type="button">停止当前试听</button></section>
+      </aside>
+
+      <section class="editor-area">
+        <div class="editor-head"><div><span class="breadcrumb">项目 / 声音制作 / 逐句配音</span><h2>配音句段</h2><p id="summary">0 个句段 · 0 字</p></div><button class="button secondary" id="add-line" type="button">＋ 添加句段</button></div>
+        <div class="notice" id="notice" role="status" aria-live="polite"></div>
+        <div class="voice-list" id="voice-list" aria-live="polite"></div>
+        <div class="empty-state" id="empty-state"><div class="empty-mark">VO</div><h3>还没有可编辑的句段</h3><p>先在字幕页创建字幕，或在这里添加一个配音句段。</p><button class="button primary" id="empty-add" type="button">添加第一句</button></div>
+      </section>
+    </main>
+
+    <template id="voice-template">
+      <article class="voice-row">
+        <div class="row-top"><div class="line-id"><span class="line-number"></span><span class="status-badge">草稿</span></div><div class="row-top-actions"><button class="preview-line" type="button">本机试听</button><button class="generate-line" type="button">云端生成</button><button class="cloud-play" type="button">本机参考试听</button><button class="cloud-download" type="button">下载 WAV</button><button class="ready-line" type="button" hidden>标记就绪</button><button class="more-remove" type="button">删除</button></div></div>
+        <div class="text-grid">
+          <div class="source-copy"><span>字幕文本</span><p class="subtitle-copy"></p></div>
+          <label class="speech-copy"><span>朗读文本 <small>可与字幕不同</small></span><textarea class="speech-text" rows="3" aria-label="朗读文本"></textarea></label>
+        </div>
+        <div class="controls-grid">
+          <label class="speed-control"><span>语速 <output>1.00×</output></span><input class="line-speed" type="range" min="0.5" max="2" step="0.05" /></label>
+          <label><span>句后停顿</span><select class="line-pause"><option value="0">无</option><option value="200">0.2 秒</option><option value="400">0.4 秒</option><option value="700">0.7 秒</option><option value="1000">1.0 秒</option><option value="1500">1.5 秒</option></select></label>
+          <label><span>表达情绪</span><select class="line-emotion"><option value="natural">自然</option><option value="calm">平静</option><option value="happy">愉快</option><option value="sad">悲伤</option></select></label>
+          <div class="structure-actions"><button class="split-line" type="button">拆分句段</button><button class="merge-line" type="button">合并下句</button></div>
+        </div>
+      </article>
+    </template>
+    <script src="/assets/session-refresh.js?v=20260930-ux4" defer></script>
+    <script src="/assets/voice-cloud.js?v=20260930-ux4" defer></script>
+    <script src="/assets/voice-editor.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-cloud.js?v=20260930-ux4" defer></script>
+</body>
+</html>

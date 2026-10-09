@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#092f2b">
+  <meta name="description" content="One-Click VidGen 镜头视觉编辑器：管理角色参考图、镜头提示词与图片版本。">
+  <title>视觉编辑器｜One-Click VidGen</title>
+  <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png">
+  <link rel="stylesheet" href="/assets/visual-editor.css?v=20260930-ux4">
+  <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+</head>
+<body>
+  <header class="editor-header">
+    <a class="brand" href="/projects/" aria-label="我的作品"><img src="/one-click-vidgen-logo.png" alt=""><span><strong>One-Click VidGen</strong><small>VISUAL EDITOR</small></span></a>
+    <div class="project-heading"><span>画面编辑</span><strong id="project-title">正在读取项目…</strong></div>
+    <div class="header-actions">
+      <span class="save-state" id="save-state" role="status"><i></i>已保存到本机</span>
+      <a class="ghost-button" id="back-project" href="/projects/">返回当前项目</a>
+      <a class="primary-button" id="open-video" href="/video-editor/">进入视频编辑</a>
+    </div>
+  </header>
+
+  <main class="editor-shell">
+    <section class="notice hidden" id="page-notice" role="status"></section>
+
+    <section class="character-panel" aria-labelledby="character-title">
+      <div class="section-title">
+        <div><span>CHARACTER LIBRARY</span><h1 id="character-title">角色档案</h1><p>最多创建 3 个角色。参考图会在浏览器内压缩后保存到本机项目。</p></div>
+        <span class="count-pill" id="character-count">0 / 3</span>
+      </div>
+      <div class="character-grid" id="character-grid"></div>
+      <button class="add-character" id="add-character" type="button"><b>＋</b><span><strong>添加角色档案</strong><small>上传参考图并填写连续性特征</small></span></button>
+    </section>
+
+    <div class="workbench">
+      <aside class="scene-sidebar">
+        <div class="panel-heading"><div><span>SHOT LIST</span><h2>镜头列表</h2></div><b id="scene-count">0 镜</b></div>
+        <div class="scene-list" id="scene-list"></div>
+      </aside>
+
+      <section class="canvas-panel">
+        <div class="canvas-toolbar">
+          <div><span id="scene-kicker">镜头 —</span><h2 id="scene-title">选择一个镜头</h2></div>
+          <div class="undo-actions"><button id="undo-button" type="button" title="撤销">↶ <span>撤销</span></button><button id="redo-button" type="button" title="恢复">↷ <span>恢复</span></button></div>
+        </div>
+        <div class="artboard" id="artboard">
+          <img id="current-image" alt="当前镜头画面">
+          <div class="empty-art" id="empty-art"><span>◫</span><strong>画面等待生成或替换</strong><small>上传本地图片，或提交参考图驱动的整图重绘</small></div>
+          <div class="generation-state hidden" id="generation-state"><i></i><strong>历史待生成记录</strong><small>点击整图重绘可提交新的云端图片任务。</small></div>
+          <div class="shot-badge" id="shot-badge">SHOT —</div>
+        </div>
+        <div class="image-meta"><span id="image-status">尚无可用画面</span><span id="image-dimensions">—</span></div>
+      </section>
+
+      <aside class="inspector">
+        <div class="inspector-head"><span>INSPECTOR</span><h2>画面设定</h2></div>
+        <label class="field"><span>镜头标题</span><input id="shot-title-input" maxlength="120" placeholder="镜头标题"></label>
+        <label class="field"><span>生图提示词</span><textarea id="prompt-input" maxlength="3000" rows="7" placeholder="描述构图、光线、人物动作和场景氛围"></textarea><small><b id="prompt-count">0</b> / 3000</small></label>
+        <fieldset class="character-binding"><legend>参考角色</legend><p>选择本镜头要保持一致的角色。</p><div id="character-options" class="character-options"></div></fieldset>
+        <div class="action-stack">
+          <button class="primary-button redraw-button" id="redraw-button" type="button"><span>✦</span><b>参考图驱动整图重绘</b><small>提交当前提示词与所选角色</small></button>
+          <label class="upload-image"><input id="local-image-input" type="file" accept="image/jpeg,image/png,image/webp"><span>↑</span><b>用本地图片替换</b></label>
+        </div>
+        <p class="cloud-generation-note">点击整图重绘将上传所选角色参考图并创建云端计费任务，按现有图片服务规则预占和结算积分。生成成功后采用新图，原图保留为历史版本。<a href="/studio/">登录账号</a></p>
+        <div class="inline-notice" id="action-message" role="status"></div>
+      </aside>
+    </div>
+
+    <section class="version-panel">
+      <div class="section-title compact"><div><span>VERSION HISTORY</span><h2>图片版本</h2><p>设为当前、删除或回看每一次替换与待生成记录。</p></div><span class="count-pill" id="version-count">0 个版本</span></div>
+      <div class="version-list" id="version-list"></div>
+    </section>
+  </main>
+
+  <dialog id="character-dialog">
+    <form method="dialog" id="character-form">
+      <div class="dialog-head"><div><span>CHARACTER PROFILE</span><h2 id="character-dialog-title">新建角色档案</h2></div><button value="cancel" aria-label="关闭" type="submit">×</button></div>
+      <div class="portrait-upload">
+        <img id="character-preview" alt="角色参考图预览">
+        <div id="character-placeholder"><span>＋</span><strong>选择参考图</strong><small>JPG、PNG 或 WebP</small></div>
+        <label><input id="character-image" type="file" accept="image/jpeg,image/png,image/webp"><span>更换图片</span></label>
+      </div>
+      <div class="dialog-fields">
+        <label class="field"><span>档案名称</span><input id="character-name" maxlength="40" required placeholder="例如：林夏"></label>
+        <label class="field"><span>角色定位</span><input id="character-role" maxlength="60" placeholder="例如：女主角 / 产品经理"></label>
+        <label class="field"><span>外观与连续性描述</span><textarea id="character-description" maxlength="500" rows="5" placeholder="发型、服装、年龄、气质及需要在镜头间保持一致的特征"></textarea></label>
+      </div>
+      <div class="dialog-actions"><button class="danger-link hidden" id="delete-character" value="none" type="button">删除档案</button><button class="ghost-button" value="cancel" type="submit">取消</button><button class="primary-button" id="save-character" value="none" type="button">保存角色</button></div>
+    </form>
+  </dialog>
+
+  <script src="/assets/visual-editor.js?v=20260930-ux4" defer></script>
+  <script src="/assets/session-refresh.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-cloud.js?v=20260930-ux4" defer></script>
+</body>
+</html>

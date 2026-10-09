@@ -4,10 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="One-Click VidGen 为视频创作者提供云端 GPU 配音加速、音色管理与任务调度服务。" />
+    <meta name="360-site-verification" content="ef62dae7255270e863422fe044b1e5ef" />
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
-    <link rel="stylesheet" href="/assets/site.css?v=20260810.3" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
     <title>One-Click VidGen｜云端 GPU 视频创作服务</title>
+    <link rel="stylesheet" href="/assets/public-nav.css?v=20260930-nav1" />
+    <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
   </head>
   <body data-page="home">
     <header class="site-header">
@@ -16,13 +19,8 @@
           <img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" />
           <span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span>
         </a>
-        <nav class="nav" aria-label="主导航">
-          <a class="active" href="/">首页</a>
-          <a href="/services/">产品与服务</a>
-          <a href="/studio/">云端工作台</a>
-          <a href="/recharge/">积分充值</a>
-        </nav>
-        <a class="header-action" href="/studio/">开始创作</a>
+        <nav class="nav" aria-label="主导航"><a class="active" aria-current="page" href="/">首页</a><a href="/studio/">开始创作</a><a href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a><a href="/contact/">联系我们</a></nav>
+        <button class="header-action header-button" id="header-account" data-account-trigger type="button">登录账户</button>
       </div>
     </header>
 
@@ -97,21 +95,23 @@
     <footer class="site-footer">
       <div class="shell footer-grid">
         <div class="footer-brand"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><p>面向视频创作者的云端 GPU 配音与任务加速服务。</p></div>
-        <div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">云端工作台</a><a href="/recharge/">积分充值</a></div>
-        <div><strong>服务状态</strong><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div>
+        <div><strong>产品</strong><a href="/services/">产品与服务</a><a href="/studio/">开始创作</a><a href="/projects/">我的作品</a><a href="/recharge/">积分充值</a></div>
+        <div><strong>联系与支持</strong><a href="/contact/">联系我们</a><span class="footer-status" data-health-status><i></i>正在连接云端</span><a href="/api/v1/health" target="_blank" rel="noreferrer">服务健康状态</a></div>
       </div>
-      <div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><span>服务域名：oneclickvidgen.com</span></div>
+      <div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">渝ICP备2026017349号-1</a><span>服务域名：oneclickvidgen.com</span></div>
     </footer>
     <dialog class="auth-dialog" id="home-auth-dialog">
       <div class="dialog-inner">
         <div class="dialog-head"><div><h2 id="home-auth-title">登录云端账户</h2><p>登录后继续进入对应的创作步骤。</p></div><button class="dialog-close" id="home-auth-close" type="button" aria-label="关闭">×</button></div>
         <div class="auth-tabs"><button class="auth-tab active" data-home-auth-mode="login" type="button">登录</button><button class="auth-tab" data-home-auth-mode="register" type="button">注册新账户</button></div>
-        <form id="home-auth-form"><div class="field"><label for="home-email">邮箱</label><input id="home-email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div><div class="field"><label for="home-password">密码</label><input id="home-password" name="password" type="password" minlength="10" autocomplete="current-password" placeholder="至少 10 位字符" required /></div><button class="button primary full" id="home-auth-submit" type="submit">登录</button><div class="message" id="home-auth-message" role="status"></div></form>
+        <form id="home-auth-form"><div class="field"><label for="home-email">邮箱</label><input id="home-email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div><div class="field"><label for="home-password">密码</label><input id="home-password" name="password" type="password" minlength="1" autocomplete="current-password" placeholder="请输入密码" required /></div><p class="forgot-password-link"><a href="/forgot-password/?return=/">忘记密码？</a></p><button class="button primary full" id="home-auth-submit" type="submit">登录</button><div class="message" id="home-auth-message" role="status"></div></form>
       </div>
     </dialog>
     <dialog class="auth-dialog status-dialog" id="home-status-dialog">
       <div class="dialog-inner"><div class="status-mark">✓</div><h2>您已登录</h2><button class="button primary full" id="home-status-close" type="button">知道了</button></div>
     </dialog>
-    <script src="/assets/site.js?v=20260809.2" defer></script>
+    <script src="/assets/session-refresh.js?v=20260930-account1" defer></script>
+    <script src="/assets/site.js?v=20261008-password1" defer></script>
+    <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
   </body>
 </html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="One-Click VidGen 字幕精修工作台，支持 SRT、VTT 导入、时间轴校准与逐句编辑。" />
+    <meta name="theme-color" content="#082f32" />
+    <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/subtitles.css?v=20260930-ux4" />
+    <title>字幕精修｜One-Click VidGen</title>
+    <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+  </head>
+  <body>
+    <a class="skip-link" href="#subtitle-list">跳到字幕列表</a>
+    <header class="topbar">
+      <a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>字幕精修工作台</small></span></a>
+      <div class="project-heading"><span>当前项目</span><strong id="project-name">正在读取…</strong></div>
+      <div class="top-actions">
+        <span class="save-state" id="save-state" role="status" aria-live="polite">已保存到本机</span>
+        <a class="button ghost" id="back-project" href="/projects/">返回当前项目</a>
+        <button class="button ghost save-retry" id="save-project" type="button" hidden>重试保存</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="side-panel" aria-label="字幕工具">
+        <section class="side-intro">
+          <span class="eyebrow">SUBTITLE LAB</span>
+          <h1>让每一句话<br />准确落在画面里</h1>
+          <p>校准时间、润色文本，并把结果保存回项目。修改会自动保存到当前浏览器。</p>
+        </section>
+
+        <section class="side-block">
+          <h2>文件</h2>
+          <label class="file-button">
+            <input id="subtitle-file" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip" />
+            <span>导入 SRT / VTT</span>
+          </label>
+          <div class="split-actions">
+            <button class="mini-button" id="export-srt" type="button">导出 SRT</button>
+            <button class="mini-button" id="export-vtt" type="button">导出 VTT</button>
+          </div>
+        </section>
+
+        <section class="side-block">
+          <h2>批量校时</h2>
+          <label class="field-label" for="offset-value">整体偏移（秒）</label>
+          <div class="input-action"><input id="offset-value" type="number" step="0.1" value="0.5" /><button id="apply-offset" type="button">应用</button></div>
+          <p class="field-help">正数延后，负数提前；时间不会小于 00:00:00。</p>
+        </section>
+
+        <section class="side-block">
+          <h2>搜索替换</h2>
+          <label class="field-label" for="search-text">查找</label><input id="search-text" type="search" placeholder="输入文字" />
+          <label class="field-label" for="replace-text">替换为</label><input id="replace-text" type="text" placeholder="替换内容" />
+          <button class="wide-button" id="replace-all" type="button">全部替换</button>
+        </section>
+
+        <section class="side-block subtitle-style-controls">
+          <h2>字幕样式</h2>
+          <label class="field-label" for="subtitle-font-size">字体大小 <output id="subtitle-font-value">28</output></label>
+          <input id="subtitle-font-size" type="range" min="16" max="64" step="1" value="28" />
+          <label class="field-label" for="subtitle-color">文字颜色</label><input id="subtitle-color" type="color" value="#ffffff" />
+          <label class="field-label" for="subtitle-bottom-margin">底部距离 <output id="subtitle-margin-value">32</output></label>
+          <input id="subtitle-bottom-margin" type="range" min="0" max="120" step="1" value="32" />
+          <label class="field-label" for="subtitle-outline">描边宽度</label><select id="subtitle-outline"><option value="0">关闭</option><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select>
+          <p class="field-help">固定使用 Noto Sans CJK SC。样式随项目保存，由 MP4 字幕烧录采用；SRT / VTT 只导出文本和时间。</p>
+        </section>
+
+        <section class="asr-card">
+          <span>ASR CLOUD</span><strong>从音频生成字幕</strong>
+          <p>上传音频或视频，先预览识别结果，再决定是否替换当前字幕。支持最长 10 分钟、50 MB；识别任务和结果保留 24 小时。</p>
+          <label class="field-label" for="asr-file">音视频文件</label>
+          <input id="asr-file" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv" />
+          <label class="field-label" for="asr-language">识别语言</label>
+          <select id="asr-language"><option value="zh">中文</option><option value="en">英语</option><option value="auto">自动检测</option></select>
+          <button id="asr-action" type="button" aria-describedby="asr-note">开始识别 / 继续任务</button>
+          <small id="asr-note" role="status">独立 CPU 识别，本功能暂不扣除积分。小模型结果需要人工校对。</small>
+          <pre id="asr-preview" style="white-space:pre-wrap;max-height:220px;overflow:auto;font-size:12px" hidden></pre>
+          <button id="asr-adopt" type="button" disabled>采用识别结果</button>
+        </section>
+      </aside>
+
+      <section class="editor-area">
+        <div class="editor-head">
+          <div><span class="breadcrumb">项目 / 后期制作 / 字幕精修</span><h2>字幕时间轴</h2><p id="summary">0 条字幕 · 总时长 00:00</p></div>
+          <button class="button secondary" id="add-subtitle" type="button">＋ 添加字幕</button>
+        </div>
+
+        <div class="subtitle-style-preview" aria-label="字幕样式预览"><span id="subtitle-style-example">让每一句话准确落在画面里</span><small>字幕样式预览 · 成片效果以导出为准</small></div>
+        <div class="notice" id="notice" role="status" aria-live="polite"></div>
+        <div class="table-labels" aria-hidden="true"><span>序号</span><span>入点 / 出点</span><span>字幕内容</span><span>操作</span></div>
+        <div class="subtitle-list" id="subtitle-list" aria-live="polite"></div>
+        <div class="empty-state" id="empty-state">
+          <div class="empty-mark">CC</div><h3>还没有字幕</h3>
+          <p>导入 SRT / VTT，或添加第一条字幕开始精修。</p>
+          <button class="button primary" id="empty-add" type="button">添加第一条</button>
+        </div>
+      </section>
+    </main>
+
+    <template id="subtitle-template">
+      <article class="subtitle-row">
+        <div class="row-number"></div>
+        <div class="time-stack">
+          <label><span>开始</span><input class="start-time" type="text" inputmode="numeric" aria-label="开始时间" /></label>
+          <label><span>结束</span><input class="end-time" type="text" inputmode="numeric" aria-label="结束时间" /></label>
+        </div>
+        <div class="text-cell"><textarea class="subtitle-text" rows="3" aria-label="字幕文本"></textarea><div class="text-meta"><span class="char-count"></span><span class="hidden-label">导出时隐藏</span></div></div>
+        <div class="row-actions">
+          <button class="icon-action split" type="button">拆分</button>
+          <button class="icon-action merge" type="button">合并下条</button>
+          <button class="icon-action toggle" type="button">隐藏</button>
+          <button class="icon-action danger remove" type="button">删除</button>
+        </div>
+      </article>
+    </template>
+    <script src="/assets/session-refresh.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-store.js?v=20260930-ux4" defer></script>
+    <script src="/assets/voice-cloud.js?v=20260930-ux4" defer></script>
+    <script src="/assets/subtitles.js?v=20260930-ux4" defer></script>
+    <script src="/assets/project-cloud.js?v=20260930-ux4" defer></script>
+  </body>
+</html>

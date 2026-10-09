@@ -1,5 +1,6 @@
 (function () {
   const API_BASE = "/api/v1";
+  const auth = window.OCVGSessionRefresh.session;
   const authDialog = document.querySelector("#auth-dialog");
   const authForm = document.querySelector("#auth-form");
   const authMessage = document.querySelector("#auth-message");
@@ -18,6 +19,7 @@
     session = value;
     if (value) sessionStorage.setItem("ocvg-cloud-session", JSON.stringify(value));
     else sessionStorage.removeItem("ocvg-cloud-session");
+    document.dispatchEvent(new CustomEvent("ocvg:account-changed"));
   }
 
   function showMessage(node, text, type) {
@@ -30,18 +32,23 @@
     node.className = "message";
   }
 
-  async function api(path, options) {
-    const headers = { Accept: "application/json", ...(options && options.headers) };
-    if (options && options.body) headers["Content-Type"] = "application/json";
-    if (session && session.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+  async function api(path, options = {}, retry = true, initial = auth.read()) {
+    const sent = initial ? auth.current(initial) : null;
+    session = sent;
+    const headers = { Accept: "application/json", ...options.headers };
+    if (options.body) headers["Content-Type"] = "application/json";
+    if (sent) headers.Authorization = `Bearer ${sent.access_token}`;
     const response = await fetch(`${API_BASE}${path}`, { cache: "no-store", ...options, headers });
+    if (initial) auth.current(initial);
+    if (response.status === 401 && retry && sent) { await auth.refresh(sent); return api(path, options, false, initial); }
     const contentType = response.headers.get("content-type") || "";
     const data = contentType.includes("application/json") ? await response.json() : await response.text();
+    if (initial) session = auth.current(initial);
     if (!response.ok) {
       const detail = typeof data === "object" ? (data.message || data.detail || data.code) : data;
-      throw new Error(detail || `请求失败（HTTP ${response.status}）`);
+      const error = new Error(detail || `请求失败（HTTP ${response.status}）`); error.status = response.status; throw error;
     }
-    return data;
+    return data?.data && data.code !== undefined ? data.data : data;
   }
 
   function renderLoggedOut() {
@@ -51,6 +58,8 @@
   }
 
   async function loadAccount() {
+    session = auth.read();
+    const initialAccount = window.OCVGSessionRefresh.owner(session);
     if (!session || !session.access_token) { renderLoggedOut(); return; }
     try {
       const summary = await api("/account/summary");
@@ -61,9 +70,9 @@
       payButton.textContent = "支付宝支付";
       clearMessage(orderMessage);
     } catch (error) {
-      saveSession(null);
-      renderLoggedOut();
-      showMessage(orderMessage, "登录状态已失效，请重新登录。", "error");
+      if (window.OCVGSessionRefresh.owner(auth.read()) !== initialAccount) return;
+      if (error.status === 401) { saveSession(null); renderLoggedOut(); }
+      showMessage(orderMessage, error.message || "账户信息暂时无法读取，请稍后重试。", "error");
     }
   }
 
@@ -72,6 +81,7 @@
     if (typeof authDialog.showModal === "function") authDialog.showModal();
   }
 
+  window.OCVGPageAccount = { login: openAuth, logout: () => document.querySelector("#logout").click() };
   document.querySelector("#open-login").addEventListener("click", openAuth);
   document.querySelector("#close-dialog").addEventListener("click", () => authDialog.close());
   authDialog.addEventListener("click", (event) => { if (event.target === authDialog) authDialog.close(); });
@@ -82,7 +92,7 @@
       document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab));
       document.querySelector("#auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户";
       document.querySelector("#auth-submit").textContent = authMode === "login" ? "登录" : "注册并继续";
-      document.querySelector("#password").autocomplete = authMode === "login" ? "current-password" : "new-password";
+      document.querySelector("#password").autocomplete = authMode === "login" ? "current-password" : "new-password"; document.querySelector("#password").minLength = authMode === "login" ? 1 : 10; document.querySelector("#password").placeholder = authMode === "login" ? "请输入密码" : "至少 10 位字符";
       clearMessage(authMessage);
     });
   });
@@ -112,6 +122,8 @@
   });
 
   document.querySelector("#logout").addEventListener("click", () => {
+    const refresh = session && session.refresh_token;
+    if (refresh) fetch(`${API_BASE}/auth/logout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: refresh }) }).catch(() => {});
     saveSession(null);
     renderLoggedOut();
     showMessage(orderMessage, "已退出云端账户。", "success");

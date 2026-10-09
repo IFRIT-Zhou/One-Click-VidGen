@@ -145,6 +145,7 @@
 
     function saveSession(session) {
       sessionStorage.setItem("ocvg-cloud-session", JSON.stringify(session));
+      document.dispatchEvent(new CustomEvent("ocvg:account-changed"));
     }
 
     function isLoggedIn() {
@@ -198,7 +199,7 @@
       document.querySelectorAll("[data-home-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab));
       document.querySelector("#home-auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户";
       authSubmit.textContent = authMode === "login" ? "登录" : "注册并继续";
-      document.querySelector("#home-password").autocomplete = authMode === "login" ? "current-password" : "new-password";
+      document.querySelector("#home-password").autocomplete = authMode === "login" ? "current-password" : "new-password"; document.querySelector("#home-password").minLength = authMode === "login" ? 1 : 10; document.querySelector("#home-password").placeholder = authMode === "login" ? "请输入密码" : "至少 10 位字符";
       authMessage.className = "message";
     }));
 
@@ -238,3 +239,17 @@
   refreshHealth();
   window.setInterval(refreshHealth, 30000);
 })();
+const qqCopyButton = document.querySelector("[data-copy-qq]");
+if (qqCopyButton) {
+  qqCopyButton.addEventListener("click", async () => {
+    const value = qqCopyButton.dataset.copyQq;
+    const state = document.querySelector("[data-copy-state]");
+    try {
+      await navigator.clipboard.writeText(value);
+      qqCopyButton.textContent = "已复制";
+      if (state) state.textContent = `群号 ${value} 已复制到剪贴板`;
+    } catch {
+      if (state) state.textContent = `请手动复制群号：${value}`;
+    }
+  });
+}

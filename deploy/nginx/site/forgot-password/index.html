@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="使用账户绑定的邮箱验证码重置 One-Click VidGen 密码" />
+  <meta name="referrer" content="same-origin" />
+  <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+  <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
+  <link rel="stylesheet" href="/assets/register.css?v=20260930-ux4" />
+  <link rel="stylesheet" href="/assets/password-reset.css?v=20261008-recovery1" />
+  <title>忘记密码｜One-Click VidGen</title>
+</head>
+<body class="register-body">
+  <header class="site-header"><div class="shell header-inner"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><a class="header-action" href="/">返回首页</a></div></header>
+  <main class="register-main shell"><section class="register-card recovery-card" aria-labelledby="reset-title">
+    <div class="register-mark" aria-hidden="true">↻</div><h1 id="reset-title">忘记密码</h1>
+    <p class="register-lead">输入账户绑定的邮箱，获取验证码后设置新密码。</p>
+    <form id="reset-form">
+      <label class="register-field"><span>账户绑定的邮箱</span><input id="reset-email" name="email" type="email" autocomplete="email" maxlength="254" required placeholder="name@example.com" /></label>
+      <label class="register-field" for="reset-code"><span>邮箱验证码</span></label>
+      <div class="recovery-code"><input class="recovery-code-input" id="reset-code" name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" aria-describedby="reset-code-hint" required placeholder="6 位数字验证码" /><button class="button primary" id="reset-send" type="button">发送验证码</button></div>
+      <p class="recovery-hint" id="reset-code-hint">验证码 30 分钟内有效。重新发送后，请使用最新验证码。</p>
+      <label class="register-field"><span>新密码</span><input id="reset-password" name="password" type="password" autocomplete="new-password" minlength="10" maxlength="200" required placeholder="10 至 200 位字符" /></label>
+      <label class="register-field"><span>确认新密码</span><input id="reset-repeat" name="repeat" type="password" autocomplete="new-password" minlength="10" maxlength="200" required placeholder="再次输入新密码" /></label>
+      <button class="button primary full" id="reset-submit" type="submit">重置密码</button>
+      <div class="register-message" id="reset-message" role="status" aria-live="polite"></div>
+    </form>
+    <div class="recovery-success" id="reset-success" role="status" hidden><h2>密码已重置</h2><p>请使用新密码重新登录。原有登录状态已失效。</p><a class="button primary full" id="reset-login" href="/#login">返回登录</a></div>
+    <p class="register-footnote"><a id="reset-back" href="/#login">返回登录</a></p>
+  </section></main>
+  <footer class="site-footer register-footer"><div class="shell footer-bottom"><span>© 2026 One-Click VidGen. All rights reserved.</span><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">渝ICP备2026017349号-1</a></div></footer>
+  <script src="/assets/password-reset.js?v=20261008-recovery1" defer></script>
+</body>
+</html>

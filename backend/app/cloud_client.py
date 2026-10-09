@@ -79,12 +79,14 @@ class CloudApiError(RuntimeError):
         code: str = "CLOUD_API_ERROR",
         details: Any = None,
         request_id: str | None = None,
+        retry_after: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = int(status_code)
         self.code = str(code or "CLOUD_API_ERROR")
         self.details = details
         self.request_id = request_id
+        self.retry_after = retry_after
 
 
 @dataclass
@@ -231,6 +233,7 @@ class CloudClient:
             code=code,
             details=details,
             request_id=request_id,
+            retry_after=response.headers.get("Retry-After") if response.status_code == 429 else None,
         )
 
     def _send(
@@ -448,6 +451,19 @@ class CloudClient:
         if captcha_token:
             body["captcha_token"] = captcha_token
         return self._json_request("POST", "/auth/register", authenticated=False, json=body)
+
+    def request_password_reset(self, email: str) -> dict[str, Any]:
+        return self._json_request("POST", "/auth/password-reset/request", authenticated=False, json={"email": email})
+
+    def confirm_password_reset(self, email: str, code: str, password: str) -> dict[str, Any]:
+        payload = self._json_request("POST", "/auth/password-reset/confirm", authenticated=False,
+                                     json={"email": email, "code": code, "password": password})
+        if payload.get("ok") is not True:
+            raise CloudApiError("云端未确认密码重置成功", code="CLOUD_INVALID_RESPONSE")
+        session = self.sessions.get(self.user_id)
+        if session and str(session.user.get("email", "")).lower() == email.lower():
+            self.sessions.clear(self.user_id)
+        return payload
 
     def login(self, email: str, password: str) -> dict[str, Any]:
         payload = self._json_request(
