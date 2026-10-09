@@ -21,6 +21,13 @@ def design_snapshot(shot):
     return {key: copy.deepcopy(shot[key]) for key in _DRAFT_FIELDS if key in shot}
 
 
+def validate_visual_candidates(entry, identity):
+    if not isinstance(entry, list) or len(entry) > 2 or any(
+            not isinstance(value, str) or len(value) > 3000 for value in entry):
+        raise ValueError(f'镜头 {identity}：visual_design.candidates 必须是最多两个短文本组成的数组，每项不超过 3000 字，不能使用对象或单个字符串')
+    return entry
+
+
 def parse_srt(text):
     blocks = re.split(r"\n\s*\n", text.lstrip('\ufeff').replace('\r', '').strip())
     scenes = []
@@ -127,13 +134,18 @@ def normalize_shots(raw, scenes, reference_ids=()):
             if not isinstance(value, dict):
                 raise ValueError('镜头设计资料格式无效')
             clean[field] = {}
+            if field == 'visual_design':
+                for flag in ('presenter_visible', 'presenter_speaking'):
+                    if flag in value:
+                        if type(value[flag]) is not bool:
+                            raise ValueError(f'镜头 {identity}：{flag} 必须为布尔值')
+                        clean[field][flag] = value[flag]
             for key in keys:
                 if key in MEDICAL_DESIGN_FIELDS and key not in value:
                     continue
                 entry = value.get(key, [] if key == 'candidates' else '')
                 if key == 'candidates':
-                    if not isinstance(entry, list) or len(entry) > 2 or any(not isinstance(v, str) or len(v) > 3000 for v in entry):
-                        raise ValueError('镜头候选方案无效')
+                    validate_visual_candidates(entry, identity)
                 elif not isinstance(entry, str) or len(entry) > 10000:
                     raise ValueError('镜头设计资料无效或过长')
                 clean[field][key] = entry
@@ -252,6 +264,9 @@ def planning_fingerprint(scenes, style, characters, world, references, parameter
 def plan_storyboard(scenes, style, characters, world, references, progress, parameters=None, checkpoint=None,
                     *, resume_state=None, save_state=None, fixed_shots=None, repair_only=False):
     parameters = parameters or {}
+    from .presenter_mode import presenter_config
+    if parameters.get('presenter_mode') and not presenter_config(parameters, references):
+        raise ValueError('讲解员模式已开启，请先选择有效的人物参考图')
     from story_agents import AGENT0_SYSTEM_PROMPT, create_story_context
     from .video_agents import (audit_storyboard, design_core_images, direct_motion, plan_groups,
                                write_image_prompts, write_video_prompts)
@@ -291,6 +306,8 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         'reference_materials': references,
         'core_image_role': '单张核心图以前段场面为主，可容纳有归属的复合素材；视频按原文依次展开，不需照搬首帧',
     }
+    from .presenter_mode import presenter_config
+    context['video_direction']['presenter'] = presenter_config(parameters, references)
     state['context'] = context
     persist_state('全文理解')
     mode_label = {'visual_first': '画面优先', 'medical_paper': '医学文献', 'text_assisted': '文字辅助'}[context['video_direction']['dynamic_text_mode']]

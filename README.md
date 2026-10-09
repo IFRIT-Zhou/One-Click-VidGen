@@ -7,7 +7,7 @@
 0/1/2 全文理解与语义分镜、第三方图像接口生图、画面精修、时序调整、BGM 和视频合成。
 
 2026.10.08 更新：[Codex 制作桥使用指南](plugins/codex_bridge/README.md)、
-[模型安装指引](docs/MODEL_INSTALL_GUIDE.md)、[内置引擎用户节点目录](comfyui_plugins/README.md)。
+[模型安装指引](docs/MODEL_INSTALL_GUIDE.md)、[可选组件目录与安装](docs/OPTIONAL_COMPONENTS.md)、[内置引擎节点目录](comfyui/README.md)。
 内置引擎独立运行环境由组件包提供，普通源码更新不包含运行环境和模型。
 
 ## 两种使用方式

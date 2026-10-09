@@ -2042,6 +2042,9 @@ def _synchronized_reference_image_ids(
             raise ValueError('当前镜头参考素材超过3张，请精简选图')
         from backend.app.reference_materials import required_every_shot_labels
         selected.update(required_every_shot_labels())
+        from backend.app.reference_materials import recover_visible_character_references
+        selected.update(recover_visible_character_references(
+            original_prompt, explicit_character_ids or [], story_plan or {}, reference_metadata()))
         if len(selected) > 3:
             raise ValueError('用户要求每张图使用的参考素材与本镜头选图合计超过3张，请精简用途说明')
         return [label for label in catalog if label in selected]

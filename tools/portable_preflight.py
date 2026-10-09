@@ -8,7 +8,12 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = PROJECT_ROOT / "tools" / "IndexTTS25" / "checkpoints"
+MODEL_DIR = PROJECT_ROOT / "models" / "tts" / "indextts25"
+TTS_ROOT = PROJECT_ROOT / "tts" / "IndexTTS25"
+if not TTS_ROOT.is_dir():
+    TTS_ROOT = PROJECT_ROOT / "tools" / "IndexTTS25"
+if not MODEL_DIR.is_dir():
+    MODEL_DIR = TTS_ROOT / "checkpoints"
 WHISPER_MODEL_DIR = PROJECT_ROOT / "tools" / "whisper_models" / "faster-whisper-base"
 HYPERFRAMES_BROWSER_DIR = PROJECT_ROOT / "runtime" / "hyperframes" / ".cache" / "hyperframes" / "chrome"
 PORTABLE_ENV_KEYS = ("INDEXTTS25_ROOT", "INDEXTTS25_MODEL_DIR", "INDEXTTS25_PACKAGES_DIR")
@@ -54,15 +59,15 @@ def validate_portable_env() -> list[str]:
 def main() -> int:
     problems = validate_portable_env()
     required_25_runtime = (
-        PROJECT_ROOT / "tools" / "IndexTTS25" / "indextts" / "infer_v2_5.py",
-        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "whisper",
-        PROJECT_ROOT / "tools" / "IndexTTS25" / "python_packages" / "tiktoken",
-        PROJECT_ROOT / "tools" / "IndexTTS25" / "examples" / "voice_05.wav",
+        TTS_ROOT / "indextts" / "infer_v2_5.py",
+        TTS_ROOT / "python_packages" / "whisper",
+        TTS_ROOT / "python_packages" / "tiktoken",
+        TTS_ROOT / "examples" / "voice_05.wav",
     )
     missing_25_runtime = [
         str(path.relative_to(PROJECT_ROOT)) for path in required_25_runtime if not path.exists()
     ]
-    if missing_25_runtime:
+    if missing_25_runtime and TTS_ROOT.is_dir():
         problems.append("IndexTTS-2.5 base runtime is incomplete: " + ", ".join(missing_25_runtime))
 
     optional_25_model = (

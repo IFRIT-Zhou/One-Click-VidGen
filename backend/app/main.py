@@ -218,6 +218,8 @@ class GenerateRequest(BaseModel):
     comfyui_profile_id: str = Field(default='', max_length=80)
     comfyui_h3_prompt_agent: bool = False
     comfyui_reference_audio: bool = False
+    presenter_mode: bool = False
+    presenter_reference_id: str = Field(default='', max_length=200)
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
     dynamic_max_shot_duration: Literal[15, 30] = 15
@@ -1656,13 +1658,17 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         add("language_api", "云端文本号池", "error", message)
                         add("image_api", "云端号池", "error", message)
 
+        if data.get('dynamic_video') and data.get('presenter_mode'):
+            valid_presenter = data.get('presenter_reference_id') in (data.get('reference_image_ids') or [])
+            add('presenter', '讲解员参考图', 'passed' if valid_presenter else 'error',
+                '已指定讲解员，按镜头规划开口表演' if valid_presenter else '请选择已上传的讲解员参考图')
         if data.get('dynamic_video') and data.get('video_generation_backend') == 'comfyui':
             from .comfyui_bridge import video_profile
             try:
                 profile = video_profile(int(user['id']), str(data.get('comfyui_profile_id') or ''))
                 h3_note = ' · H3 提示词转换 Agent 已启用' if data.get('comfyui_h3_prompt_agent') else ''
-                effective_reference_audio = bool(data.get('comfyui_reference_audio') and
-                                                 not data.get('comfyui_h3_prompt_agent'))
+                effective_reference_audio = bool(data.get('presenter_mode') or (data.get('comfyui_reference_audio') and
+                                                 not data.get('comfyui_h3_prompt_agent')))
                 audio_note = ' · 注入本镜 TTS 参考音频' if effective_reference_audio else ''
                 if effective_reference_audio:
                     binding = (profile.get('mappings') or {}).get('audio') or {}
@@ -2491,7 +2497,7 @@ def advance_step_workflow(
             "visual_backend", "use_cloud_image_pool", "method", "size", "image_profile_id", "image_resolution", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",
             "visual_max_duration", "visual_max_slides", "visual_style_prompt", "dynamic_max_shot_duration",
-            "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt",
+            "global_character_prompt", "reference_image_ids", "reference_image_notes", "reference_image_labels", "reference_image_kinds", "story_environment_prompt", "presenter_mode", "presenter_reference_id",
             "visual_prompt_system", "agent0_prompt_system", "agent1_prompt_system",
             "agent2_director_theme",
         },

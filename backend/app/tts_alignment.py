@@ -119,17 +119,37 @@ def align_starts(texts, words, duration, reading_text=None):
             spans.append((start + (end-start)*index/len(value), end))
     recognized, spans = _canonical(''.join(chars), spans)
     expected = ''.join(clean(text) for text in texts)
+    try:
+        return _matched_starts(texts, expected, recognized, spans, duration, .65)
+    except ValueError as original:
+        # ASR often spells correctly spoken Chinese as homophones. Match one
+        # syllable per character, retaining ASR timings and a stricter threshold.
+        try:
+            from pypinyin import lazy_pinyin, Style
+        except ImportError:
+            raise original
+        def phonemes(text):
+            return [lazy_pinyin(c, style=Style.NORMAL)[0] if '\u4e00' <= c <= '\u9fff' else c
+                    for c in text]
+        try:
+            return _matched_starts(texts, phonemes(expected), phonemes(recognized),
+                                   spans, duration, .80)
+        except ValueError:
+            raise original
+
+
+def _matched_starts(texts, expected, recognized, spans, duration, threshold):
     matcher = difflib.SequenceMatcher(None, expected, recognized, autojunk=False)
     mapping = {}
     for block in matcher.get_matching_blocks():
         for offset in range(block.size):
             mapping[block.a+offset] = block.b+offset
     starts, cursor = [], 0
-    for text in texts:
+    for cue_index, text in enumerate(texts, 1):
         value = clean(text)
         matched = [i for i in range(cursor, cursor+len(value)) if i in mapping]
-        if not value or len(matched)/len(value) < .65:
-            raise ValueError('新配音与字幕无法可靠对齐，可能漏读或发音异常；新配音已保留，请检查后重试，不会沿用旧时间戳')
+        if not value or len(matched)/len(value) < threshold:
+            raise ValueError(f'第 {cue_index} 条字幕“{text[:45]}”与新配音无法可靠对齐；可能是识别错误、漏读或发音异常。新配音已保留，未修改原配音和字幕')
         # A phrase must have evidence near its beginning, not merely its tail.
         first = matched[0]
         if first-cursor > max(2, len(value)//5):
@@ -148,7 +168,11 @@ def main():
     for item in request:
         segments, _, _ = transcribe_audio(Path(item['audio']), word_timestamps=True)
         words = [dict(word=w.word, start=w.start, end=w.end) for s in segments for w in (s.words or [])]
-        result.append(align_starts(item['texts'], words, item['duration'], item.get('reading_text')))
+        try:
+            result.append(align_starts(item['texts'], words, item['duration'], item.get('reading_text')))
+        except ValueError as exc:
+            print(f"{Path(item['audio']).name}：{exc}", file=sys.stderr)
+            sys.exit(1)
     Path(sys.argv[2]).write_text(json.dumps(result), encoding='utf-8')
 
 

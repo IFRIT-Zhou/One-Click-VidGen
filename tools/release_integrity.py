@@ -109,6 +109,9 @@ INTEGRITY_FILES = (
     "plugins/codex_bridge/skills/ocv-production-bridge/SKILL.md",
     "plugins/codex_bridge/skills/ocv-production-bridge/agents/openai.yaml",
     "comfyui_plugins/README.md",
+    "comfyui/README.md",
+    "tts/README.md",
+    "tools/migrate_optional_components.ps1",
 )
 
 TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue", ".md", ".yaml"}

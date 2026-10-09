@@ -6,6 +6,24 @@ from backend.app.video_agents import _complete_rows, design_core_images
 
 
 class VideoAgentResponseShapeTests(unittest.TestCase):
+    def test_invalid_candidates_repaired_before_save(self):
+        for candidates in ('单个方案', [{'description': '画面'}], ['甲', '乙', '丙'], ['长' * 3001]):
+            with self.subTest(candidates=str(candidates)[:40]):
+                ask = Mock(side_effect=[
+                    {'shots': [{'id': 'a', 'visual_description': '人物', 'visual_design': {'candidates': candidates}}]},
+                    {'shots': [{'id': 'a', 'visual_description': '人物', 'visual_design': {'candidates': ['画面甲', '画面乙']}}]},
+                ])
+                rows = design_core_images({}, [], [{'id': 'a'}], [], ask=ask)
+                self.assertEqual(rows[0]['visual_design']['candidates'], ['画面甲', '画面乙'])
+                self.assertEqual(ask.call_count, 2)
+                self.assertIn('visual_design.candidates', ask.call_args.args[1]['validation_errors'][0])
+
+    def test_bad_candidates_after_retry_identify_shot(self):
+        ask = Mock(return_value={'shots': [{'id': 'a', 'visual_description': '人物', 'visual_design': {'candidates': {}}}]})
+        with self.assertRaisesRegex(ValueError, '镜头 a.*candidates'):
+            design_core_images({}, [], [{'id': 'a'}], [], ask=ask)
+        self.assertEqual(ask.call_count, 2)
+
     def test_supported_wrappers_keep_exact_rows(self):
         rows = [{'id': 'a'}, {'id': 'b'}]
         for response in ({'shots': rows}, {'shots': json.dumps(rows)},

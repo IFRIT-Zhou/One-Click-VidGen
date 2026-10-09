@@ -75,6 +75,12 @@ Follow the official h3-prompt-writing skill contract:
 9. OCV uses H3 for silent-performance animation with generated diegetic effects only. Never generate
    human speech, dialogue, narration, whispers, chanting, humming, singing, crowd voices, or vocal
    reactions. Generate only environmental ambience and physical/action sound effects.
+   Exception for visible performance: when reference_audio_requires_lipsync is true, the visible
+   presenter MUST open and close their mouth naturally in precise sync with <Audio 1>. The no-speech
+   output-audio policy does NOT mean closed lips or silent body acting. Supplied spoken_text is the
+   exact performance script, not visible text. Do not paraphrase it, add words, or render captions.
+   Put the exact original-language spoken_text only in subject_definitions as the <Audio 1> script;
+   detailed_description must refer to that script and describe lip-sync, not print the dialogue.
 10. Preserve the lighting direction, shadow placement, exposure, contrast, and color temperature of
    <Picture 1> as closely as possible. Do not invent dramatic relighting, flicker, lens flares, or a
    day/night change unless the approved source explicitly requests it. A centered presenter, podium,
@@ -299,7 +305,7 @@ def _enforce_no_background_music(prompt: str) -> str:
     return prompt[:body_start] + policy + "\n" + prompt[body_end:]
 
 
-def _enforce_visual_and_sound_policy(prompt: str) -> str:
+def _enforce_visual_and_sound_policy(prompt: str, *, lipsync: bool = False) -> str:
     """Apply only the mandatory H3 output-audio policy to the submitted prompt.
 
     Lighting and camera guidance belongs to the conversion Agent's system
@@ -313,6 +319,9 @@ def _enforce_visual_and_sound_policy(prompt: str) -> str:
             "sound effects. Do not generate any human speech, dialogue, narration, whispering, "
             "chanting, humming, singing, crowd voices, or vocal reactions."
         )
+        if lipsync:
+            sound += (' This restriction concerns generated sound only: the visible presenter must '
+                      'speak visually with natural mouth movement synchronized to <Audio 1>, never closed-mouth narration.')
         prompt = prompt[:body_start] + sound + "\n" + prompt[body_end:]
     subtitle_policy = (
         "Do not generate subtitles, automatic captions, lower thirds, narration transcription, title "
@@ -366,7 +375,7 @@ def _validate(prompt: str, duration: int, *, reference_audio: bool = False,
     if "<Picture 1>" not in prompt:
         raise ValueError("H3 转换结果没有保留核心分镜图标签 <Picture 1>")
     prompt = _enforce_reference_audio(prompt, reference_audio=reference_audio, lipsync=lipsync)
-    prompt = _enforce_visual_and_sound_policy(prompt)
+    prompt = _enforce_visual_and_sound_policy(prompt, lipsync=bool(reference_audio and lipsync))
     prompt = _enforce_no_background_music(prompt)
     prompt = _repair_timeline(prompt, duration)
     ranges = re.findall(r"\[(\d{2}):(\d{2})-(\d{2}):(\d{2})\]", prompt)
@@ -392,8 +401,11 @@ def source_fingerprint(shot: dict[str, Any], duration: int, *, reference_audio: 
         "reference_audio": reference_audio,
         "reference_audio_lipsync": lipsync,
         "core_image_digest": image_digest,
+        "spoken_text": [row.get('text', '') for row in shot.get('source_subtitles', [])] if reference_audio else [],
+        "audio_digest": shot.get('reference_audio_digest', '') if reference_audio else '',
+        "audio_interval": [shot.get('start'), shot.get('duration')] if reference_audio else [],
         "skill": H3_SKILL_SOURCE,
-        "contract": 12,
+        "contract": 13,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -416,6 +428,7 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         "approved_visible_texts": approved_visible_texts(shot.get("motion_plan")),
         "reference_audio_supplied": reference_audio,
         "reference_audio_requires_lipsync": bool(reference_audio and lipsync),
+        "spoken_text": '\n'.join(str(row.get('text') or '') for row in shot.get('source_subtitles', [])) if reference_audio and lipsync else '',
         "core_storyboard_image_attached": bool(image_data),
         "core_storyboard_image_sha256": image_digest,
         "reference_assets": [
@@ -449,4 +462,9 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
     )
     if issues:
         raise ValueError("H3 转换结果重新加入了未选用的画中文字：" + "；".join(issues))
+    if reference_audio and lipsync:
+        text = payload['spoken_text']
+        if text and text not in _section_body(prompt, 'subject_definitions'):
+            prompt = _insert_in_section(prompt, 'subject_definitions',
+                '<Audio 1> exact spoken script (pronunciation only, never visible text):\n' + text)
     return prompt, fingerprint

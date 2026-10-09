@@ -85,10 +85,13 @@ def main():
     parser.add_argument("--profiles", type=Path, required=True)
     parser.add_argument("--profile-id", required=True)
     parser.add_argument("--destination", type=Path, required=True)
+    parser.add_argument("--nodes-destination", type=Path, help="Shared comfyui/custom_nodes directory")
     parser.add_argument("--version", required=True)
     parser.add_argument("--object-info-url", default="http://127.0.0.1:8188/object_info")
     args = parser.parse_args()
     destination = args.destination.resolve()
+    nodes_destination = (args.nodes_destination.resolve() if args.nodes_destination else
+                         destination.parent.parent.parent / "custom_nodes")
     if destination.exists():
         raise ValueError("目标已存在；请使用新的组件版本目录，不覆盖正在使用的版本。")
     source = args.source.resolve()
@@ -108,7 +111,7 @@ def main():
     for name in sorted(node_dirs):
         print("Copying node: " + name, flush=True)
         node_source = source / "custom_nodes" / name
-        entry = {"name": name, **copy_source(node_source, destination / "ComfyUI" / "custom_nodes" / name)}
+        entry = {"name": name, **copy_source(node_source, nodes_destination / name)}
         entry["license_files"] = [p.name for p in node_source.glob("*") if p.name.lower().startswith(("license", "copying"))]
         nodes.append(entry)
     # A full standalone interpreter, not a venv redirecting to the user's old path.

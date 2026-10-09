@@ -343,6 +343,23 @@ def _disconnect_optional_reference(graph: dict[str, Any], node_id: str) -> None:
 
 def _patch_graph(graph: dict[str, Any], mappings: WorkflowMappings, *, prompt: str, duration: float, width: int, height: int, seed: int, image_name: str = "", audio_name: str = "") -> dict[str, Any]:
     graph = copy.deepcopy(graph)
+    if audio_name and mappings.audio.node_id:
+        # H3 companion audio is ignored without its paired reference video.
+        # Repair only that orphaned mapped loader; paired video sound stays intact.
+        for node in graph.values():
+            if node.get('class_type') != 'MiniMaxH3ReferenceToVideo':
+                continue
+            inputs = node.get('inputs', {})
+            for key, value in list(inputs.items()):
+                if not key.startswith('ref_video_audios.ref_video_audio_'):
+                    continue
+                suffix = key.rsplit('_', 1)[-1]
+                if (value == [mappings.audio.node_id, 0]
+                        and f'ref_videos.ref_video_{suffix}' not in inputs):
+                    free = next((i for i in range(3) if f'ref_audios.ref_audio_{i}' not in inputs), None)
+                    if free is None:
+                        raise ValueError('H3 独立音频参考端口已满，请检查工作流音频连接')
+                    inputs[f'ref_audios.ref_audio_{free}'] = inputs.pop(key)
     values = (
         ("提示词", mappings.prompt, prompt),
         ("参考图", mappings.image, image_name),

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from .auth import require_user
 
 PROJECT = Path(__file__).resolve().parents[2]
-RUNTIME = PROJECT / "runtime" / "comfyui"
+RUNTIME = PROJECT / "comfyui" / "engine"
 DATA = PROJECT / "workspace" / "managed_comfyui"
 LOCK = threading.RLock()
 START_LOCK = threading.Lock()
@@ -59,6 +59,8 @@ def builtin_profiles():
         if not isinstance(profile, dict) or not isinstance(profile.get("id"), str) or not profile["id"] or profile["id"] in seen:
             continue
         seen.add(profile["id"])
+        from .presenter_mode import with_optional_h3_audio
+        profile = with_optional_h3_audio(profile)
         result.append({**profile, "engine": "managed", "managed_builtin": True,
                        "component_version": manifest["version"]})
     return result
@@ -82,11 +84,15 @@ def write_json(path: Path, value):
 
 
 def runtime_info():
-    active = read_json(RUNTIME / "active.json", {})
+    # Older optional packages remain usable until the local migration is run.
+    runtime = RUNTIME
+    if not (runtime / "active.json").exists():
+        runtime = PROJECT / "runtime" / "comfyui"
+    active = read_json(runtime / "active.json", {})
     version = str(active.get("version") or "")
     if not version or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in version) or version in {".", ".."}:
         return None, {}
-    release = RUNTIME / "releases" / version
+    release = runtime / "releases" / version
     manifest = read_json(release / "component.json", {})
     if manifest.get("version") != version or not (release / "python" / "python.exe").is_file() or not (release / "ComfyUI" / "main.py").is_file():
         return None, {}
@@ -95,7 +101,7 @@ def runtime_info():
 
 def model_roots():
     config = read_json(DATA / "settings.json", {})
-    roots = [PROJECT / "models" / "comfyui", RUNTIME / "models"]
+    roots = [PROJECT / "models" / "comfyui", RUNTIME / "models", PROJECT / "runtime" / "comfyui" / "models"]
     if config.get("model_directory"):
         roots.append(Path(config["model_directory"]))
     return roots
@@ -140,7 +146,7 @@ def status():
 
 
 def node_status():
-    directory = PROJECT / 'comfyui_plugins'
+    directory = PROJECT / 'comfyui' / 'custom_nodes'
     profiles = []
     for profile in builtin_profiles():
         required = {n['class_type'] for n in profile.get('workflow', {}).values()}
@@ -160,9 +166,12 @@ def _extra_paths():
     for index, root in enumerate(model_roots()):
         root.mkdir(parents=True, exist_ok=True) if index == 0 else None
         result[f"ocv_models_{index}"] = {"base_path": str(root.resolve()), **{name: name for name in categories}}
-    plugins = PROJECT / 'comfyui_plugins'
+    plugins = PROJECT / 'comfyui' / 'custom_nodes'
     plugins.mkdir(parents=True, exist_ok=True)
     result['ocv_user_nodes'] = {'custom_nodes': str(plugins.resolve())}
+    legacy_plugins = PROJECT / 'comfyui_plugins'
+    if legacy_plugins.is_dir():
+        result['ocv_legacy_nodes'] = {'custom_nodes': str(legacy_plugins.resolve())}
     write_json(DATA / "model_paths.yaml", result)
 
 
@@ -310,7 +319,7 @@ def execution_lease(required_models=None, required_nodes=None):
         missing = sorted(set(required_nodes or []) - (LOADED_NODES or set()))
         if missing:
             raise RuntimeError('此工作流缺少已加载节点：' + '、'.join(missing)
-                               + '。请在 ComfyUI 工作台的「用户节点」查看安装指引，将插件放入 OCV/comfyui_plugins，关闭并重新启动内置引擎后检查。')
+                               + '。请在 ComfyUI 工作台的「用户节点」查看安装指引，将插件放入 OCV/comfyui/custom_nodes，关闭并重新启动内置引擎后检查。')
         yield url
     finally:
         with LOCK:
@@ -395,7 +404,7 @@ def get_nodes(request: Request):
 @router.post('/nodes/open-folder')
 def open_nodes_folder(request: Request):
     _local_user(request)
-    directory = PROJECT / 'comfyui_plugins'
+    directory = PROJECT / 'comfyui' / 'custom_nodes'
     directory.mkdir(parents=True, exist_ok=True)
     if os.name == 'nt':
         os.startfile(str(directory))

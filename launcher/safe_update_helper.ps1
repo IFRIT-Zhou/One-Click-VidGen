@@ -85,6 +85,9 @@ function Test-ProtectedRelativePath {
         'saved_agent_prompts', 'node_modules', 'models'
     )
     if ($protectedRoots -contains $first) { return $true }
+    if ($first -in @('comfyui', 'tts')) {
+        return -not (@('comfyui\README.md', 'tts\README.md') -contains $normalized)
+    }
     if ($first -ieq 'comfyui_plugins') {
         return -not (@('comfyui_plugins\.gitignore', 'comfyui_plugins\README.md') -contains $normalized)
     }

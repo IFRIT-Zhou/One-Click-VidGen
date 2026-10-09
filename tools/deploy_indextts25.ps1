@@ -8,8 +8,12 @@ $ErrorActionPreference = "Stop"
 if (-not $ProjectRoot) {
     $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
-$engineRoot = Join-Path $ProjectRoot "tools\IndexTTS25"
-$python = Join-Path $ProjectRoot "runtime\python\python.exe"
+$engineRoot = Join-Path $ProjectRoot "tts\IndexTTS25"
+$python = Join-Path $ProjectRoot "tts\python\python.exe"
+if (!(Test-Path -LiteralPath $engineRoot) -and (Test-Path -LiteralPath (Join-Path $ProjectRoot "tools\IndexTTS25"))) {
+    $engineRoot = Join-Path $ProjectRoot "tools\IndexTTS25"
+    $python = Join-Path $ProjectRoot "runtime\python\python.exe"
+}
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "OCV portable Python was not found: $python"
 }

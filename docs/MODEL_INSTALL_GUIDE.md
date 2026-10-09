@@ -42,7 +42,7 @@ OCV/
 
 ## 旧安装兼容
 
-旧版 `runtime/comfyui/models` 仍会读取；已有外部 ComfyUI 模型目录可在内置引擎的高级设置中复用。
+引擎组件位于 `comfyui/engine`，拓展节点位于 `comfyui/custom_nodes`，本地 TTS 组件位于 `tts`。所有配套压缩包统一解压到 OCV 根目录。旧版 `runtime/comfyui/models` 仍会读取；已有外部 ComfyUI 模型目录可在内置引擎的高级设置中复用。
 旧版 `tools/IndexTTS25/checkpoints` 继续兼容。若设置了 `INDEXTTS25_MODEL_DIR`，该配置优先；留空则自动识别统一目录或旧目录。搬移整个 OCV 文件夹后，默认模型目录随之变化。
 Launcher 更新保留 `models`；运行环境和模型分开维护。
 

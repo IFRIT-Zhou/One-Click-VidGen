@@ -23,7 +23,13 @@ const workspaceTitles={audio:'配音与字幕',storyboard:'动态分镜',motions
 const workspaceHints={audio:'试听配音、核对字幕；需要调整时进入配音精修。',storyboard:'逐镜确认画面与提示词，再将核心图制作成动态片段。',motions:'逐镜试看、重新生成或替换本地视频，满意后合成成片。',export:'预览和下载成片；合成选项可随时调整，不必重新生成镜头。',parameters:'查看本项目保存的配置，也可以用相同配置新建作品。'}
 function moveShot(delta){selected.value=Math.max(0,Math.min((project.value?.shots.length||1)-1,selected.value+delta));boundary.value=1;closeBoundaryEditor()}
 const motionDrafts=ref({})
-function rememberMotionDraft(shot){if(project.value?.status==='image_review'){motionDrafts.value[shot.id]={intent:shot.intent||'',kind:shot.kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false};dirty.value=true}else dirty.value=true}
+function rememberMotionDraft(shot){if(project.value?.status==='image_review'){motionDrafts.value[shot.id]={intent:shot.intent||'',kind:shot.kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false,presenter_speaking:shot.visual_design?.presenter_speaking??null};dirty.value=true}else dirty.value=true}
+function setPresenterSpeaking(shot,enabled){
+ shot.visual_design={...(shot.visual_design||{}),presenter_speaking:enabled,...(enabled?{presenter_visible:true}:{})}
+ const id=project.value?.context?.video_direction?.presenter?.reference_id||project.value?.creation_parameters?.presenter_reference_id
+ if(enabled&&id&&!shot.reference_ids.includes(id))shot.reference_ids.push(id)
+ rememberMotionDraft(shot)
+}
 async function saveMotionDrafts(){for(const [id,fields] of Object.entries(motionDrafts.value)){const updated=await call('/'+project.value.id+'/shots/'+encodeURIComponent(id)+'/motion','POST',{revision:project.value.revision,...fields});delete motionDrafts.value[id];acceptImageUpdate(updated)}dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))}
 const autoMotionBusy=ref(false)
 async function autoFillMotion(shot){
@@ -103,7 +109,7 @@ const storyboardStageLabel=computed(()=>({stopping:'正在停止规划…',plann
 const dynamicShots=computed(()=>(project.value?.shots||[]).filter(shot=>shot.kind==='video'))
 const completedVideos=computed(()=>dynamicShots.value.filter(shot=>shot.video_status==='completed').length)
 const localVideo=computed(()=>project.value?.creation_parameters?.video_generation_backend==='comfyui')
-const projectReferenceAudio=computed(()=>localVideo.value&&project.value?.creation_parameters?.comfyui_reference_audio===true&&!project.value?.creation_parameters?.comfyui_h3_prompt_agent)
+const projectReferenceAudio=computed(()=>Boolean(project.value?.creation_parameters?.presenter_mode)||(localVideo.value&&project.value?.creation_parameters?.comfyui_reference_audio===true&&!project.value?.creation_parameters?.comfyui_h3_prompt_agent))
 const videoConfigured=computed(()=>localVideo.value?Boolean(project.value?.creation_parameters?.comfyui_profile_id):videoModel.value?.source==='dedicated'&&videoModel.value?.has_api_key)
 const canProcessVideo=shot=>shot.kind==='video'&&shot.video_status!=='completed'&&!shot.video_terminal&&shot.video_status!=='failed'&&!(shot.video_status==='unknown'&&!shot.video_resume_available)
 const pendingVideos=computed(()=>dynamicShots.value.filter(canProcessVideo))
@@ -701,6 +707,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <p v-if="shot.duration_repair?.note" class="duration-repair-note" :class="{'needs-review':['boundary_fallback','single_subtitle_static'].includes(shot.duration_repair.method)}">{{shot.duration_repair.note}}</p>
      <p v-if="shot.warning" class="studio-notice">{{shot.warning}}</p>
      <label v-if="shot.kind==='video'" class="motion-field">动态表达<textarea v-model="shot.action" rows="3" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"/></label>
+     <div v-if="i>=0&&shot.kind==='video'&&project.creation_parameters?.presenter_mode" class="shot-audio-settings"><label><input type="checkbox" :checked="shot.visual_design?.presenter_speaking===true" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @change="setPresenterSpeaking(shot,$event.target.checked)">本镜讲解员出镜开口</label><small class="muted">仅在图中确有指定讲解员时开启；勾选且本镜音频、对口型均启用时，将按本镜台词和配音驱动口型。不重新生图。</small><button v-if="project.status==='image_review'" :disabled="busy||!dirty||imageAssetRunning(shot)" @click="run(save)">保存讲解设置</button></div>
      <label class="image-prompt-field">{{i<0?'场景图提示词':'核心分镜图提示词'}} <small v-if="project.status==='image_review'" class="muted">修改后点击“按当前提示词重绘”提交，当前图片不会自动变化。</small><textarea v-model="shot.image_prompt" rows="4" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')" @input="project.status==='image_review'&&rememberImagePrompt(shot)"/></label>
      <label v-if="shot.kind==='video'" class="video-prompt-field">视频模型最终提示词<textarea v-model="shot.video_prompt" rows="5" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&project.status!=='image_review')"/></label>
      <p v-if="autoMotionBusy" role="status" class="muted">正在按核心图规划动态表达与视频模型最终提示词…不会生成图片或视频。</p>

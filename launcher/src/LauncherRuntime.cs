@@ -188,7 +188,10 @@ namespace OcvLauncher
             "plugins/codex_bridge/README.md",
             "plugins/codex_bridge/skills/ocv-production-bridge/SKILL.md",
             "plugins/codex_bridge/skills/ocv-production-bridge/agents/openai.yaml",
-            "comfyui_plugins/README.md"
+            "comfyui_plugins/README.md",
+            "comfyui/README.md",
+            "tts/README.md",
+            "tools/migrate_optional_components.ps1"
         };
         private readonly string root;
 
@@ -361,7 +364,8 @@ namespace OcvLauncher
                 AddFileCheck(items, "FFmpeg", Path.Combine(root, "tools", "ffmpeg", "bin", "ffmpeg.exe"));
                 AddDirectoryCheck(items, "根目录依赖", Path.Combine(root, "node_modules", "hyperframes"));
                 AddDirectoryCheck(items, "前端依赖", Path.Combine(root, "frontend", "node_modules"));
-                string ttsModelRoot = Path.Combine(root, "tools", "IndexTTS25", "checkpoints");
+                string ttsModelRoot = Path.Combine(root, "models", "tts", "indextts25");
+                if (!Directory.Exists(ttsModelRoot)) ttsModelRoot = Path.Combine(root, "tools", "IndexTTS25", "checkpoints");
                 bool localTtsInstalled = File.Exists(Path.Combine(ttsModelRoot, "config.yaml"))
                     && File.Exists(Path.Combine(ttsModelRoot, "gpt.pth"))
                     && File.Exists(Path.Combine(ttsModelRoot, "codec.pth"))

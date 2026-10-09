@@ -29,6 +29,12 @@ ROOT_EXCLUDES = {
 
 def is_excluded(relative: Path, *, without_local_tts: bool = False, without_local_video: bool = False, without_models: bool = False) -> bool:
     parts = relative.parts
+    if parts and (parts[0].startswith('local_integration_bundle_') or parts[0] == 'optional_packages'):
+        return True
+    if without_local_video and parts[:1] == ('comfyui',):
+        return relative.as_posix() != 'comfyui/README.md'
+    if without_local_tts and parts[:1] == ('tts',):
+        return relative.as_posix() != 'tts/README.md'
     if parts[:1] == ('comfyui_plugins',):
         return relative.as_posix() not in {'comfyui_plugins/.gitignore', 'comfyui_plugins/README.md'}
     if parts[:2] == ('plugins', 'codex_bridge'):
@@ -46,7 +52,7 @@ def is_excluded(relative: Path, *, without_local_tts: bool = False, without_loca
         return True
     if without_local_video and parts[:2] == ("runtime", "comfyui"):
         return True
-    if without_local_tts and parts[:3] == ("tools", "IndexTTS25", "checkpoints"):
+    if without_local_tts and parts[:2] == ("tools", "IndexTTS25"):
         return True
     if not parts or parts[0] in ROOT_EXCLUDES or ".git" in parts or "__pycache__" in parts:
         return True
@@ -64,6 +70,8 @@ def is_excluded(relative: Path, *, without_local_tts: bool = False, without_loca
     }:
         return True
     if parts[:2] == ("launcher", "ui-preview.png"):
+        return True
+    if parts[:2] == ('tts', 'IndexTTS25') and len(parts) > 2 and parts[2] in {'checkpoints', 'outputs', 'archive'}:
         return True
     return parts[:3] in {
         ("tools", "IndexTTS25", "outputs"),
@@ -94,8 +102,8 @@ def main() -> int:
 
     # A local development snapshot may include unaudited third-party packages.
     # Never accidentally publish it merely because it lives under runtime/.
-    components = source / "runtime" / "comfyui" / "releases"
-    if components.is_dir() and not args.without_local_video:
+    for components in (source / "comfyui" / "engine" / "releases", source / "runtime" / "comfyui" / "releases"):
+      if components.is_dir() and not args.without_local_video:
         for release in components.iterdir():
             if not release.is_dir():
                 continue

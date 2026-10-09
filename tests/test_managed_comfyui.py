@@ -32,8 +32,8 @@ class ManagedComfyTests(unittest.TestCase):
     def test_user_nodes_registered_as_extra_path(self):
         engine._extra_paths()
         config = engine.read_json(engine.DATA / 'model_paths.yaml', {})
-        self.assertEqual(config['ocv_user_nodes']['custom_nodes'], str((self.root / 'comfyui_plugins').resolve()))
-        self.assertTrue((self.root / 'comfyui_plugins').is_dir())
+        self.assertEqual(config['ocv_user_nodes']['custom_nodes'], str((self.root / 'comfyui/custom_nodes').resolve()))
+        self.assertTrue((self.root / 'comfyui/custom_nodes').is_dir())
 
     def test_missing_optional_node_only_blocks_its_workflow(self):
         with patch.object(engine, 'ensure_ready', return_value='http://127.0.0.1:8199'), patch.object(engine, 'LOADED_NODES', {'FastSampler'}):

@@ -118,6 +118,9 @@ def revise_motion(context: dict, shot: dict, references: list[dict], action: str
     for key in ('motion_plan', 'video_prompt', 'visual_description', 'visual_design',
                 'previous_designs', 'progression_plan', 'semantic', 'image_analysis'):
         current_shot.pop(key, None)
+    if context.get('video_direction', {}).get('presenter'):
+        current_shot['visual_design'] = {key: shot.get('visual_design', {}).get(key, False)
+                                       for key in ('presenter_visible', 'presenter_speaking')}
     current_shot['action'] = action.strip() if refresh_basis == 'action' else ''
     current_shot['image_prompt'] = core_basis if refresh_basis == 'image' else ''
     payload = {'story_context': context, 'shot': current_shot,
@@ -125,7 +128,8 @@ def revise_motion(context: dict, shot: dict, references: list[dict], action: str
                'basis_kind': basis_kind,
                'refresh_basis': refresh_basis,
                'reference_catalog': references}
-    system = MOTION_SYSTEM + medical_contract(context, 'motion')
+    from .presenter_mode import presenter_contract
+    system = MOTION_SYSTEM + medical_contract(context, 'motion') + presenter_contract(context)
     system += '\n本次重建动作方案：不得从旧镜头补回未被当前依据要求的主体、时代、分屏或场景。refresh_basis=image 时仅以实际核心画面和本镜字幕构建自然动作；refresh_basis=action 时以 manual_action 为首要画面要求。'
     if not action.strip() and refresh_basis == 'image':
         system += '\n本镜由用户从静态改为动态，尚无 manual_action。请依据现有核心图、原文和表达目的设计适合时长的自然动作过程；保留主体与场景，不另起剧情，不受之前静态判定约束。'
@@ -210,6 +214,9 @@ def refresh(context: dict, style: str, shot: dict, references: list[dict], *,
                                           basis_kind, refresh_basis=basis)
     for key in ('visual_design', 'semantic', 'progression_plan', 'video_prompt', 'previous_designs'):
         updated.pop(key, None)
+    if context.get('video_direction', {}).get('presenter'):
+        updated['visual_design'] = {key: shot.get('visual_design', {}).get(key, False)
+                                    for key in ('presenter_visible', 'presenter_speaking')}
     updated['visual_description'] = updated['motion_plan'].get('reference_visual', core_basis)
     original_image_prompt = updated['image_prompt']
     updated['image_prompt'] = core_basis if basis == 'image' else ''

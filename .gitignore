@@ -86,3 +86,13 @@ launcher/ui-preview.png
 
 # Maintainer-only optional director content.
 /plugins/private_*/
+
+# Local redistribution review bundle; never publish implicitly.
+/local_integration_bundle_*/
+
+# Optional component binaries and third-party nodes are distributed separately.
+/comfyui/*
+!/comfyui/README.md
+/tts/*
+!/tts/README.md
+!tools/migrate_optional_components.ps1

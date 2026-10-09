@@ -93,7 +93,7 @@ video 优先以视频前段已经开始表达内容的场面为主体，可自�
 控制元素靠阅读清晰度与表达必要性，不按固定数量删掉必要的角色、气泡或图解。原文中的每个名词
 也不必都画出来。示意性补充可以帮助理解，不能捏造精确数字、病情、事实或人物关系。
 visual_description 写一张可直接绘制的完整核心图：人物/物体及属性、正在发生的动作关系、布局、
-环境、必要短字或图案及其归属。visual_design 输出 candidates（两个短方案）、selection_reason、
+环境、必要短字或图案及其归属。visual_design 输出 candidates（两个短方案，必须是字符串数组，例如 ["方案一的画面描述", "方案二的画面描述"]，不可用对象，每项不超过3000字）、selection_reason、
 expression（narrative/experience/explanatory/metaphor/asset_display）、human_presence（none/present/partial）、
 visible_evidence（观众从画面能看到的本段特有信息）。不输出内部长篇推理。
 用户设定优先；同一现场的人物、服装和布局保持连续，换景不带走整套道具。人物档案不等于出镜名单。

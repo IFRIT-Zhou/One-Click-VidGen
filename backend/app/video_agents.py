@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Callable
+from .presenter_mode import presenter_contract
 
 from .gemini_client import generate_gemini_text, parse_json_response
 from .video_director_contracts import (MOTION_CONTRACT, SEMANTIC_CONTRACT, SINGLE_REFERENCE_GUIDE,
@@ -184,6 +185,7 @@ method_example 是一个独立方法示例，当前任务的事实、角色、�
 intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅纠正错归属时填写",attribution_correction:"仅纠正错归属时填写依据"}]}。
 未调整的镜头除有原文依据的归属纠正外，不改写既定 intent。""" + VISUAL_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
     system += medical_contract(context, 'core', include_common=False)
+    system += presenter_contract(context)
     payload = {"story_context": context, "scenes": scenes, "shots": shots, "references": references,
                "method_example": (VISUAL_FIRST_CORE_DESIGN_EXAMPLE
                                   if dynamic_text_mode(context) == VISUAL_FIRST else CORE_DESIGN_EXAMPLE)}
@@ -196,6 +198,17 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
         try:
             rows = _complete_rows(response, expected, "核心画面导演")
             for original, row in zip(shots, rows):
+                from .video_plan import validate_visual_candidates
+                design = row.get('visual_design', {})
+                if not isinstance(design, dict):
+                    raise ValueError(f"镜头 {row['id']}：visual_design 必须是对象")
+                validate_visual_candidates(design.get('candidates', []), row['id'])
+                presenter = context.get('video_direction', {}).get('presenter') or {}
+                if presenter:
+                    if any(type(design.get(flag)) is not bool for flag in ('presenter_visible', 'presenter_speaking')):
+                        raise ValueError(f"镜头 {row['id']}：请填写 presenter_visible 和 presenter_speaking 布尔值")
+                    if design['presenter_speaking'] and (not design['presenter_visible'] or presenter['reference_id'] not in row.get('reference_ids', [])):
+                        raise ValueError(f"镜头 {row['id']}：开口讲解必须可见且绑定指定讲解员参考图")
                 selected = row.get('reference_ids', [])
                 if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):
                     raise ValueError(f"镜头 {row['id']}：reference_ids 必须是已提供素材 id 的数组；没有参考素材时填 []")
@@ -206,6 +219,12 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
                                      + ('本任务没有上传参考素材，必须填 []。' if not references else
                                         '不可使用角色名、图号、示例或不存在的素材 id。'))
                 row['reference_ids'] = selected
+                from .reference_materials import explicit_reference_labels
+                by_label = {ref.get('label'): ref['id'] for ref in references if ref.get('label')}
+                omitted = [label for label in explicit_reference_labels(row.get('visual_description', ''))
+                           if label in by_label and by_label[label] not in selected]
+                if omitted:
+                    raise ValueError(f"镜头 {row['id']}：提示词引用了{'、'.join(sorted(omitted))}，但 reference_ids 未选择对应素材；请补齐绑定或移除不适用的引用")
                 medical_issues = medical_design_issues(context, row)
                 if medical_issues:
                     raise ValueError(f"镜头 {row['id']}：" + '；'.join(medical_issues))
@@ -338,6 +357,7 @@ reference_texts:[{text:"参考图实际短字",owner:"核心图主体名或画�
 id及顺序保持不变，不输出多格数量、面板或额外镜头。
 若提供 validation_errors，只修复指出的方案交接问题，保持原文、既定表达与顺序，返回完整 shots。""" + MOTION_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
     system += medical_contract(context, 'motion', include_common=False)
+    system += presenter_contract(context)
     payload = {'story_context': context, 'shots': prepared,
                'method_example': (VISUAL_FIRST_MOTION_DESIGN_EXAMPLE
                                   if dynamic_text_mode(context) == VISUAL_FIRST else MOTION_DESIGN_EXAMPLE)}
@@ -421,6 +441,7 @@ beat_prompts 必须按 beats 原顺序一一对应，不省略任何阶段，也
 旧 version=1 或无 motion_plan 的镜头仍返回 {id,video_prompt:"..."}。
 顶层统一返回 {shots:[...]}，镜头顺序不变。""" + text_mode_contract(context) + SPEECH_HANDOFF_CONTRACT
     system += medical_contract(context, 'video', include_common=False)
+    system += presenter_contract(context)
     def present(rows):
         result = []
         for row in rows:

@@ -17,10 +17,6 @@ REQUIRED_FILES = (
     ".env.example",
     "runtime/python/python.exe",
     "runtime/node/node.exe",
-    "tools/IndexTTS25/indextts/infer_v2_5.py",
-    "tools/IndexTTS25/python_packages/tiktoken/__init__.py",
-    "tools/IndexTTS25/python_packages/whisper/__init__.py",
-    "tools/IndexTTS25/examples/voice_05.wav",
     "launcher/update-channel.json",
     "launcher/update-sources.json",
     "launcher/safe_update_helper.ps1",
@@ -81,6 +77,11 @@ def main() -> int:
         else:
             notes.append("local_tts_model=optional/not bundled")
     else:
+        for relative in ("tts/python/python.exe", "tts/IndexTTS25/indextts/infer_v2_5.py",
+                         "tts/IndexTTS25/python_packages/tiktoken/__init__.py",
+                         "tts/IndexTTS25/examples/voice_05.wav"):
+            if not (root / relative).is_file():
+                errors.append(f"完整包缺少 TTS 运行组件：{relative}")
         for relative in LOCAL_TTS_MODEL_FILES:
             if not (root / Path(relative)).is_file() and not (root / relative.replace("models/tts/indextts25", "tools/IndexTTS25/checkpoints")).is_file():
                 errors.append(f"完整包缺少本地 TTS 权重：{relative}")

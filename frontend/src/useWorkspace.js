@@ -543,6 +543,8 @@ const form = reactive({
   comfyui_profile_id: '',
   comfyui_h3_prompt_agent: false,
   comfyui_reference_audio: false,
+  presenter_mode: false,
+  presenter_reference_id: '',
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'standard',
   dynamic_max_shot_duration: 15,
@@ -4375,6 +4377,7 @@ function removeReferenceImage(index) {
     if (!form.reference_image_labels[id]) form.reference_image_labels[id] = `图${position + 1}`
   }
   const removedId = form.reference_image_ids[index]
+  if(form.presenter_reference_id===removedId){form.presenter_reference_id='';form.presenter_mode=false}
   delete form.reference_image_notes[removedId]
   delete form.reference_image_labels[removedId]
   delete form.reference_image_kinds[removedId]
@@ -4418,6 +4421,8 @@ function guidedVisualParameters() {
     content_mode: form.content_mode,
     director_strategy: form.director_strategy,
     ...(form.dynamic_video ? { dynamic_text_mode: form.dynamic_text_mode } : {}),
+    presenter_mode: Boolean(form.dynamic_video&&form.presenter_mode),
+    presenter_reference_id: form.presenter_reference_id||'',
     ...(form.dynamic_video ? { video_generation_backend: form.video_generation_backend, comfyui_profile_id: form.comfyui_profile_id, comfyui_h3_prompt_agent: form.comfyui_h3_prompt_agent, comfyui_reference_audio: form.comfyui_h3_prompt_agent ? false : form.comfyui_reference_audio } : {}),
     scene_references_enabled: form.scene_references_enabled,
     auto_split_long_text: form.auto_split_long_text,

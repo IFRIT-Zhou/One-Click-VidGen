@@ -1,0 +1,22 @@
+<!doctype html><html><meta charset="utf-8"><div id="app"></div><script type="module">
+import {createApp,h,reactive} from 'vue'
+import ReferenceMaterials from '../src/components/ReferenceMaterials.vue'
+import VideoStudio from '../src/components/VideoStudio.vue'
+import '../src/style.css'
+const form=reactive({dynamic_video:true,reference_image_ids:['person'],reference_image_notes:{},reference_image_labels:{person:'图1'},presenter_mode:false,presenter_reference_id:'',video_generation_backend:'comfyui'})
+const record={id:'presenter-ui',revision:1,status:'image_review',settings:{name:'讲解模式测试',ratio:'16:9'},creation_parameters:{presenter_mode:true,presenter_reference_id:'person'},references:[{id:'person',label:'图1'}],scenes:[{slide_id:'s1',text:'大家好',start:0,end:8}],shots:[{id:'shot1',kind:'video',start:0,end:8,duration:8,slide_ids:['s1'],reference_ids:[],intent:'出镜讲解',image_prompt:'讲解员',image_status:'completed',action:'自然讲话',video_prompt:'自然讲话',visual_design:{}}],scene_assets:[],logs:[]}
+window.form=form;window.record=record;window.requests=[]
+window.fetch=async(url,options={})=>{
+ const p=new URL(url,location.href).pathname;let result={}
+ if(options.method==='POST'){
+  const body=JSON.parse(options.body||'{}');window.requests.push({path:p,body})
+  if(p.endsWith('/motion')){Object.assign(record.shots[0],body);record.shots[0].visual_design.presenter_speaking=body.presenter_speaking;record.revision++;result=record}
+ }else if(p==='/api/video-studio/presenter-ui')result=record
+ else if(p==='/api/video-studio')result={items:[record]}
+ else if(p==='/api/language-presets')result={presets:[],current:{}}
+ else if(p==='/api/comfyui'||p==='/api/director-profiles')result={profiles:[]}
+ return new Response(JSON.stringify(result))
+}
+sessionStorage.setItem('ocv-video-open',record.id)
+createApp({render:()=>h('div',[h(ReferenceMaterials,{form,assets:[],names:['讲解员照片']}),h(VideoStudio)])}).mount('#app')
+</script></html>

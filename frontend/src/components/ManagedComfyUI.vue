@@ -35,18 +35,18 @@ onMounted(()=>{refresh(true);checkNodes()});onBeforeUnmount(()=>{disposed=true;c
     <template v-else><a v-if="state.maintenance_enabled" :href="state.base_url" target="_blank" rel="noopener noreferrer">维护工作流 ↗</a><button :disabled="busy||state.active_tasks>0" @click="action('stop')">关闭引擎并释放显存</button></template>
     <button @click="readLogs">{{showLogs?'收起日志':'查看引擎日志'}}</button>
    </div>
-   <p class="hint">生成时自动启动内置引擎。可选工作流所需的用户节点放入 OCV 根目录的 comfyui_plugins，更新引擎时保留。</p>
+   <p class="hint">生成时自动启动内置引擎。ComfyUI 功能包解压到 OCV 根目录，拓展节点位于 comfyui/custom_nodes。</p>
    <ModelInstallGuide />
    <details><summary>高级：复用已有模型目录</summary><p>默认读取整合包 models/comfyui，兼容旧版 runtime/comfyui/models。也可复用已有 ComfyUI 的 models 文件夹。</p><div class="model-path"><input v-model.trim="modelDirectory" placeholder="现有模型根目录（可选）" :disabled="state.state==='ready'||state.state==='starting'"><button :disabled="busy||state.state==='ready'||state.state==='starting'" @click="action('settings','PUT',{model_directory:modelDirectory})">保存模型目录</button></div></details>
   </template>
-  <details class="user-nodes"><summary>用户节点 · comfyui_plugins</summary>
-   <p>将下载的插件文件夹解压到 comfyui_plugins 下，例如 comfyui_plugins/comfyui-SelfLift/__init__.py。安装后关闭并重新启动内置引擎，再检查是否加载成功。</p>
+  <details class="user-nodes"><summary>拓展节点 · comfyui/custom_nodes</summary>
+   <p>配套节点包直接解压到 OCV 根目录。手动安装时，节点应位于 comfyui/custom_nodes/节点名称/__init__.py。安装后关闭并重新启动内置引擎，再检查是否加载成功。</p>
    <div class="engine-actions"><button :disabled="busy" @click="openNodes">打开节点目录</button><button @click="checkNodes">重新检查节点</button><a href="https://github.com/facok/comfyui-SelfLift" target="_blank" rel="noopener noreferrer">SelfLift 作者仓库 ↗</a></div>
    <p v-if="nodes">{{nodes.directory}}</p>
    <p v-for="profile in nodes?.profiles||[]" :key="profile.id">{{profile.name}}：{{!profile.checked?'启动引擎后可检查':profile.missing_nodes.length?'未加载：'+profile.missing_nodes.join('、'):'所需节点已加载'}}</p>
    <p>SelfLift 由用户自行安装。插件缺少 Python 依赖或与内置节点冲突时，请查看引擎日志；依赖应安装到内置引擎的 Python 环境。</p>
   </details>
-  <p v-if="state&&!state.installed">当前整合包未包含内置引擎。外部 ComfyUI 和视频 API 仍可正常使用；组件包安装入口将在完整包验证后开放。</p>
+  <p v-if="state&&!state.installed">尚未安装内置引擎。将 ComfyUI 功能包解压到 OCV 根目录，形成 comfyui/engine 后重新检查；模型包也解压到 OCV 根目录。</p>
   <p v-if="error||state?.error" role="alert" class="engine-error">{{error||state.error}}</p>
   <pre v-if="showLogs">{{logs}}</pre>
  </article>

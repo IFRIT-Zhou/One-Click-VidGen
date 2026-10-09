@@ -86,6 +86,8 @@ class ProjectSettingsEdit(Review):
     comfyui_profile_id: str = Field(default='', max_length=80)
     comfyui_h3_prompt_agent: bool = False
     comfyui_reference_audio: bool = False
+    presenter_mode: bool = False
+    presenter_reference_id: str = Field(default='', max_length=200)
     dynamic_auto_advance: bool = False
     parameters: dict[str, Any] = Field(default_factory=dict)
 
@@ -121,6 +123,7 @@ class ShotMotionEdit(Review):
     video_prompt: str = Field(default='', max_length=20000)
     reference_audio_enabled: bool = True
     reference_audio_lipsync: bool = True
+    presenter_speaking: bool | None = None
 
 
 def _normalize_rgb_image(image: Path, *, strict: bool = False) -> bool:
@@ -810,6 +813,9 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         editable(record, data.revision)
         parameters = record.setdefault('creation_parameters', {})
         settings = record['settings']
+        from .presenter_mode import presenter_config
+        if data.presenter_mode and not presenter_config({**parameters, 'presenter_mode': True, 'presenter_reference_id': data.presenter_reference_id}, record['references']):
+            raise HTTPException(400, '请选择项目中的讲解员参考图')
         effective_reference_audio = bool(data.comfyui_reference_audio and
                                          not data.comfyui_h3_prompt_agent)
         if data.video_generation_backend == 'comfyui':
@@ -866,6 +872,8 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         # H3 uses OCV's final narration only during export. Stale values from
         # an older audio-enabled profile must not require an audio node.
         parameters['comfyui_reference_audio'] = effective_reference_audio
+        from .presenter_mode import presenter_config
+        record.setdefault('context', {}).setdefault('video_direction', {})['presenter'] = presenter_config(parameters, record['references'])
         if visual_changed:
             for shot in record['shots']:
                 _invalidate_shot_video(record, shot, '全局画面设定已调整')
@@ -1103,7 +1111,7 @@ def import_new_project(data, user):
                 copied = target / relative
                 copied.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(original, copied)
-                record['references'].append(dict(id=f'ref_{index:02d}', label=row['label'],
+                record['references'].append(dict(id=f'ref_{index:02d}', label=row['label'], source_asset_id=row['asset_id'],
                     description=row['description'], kind=row['kind'], file=relative))
         with LOCK:
             save(target, record)
@@ -1668,6 +1676,20 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
                           shot.get('video_prompt', '') != data.video_prompt.strip() or
                           bool(shot.get('reference_audio_enabled', True)) != data.reference_audio_enabled or
                           bool(shot.get('reference_audio_lipsync', True)) != data.reference_audio_lipsync)
+        if data.presenter_speaking is not None:
+            from .presenter_mode import presenter_config
+            presenter = presenter_config(record.get('creation_parameters', {}), record['references'])
+            if data.presenter_speaking and not presenter:
+                raise HTTPException(400, '请先在项目参考素材中开启讲解员模式并指定人物')
+            design = shot.setdefault('visual_design', {})
+            changed_motion |= design.get('presenter_speaking') != data.presenter_speaking
+            design['presenter_speaking'] = data.presenter_speaking
+            if data.presenter_speaking:
+                design['presenter_visible'] = True
+                if presenter['reference_id'] not in shot['reference_ids']:
+                    if len(shot['reference_ids']) >= 8:
+                        raise HTTPException(400, '本镜参考素材已满，请先移除一个素材')
+                    shot['reference_ids'].append(presenter['reference_id'])
         if shot.get('action', '') != data.action.strip():
             shot.pop('motion_plan', None)
         if shot.get('video_prompt', '') != data.video_prompt.strip():
@@ -1723,6 +1745,8 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
         context = copy.deepcopy(record.get('context') or {})
         context.setdefault('video_direction', {})['dynamic_text_mode'] = normalize_text_mode(
             planning_parameters(record).get('dynamic_text_mode'))
+        from .presenter_mode import presenter_config
+        context['video_direction']['presenter'] = presenter_config(planning_parameters(record), record.get('references', []))
         with project_language_scope(user['id'], planning_parameters(record)):
             updated, analysis = refresh(context, record['settings'].get('style', ''),
                                         snapshot, record.get('references', []), basis=data.basis,

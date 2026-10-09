@@ -25,6 +25,7 @@ requests==2.32.5
 
 # Subtitle recognition (Module 2)
 faster-whisper==1.2.1
+pypinyin==0.55.0
 ctranslate2==4.8.1
 
 # Official IndexTTS-2.5 runtime support (Module 1 local GPU mode).

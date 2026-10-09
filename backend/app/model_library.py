@@ -74,7 +74,7 @@ def installation(kind="comfyui", profile_id=""):
         return {"kind": kind, "title": "IndexTTS-2.5 本地配音", "directory": str(config.model_dir),
                 "default_directory": str(root / "tts" / "indextts25"), "items": items,
                 "ready": all(x["ready"] for x in items), "runtime_missing": config.missing_runtime_resources(),
-                "profiles": [], "message": "将 OCV 配套 TTS 模型包解压到此目录，保留 hf_cache 和 qwen0.6bemo4-merge 子目录。仅下载主模型仓库还需要补齐辅助模型；推荐使用完整的配套模型包。"}
+                "profiles": [], "message": "将 OCV 配套 TTS 功能包和模型包都解压到 OCV 根目录。引擎位于 tts，模型位于 models/tts/indextts25，并保留 hf_cache 和 qwen0.6bemo4-merge 子目录。"}
     if kind != "comfyui":
         raise HTTPException(400, "未知模型类型")
     release, manifest = engine.runtime_info()

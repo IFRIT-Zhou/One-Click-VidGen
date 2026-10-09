@@ -71,7 +71,7 @@ def component_status() -> dict[str, Any]:
         message = "正在下载并安装本地 TTS 权重，可关闭此窗口在后台继续。"
     elif runtime_missing:
         state = "runtime_incomplete"
-        message = "本地 TTS 基础环境不完整，请重新下载 OCV 整合包。"
+        message = "尚未装齐本地 TTS 运行组件，请将 TTS 功能包解压到 OCV 根目录（生成 tts 文件夹），再重新检查。"
     elif _LAST_EXIT_CODE not in (None, 0):
         state = "failed"
         message = "本地 TTS 权重安装未完成，可检查网络后继续下载。"

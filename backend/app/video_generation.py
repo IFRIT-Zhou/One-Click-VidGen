@@ -551,14 +551,18 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     with studio.LOCK:
                         source_record = studio.read(path)
                         source_shot = copy.deepcopy(studio._find_shot(source_record, identity))
-                    # H3 currently produces more reliable animation and effects without TTS conditioning.
-                    # Final narration is mixed by OCV, so H3 never receives the voice reference.
-                    shot_reference_audio = bool(use_reference_audio and not use_h3_agent and
-                                                source_shot.get('reference_audio_enabled', True))
-                    shot_lipsync = bool(source_shot.get('reference_audio_lipsync', True))
+                    from .presenter_mode import audio_policy, spoken_text
+                    shot_reference_audio, shot_lipsync = audio_policy(
+                        source_record.get('creation_parameters', {}), source_shot, use_h3_agent, source_record.get('references', []))
                     effective_source_prompt = enforce_no_auto_subtitles(source_shot.get('video_prompt'))
                     if shot_reference_audio:
                         effective_source_prompt = _prompt_with_reference_audio(effective_source_prompt, lipsync=shot_lipsync)
+                        if shot_lipsync:
+                            effective_source_prompt += '\n【仅用于发音，不可上屏的台词】\n' + spoken_text(source_shot)
+                        audio_source = path / 'assets' / 'audio.wav'
+                        if not audio_source.is_file():
+                            raise ValueError('当前项目缺少完整配音，无法启用讲解员参考音频')
+                        source_shot['reference_audio_digest'] = hashlib.sha256(audio_source.read_bytes()).hexdigest()
                     if use_h3_agent and not resume_prompt_id:
                         duration = int(source_shot.get('generation_duration') or 0)
                         source_shot['video_prompt'] = effective_source_prompt
@@ -994,9 +998,16 @@ def generate(identity: str, data: GenerateClips, request: Request):
                             missing = '、'.join(item['name'] for item in model_state['items'] if not item['ready'])
                             raise ValueError('内置工作流模型尚未齐备：' + (missing or '引擎组件未安装') + '。请打开本镜生成设置中的「模型安装指引」，补齐后重新检查。')
                     binding = (profile.get('mappings') or {}).get('audio') or {}
-                    if use_reference_audio and not options['h3_prompt_agent'] and shot.get('reference_audio_enabled', True) and not (binding.get('node_id') and binding.get('input_name')):
+                    from .presenter_mode import audio_policy
+                    needs_audio, _ = audio_policy(record.get('creation_parameters', {}), shot, options['h3_prompt_agent'], record.get('references', []))
+                    if needs_audio and not (binding.get('node_id') and binding.get('input_name')):
                         raise ValueError(f'{shot["id"]} 的工作流没有映射参考音频节点')
+                    if needs_audio and not (path / 'assets' / 'audio.wav').is_file():
+                        raise ValueError('当前项目缺少完整配音，无法启用讲解员参考音频')
                 elif not previous or data.regenerate_completed or shot.get('video_terminal'):
+                    from .presenter_mode import presenter_requested
+                    if presenter_requested(record.get('creation_parameters', {}), shot, record.get('references', [])):
+                        raise ValueError('讲解员音频对口型目前支持 ComfyUI 音频工作流；请切换本镜生成方式，或关闭本镜人物对口型后使用视频 API')
                     validate_request(VideoGenerationRequest(str(shot.get('video_prompt') or ''),
                         _inputs(path, record, shot), path / 'unused.mp4', shot.get('generation_duration'),
                         record['settings'].get('ratio') or '16:9', options['resolution'] or config['resolution']))
