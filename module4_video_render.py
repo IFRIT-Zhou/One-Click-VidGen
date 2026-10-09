@@ -984,6 +984,7 @@ def _provider_configs() -> list[dict[str, str]]:
         or "rhart-image-g-2"
     )
     base_config = {
+        "protocol": os.getenv("OCV_IMAGE_PROTOCOL", "async_task"),
         "endpoint": os.getenv("RUNNINGHUB_ENDPOINT", "").strip()
         or f"/{image_model.strip('/')}/text-to-image",
         "model": image_model,
@@ -993,7 +994,10 @@ def _provider_configs() -> list[dict[str, str]]:
         ),
         "ratio": '9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip(),
         "query_url": os.getenv("OCV_IMAGE_QUERY_URL", "").strip(),
+        "reference_endpoint": os.getenv("RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT", "").strip(),
     }
+    if base_config['protocol'] == 'openai_sync':
+        base_config.update(json.loads(os.getenv('OCV_IMAGE_SYNC_OPTIONS', '{}')))
     raw_keys = [os.getenv("RUNNINGHUB_API_KEY", "")]
     raw_keys.extend(re.split(r"[,;\s]+", os.getenv("RUNNINGHUB_API_KEYS", "")))
     raw_keys.extend(
@@ -3185,9 +3189,13 @@ def _submit_poster_request(
         json=payload,
         timeout=60,
     )
+    if response.status_code in {404, 405, 422}:
+        raise RuntimeError(f'图像提交接口 HTTP {response.status_code}：请检查协议、路径、模型和账号权限；不是网络抖动，已停止重试')
     try:
         submitted = response.json()
     except ValueError as exc:
+        if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
+            raise RuntimeError(f'图像提交接口 HTTP {response.status_code}：接口协议、路径或权限错误，已停止重试') from exc
         response.raise_for_status()
         raise RunningHubTransientError("第三方生成图接口返回了无效 JSON") from exc
     if not isinstance(submitted, dict):
@@ -3237,6 +3245,10 @@ def _submit_poster(macro: dict[str, Any], config: dict[str, str]) -> PosterTask:
         return PosterTask(macro=macro, output=output, task_id=None)
 
     session = _new_session()
+    if config.get('protocol') == 'openai_sync':
+        from backend.app.openai_image_adapter import render
+        render(macro, config, session, output)
+        return PosterTask(macro=macro, output=output, task_id=None)
     try:
         task_id = _submit_poster_request(macro, config, session)
     except requests.RequestException as exc:

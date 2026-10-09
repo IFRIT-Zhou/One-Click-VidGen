@@ -14,6 +14,46 @@ spec.loader.exec_module(client)
 
 
 class ClientTests(unittest.TestCase):
+    def test_scene_apply_checks_preview_token_and_reads_back_scene_state(self):
+        import hashlib
+        token = hashlib.sha256(b'[]').hexdigest()
+        calls = []
+        class Opener:
+            def open(self, request, timeout):
+                route = request.full_url.rsplit('/', 1)[-1]; calls.append(route)
+                response = {'ok': True, 'revision': 3, 'confirmation_token': 'checked', 'scene_state_token': token}
+                if route == 'info':
+                    response = {'capabilities': ['scene_management']}
+                if route == 'pack':
+                    response = {'revision': 3, 'scene_assets': []}
+                if route == 'scene-apply':
+                    self.payload = json.loads(request.data)
+                    assert self.payload['confirmed'] is True
+                return io.BytesIO(json.dumps(response).encode())
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / 'scene.json'
+            payload.write_text('{"confirmation_token":"checked"}')
+            with patch.object(client.urllib.request, 'build_opener', return_value=Opener()), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                status = client.main(['scene-apply', 'project', str(payload), '--confirmed'])
+            self.assertEqual(status, 0)
+            self.assertTrue(json.loads(output.getvalue())['readback_verified'])
+        self.assertEqual(calls, ['info', 'scene-validate', 'scene-apply', 'pack'])
+
+    def test_scene_changed_preview_is_not_silently_confirmed(self):
+        calls = []
+        class Opener:
+            def open(self, request, timeout):
+                route = request.full_url.rsplit('/', 1)[-1]; calls.append(route)
+                return io.BytesIO(json.dumps({'ok': True, 'confirmation_token': 'new'}).encode())
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / 'scene.json'; payload.write_text('{"confirmation_token":"old"}')
+            with patch.object(client.urllib.request, 'build_opener', return_value=Opener()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                status = client.main(['scene-apply', 'project', str(payload), '--confirmed'])
+        self.assertEqual(status, 2)
+        self.assertEqual(calls, ['info', 'scene-validate'])
+
     def run_client(self, command, valid=True):
         calls = []
 

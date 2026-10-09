@@ -67,6 +67,28 @@ class ImageProfilesTest(unittest.TestCase):
         self.assertEqual(environment["RUNNINGHUB_ENDPOINT"], "https://relay.example.test/image-2.5/text-to-image")
         self.assertEqual(environment["OCV_IMAGE_QUERY_URL"], "https://relay.example.test/tasks/query")
 
+    def test_openai_profile_save_defaults_and_parameters(self):
+        request = image_profiles.ImageProfileRequest(name='同步图像', protocol='openai_sync',
+            base_url='https://relay.example.test/v1', model_id='custom', api_key='key',
+            size='1536x1024', request_parameters={'output_format': 'png'})
+        with patch.object(image_profiles, 'require_user', return_value={'id': 1}), \
+             patch.object(image_profiles, 'save_project_env_values'), \
+             patch.object(image_profiles, 'profile_by_id', return_value={}):
+            image_profiles.save_profile(request, None)
+        saved = json.loads(self.profiles.read_text(encoding='utf-8'))['profiles'][0]
+        self.assertEqual(saved['text_endpoint'], '/v1/images/generations')
+        self.assertEqual(saved['reference_endpoint'], '/v1/images/edits')
+        self.assertEqual(saved['request_parameters'], {'output_format': 'png'})
+
+    def test_reserved_parameters_rejected_without_write(self):
+        from fastapi import HTTPException
+        request = image_profiles.ImageProfileRequest(name='同步图像', protocol='openai_sync',
+            base_url='https://relay.example.test', model_id='custom', request_parameters={'n': 10})
+        with patch.object(image_profiles, 'require_user', return_value={'id': 1}):
+            with self.assertRaises(HTTPException):
+                image_profiles.save_profile(request, None)
+        self.assertFalse(self.profiles.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,11 @@ class Draft(StrictModel):
     parameters: dict[str, Any]
 
 
+class DraftArchive(StrictModel):
+    revision: int = Field(ge=1)
+    archived: bool
+
+
 class Shot(StrictModel):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     slide_ids: list[str] = Field(min_length=1, max_length=1000)
@@ -140,6 +145,7 @@ def brief(record):
 
 
 def compact_pack(record, path):
+    from .codex_scene_management import scene_pack
     keys = ('id', 'slide_ids', 'kind', 'intent', 'image_prompt', 'video_prompt', 'motion_plan', 'reference_ids',
             'image_material_numbers_bound', 'image_prompt_out_of_sync', 'image_status', 'video_status', 'prompt_refresh_note')
     return {'schema_version': 1, **brief(record), 'timeline_token': timeline_token(record, path),
@@ -150,6 +156,10 @@ def compact_pack(record, path):
                            {'url': f"/api/codex-bridge/projects/{record['id']}/references/{row['id']}"}
                            for row in record.get('references', [])],
             'shots': [{k: row.get(k) for k in keys if k in row} for row in record.get('shots', [])],
+            'scene_assets': scene_pack(record),
+            'scene_history': record.get('codex_bridge', {}).get('scene_history', []),
+            'scene_bindings': [{'id': s['id'], 'scene_id': s.get('scene_reference_id'),
+                                'disabled': bool(s.get('scene_reference_disabled'))} for s in record.get('shots', [])],
             'evidence': record.get('codex_bridge', {}).get('evidence', {}),
             'audio_url': f"/api/video-studio/{record['id']}/audio" if record.get('audio') else None,
             'rules': ['配音须由用户确认；字幕只读，按 slide_id 完整顺序覆盖一次',
@@ -166,8 +176,8 @@ def info(request: Request):
     return {'version': 1, 'name': 'Codex 制作桥', 'client_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'ocv_bridge.py'),
             'skill_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'skills' / 'ocv-production-bridge' / 'SKILL.md'),
             'guide_url': '/api/codex-bridge/guide',
-            'capabilities': ['drafts', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch'],
-            'generates_media': False, 'schema_url': '/api/codex-bridge/schema'}
+            'capabilities': ['drafts', 'draft_archive', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch', 'scene_management', 'image_generation'],
+            'generates_media': True, 'generation_requires_confirmation': True, 'schema_url': '/api/codex-bridge/schema'}
 
 
 @router.get('/guide')
@@ -184,7 +194,9 @@ def guide(request: Request):
 @router.get('/schema')
 def schema(request: Request):
     user_for(request)
-    return {'plan': Plan.model_json_schema(), 'draft': Draft.model_json_schema(), 'shot_patch': ShotPatches.model_json_schema(),
+    from .codex_scene_management import SceneEdit
+    from .codex_image_generation import ImageGenerate
+    return {'image_generate': ImageGenerate.model_json_schema(), 'scene_edit': SceneEdit.model_json_schema(), 'plan': Plan.model_json_schema(), 'draft': Draft.model_json_schema(), 'shot_patch': ShotPatches.model_json_schema(),
             'draft_fields': sorted(DRAFT_FIELDS),
             'motion_example': {'version': 2, 'scene_anchor': '固定构图，显示本镜空间关系',
                 'participants': ['主体'], 'reference_participants': ['主体'], 'reference_texts': [],
@@ -201,12 +213,14 @@ def schema(request: Request):
 
 
 @router.get('/drafts')
-def drafts(request: Request):
+def drafts(request: Request, include_archived: bool = False):
     user = user_for(request)
     with studio.LOCK:
         items = [read_record(p.parent) for p in (ROOT / str(user['id']) / 'drafts').glob('*/record.json')]
     return {'items': sorted([{'id': r['id'], 'revision': r['revision'], 'name': r['parameters']['project_name'],
-                              'updated_at': r['updated_at']} for r in items], key=lambda r: r['updated_at'], reverse=True)}
+                              'archived': bool(r.get('archived', False)),
+                              'updated_at': r['updated_at']} for r in items
+                            if include_archived or not r.get('archived', False)], key=lambda r: r['updated_at'], reverse=True)}
 
 
 def draft_path(user, identity):
@@ -254,9 +268,25 @@ def draft_put(data: Draft, request: Request):
             return old | {'generation_started': False}
         if (old['revision'] if old else 0) != data.revision:
             raise HTTPException(409, '草稿已被修改，请重新读取 revision')
-        result = {'id': data.id, 'revision': data.revision + 1, 'parameters': params}
+        result = {'id': data.id, 'revision': data.revision + 1, 'parameters': params,
+                  'archived': bool(old and old.get('archived', False))}
         studio.save(path, result)
         return result | {'generation_started': False}
+
+
+@router.put('/drafts/{identity}/archive')
+def draft_archive(identity: str, data: DraftArchive, request: Request):
+    user = user_for(request)
+    with studio.LOCK:
+        path = draft_path(user['id'], identity)
+        record = read_record(path)
+        if record['revision'] != data.revision:
+            raise HTTPException(409, '草稿已被修改，请刷新后再操作')
+        if bool(record.get('archived', False)) != data.archived:
+            record['archived'] = data.archived
+            record['revision'] += 1
+            studio.save(path, record)
+        return record | {'generation_started': False}
 
 
 @router.get('/projects')
@@ -590,3 +620,9 @@ def patch_validate(identity: str, data: ShotPatches, request: Request):
 @router.post('/projects/{identity}/patch-apply')
 def patch_apply(identity: str, data: ShotPatches, request: Request):
     return review_patches(identity, data, request, True)
+
+
+from .codex_scene_management import register as register_scene_management
+register_scene_management(router)
+from .codex_image_generation import register as register_image_generation
+register_image_generation(router)

@@ -27,7 +27,12 @@ SUPPORTED_RESOLUTIONS = {"1k", "2k", "4k"}
 class ImageProfileRequest(BaseModel):
     id: str | None = Field(default=None, max_length=80)
     name: str = Field(min_length=1, max_length=60)
-    protocol: Literal["async_task"] = "async_task"
+    protocol: Literal["async_task", "openai_sync"] = "async_task"
+    size: str = Field(default="auto", max_length=40)
+    quality: str = Field(default="", max_length=40)
+    response_format: Literal["", "b64_json", "url"] = ""
+    request_parameters: dict[str, Any] = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=600, ge=30, le=1800)
     base_url: str = Field(min_length=1, max_length=2048)
     model_id: str = Field(min_length=1, max_length=256)
     text_endpoint: str = Field(default="/openapi/v2/{model}/text-to-image", max_length=512)
@@ -159,6 +164,7 @@ def profile_snapshot(profile_id: str, resolution: str | None = None) -> dict[str
     return {key: profile.get(key) for key in (
         "id", "name", "protocol", "base_url", "model_id", "text_endpoint",
         "reference_endpoint", "query_endpoint", "reference_images",
+        "size", "quality", "response_format", "request_parameters", "timeout_seconds",
     )} | {"resolution": selected}
 
 
@@ -167,6 +173,8 @@ def profile_environment(snapshot: dict[str, Any]) -> dict[str, str]:
     first = configs[0]
     return {
         "OCV_IMAGE_PROFILE_ACTIVE": "1",
+        "OCV_IMAGE_PROTOCOL": str(first["protocol"]),
+        "OCV_IMAGE_SYNC_OPTIONS": json.dumps({k: first.get(k) for k in ("size", "quality", "response_format", "request_parameters", "timeout_seconds")}),
         "IMAGE_API_BASE_URL": str(first["base_url"]),
         "IMAGE_MODEL_ID": str(first["model"]),
         "IMAGE_RESOLUTION": str(first["resolution"]),
@@ -187,8 +195,11 @@ def profile_provider_configs(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     base = str(snapshot.get("base_url") or profile.get("base_url") or "").rstrip("/")
     def absolute(endpoint: str) -> str:
         value = endpoint.replace("{model}", model)
+        if (snapshot.get('protocol') or profile.get('protocol')) == 'openai_sync' and base.endswith('/v1') and value.startswith('/v1/'):
+            value = value[3:]
         return value if value.startswith(("http://", "https://")) else f"{base}/{value.lstrip('/')}"
     common = {
+        "protocol": snapshot.get("protocol") or profile.get("protocol", "async_task"),
         "base_url": base,
         "model": model,
         "resolution": resolution,
@@ -197,6 +208,8 @@ def profile_provider_configs(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         "query_url": absolute(str(snapshot.get("query_endpoint") or profile.get("query_endpoint"))),
         "reference_images": snapshot.get("reference_images", profile.get("reference_images", True)),
     }
+    for key, default in {"size": "auto", "quality": "", "response_format": "", "request_parameters": {}, "timeout_seconds": 600}.items():
+        common[key] = snapshot.get(key, profile.get(key, default))
     return [
         {**common, "api_key": str(key), "account_label": f"账号 {index}"}
         for index, key in enumerate(profile.get("api_keys") or [], 1)
@@ -221,6 +234,17 @@ def save_profile(payload: ImageProfileRequest, request: Request) -> dict[str, An
         if not re.fullmatch(r"[A-Za-z0-9_-]+", profile_id):
             raise ValueError("配置 ID 无效")
         resolutions = list(dict.fromkeys(value.lower() for value in payload.resolutions))
+        if payload.protocol == 'openai_sync':
+            if payload.text_endpoint == '/openapi/v2/{model}/text-to-image':
+                payload.text_endpoint = '/v1/images/generations'
+            if payload.reference_endpoint == '/openapi/v2/{model}/image-to-image':
+                payload.reference_endpoint = '/v1/images/edits'
+        if not re.fullmatch(r'auto|[1-9][0-9]{1,4}x[1-9][0-9]{1,4}', payload.size):
+            raise ValueError('同步图像尺寸须为 auto 或宽x高，例如1536x1024')
+        if any(k in payload.request_parameters for k in ('model', 'prompt', 'n', 'image', 'image[]', 'api_key', 'headers', 'stream')):
+            raise ValueError('额外参数不能覆盖模型、提示词、图片、数量、密钥或流式设置')
+        if len(json.dumps(payload.request_parameters)) > 10000:
+            raise ValueError('额外参数过长')
         if not resolutions or any(value not in SUPPORTED_RESOLUTIONS for value in resolutions):
             raise ValueError("请至少选择一种受支持的分辨率")
         document = {
@@ -230,6 +254,9 @@ def save_profile(payload: ImageProfileRequest, request: Request) -> dict[str, An
             "reference_endpoint": _validate_endpoint(payload.reference_endpoint, "参考生图路径"),
             "query_endpoint": _validate_endpoint(payload.query_endpoint, "状态查询路径"),
             "resolutions": resolutions, "reference_images": bool(payload.reference_images),
+            "size": payload.size, "quality": payload.quality,
+            "response_format": payload.response_format, "request_parameters": payload.request_parameters,
+            "timeout_seconds": payload.timeout_seconds,
         }
         with LOCK:
             documents = _read_documents()

@@ -204,8 +204,10 @@ def _shot_reference_paths(path, record, shot):
 
 
 def _scene_asset(record, shot):
+    if shot.get('scene_reference_disabled'):
+        return None
     return next((asset for asset in record.get('scene_assets', [])
-                 if asset['id'] == shot.get('scene_reference_id')), None)
+                 if asset['id'] == shot.get('scene_reference_id') and not asset.get('disabled')), None)
 
 
 def _bind_material_numbers(record, shot, prompt):
@@ -221,6 +223,15 @@ def _bind_material_numbers(record, shot, prompt):
 def _image_inputs(path, record, shot, prompt, references=None, use_scene=True):
     """One input contract for first generation and subsequent image edits."""
     paths = list(references if references is not None else _shot_reference_paths(path, record, shot))
+    # Filter both automatic and explicitly selected old scene files at the
+    # actual generation boundary, not merely in the scene library UI.
+    blocked = set()
+    for item in record.get('scene_assets', []):
+        old = [r.get('image') for r in item.get('bridge_image_history', [])]
+        if item.get('disabled') or shot.get('scene_reference_disabled'):
+            old.append(item.get('image'))
+        blocked.update(str((path / value).resolve()) for value in old if value)
+    paths = [value for value in paths if str(Path(value).resolve()) not in blocked]
     prompt = scene_references.strip_scene_hint(prompt)
     if references is None:
         prompt = _bind_material_numbers(record, shot, prompt)
@@ -228,8 +239,10 @@ def _image_inputs(path, record, shot, prompt, references=None, use_scene=True):
     if asset:
         if asset.get('image_status') != 'completed':
             raise ValueError('关联场景参考尚未生成，请先完成场景参考')
-        paths.append(str(_storyboard_image_path(path, asset).resolve()))
-        prompt = scene_references.scene_prompt(prompt, len(paths))
+        scene_path = str(_storyboard_image_path(path, asset).resolve())
+        if scene_path not in paths:
+            paths.append(scene_path)
+        prompt = scene_references.scene_prompt(prompt, paths.index(scene_path) + 1)
     if len(paths) > 4:
         raise ValueError('核心图最多接收 4 张参考图，启用场景参考时最多再使用 3 张人物或其他素材；请减少本镜头的参考素材')
     return prompt, paths, asset
@@ -297,13 +310,15 @@ def _prepare_scene_assets(path, record, pool, cancelled):
             shot['image_prompt'] = scene_references.strip_scene_hint(shot.get('image_prompt'))
         for asset in assets:
             for shot in record['shots']:
-                if shot['id'] in asset['used_by']:
+                if not asset.get('disabled') and not shot.get('scene_reference_disabled') and shot['id'] in asset['used_by']:
                     shot['scene_reference_id'] = asset['id']
         record['logs'].append(f'场景参考：找到 {len(assets)} 个共用空间；已生成的场景会复用。' if assets
                               else '场景参考：没有明确共用的空间，本轮无需额外生成场景图。')
         save(path, record)
     import module4_video_render as visual
     for asset in assets:
+        if asset.get('disabled'):
+            continue
         if cancelled.is_set():
             raise PlanningStopped()
         target = path / asset['image']
@@ -1426,7 +1441,7 @@ async def upload_storyboard_reference(identity: str, request: Request, file: Upl
 
 def _scene_redraw_references(record):
     return [{**row, 'file': row['image']} for row in record.get('scene_assets', [])
-            if row.get('image_status') == 'completed' and row.get('image')]
+            if not row.get('disabled') and row.get('image_status') == 'completed' and row.get('image')]
 
 
 def _redraw_reference_row(record, reference_id):

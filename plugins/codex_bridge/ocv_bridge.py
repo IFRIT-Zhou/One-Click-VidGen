@@ -1,5 +1,6 @@
-"""OCV production bridge client. Standard library only; no generation endpoints."""
+"""OCV production bridge client, including explicitly confirmed image redraw."""
 import argparse
+import hashlib
 import http.cookiejar
 import json
 import mimetypes
@@ -21,12 +22,17 @@ def main(argv=None):
         sub.add_parser(name)
     for name in ('draft-save', 'upload'):
         sub.add_parser(name).add_argument('file')
-    for name in ('draft-get', 'pack'):
+    for name in ('draft-get', 'pack', 'scene-assets', 'image-status'):
         sub.add_parser(name).add_argument('id')
+    for name in ('draft-archive', 'draft-restore'):
+        p = sub.add_parser(name); p.add_argument('id'); p.add_argument('--revision', type=int, required=True)
     p = sub.add_parser('from-audio')
     p.add_argument('job_id'); p.add_argument('--confirmed', action='store_true', required=True)
-    for name in ('validate', 'apply', 'patch-validate', 'patch-apply'):
+    for name in ('validate', 'apply', 'patch-validate', 'patch-apply', 'scene-validate', 'scene-apply', 'image-validate', 'image-apply'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('file')
+        if name in ('scene-apply', 'image-apply'):
+            p.add_argument('--confirmed', action='store_true', required=True,
+                           help='Confirm the previously inspected affected-shot list')
     args = parser.parse_args(argv)
     base = args.base_url.rstrip('/')
     parsed = urllib.parse.urlsplit(base)
@@ -71,20 +77,43 @@ def main(argv=None):
             result = call(prefix + '/drafts', json.loads(Path(args.file).read_text(encoding='utf-8-sig')), 'PUT')
         elif args.command == 'draft-get':
             result = call(prefix + '/drafts/' + urllib.parse.quote(args.id, safe=''))
+        elif args.command in ('draft-archive', 'draft-restore'):
+            result = call(prefix + '/drafts/' + urllib.parse.quote(args.id, safe='') + '/archive',
+                          {'revision': args.revision, 'archived': args.command == 'draft-archive'}, 'PUT')
         elif args.command == 'from-audio':
             result = call(prefix + '/from-audio', {'job_id': args.job_id, 'audio_confirmed': args.confirmed}, 'POST')
         elif args.command == 'pack':
             result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/pack')
+        elif args.command == 'scene-assets':
+            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/scene-assets')
+        elif args.command == 'image-status':
+            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/image-status')
+        elif args.command in ('image-validate', 'image-apply'):
+            payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
+            path = prefix + '/projects/' + urllib.parse.quote(args.id, safe='')
+            if args.command == 'image-apply':
+                payload['confirmed'] = args.confirmed
+            result = call(path + '/' + args.command, payload, 'POST')
         else:
             payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
             path = prefix + '/projects/' + urllib.parse.quote(args.id, safe='')
-            operation = 'patch-' if args.command.startswith('patch-') else ''
+            operation = 'scene-' if args.command.startswith('scene-') else 'patch-' if args.command.startswith('patch-') else ''
             result = call(path + '/' + operation + 'validate', payload, 'POST')
-            if args.command in ('apply', 'patch-apply') and result.get('ok'):
+            if args.command in ('apply', 'patch-apply', 'scene-apply') and result.get('ok'):
+                if args.command == 'scene-apply':
+                    # Never silently confirm a changed preview on behalf of the user.
+                    if payload.get('confirmation_token') != result.get('confirmation_token'):
+                        raise RuntimeError('Scene preview changed or token missing; run scene-validate and inspect impacts first')
+                    payload['confirmed'] = args.confirmed
                 result = call(path + '/' + operation + 'apply', payload, 'POST')
                 pack = call(path + '/pack')
                 if pack['revision'] != result['revision']:
                     raise RuntimeError('Project changed after import; reread pack')
+                if args.command == 'scene-apply':
+                    state = hashlib.sha256(json.dumps(pack.get('scene_assets', []), ensure_ascii=False,
+                        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                    if state != result.get('scene_state_token'):
+                        raise RuntimeError('Scene readback differs from applied proposal; reread pack')
                 result['readback_verified'] = True
         if args.out:
             out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)

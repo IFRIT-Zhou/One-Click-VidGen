@@ -11,11 +11,14 @@ const editing = ref(false)
 const draft = reactive({ id:'', name:'', protocol:'async_task', base_url:'', model_id:'', text_endpoint:'/openapi/v2/{model}/text-to-image', reference_endpoint:'/openapi/v2/{model}/image-to-image', query_endpoint:'/openapi/v2/query', resolutions:['1k','2k','4k'], reference_images:true, api_key:'' })
 const selected = computed(() => profiles.value.find(item => item.id === props.form.image_profile_id) || null)
 const resolutions = computed(() => selected.value?.resolutions || ['1k','2k','4k'])
+const extraParameters = ref('{}')
+function chooseProtocol(){Object.assign(draft,draft.protocol==='openai_sync'?{text_endpoint:'/v1/images/generations',reference_endpoint:'/v1/images/edits',size:'auto',quality:'',response_format:'',timeout_seconds:600}:{text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query'})}
+watch(editing,value=>{if(value){extraParameters.value=JSON.stringify(draft.request_parameters||{},null,2);draft.size ||= 'auto';draft.timeout_seconds ||= 600}})
 
-function reset(profile=null){Object.assign(draft,profile?{...profile,api_key:'',resolutions:[...(profile.resolutions||['1k','2k','4k'])]}:{id:'',name:'',protocol:'async_task',base_url:'',model_id:'',text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query',resolutions:['1k','2k','4k'],reference_images:true,api_key:''});editing.value=true}
+function reset(profile=null){Object.assign(draft,{size:'auto',quality:'',response_format:'',request_parameters:{},timeout_seconds:600},profile?{...profile,api_key:'',resolutions:[...(profile.resolutions||['1k','2k','4k'])]}:{id:'',name:'',protocol:'async_task',base_url:'',model_id:'',text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query',resolutions:['1k','2k','4k'],reference_images:true,api_key:''});editing.value=true}
 async function load(){try{profiles.value=(await api.imageProfiles()).profiles||[];if(!profiles.value.some(x=>x.id===props.form.image_profile_id))props.form.image_profile_id=profiles.value.find(x=>x.configured)?.id||'';syncResolution()}catch(e){message.value=e.message}}
 function syncResolution(){if(props.form.use_cloud_image_pool)return;if(!resolutions.value.includes(props.form.image_resolution))props.form.image_resolution=resolutions.value[0]||'1k'}
-async function save(){saving.value=true;message.value='';try{const payload={...draft,resolutions:[...draft.resolutions]};if(!payload.api_key.trim())delete payload.api_key;const result=await api.saveImageProfile(payload);message.value=result.message;await load();props.form.image_profile_id=result.profile.id;editing.value=false}catch(e){message.value=e.message}finally{saving.value=false}}
+async function save(){saving.value=true;message.value='';try{const parameters=draft.protocol==='openai_sync'?JSON.parse(extraParameters.value||'{}'):{};if(!parameters||Array.isArray(parameters)||typeof parameters!=='object')throw new Error('额外参数须为 JSON 对象');const payload={...draft,request_parameters:parameters,resolutions:[...draft.resolutions]};if(!payload.api_key.trim())delete payload.api_key;const result=await api.saveImageProfile(payload);message.value=result.message;await load();props.form.image_profile_id=result.profile.id;editing.value=false}catch(e){message.value=e.message}finally{saving.value=false}}
 async function remove(profile){if(!confirm(`删除“${profile.name}”？`))return;try{await api.deleteImageProfile(profile.id);await load()}catch(e){message.value=e.message}}
 function toggleResolution(value){const list=draft.resolutions;const index=list.indexOf(value);if(index>=0&&list.length>1)list.splice(index,1);else if(index<0)list.push(value)}
 watch(()=>props.form.image_profile_id,syncResolution)
@@ -29,12 +32,22 @@ onMounted(load)
   <template v-if="!form.use_cloud_image_pool">
    <div v-if="!manage||!editing" class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>
-    <label><span>出图分辨率</span><select v-model="form.image_resolution" :disabled="!selected"><option v-for="r in resolutions" :key="r" :value="r">{{r.toUpperCase()}}</option></select></label>
+    <label v-if="selected?.protocol==='openai_sync'"><span>同步接口出图尺寸</span><input :value="selected.size||'auto'" disabled /><small>由模型配置的 size 控制；需修改时编辑该配置。</small></label>
+    <label v-else><span>出图分辨率</span><select v-model="form.image_resolution" :disabled="!selected"><option v-for="r in resolutions" :key="r" :value="r">{{r.toUpperCase()}}</option></select></label>
    </div>
    <div v-if="manage&&!editing" class="profile-list"><article v-for="p in profiles" :key="p.id"><div><b>{{p.name}}</b><small>{{p.model_id}} · {{p.protocol==='async_task'?'异步任务接口':'兼容接口'}} · {{p.key_count}} 个 Key</small></div><button type="button" @click="reset(p)">编辑</button><button v-if="!p.legacy" type="button" @click="remove(p)">删除</button></article><div v-if="!profiles.length" class="profile-empty"><div class="profile-empty-title"><div><span>填写示范</span><b>Image 2.5 · 我的接口</b></div><em>仅为格式示例</em></div><dl><div><dt>API Base URL</dt><dd>https://api.example.com</dd></div><div><dt>模型 ID</dt><dd>image-2.5</dd></div><div><dt>API Key</dt><dd>填写服务商提供的密钥</dd></div><div><dt>支持分辨率</dt><dd>1K / 2K / 4K</dd></div></dl><p>实际内容请以你的接口服务商文档为准。OCV 不指定或推荐第三方服务商。</p><button class="primary" type="button" @click="reset()">＋ 按格式新增配置</button></div></div>
    <div v-if="manage&&editing" class="profile-editor">
     <label><span>配置名称</span><input v-model="draft.name" placeholder="例如：Image 2.5 · 我的中转接口" /></label>
-    <label><span>接口协议</span><select v-model="draft.protocol"><option value="async_task">通用异步任务接口</option></select></label>
+    <label><span>接口协议</span><select v-model="draft.protocol" @change="chooseProtocol"><option value="async_task">异步任务接口 · 提交后查询</option><option value="openai_sync">OpenAI 兼容图像接口 · 同步返回</option></select></label>
+    <p class="wide" v-if="draft.protocol==='openai_sync'">适用于 images/generations 与 images/edits；支持 Base64 或图片 URL 返回。不会调用 RunningHub 上传/查询接口。超时后不会自动重新出图，避免重复收费。</p>
+    <template v-if="draft.protocol==='openai_sync'">
+     <label><span>实际出图尺寸</span><input v-model="draft.size" placeholder="auto 或 1536x1024" /></label>
+     <label><span>质量参数（可留空）</span><input v-model="draft.quality" placeholder="以服务商文档为准，例如 high" /></label>
+     <label><span>返回格式</span><select v-model="draft.response_format"><option value="">不传参数 · 服务商默认</option><option value="b64_json">b64_json</option><option value="url">url</option></select></label>
+     <label><span>等待超时（秒）</span><input v-model.number="draft.timeout_seconds" type="number" min="30" max="1800" /></label>
+     <label class="wide"><span>额外请求参数（JSON，可选）</span><textarea v-model="extraParameters" rows="3" placeholder='{"output_format":"png"}' /></label>
+     <small class="wide">同步接口使用以上 size，不将 1K/2K/4K 擅自转成不受支持的尺寸；模型、提示词、参考图与数量由 OCV 管理。额外参数请以服务商文档为准。</small>
+    </template>
     <label class="wide"><span>API Base URL</span><input v-model="draft.base_url" placeholder="https://api.example.com" /></label>
     <label><span>模型 ID</span><input v-model="draft.model_id" placeholder="填写服务商提供的模型 ID" /></label>
     <label><span>API Key</span><input v-model="draft.api_key" type="password" :placeholder="draft.id?'已保存；不修改可留空':'填写 API Key；多个可用逗号分隔'" /></label>
