@@ -79,6 +79,7 @@ INTEGRITY_FILES = (
     "backend/app/video_group_repair.py",
     "backend/app/video_image_prompt.py",
     "backend/app/video_model_config.py",
+    "backend/app/runninghub_workflow_video.py",
     "backend/app/video_motion_plan.py",
     "backend/app/video_plan.py",
     "backend/app/video_prompt_notices.py",

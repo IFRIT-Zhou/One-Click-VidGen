@@ -7,6 +7,7 @@ credential material (not even a key suffix).
 from __future__ import annotations
 
 import os
+import json
 import threading
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
@@ -18,6 +19,7 @@ from module6_dynamic_video import DEFAULT_BASE_URL, QUERY_PATH, SUBMIT_PATH, UPL
 from .auth import require_user
 from .config import ENV_PATH, _parse_env_lines, save_project_env_values
 from .image_profiles import _legacy_document, _legacy_keys, list_profiles
+from .runninghub_workflow_video import WorkflowConfig
 
 
 router = APIRouter(prefix="/api/video-model")
@@ -26,7 +28,8 @@ _COMPATIBLE_HOSTS = {"runninghub.ai", "www.runninghub.ai", "runninghub.cn", "www
 
 
 class VideoModelRequest(BaseModel):
-    protocol: Literal['async_task', 'ark'] = 'async_task'
+    protocol: Literal['async_task', 'ark', 'runninghub_workflow'] = 'async_task'
+    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     model: str = Field(default='doubao-seedance-2-0-260128', max_length=120)
     base_url: str = Field(min_length=1, max_length=2048)
     submit_path: str = Field(default=SUBMIT_PATH, min_length=1, max_length=1024)
@@ -159,16 +162,20 @@ def load_config() -> dict[str, Any]:
     capacity = len(usable_keys) * per_key
     effective = capacity if mode == "auto" else min(capacity, total)
     protocol = values.get('VIDEO_PROTOCOL', 'async_task')
+    workflow = WorkflowConfig.model_validate(json.loads(values.get('VIDEO_RH_WORKFLOW') or '{}'))
+    if protocol == 'runninghub_workflow':
+        workflow.require_ready()
+        submit_path = '/openapi/v2/run/workflow/' + workflow.workflow_id
     model = values.get('VIDEO_MODEL', 'doubao-seedance-2-0-260128')
     if protocol == 'ark' and resolution == '1080p' and any(part in model for part in ('mini', 'fast')):
         raise ValueError('Seedance Mini 和 Fast 仅支持 480p、720p，请使用标准版生成 1080p')
-    return {"protocol": protocol, "model": model, "base_url": base, "submit_path": submit_path, "query_path": query_path,
+    return {"protocol": protocol, "workflow": workflow.model_dump(), "model": model, "base_url": base, "submit_path": submit_path, "query_path": query_path,
             "upload_path": upload_path, "resolution": resolution,
             "api_key": usable_keys[0] if usable_keys else "", "api_keys": usable_keys,
             "key_count": len(usable_keys), "key_hints": [f"••••{key[-4:]}" for key in usable_keys],
             "concurrency_mode": mode, "per_key_concurrency": per_key,
             "total_concurrency": total, "effective_concurrency": effective,
-            "has_api_key": bool(usable_keys), "model_label": model if protocol == 'ark' else "多模态视频",
+            "has_api_key": bool(usable_keys), "model_label": model if protocol == 'ark' else "RH 币工作流" if protocol == 'runninghub_workflow' else "多模态视频",
             "source": "dedicated" if usable_keys else "image_compatible" if candidate else "missing"}
 
 
@@ -176,7 +183,7 @@ def _public(config: dict[str, Any]) -> dict[str, Any]:
     return {key: config[key] for key in (
         "base_url", "submit_path", "query_path", "upload_path", "resolution", "has_api_key",
         "key_count", "key_hints", "concurrency_mode", "per_key_concurrency", "total_concurrency",
-        "effective_concurrency", "model_label", "source", "protocol", "model")}
+        "effective_concurrency", "model_label", "source", "protocol", "model", "workflow")}
 
 
 @router.get("")
@@ -220,9 +227,15 @@ def save_video_model(payload: VideoModelRequest, request: Request) -> dict[str, 
                 raise ValueError("请填写视频 API Key，或明确选择复用同站点图像接口凭据")
             if payload.protocol == 'ark' and urlsplit(base).hostname != 'ark.cn-beijing.volces.com':
                 raise ValueError('火山方舟官方接口请使用 ark.cn-beijing.volces.com')
-            if payload.protocol != 'ark' and payload.resolution == '1080p':
+            if payload.protocol == 'runninghub_workflow':
+                payload.workflow.require_ready()
+                path = '/openapi/v2/run/workflow/' + payload.workflow.workflow_id
+                query_path = QUERY_PATH
+                upload_path = UPLOAD_PATH
+            if payload.protocol == 'async_task' and payload.resolution == '1080p':
                 raise ValueError('当前兼容接口仅支持 480p 和 720p')
             save_project_env_values({"VIDEO_PROTOCOL": payload.protocol, "VIDEO_MODEL": payload.model,
+                                     "VIDEO_RH_WORKFLOW": json.dumps(payload.workflow.model_dump(), ensure_ascii=False),
                                      "VIDEO_API_BASE_URL": base, "VIDEO_SUBMIT_PATH": path,
                                      "VIDEO_QUERY_PATH": query_path, "VIDEO_UPLOAD_PATH": upload_path,
                                      "VIDEO_API_KEY": supplied[0], "VIDEO_API_KEYS": ",".join(supplied[1:]),

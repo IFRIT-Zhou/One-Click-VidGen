@@ -85,7 +85,7 @@ def _resolve_generation_options(record, shot, user_id, override=None):
             raise ValueError('自定义分辨率需要填写宽度与高度')
     else:
         options.update(profile_id='', h3_prompt_agent=False)
-        allowed = {'', '480p', '720p', '1080p'} if load_config().get('protocol') == 'ark' else {'', '480p', '720p'}
+        allowed = {'', '480p', '720p', '1080p'} if load_config().get('protocol') in {'ark', 'runninghub_workflow'} else {'', '480p', '720p'}
         if options['resolution'] not in allowed:
             raise ValueError('当前视频 API 支持 480p 和 720p')
     return options
@@ -335,6 +335,13 @@ def _freeze_request(path, record, shot, config):
                     base_url=config['base_url'], submit_path=config['submit_path'],
                     query_path=config.get('query_path'), upload_path=config.get('upload_path'),
                     account_fingerprint=hashlib.sha256(config['api_key'].encode('utf-8')).hexdigest())
+    if config.get('protocol') == 'runninghub_workflow':
+        from .runninghub_workflow_video import WorkflowConfig
+        workflow = WorkflowConfig.model_validate(config.get('workflow', {}))
+        workflow.require_ready()
+        if len(inputs) > len(workflow.image_nodes):
+            raise ValueError('参考图数量超过 RH 工作流图片槽位，请补充映射或减少参考图')
+        snapshot['workflow'] = workflow.model_dump()
     target.parent.mkdir(parents=True, exist_ok=True)
     # Prepare atomically. A bad local image must not leave an attempt directory
     # that looks like a submitted paid task or blocks a corrected retry.
@@ -830,6 +837,10 @@ def _process_api_clip(path, identity, config, cancelled, halted):
             raise ValueError('原视频任务使用另一套接口配置，请恢复原配置后继续查询，不会重新付费提交')
         provider_type = ArkVideoProvider if saved.get('protocol', config.get('protocol')) == 'ark' else RunningHubVideoProvider
         extra = {'model': saved.get('model', config.get('model'))} if provider_type is ArkVideoProvider else {}
+        if saved.get('protocol', config.get('protocol')) == 'runninghub_workflow':
+            from .runninghub_workflow_video import RunningHubWorkflowVideoProvider
+            provider_type = RunningHubWorkflowVideoProvider
+            extra = {'workflow': saved.get('workflow', {})}
         provider = provider_type(config['api_key'], base_url=saved['base_url'],
                                            submit_path=saved['submit_path'],
                                            query_path=saved.get('query_path'),
