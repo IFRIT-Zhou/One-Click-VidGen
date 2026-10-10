@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.10.2",
-  "release_order": 2026101002,
-  "display_version": "2026.10.10 统一制作工作区与桥接批量出图",
+  "release_id": "2026.10.11.1",
+  "release_order": 2026101101,
+  "display_version": "2026.10.11 制作工作区与稳定版渠道",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.10.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.11.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
   "notes": "统一分镜与动态制作工作区，支持生成时编辑空闲镜头、逐镜锁定、排队及取消未开始任务。制作桥1.5支持确认后批量出图、路由设置和暂停队列。云端图像号池默认10并发，修复拒绝访问缓存及错误信息丢失。升级诊断包，修复H3文字误判并恢复配音字幕同步选项。包含此前自定义图像协议和ICAN更新；保留用户配置、模型及素材。",
-  "content_fingerprint": "d75d84da736f47c64cce3f7e2f33fe10ce90efb06694560486b85fcbeee8481c"
+  "content_fingerprint": "63445896f0e5972e9c60b2d915a3ad3c4b906f8b1c1a02a5f655a76a6a9775e9"
 }
