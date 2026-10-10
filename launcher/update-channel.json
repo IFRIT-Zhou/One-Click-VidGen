@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.10.1",
-  "release_order": 2026101001,
-  "display_version": "2026.10.10 自定义图像协议与制作桥增强",
+  "release_id": "2026.10.10.2",
+  "release_order": 2026101002,
+  "display_version": "2026.10.10 统一制作工作区与桥接批量出图",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.10.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.10.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "自定义图像 API 新增 OpenAI 兼容同步协议及参考图编辑；修复404路径错误被当作网络抖动反复重试。制作桥新增场景参考管理、恢复及明确授权后的指定镜头重绘与查询。合并ICAN计价和渠道名称更新。保留现有异步通道、用户配置、模型和素材。",
-  "content_fingerprint": "9624406aad5681e87506a2bae326d044fdae78d352a59c60bbf0cf11c648b438"
+  "notes": "统一分镜与动态制作工作区，支持生成时编辑空闲镜头、逐镜锁定、排队及取消未开始任务。制作桥1.5支持确认后批量出图、路由设置和暂停队列。云端图像号池默认10并发，修复拒绝访问缓存及错误信息丢失。升级诊断包，修复H3文字误判并恢复配音字幕同步选项。包含此前自定义图像协议和ICAN更新；保留用户配置、模型及素材。",
+  "content_fingerprint": "d75d84da736f47c64cce3f7e2f33fe10ce90efb06694560486b85fcbeee8481c"
 }

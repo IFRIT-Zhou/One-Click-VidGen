@@ -22,15 +22,21 @@ def main(argv=None):
         sub.add_parser(name)
     for name in ('draft-save', 'upload'):
         sub.add_parser(name).add_argument('file')
-    for name in ('draft-get', 'pack', 'scene-assets', 'image-status'):
+    for name in ('draft-get', 'pack', 'scene-assets', 'generation-settings-get'):
         sub.add_parser(name).add_argument('id')
+    p = sub.add_parser('image-status'); p.add_argument('id')
+    p.add_argument('--request-id'); p.add_argument('--batch-id')
+    for name in ('generation-settings-patch', 'image-batch-control'):
+        p = sub.add_parser(name); p.add_argument('id'); p.add_argument('file')
+
     for name in ('draft-archive', 'draft-restore'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('--revision', type=int, required=True)
     p = sub.add_parser('from-audio')
     p.add_argument('job_id'); p.add_argument('--confirmed', action='store_true', required=True)
-    for name in ('validate', 'apply', 'patch-validate', 'patch-apply', 'scene-validate', 'scene-apply', 'image-validate', 'image-apply'):
+    for name in ('validate', 'apply', 'patch-validate', 'patch-apply', 'scene-validate', 'scene-apply', 'image-validate', 'image-apply', 'image-batch-validate', 'image-batch-apply'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('file')
-        if name in ('scene-apply', 'image-apply'):
+        if name in ('scene-apply', 'image-apply', 'image-batch-apply'):
+
             p.add_argument('--confirmed', action='store_true', required=True,
                            help='Confirm the previously inspected affected-shot list')
     args = parser.parse_args(argv)
@@ -87,11 +93,20 @@ def main(argv=None):
         elif args.command == 'scene-assets':
             result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/scene-assets')
         elif args.command == 'image-status':
-            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/image-status')
-        elif args.command in ('image-validate', 'image-apply'):
+            query = urllib.parse.urlencode({k: v for k, v in {'request_id': args.request_id, 'batch_id': args.batch_id}.items() if v})
+            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/image-status' + ('?' + query if query else ''))
+        elif args.command == 'generation-settings-get':
+            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/generation-settings')
+        elif args.command in ('generation-settings-patch', 'image-batch-control'):
+            payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
+            endpoint = 'generation-settings' if args.command == 'generation-settings-patch' else args.command
+            result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/' + endpoint,
+                          payload, 'PATCH' if endpoint == 'generation-settings' else 'POST')
+        elif args.command in ('image-validate', 'image-apply', 'image-batch-validate', 'image-batch-apply'):
             payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
             path = prefix + '/projects/' + urllib.parse.quote(args.id, safe='')
-            if args.command == 'image-apply':
+            if args.command in ('image-apply', 'image-batch-apply'):
+
                 payload['confirmed'] = args.confirmed
             result = call(path + '/' + args.command, payload, 'POST')
         else:
@@ -132,10 +147,18 @@ def main(argv=None):
             detail = json.loads(exc.read().decode()).get('detail', f'HTTP {exc.code}')
         except (ValueError, UnicodeError):
             detail = f'HTTP {exc.code}'
-        print(json.dumps({'ok': False, 'status': exc.code, 'error': detail}, ensure_ascii=False), file=sys.stderr)
+        failure = {'ok': False, 'status': exc.code, 'error': detail}
+        if args.out:
+            out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
         return 2
     except (OSError, ValueError, RuntimeError) as exc:
-        print(json.dumps({'ok': False, 'error': str(exc)}, ensure_ascii=False), file=sys.stderr)
+        failure = {'ok': False, 'error': '本地请求失败（' + type(exc).__name__ + '），请检查连接、文件和请求格式。'}
+        if args.out:
+            out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(failure, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(json.dumps(failure, ensure_ascii=False), file=sys.stderr)
         return 2
 
 

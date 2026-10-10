@@ -623,7 +623,7 @@
                         <template v-if="isTtsPronunciationOpen(item.index)">
                           <div class="tts-pronunciation-editor">
                             <label>
-                              <span>朗读文本 <small>可单独修正发音；如需同步显示文字，请勾选下方选项</small></span>
+                              <span>朗读文本 <small>仅修正发音时无需同步字幕</small></span>
                               <textarea
                                 :value="ttsReadingDrafts[item.index]"
                                 rows="2"
@@ -640,12 +640,12 @@
                               @click="resetTtsReadingDraft(item)"
                             >恢复原文</button>
                           </div>
-                          <label v-if="visualEditor.timing_available" class="tts-subtitle-sync-toggle" :class="{ disabled: !isTtsReadingModified(item) }">
+                          <label class="tts-subtitle-sync-toggle" :class="{ disabled: !isTtsReadingModified(item) }">
                             <input v-model="ttsEditor.subtitle_sync_indices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" />
                             <span>同时修改字幕</span>
                             <small>重配成功后自动同步并保存这句显示文字</small>
                           </label>
-                          <small class="tts-subtitle-preview">成片字幕保持：{{ item.text }}</small>
+                          <small class="tts-subtitle-preview">{{ (ttsEditor.subtitle_sync_indices || []).includes(item.index) ? '重配成功后字幕将同步为：' + (ttsReadingDrafts[item.index] || item.text) : '成片字幕保持：' + item.text }}</small>
                         </template>
                       </div>
                       <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">

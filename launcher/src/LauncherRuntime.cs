@@ -126,6 +126,7 @@ namespace OcvLauncher
               "frontend/src/workspaceLayout.js",
             "frontend/src/dynamicTextMode.js",
             "frontend/src/videoPromptWarnings.js",
+            "frontend/src/serialTaskQueue.js",
             "backend/app/comfyui_bridge.py",
             "backend/app/h3_prompt_agent.py",
             "backend/app/presenter_mode.py",

@@ -139,7 +139,14 @@ patch-apply 内部再次预检、备份、原子写入并回读；保存回执�
 
 用户明确要求“选好参考图并重绘”时，可以执行，不必再让用户逐镜点击。先完成 patch/场景管理并回读 pack，确认目标稳定 shot_id、image_prompt 与参考图绑定；本功能只用当前保存的配置，不擅自更换模型或扩大镜头范围。
 
-请求包含 `revision,timeline_token,audio_confirmed:true,shot_id,request_id`（每次操作唯一，至少8字符）。调用 `image-validate <项目ID> <请求.json>`，核对 reference_ids、actual_reference_count 及 may_charge。用户授权需覆盖这些镜头的图片生成费用；未授权则先询问。将预检返回的 confirmation_token 加入原请求，调用 `image-apply <项目ID> <请求.json> --confirmed`。状态变化须重新预检，不自动接受变化。多镜逐一读取最新 pack、预检和提交；不要并行抢写版本。
+请求包含 `revision,timeline_token,audio_confirmed:true,shot_id,request_id`（每次操作唯一，至少8字符）。可选 `use_current_image`（基于当前图编辑）、`use_scene_reference`、`image_resolution`（1k/2k/4k）、`image_size`（如1536x1024，仅支持该尺寸的服务使用）。调用 `image-validate <项目ID> <请求.json>`，核对 references 中本次图号/类型、actual_reference_count、effective_image_config 及 may_charge。用户授权需覆盖这些镜头的图片生成费用；未授权则先询问。将 confirmation_token 加入原请求，再调用 `image-apply <项目ID> <请求.json> --confirmed`。令牌绑定目标内容、配音、参考图和生成配置；其他镜头返图导致的版本变化不要求重新预检，目标改变则必须重做预检。
+
+多镜使用 `image-batch-validate` / `image-batch-apply --confirmed`，不要逐镜反复下载 pack 或自写并行提交脚本。批次顶层为 `revision,timeline_token,audio_confirmed:true,batch_id,concurrency,items`；items 每项为 `shot_id,request_id` 加上述可选字段。concurrency 为1–7，实际并发还受服务限额约束，多余任务排队。整批先原子预检后确认提交；同镜已有任务会返回 SHOT_BUSY，不阻止其他独立镜头单独组成批次。成功提交后保留 batch_id/request_id，以 `image-status --batch-id ...` 或 `--request-id ...` 查询本次请求，而不是以已有 image_status=completed 判断这轮成功。
+
+路由先看 `generation-settings-get <项目ID>`。用户明确指定更换路由时，用 `generation-settings-patch <项目ID> <文件>`，文件如 `{"revision":当前版本,"use_cloud_image_pool":false}`；只修改提交字段，未启动生成、不修改全局配置。不能根据全局开关推断历史项目快照；预检会显示实际路由。登录失败不自动切换个人API；结构化错误中的 code/message 用于排查，CLI --out 在失败时也会覆盖写入失败回执，并以非零码退出。
+
+暂停/续作使用 `image-batch-control`，文件为 `{"batch_id":"原批次编号","action":"pause"}`，action 可为 pause/resume/cancel_pending。暂停不再提交排队任务；cancel_pending 只取消未提交任务，不宣称取消上游运行中的任务。服务重启后 interrupted_unknown 可能已经扣费，必须先核实，不用新编号自动重试；interrupted_pending 先 cancel_pending 解除旧排队，再重新预检确认才能重提。成功图片 review_status=not_reviewed，仍需人工检查。
+
 
 通过 `image-status <项目ID>` 查询异步任务；提交成功不代表图片已完成。保留原请求和 request_id，网络断开只能原样重试，不能新造 ID 造成重复付费。失败只报告原因，不自动付费重试。旧图按原生重绘历史保留，配音/字幕/时间轴不变；核心图改变会正常使对应旧视频待重做，不自动生成视频。
 

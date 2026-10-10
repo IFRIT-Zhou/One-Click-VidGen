@@ -123,9 +123,12 @@ def visual_first_plan_issues(plan: Any, *, inspect_reference: bool = True) -> li
 
 
 _VISIBLE_TEXT_INSTRUCTION = re.compile(
-    r'(?P<context>.{0,28}(?:对话气泡|想象气泡|文字气泡|标签气泡|标注|标签|说明框|标题|字幕条|画面文字|'
-    r'speech bubble|thought bubble|text bubble|callout|caption|subtitle|title|label)'
-    r'.{0,18}(?:显示|写着|写有|出现|浮现|变为|内容为|shows?|displays?|reads?|contains?)?\s*)'
+    # Never cross another quoted string while searching for the displayed
+    # text. Otherwise a closing quote can become the opening delimiter and
+    # turn layout prose between two labels into invented visible text.
+    r'(?P<context>[^“”「」『』"\n]{0,28}(?:对话气泡|想象气泡|文字气泡|标签气泡|标注|标签|说明框|标题|字幕条|画面文字|'
+    r'speech bubble|thought bubble|text bubble|callout|caption|subtitle|title|label|footer|heading)'
+    r'[^“”「」『』"\n]{0,18}(?:显示|写着|写有|出现|浮现|变为|内容为|shows?|displays?|reads?|contains?)?\s*)'
     r'[“「『\"](?P<text>[^”」』\"\n]{1,120})[”」』\"]'
 , re.I)
 _NEGATIVE_VISIBLE_TEXT = re.compile(

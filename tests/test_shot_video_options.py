@@ -319,7 +319,7 @@ class ShotVideoOptionsTests(unittest.TestCase):
                    {'id': 'c', 'kind': 'video', 'slide_ids': ['c']}]
         with patch.object(video.studio, 'edit_structure', return_value=changed):
             video.studio.structure('test', video.studio.Structure(revision=1, action='delete', index=1), None)
-        self.assertEqual(self.record['status'], 'image_review')
+        self.assertEqual(self.record['status'], 'video_review')
         self.assertEqual(self.record['shots'][0]['image'], 'a.png')
         self.assertEqual(self.record['shots'][0]['video_status'], 'pending')
         self.assertEqual(self.record['shots'][1]['video'], 'c.mp4')

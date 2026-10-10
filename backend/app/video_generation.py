@@ -97,9 +97,7 @@ def save_generation_options(identity: str, shot_id: str, data: SaveClipOptions, 
         user_id = int(studio.require_user(request)['id'])
         path = studio.directory(user_id, identity)
         record = studio.read(path)
-        studio.editable(record, data.revision)
-        if str(path) in studio.ACTIVE:
-            raise HTTPException(409, '任务正在生成，请在结束后保存配置')
+        studio.shot_editable(record, data.revision, shot_id)
         shot = studio._find_shot(record, shot_id)
         if shot.get('kind') != 'video':
             raise HTTPException(400, '静态镜头不需要视频生成配置')
@@ -195,6 +193,16 @@ def _sync_identity(path, shot):
 
 def recover_interrupted(path, record):
     """Recovery only exposes saved state. It never queries or submits a task."""
+    waiting = [shot for shot in record.get('shots', []) if shot.get('video_queued') and shot.get('video_status') != 'running']
+    if waiting:
+        record.setdefault('video_waiting_queue', []).append({
+            'revision': record['revision'], 'shot_ids': [shot['id'] for shot in waiting],
+            'shot_options': {shot['id']: shot['video_generation_options'] for shot in waiting if shot.get('video_generation_options')},
+            'retry_failed': False, 'regenerate_completed': False})
+        for shot in waiting:
+            shot['video_waiting'] = True
+    for shot in record.get('shots', []):
+        shot['video_queued'] = False
     for shot in record.get('shots', []):
         if shot.get('kind') != 'video' or shot.get('video_status') != 'running':
             continue
@@ -464,6 +472,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                 with studio.LOCK:
                     queue = LOCAL_VIDEO_QUEUES.setdefault(worker_key, [])
                     if not queue:
+                        LOCAL_VIDEO_RUNNING[worker_key] = '__finishing__'
                         break
                     identity = queue.pop(0)
                     LOCAL_VIDEO_RUNNING[worker_key] = identity
@@ -656,6 +665,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                                 video_resume_available=False, video_terminal=True)
                     live.update(video_finished_at=time.time(), video_progress_message='已完成，可试看' if status == 'completed' else error)
                     if status == 'completed':
+                        live['video_design_changed'] = False
                         live['video_version'] = _video_version(_asset(path, live['video']))
                         latest['logs'].append(f'{identity}：本地 ComfyUI 视频已生成并归档，可直接预览。')
                     else:
@@ -698,6 +708,8 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     LOCAL_VIDEO_RUNNING.pop(worker_key, None)
                     studio.ACTIVE.discard(worker_key)
                     studio.CANCEL_EVENTS.pop(worker_key, None)
+                    if not cancelled.is_set():
+                        _drain_video_waiting(path)
 
     threading.Thread(target=worker, daemon=True, name='ocv-comfyui-video').start()
 
@@ -792,7 +804,9 @@ def _process_api_clip(path, identity, config, cancelled, halted):
     with studio.LOCK:
         current = studio.read(path)
         shot = studio._find_shot(current, identity)
-        shot.update(video_status='running', video_error='')
+        if shot.get('video_queue_cancelled') or (config.get('_queue_token') and config['_queue_token'] != shot.get('video_queue_token')):
+            return True
+        shot.update(video_status='running', video_error='', video_queued=False)
         shot.update(video_started_at=time.time(), video_finished_at=None, video_progress_message='正在准备并提交视频请求')
         current['logs'].append(f'{identity}：开始处理动态镜头，使用 {shot["duration"]} 秒，请求 {shot["video_request"]["duration"]} 秒。')
         current['revision'] += 1
@@ -852,6 +866,7 @@ def _process_api_clip(path, identity, config, cancelled, halted):
             live.update(video_status='unknown', video_resume_available=False, video_terminal=False,
                         video_error=str(exc))
         if live['video_status'] == 'completed':
+            live['video_design_changed'] = False
             output = _asset(path, live['video'])
             live['video_version'] = _video_version(output)
             live['video_resume_available'] = False
@@ -908,6 +923,11 @@ def _start_worker(path, record, identities, configs):
                 finally:
                     studio.ACTIVE.discard(str(path))
                     studio.CANCEL_EVENTS.pop(str(path), None)
+                    for shot in current['shots']:
+                        shot['video_queued'] = False
+                    studio.save(path, current)
+                    if not cancelled.is_set():
+                        _drain_video_waiting(path)
 
     thread = threading.Thread(target=worker, daemon=True)
     try:
@@ -920,8 +940,11 @@ def _start_worker(path, record, identities, configs):
 
 @router.post('/{identity}/videos/generate')
 def generate(identity: str, data: GenerateClips, request: Request):
+    return _generate_for_user(identity, data, int(studio.require_user(request)['id']))
+
+
+def _generate_for_user(identity, data, user_id):
     with studio.LOCK:
-        user_id = int(studio.require_user(request)['id'])
         path = studio.directory(user_id, identity)
         record = studio.read(path)
         if data.options and (len(data.shot_ids) != 1 or data.shot_options):
@@ -952,21 +975,47 @@ def generate(identity: str, data: GenerateClips, request: Request):
             raise HTTPException(400, str(exc)) from exc
         local_queue_append = (backend == 'comfyui' and
                               record.get('active_video_backend') in {'comfyui', 'mixed'} and
+                              LOCAL_VIDEO_RUNNING.get(str(path)) != '__finishing__' and
                               str(path) in studio.ACTIVE and record.get('status') == 'video_generating')
+        if record['status'] == 'video_generating' and str(path) in studio.ACTIVE and not local_queue_append:
+            if record['revision'] != data.revision:
+                raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
+            for shot in selected:
+                studio.shot_editable(record, data.revision, shot['id'])
+                try:
+                    _inputs(path, record, shot)
+                except (ValueError, OSError) as exc:
+                    raise HTTPException(409, str(exc)) from exc
+                if not str(shot.get('video_prompt') or '').strip():
+                    raise HTTPException(409, '请先填写本镜视频提示词')
+            payload = data.model_dump(mode='json')
+            payload['shot_ids'] = [shot['id'] for shot in selected]
+            payload['options'] = None
+            payload['shot_options'] = resolved
+            record.setdefault('video_waiting_queue', []).append(payload)
+            for shot in selected:
+                shot['video_waiting'] = True
+            record['revision'] += 1
+            record['logs'].append(f'已保存 {len(selected)} 镜到生成队列，当前批次完成后继续。')
+            studio.save(path, record)
+            return record
         if local_queue_append:
             if int(record.get('revision') or 0) != data.revision:
                 raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
         else:
-            studio.editable(record, data.revision)
+            studio.editable(record, data.revision, allow_image_edits=True)
             if record['status'] not in VIDEO_GENERATION_ENTRY_STAGES:
                 raise HTTPException(409, '请先确认核心分镜图，再生成动态镜头')
-        if (str(path) in studio.ACTIVE and not local_queue_append) or studio.project_has_image_edits(record['id']):
+        if str(path) in studio.ACTIVE and not local_queue_append:
             raise HTTPException(409, '此任务正在处理，请稍后重试')
         profiles = {}
         use_reference_audio = bool(record.get('creation_parameters', {}).get('comfyui_reference_audio'))
         # Validate every selected configuration before invalidating any asset or starting work.
         try:
             for shot in selected:
+                if (studio.image_edit_key(record['id'], shot['id']) in studio.IMAGE_EDITS or
+                        (shot.get('image_task') or {}).get('status') == 'running' or shot.get('video_waiting')):
+                    raise ValueError('所选镜头正在编辑或已在等待队列中')
                 options = resolved[shot['id']]
                 if local_queue_append and (shot['id'] == LOCAL_VIDEO_RUNNING.get(str(path)) or shot['id'] in LOCAL_VIDEO_QUEUES.get(str(path), [])):
                     raise ValueError('此镜头已在生成队列中，不能修改配置或重复添加')
@@ -1024,6 +1073,7 @@ def generate(identity: str, data: GenerateClips, request: Request):
         execution_configs = {}
         for index, shot in enumerate(selected):
             options = resolved[shot['id']]
+            shot['video_queue_token'] = uuid.uuid4().hex
             if data.regenerate_completed:
                 studio._invalidate_shot_video(record, shot, '用户要求重新生成本镜动态片段，保留本镜配置')
             elif shot.get('video_request') and shot.get('video_terminal') and (shot['video_request'].get('backend') or shot.get('video_backend') or 'api') != options['backend']:
@@ -1039,9 +1089,9 @@ def generate(identity: str, data: GenerateClips, request: Request):
                         raise HTTPException(409, _safe_message(exc, config)) from exc
                     record['revision'] += 1
                     studio.save(path, record)
-                execution_configs[shot['id']] = _config_for_shot(per_shot, shot, index)
-            if backend != 'api':
-                shot['video_queued'] = True
+                execution_configs[shot['id']] = {**_config_for_shot(per_shot, shot, index), '_queue_token': shot['video_queue_token']}
+            shot['video_queued'] = True
+            shot.pop('video_queue_cancelled', None)
         if local_queue_append:
             added = _enqueue_local_videos(path, [shot['id'] for shot in selected])
             for shot in selected:
@@ -1066,11 +1116,86 @@ def generate(identity: str, data: GenerateClips, request: Request):
         return record
 
 
+def _drain_video_waiting(path):
+    """Drain a persisted, explicitly authorized batch after the active worker."""
+    if str(path) in studio.ACTIVE:
+        return
+    record = studio.read(path)
+    queue = record.get('video_waiting_queue') or []
+    if not queue:
+        return
+    payload = queue.pop(0)
+    selected = set(payload['shot_ids'])
+    for shot in record['shots']:
+        if shot['id'] in selected:
+            shot['video_waiting'] = False
+    record['video_waiting_queue'] = queue
+    record['revision'] += 1
+    studio.save(path, record)
+    payload['revision'] = record['revision']
+    try:
+        _generate_for_user(record['id'], GenerateClips(**payload), int(path.parent.name))
+    except Exception as exc:
+        current = studio.read(path)
+        message = str(exc.detail) if isinstance(exc, HTTPException) else type(exc).__name__
+        current['error'] = '队列提交暂停：' + message
+        current['logs'].append(current['error'])
+        current['revision'] += 1
+        studio.save(path, current)
+
+
+@router.post('/{identity}/videos/queue/resume')
+def resume_waiting(identity: str, data: studio.Review, request: Request):
+    with studio.LOCK:
+        path = studio.directory(studio.require_user(request)['id'], identity)
+        record = studio.read(path)
+        if record['revision'] != data.revision or str(path) in studio.ACTIVE:
+            raise HTTPException(409, '项目状态已变化，请刷新后重试')
+        _drain_video_waiting(path)
+        return studio.read(path)
+
+
+@router.post('/{identity}/videos/{shot_id}/cancel-queue')
+def cancel_queued_shot(identity: str, shot_id: str, data: studio.Review, request: Request):
+    with studio.LOCK:
+        path = studio.directory(studio.require_user(request)['id'], identity)
+        record = studio.read(path)
+        if record['revision'] != data.revision:
+            raise HTTPException(409, '项目状态已变化，请刷新后重试')
+        shot = studio._find_shot(record, shot_id)
+        if shot.get('video_status') == 'running' or LOCAL_VIDEO_RUNNING.get(str(path)) == shot_id:
+            raise HTTPException(409, '本镜已经开始处理，不能取消排队')
+        if not (shot.get('video_queued') or shot.get('video_waiting')):
+            raise HTTPException(409, '本镜不在等待队列中')
+        queue = LOCAL_VIDEO_QUEUES.get(str(path), [])
+        if shot_id in queue:
+            queue.remove(shot_id)
+        waiting = []
+        for item in record.get('video_waiting_queue') or []:
+            item['shot_ids'] = [value for value in item['shot_ids'] if value != shot_id]
+            item.get('shot_options', {}).pop(shot_id, None)
+            if item['shot_ids']:
+                waiting.append(item)
+        record['video_waiting_queue'] = waiting
+        shot.update(video_queued=False, video_waiting=False, video_queue_cancelled=True)
+        shot['video_queue_token'] = uuid.uuid4().hex
+        if not shot.get('video_execution_started') and shot.get('video_status') != 'completed':
+            studio._invalidate_shot_video(record, shot, '已取消尚未开始的生成任务')
+        record['revision'] += 1
+        record['logs'].append(f'{shot_id}：已取消排队，可以编辑。')
+        studio.save(path, record)
+        return record
+
+
 @router.post('/{identity}/videos/stop')
 def stop(identity: str, request: Request):
     with studio.LOCK:
         path = studio.directory(studio.require_user(request)['id'], identity)
         record = studio.read(path)
+        record['video_waiting_queue'] = []
+        for shot in record['shots']:
+            shot['video_waiting'] = False
+        studio.save(path, record)
         if record['status'] in {'video_generating', 'video_stopping'}:
             event = studio.CANCEL_EVENTS.get(str(path))
             if event is not None:

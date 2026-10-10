@@ -14,45 +14,28 @@ spec.loader.exec_module(client)
 
 
 class ClientTests(unittest.TestCase):
-    def test_scene_apply_checks_preview_token_and_reads_back_scene_state(self):
-        import hashlib
-        token = hashlib.sha256(b'[]').hexdigest()
-        calls = []
-        class Opener:
-            def open(self, request, timeout):
-                route = request.full_url.rsplit('/', 1)[-1]; calls.append(route)
-                response = {'ok': True, 'revision': 3, 'confirmation_token': 'checked', 'scene_state_token': token}
-                if route == 'info':
-                    response = {'capabilities': ['scene_management']}
-                if route == 'pack':
-                    response = {'revision': 3, 'scene_assets': []}
-                if route == 'scene-apply':
-                    self.payload = json.loads(request.data)
-                    assert self.payload['confirmed'] is True
-                return io.BytesIO(json.dumps(response).encode())
+    def test_http_failure_overwrites_out_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
-            payload = Path(directory) / 'scene.json'
-            payload.write_text('{"confirmation_token":"checked"}')
-            with patch.object(client.urllib.request, 'build_opener', return_value=Opener()), \
-                    contextlib.redirect_stdout(io.StringIO()) as output:
-                status = client.main(['scene-apply', 'project', str(payload), '--confirmed'])
-            self.assertEqual(status, 0)
-            self.assertTrue(json.loads(output.getvalue())['readback_verified'])
-        self.assertEqual(calls, ['info', 'scene-validate', 'scene-apply', 'pack'])
+            out = Path(directory)/'receipt.json'; out.write_text('{"ok":true}')
+            failure = client.urllib.error.HTTPError('http://127.0.0.1:8010/api', 401, 'auth', {},
+                io.BytesIO(b'{"detail":{"code":"IMAGE_AUTH_REQUIRED","message":"login required"}}'))
+            with patch.object(client.urllib.request, 'build_opener') as opener, contextlib.redirect_stderr(io.StringIO()):
+                opener.return_value.open.side_effect = failure
+                code = client.main(['--out', str(out), 'info'])
+            self.assertEqual(code, 2)
+            receipt = json.loads(out.read_text())
+            self.assertFalse(receipt['ok']); self.assertEqual(receipt['error']['code'], 'IMAGE_AUTH_REQUIRED')
 
-    def test_scene_changed_preview_is_not_silently_confirmed(self):
-        calls = []
-        class Opener:
-            def open(self, request, timeout):
-                route = request.full_url.rsplit('/', 1)[-1]; calls.append(route)
-                return io.BytesIO(json.dumps({'ok': True, 'confirmation_token': 'new'}).encode())
+    def test_network_failure_overwrites_out_without_leaking_url(self):
         with tempfile.TemporaryDirectory() as directory:
-            payload = Path(directory) / 'scene.json'; payload.write_text('{"confirmation_token":"old"}')
-            with patch.object(client.urllib.request, 'build_opener', return_value=Opener()), \
-                    contextlib.redirect_stderr(io.StringIO()):
-                status = client.main(['scene-apply', 'project', str(payload), '--confirmed'])
-        self.assertEqual(status, 2)
-        self.assertEqual(calls, ['info', 'scene-validate'])
+            out = Path(directory)/'receipt.json'
+            with patch.object(client.urllib.request, 'build_opener') as opener, contextlib.redirect_stderr(io.StringIO()):
+                opener.return_value.open.side_effect = OSError('secret-key signed-url')
+                code = client.main(['--out', str(out), 'info'])
+            self.assertEqual(code, 2)
+            self.assertNotIn('secret-key', out.read_text())
+            self.assertFalse(json.loads(out.read_text())['ok'])
+
 
     def run_client(self, command, valid=True):
         calls = []

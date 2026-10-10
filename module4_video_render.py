@@ -710,7 +710,7 @@ class RunningHubAccountPool:
 
     def __init__(self, configs: list[dict[str, str]], per_key_concurrency: int | None = None) -> None:
         self._configs = configs
-        server_managed_capacity = 64 if any(config.get("cloud_pool") == "1" for config in configs) else None
+        server_managed_capacity = _positive_env_int("CLOUD_IMAGE_POOL_CONCURRENCY", 10) if any(config.get("cloud_pool") == "1" for config in configs) else None
         self._configured_capacity = max(
             1,
             int(
@@ -826,6 +826,11 @@ class RunningHubAccountPool:
             with _ACCOUNT_STATE_LOCK:
                 _POWER_EXHAUSTED_ACCOUNT_KEYS.difference_update(keys)
             self._power_exhausted.difference_update(keys)
+            # A cloud gateway is not an individual upstream account. Explicit
+            # retries must not inherit a previous request's gateway rejection.
+            cloud_keys = {config['api_key'] for config in self._configs
+                          if config.get('cloud_pool') == '1' and config['api_key'] in keys}
+            self._access_denied.difference_update(cloud_keys)
             self._condition.notify_all()
 
     def mark_access_denied(self, config: dict[str, str]) -> None:
@@ -2801,7 +2806,7 @@ def _worker_count(name: str, default: int, task_count: int) -> int:
 
 def _poster_worker_count(provider_configs: list[dict[str, str]], task_count: int) -> int:
     if any(config.get("cloud_pool") == "1" for config in provider_configs):
-        return max(1, task_count)
+        return max(1, min(task_count, _positive_env_int("CLOUD_IMAGE_POOL_CONCURRENCY", 10)))
     per_key = _positive_env_int("RUNNINGHUB_PER_KEY_CONCURRENCY", 1)
     account_capacity = max(1, len(provider_configs) * per_key)
     mode = os.getenv("RUNNINGHUB_CONCURRENCY_MODE", "auto").strip().lower()
@@ -3502,7 +3507,12 @@ def _render_poster_with_retry(
                 config = account_pool.acquire_waiting_account()
                 queued = True
             continue
-        except RunningHubAccessDenied:
+        except RunningHubAccessDenied as exc:
+            if config.get('cloud_pool') == '1':
+                account_pool.release(config)
+                # Preserve the actual rejection and fail this request only;
+                # never blacklist the entire server-managed pool.
+                raise
             account_pool.mark_access_denied(config)
             print(
                 f"{poster_id} 的 {config['account_label']} 被当前站点或模型拒绝，切换到下一个账号。",

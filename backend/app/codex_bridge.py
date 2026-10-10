@@ -146,12 +146,15 @@ def brief(record):
 
 def compact_pack(record, path):
     from .codex_scene_management import scene_pack
+    from .codex_image_generation import effective
+
     keys = ('id', 'slide_ids', 'kind', 'intent', 'image_prompt', 'video_prompt', 'motion_plan', 'reference_ids',
             'image_material_numbers_bound', 'image_prompt_out_of_sync', 'image_status', 'video_status', 'prompt_refresh_note')
     return {'schema_version': 1, **brief(record), 'timeline_token': timeline_token(record, path),
             'settings': {k: record.get('settings', {}).get(k) for k in ('style', 'characters', 'world', 'ratio')},
             'subtitles': [{k: row.get(k) for k in ('slide_id', 'start', 'end', 'text')} for row in record.get('scenes', [])],
             'narration_groups': record.get('narration_groups', []),
+            'effective_image_config': effective(record),
             'references': [{k: row.get(k, '') for k in ('id', 'label', 'description', 'kind')} |
                            {'url': f"/api/codex-bridge/projects/{record['id']}/references/{row['id']}"}
                            for row in record.get('references', [])],
@@ -177,6 +180,9 @@ def info(request: Request):
             'skill_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'skills' / 'ocv-production-bridge' / 'SKILL.md'),
             'guide_url': '/api/codex-bridge/guide',
             'capabilities': ['drafts', 'draft_archive', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch', 'scene_management', 'image_generation'],
+            'plugin_version': '1.5.0', 'max_image_concurrency': 7, 'upstream_task_cancel_supported': False,
+            'image_capabilities': ['image_redraw', 'image_edit_current', 'image_batch', 'image_generation_config', 'image_batch_pause', 'image_cancel_pending'],
+
             'generates_media': True, 'generation_requires_confirmation': True, 'schema_url': '/api/codex-bridge/schema'}
 
 
@@ -195,8 +201,11 @@ def guide(request: Request):
 def schema(request: Request):
     user_for(request)
     from .codex_scene_management import SceneEdit
-    from .codex_image_generation import ImageGenerate
+    from .codex_image_generation import ImageGenerate, ImageBatch, GenerationSettings, BatchControl
     return {'image_generate': ImageGenerate.model_json_schema(), 'scene_edit': SceneEdit.model_json_schema(), 'plan': Plan.model_json_schema(), 'draft': Draft.model_json_schema(), 'shot_patch': ShotPatches.model_json_schema(),
+            'image_batch': ImageBatch.model_json_schema(), 'generation_settings': GenerationSettings.model_json_schema(),
+            'image_batch_control': BatchControl.model_json_schema(),
+
             'draft_fields': sorted(DRAFT_FIELDS),
             'motion_example': {'version': 2, 'scene_anchor': '固定构图，显示本镜空间关系',
                 'participants': ['主体'], 'reference_participants': ['主体'], 'reference_texts': [],
@@ -354,8 +363,8 @@ def file_hash(path):
     return value.hexdigest()
 
 
-def check_edit_context(record, path, data, user_id=None):
-    studio.editable(record, data.revision)
+def check_edit_context(record, path, data, user_id=None, *, allow_image_edits=False):
+    studio.editable(record, data.revision, allow_image_edits=allow_image_edits)
     audio = (path / str(record.get('audio') or '')).resolve()
     if not record.get('audio') or path.resolve() not in audio.parents or not audio.is_file():
         raise ValueError('缺少真实配音文件，请完成配音并确认后再规划')

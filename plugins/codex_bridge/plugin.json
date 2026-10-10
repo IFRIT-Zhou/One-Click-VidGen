@@ -2,7 +2,8 @@
   "manifest_version": 1,
   "id": "codex_bridge",
   "name": "Codex 制作桥",
-  "version": "1.4.0",
+  "version": "1.5.0",
+
   "author": "OCV",
   "type": "production_bridge",
   "description": "通用创作交接：填写动态视频草稿、按配音规划分镜、局部返修、管理场景参考图及绑定。附带 Codex 指南；保留旧素材和恢复记录，不自动生成或扣费。",

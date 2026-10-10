@@ -374,6 +374,9 @@ def start_export(identity: str, data: ExportRequest, request: Request):
         path = studio.directory(user_id, identity)
         record = studio.read(path)
         studio.editable(record, data.revision)
+        if record.get('video_waiting_queue') or any(shot.get('video_queued') or shot.get('video_waiting')
+                                                   for shot in record.get('shots', [])):
+            raise HTTPException(409, '请先完成或取消生成队列，再合成成片')
         all_static_ready = (bool(record.get('shots')) and
                             all(shot.get('kind') == 'static' and shot.get('image_status') == 'completed'
                                 for shot in record['shots']))

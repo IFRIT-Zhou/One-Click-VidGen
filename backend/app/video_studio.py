@@ -405,6 +405,9 @@ def _archive_storyboard_image(path, shot):
 
 def _invalidate_shot_video(record, shot, reason):
     """Keep paid artifacts on disk, but prevent a stale clip from being reused."""
+    record.pop('export', None)
+    if record.get('status') in {'completed', 'export_failed'}:
+        record['status'] = 'video_review'
     if shot.get('kind') != 'video' or not any(shot.get(key) for key in (
             'video_request', 'video_task_id', 'video', 'video_version')):
         return False
@@ -419,6 +422,7 @@ def _invalidate_shot_video(record, shot, reason):
     shot.update(video_status='pending', video_error='', video_terminal=False,
                 video_resume_available=False, video_not_submitted=True,
                 video_execution_started=False)
+    shot['video_design_changed'] = not reason.startswith(('用户要求重新生成', '已取消'))
     record.pop('export', None)
     record['logs'].append(f'{shot["id"]}：{reason}，原动态片段已保留但不再用于合成。')
     return True
@@ -521,12 +525,15 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                 if shot.get('image_status') != 'completed' or not shot.get('image')
             ] if not scenes_only else []
             per_key = visual._positive_env_int('RUNNINGHUB_PER_KEY_CONCURRENCY', 1)
-            max_workers = min(len(pending), max(1, len(configs) * per_key))
+            uses_cloud_pool = any(config.get('cloud_pool') == '1' for config in configs)
+            max_workers = visual._poster_worker_count(configs, len(pending))
             with LOCK:
                 if not scenes_only:
                     record['logs'].append(
-                    f'核心分镜图启用并行生成：{len(configs)} 个 API，'
-                    f'每个 API 并行 {per_key}，本轮最多同时生成 {max_workers} 张。'
+                    (f'核心分镜图云端号池并行生成：本轮最多同时生成 {max_workers} 张，服务器调度。'
+                     if uses_cloud_pool else
+                     f'核心分镜图启用并行生成：{len(configs)} 个 API，'
+                     f'每个 API 并行 {per_key}，本轮最多同时生成 {max_workers} 张。')
                     )
                 save(path, record)
 
@@ -790,6 +797,35 @@ def read(path):
 def editable(record, revision, *, allow_image_edits=False):
     if record['status'] in {'planning', 'stopping', 'image_generating', 'image_stopping', 'video_generating', 'video_stopping', 'exporting'} or (project_has_image_edits(record['id']) and not allow_image_edits) or record['revision'] != revision:
         raise HTTPException(409, '项目正在规划或已被其他页面修改，请重新读取')
+
+
+SHOT_EDIT_STAGES = {'image_review', *VIDEO_STAGE_STATUSES} - {'exporting'}
+
+
+def shot_editable(record, revision, shot_id):
+    """Permit independent shot edits while other shots are being rendered."""
+    if record['revision'] != revision:
+        raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
+    if record['status'] not in SHOT_EDIT_STAGES | {'storyboard_review'}:
+        raise HTTPException(409, '当前阶段不能修改镜头')
+    shot = _find_shot(record, shot_id)
+    targets = [shot]
+    if shot.get('asset_kind') == 'scene_reference':
+        # Shared files must not change underneath a worker that is freezing inputs.
+        targets += list(record.get('shots', []))
+    from .video_generation import LOCAL_VIDEO_RUNNING
+    for target in targets:
+        if (target.get('video_status') == 'running' or target.get('video_queued') or
+                target.get('video_waiting') or any(value == target['id'] and Path(key).name == record['id']
+                                                for key, value in LOCAL_VIDEO_RUNNING.items())):
+            raise HTTPException(409, '本镜或关联镜头正在生成或排队；请先取消排队再编辑')
+        if ((target.get('image_task') or {}).get('status') == 'running' or
+                image_edit_key(record['id'], target['id']) in IMAGE_EDITS):
+            raise HTTPException(409, '本镜正在重绘或规划，请等待完成')
+        if (target.get('video_request') and target.get('video_status') in {'unknown', 'stopped'}
+                and not target.get('video_terminal') and not target.get('video_not_submitted')):
+            raise HTTPException(409, '本镜原视频任务状态尚未确认，请先查询原任务')
+    return shot
 
 @router.get('')
 def listing(request: Request):
@@ -1200,16 +1236,23 @@ def structure(identity: str, data: Structure, request: Request):
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision)
+        if record['status'] in SHOT_EDIT_STAGES:
+            if record['revision'] != data.revision:
+                raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
+        else:
+            editable(record, data.revision)
         asset_stage = record['status'] == 'image_review' or record['status'] in VIDEO_STAGE_STATUSES
-        if asset_stage and any(shot.get('video_request') and shot.get('video_status') in {'running', 'unknown'}
-                               for shot in record['shots']):
-            raise HTTPException(409, '请先核实正在运行或状态未知的视频任务，再调整分镜结构')
         try:
             changed = edit_structure(record['shots'], record['scenes'], data.action, data.index,
                                              data.boundary, [r['id'] for r in record['references']])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        if asset_stage:
+            after = {row['id']: row for row in changed}
+            for original in record['shots']:
+                row = after.get(original['id'])
+                if row is None or row['slide_ids'] != original['slide_ids']:
+                    shot_editable(record, data.revision, original['id'])
         remember_structure(record, data.action)
         if asset_stage:
             originals = {shot['id']: shot for shot in record['shots']}
@@ -1241,7 +1284,8 @@ def structure(identity: str, data: Structure, request: Request):
             record['logs'].append('已调整分镜：配音和字幕原文保留；未受影响的图片与视频保留，请检查变更镜头后重新合成。')
         record['shots'] = changed
         lock_manual_groups(record)
-        record.update(revision=record['revision']+1, status='image_review' if asset_stage else 'storyboard_review')
+        record.update(revision=record['revision']+1, status=(record['status'] if record['status'] in VIDEO_STAGE_STATUSES
+                      else 'image_review' if asset_stage else 'storyboard_review'))
         discard_planning_resume(record)
         save(path, record)
         return record
@@ -1253,6 +1297,8 @@ def undo_structure(identity: str, data: Review, request: Request):
         path = directory(require_user(request)['id'], identity)
         record = read(path)
         editable(record, data.revision)
+        if record.get('video_waiting_queue'):
+            raise HTTPException(409, '请先取消等待队列，再撤回整个分镜结构')
         asset_stage = record['status'] == 'image_review' or record['status'] in VIDEO_STAGE_STATUSES
         if any(shot.get('video_request') and shot.get('video_status') in {'running', 'unknown'}
                for shot in record['shots']):
@@ -1284,8 +1330,11 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision)
-        if record['status'] not in {'draft', 'storyboard_review', 'image_review'}:
+        if record['status'] in SHOT_EDIT_STAGES:
+            shot_editable(record, data.revision, data.shot_id)
+        else:
+            editable(record, data.revision)
+        if record['status'] not in {'draft', 'storyboard_review'} | SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在分镜确认前检查设计')
         shot = next((row for row in record['shots'] if row['id'] == data.shot_id), None)
         if shot is None:
@@ -1473,7 +1522,7 @@ def delete_storyboard_reference(identity: str, reference_id: str, revision: int,
         path = directory(require_user(request)['id'], identity)
         record = read(path)
         editable(record, revision, allow_image_edits=True)
-        if record['status'] != 'image_review':
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段管理重绘参考图')
         if project_has_image_edits(record['id']):
             raise HTTPException(409, '请等待当前重绘完成后再删除参考图')
@@ -1526,8 +1575,8 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision, allow_image_edits=True)
-        if record['status'] != 'image_review':
+        shot_editable(record, data.revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段重绘')
         shot = _find_shot(record, shot_id)
         if (shot.get('image_task') or {}).get('status') == 'running':
@@ -1584,8 +1633,8 @@ async def replace_storyboard_image(identity: str, shot_id: str, request: Request
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, revision)
-        if record['status'] != 'image_review':
+        shot_editable(record, revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段替换图片')
         shot = _find_shot(record, shot_id)
         if (shot.get('image_task') or {}).get('status') == 'running':
@@ -1625,8 +1674,8 @@ def undo_storyboard_image(identity: str, shot_id: str, data: Review, request: Re
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision)
-        if record['status'] != 'image_review':
+        shot_editable(record, data.revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段撤回图片')
         shot = _find_shot(record, shot_id)
         history = list(shot.get('image_history') or [])
@@ -1662,8 +1711,8 @@ def reset_storyboard_prompt(identity: str, shot_id: str, data: Review, request: 
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision)
-        if record['status'] != 'image_review':
+        shot_editable(record, data.revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段恢复提示词')
         shot = _find_shot(record, shot_id)
         baseline = str(shot.get('baseline_image_prompt') or '')
@@ -1680,8 +1729,8 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
-        editable(record, data.revision)
-        if record['status'] != 'image_review':
+        shot_editable(record, data.revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段调整动静态')
         shot = _find_shot(record, shot_id)
         if shot.get('asset_kind') == 'scene_reference':
@@ -1723,7 +1772,7 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if changed_kind:
             shot['kind_adjustment'] = '用户手动选择动态' if data.kind == 'video' else '用户手动选择静态'
             record['logs'].append(f'{shot_id}：{shot["kind_adjustment"]}；核心图和字幕时间轴保持不变。')
-        if changed_motion:
+        if changed_motion or changed_kind:
             _invalidate_shot_video(record, shot, '动态表达或视频提示词已修改')
         record['revision'] += 1
         save(path, record)
@@ -1736,8 +1785,8 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
     with LOCK:
         path = directory(user['id'], identity)
         record = read(path)
-        editable(record, data.revision)
-        if record['status'] not in {'storyboard_review', 'image_review'}:
+        shot_editable(record, data.revision, shot_id)
+        if record['status'] not in SHOT_EDIT_STAGES | {'storyboard_review'}:
             raise HTTPException(409, '请在分镜确认或核心分镜图检查阶段更新提示词')
         shot = _find_shot(record, shot_id)
         if shot.get('asset_kind') == 'scene_reference' or shot.get('kind') != 'video':
@@ -1781,7 +1830,7 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
             IMAGE_EDITS.discard(edit_key)
     with LOCK:
         current = read(path)
-        if current['revision'] != data.revision:
+        if _find_shot(current, shot_id) != snapshot:
             raise HTTPException(409, '项目已被其他操作修改，请重新读取后再试')
         target = _find_shot(current, shot_id)
         before_action = str(target.get('action') or '')
