@@ -6,7 +6,7 @@ from unittest.mock import patch
 import requests
 import json
 
-from backend.app.runninghub_workflow_video import WorkflowConfig, RunningHubWorkflowVideoProvider
+from backend.app.runninghub_workflow_video import WorkflowConfig, RunningHubWorkflowVideoProvider, aiwood_workflow_preset
 from module6_dynamic_video import VideoGenerationRequest, DynamicVideoTaskFailed, DynamicVideoTaskUnknown
 
 
@@ -23,6 +23,20 @@ def response(body, status=200):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_aiwood_preset_submits_owner_graph_nodes(self):
+        provider = RunningHubWorkflowVideoProvider('secret-test', workflow=aiwood_workflow_preset(), session=Mock())
+        provider.session.post.return_value=response({'taskId':'owner-task'})
+        provider.upload_image=Mock(return_value='openapi/new-core.jpg')
+        with tempfile.TemporaryDirectory() as folder:
+            image=Path(folder)/'x.jpg'; image.write_bytes(b'image')
+            provider.submit(VideoGenerationRequest('new prompt',(image,),Path(folder)/'out.mp4',8,'16:9'))
+        rows={(r['nodeId'],r['fieldName']):r['fieldValue'] for r in provider.session.post.call_args.kwargs['json']['nodeInfoList']}
+        self.assertEqual(rows[('150','image')],'openapi/new-core.jpg')
+        self.assertEqual(rows[('232','value')],'new prompt')
+        self.assertEqual(rows[('132','value')],8)
+        self.assertIs(rows[('180','save_output')],True)
+        self.assertNotIn(('238','audio'),rows)
+
     def provider(self, *responses):
         session = Mock()
         session.post.side_effect = responses

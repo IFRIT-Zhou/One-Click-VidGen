@@ -25,6 +25,25 @@ class WorkflowOverride(WorkflowNode):
     value: str | int | float | bool
 
 
+def aiwood_workflow_preset():
+    """Bindings verified against the owner's exported graph; no workflow assets."""
+    return {
+        'workflow_id': '2108955980238266370',
+        'image_nodes': [{'node_id': '150', 'field': 'image'}],
+        'prompt_node': {'node_id': '232', 'field': 'value'},
+        'duration_node': {'node_id': '132', 'field': 'value'},
+        'output_nodes': ['180'], 'preferred_output': '180',
+        'instance_type': 'default', 'use_personal_queue': False,
+        'overrides': [
+            {'node_id': '115', 'field': 'aspect_ratio', 'value': '16:9 (Widescreen)'},
+            {'node_id': '115', 'field': 'megapixels', 'value': 1.0},
+            {'node_id': '115', 'field': 'multiple', 'value': 32},
+            {'node_id': '180', 'field': 'frame_rate', 'value': 24},
+            {'node_id': '180', 'field': 'trim_to_audio', 'value': False},
+        ],
+    }
+
+
 class WorkflowConfig(BaseModel):
     workflow_id: str = Field(default='', max_length=100, pattern=r'^\d*$')
     image_nodes: list[WorkflowNode] = Field(default_factory=list, max_length=9)

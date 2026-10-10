@@ -5,6 +5,7 @@ import {requestJSON} from '../api'
 const model=ref(null),busy=ref(false),message=ref(''),error=ref('')
 const workflow=ref(emptyWorkflow()),imageNodesText=ref(''),outputNodesText=ref(''),overridesText=ref('[]')
 function emptyWorkflow(){return {workflow_id:'2108955980238266370',image_nodes:[],prompt_node:{node_id:'',field:'text'},duration_node:{node_id:'',field:'value'},output_nodes:[],preferred_output:'',instance_type:'default',use_personal_queue:false,overrides:[]}}
+function useWorkflowPreset(preset){hydrateWorkflow(preset.config);message.value='已填入 '+preset.name+' 节点映射，点击保存后生效。';error.value=''}
 function hydrateWorkflow(value){workflow.value={...emptyWorkflow(),...value,prompt_node:value?.prompt_node||{node_id:'',field:'text'},duration_node:value?.duration_node||{node_id:'',field:'value'}};if(!workflow.value.workflow_id)workflow.value.workflow_id='2108955980238266370';imageNodesText.value=(value?.image_nodes||[]).map(n=>`${n.node_id}.${n.field}`).join(', ');outputNodesText.value=(value?.output_nodes||[]).join(', ');overridesText.value=JSON.stringify(value?.overrides||[],null,2)}
 function workflowPayload(){return {...workflow.value,image_nodes:imageNodesText.value.split(/[,，\n]/).map(v=>v.trim()).filter(Boolean).map(v=>{const pos=v.lastIndexOf('.');if(pos<1)throw Error('图片槽位请填写“节点编号.字段名”，多个槽位用逗号分隔');return {node_id:v.slice(0,pos),field:v.slice(pos+1)}}),output_nodes:outputNodesText.value.split(/[,，\n]/).map(v=>v.trim()).filter(Boolean),overrides:JSON.parse(overridesText.value||'[]')}}
 const draft=ref({base_url:'',submit_path:'/openapi/v2/model/multimodal-video',query_path:'/openapi/v2/query',upload_path:'/openapi/v2/media/upload/binary',resolution:'720p',concurrency_mode:'auto',per_key_concurrency:1,total_concurrency:3,api_keys:['']})
@@ -33,6 +34,8 @@ onMounted(load)
    </template>
   </div>
   <section v-if="draft.protocol==='runninghub_workflow'" class="workflow-config">
+   <div class="video-settings-actions"><strong>工作流预设</strong><button v-for="preset in model?.workflow_presets||[]" :key="preset.id" type="button" class="ghost-btn" :disabled="busy" @click="useWorkflowPreset(preset)">使用 {{preset.name}}</button></div>
+   <small v-if="workflow.workflow_id==='2108955980238266370'">aiwood 预设：单张核心图，16:9 横屏、约 1MP、24 帧；时长自动跟随本镜。参考音频未启用。可在下方固定参数中调整分辨率。</small>
    <div><strong>RH 币工作流</strong><p>按每镜的核心图、视频提示词和请求秒数运行已发布工作流。分辨率、采样及音频开关由工作流决定；请核对节点后保存。</p></div>
    <div class="video-settings-grid">
     <label><span>工作流 ID</span><input v-model.trim="workflow.workflow_id" placeholder="2108955980238266370"></label>

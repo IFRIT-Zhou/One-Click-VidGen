@@ -19,7 +19,7 @@ from module6_dynamic_video import DEFAULT_BASE_URL, QUERY_PATH, SUBMIT_PATH, UPL
 from .auth import require_user
 from .config import ENV_PATH, _parse_env_lines, save_project_env_values
 from .image_profiles import _legacy_document, _legacy_keys, list_profiles
-from .runninghub_workflow_video import WorkflowConfig
+from .runninghub_workflow_video import WorkflowConfig, aiwood_workflow_preset
 
 
 router = APIRouter(prefix="/api/video-model")
@@ -180,10 +180,13 @@ def load_config() -> dict[str, Any]:
 
 
 def _public(config: dict[str, Any]) -> dict[str, Any]:
-    return {key: config[key] for key in (
+    public = {key: config[key] for key in (
         "base_url", "submit_path", "query_path", "upload_path", "resolution", "has_api_key",
         "key_count", "key_hints", "concurrency_mode", "per_key_concurrency", "total_concurrency",
         "effective_concurrency", "model_label", "source", "protocol", "model", "workflow")}
+    public['workflow_presets'] = [{'id': 'aiwood_h3', 'name': 'aiwood 黑科技 H3',
+                                    'config': aiwood_workflow_preset()}]
+    return public
 
 
 @router.get("")
