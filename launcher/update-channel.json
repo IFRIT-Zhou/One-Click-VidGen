@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.11.1",
-  "release_order": 2026101101,
-  "display_version": "2026.10.11 制作工作区与稳定版渠道",
+  "release_id": "2026.10.11.2",
+  "release_order": 2026101102,
+  "display_version": "2026.10.11 RH币工作流视频接入",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.11.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.11.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "统一分镜与动态制作工作区，支持生成时编辑空闲镜头、逐镜锁定、排队及取消未开始任务。制作桥1.5支持确认后批量出图、路由设置和暂停队列。云端图像号池默认10并发，修复拒绝访问缓存及错误信息丢失。升级诊断包，修复H3文字误判并恢复配音字幕同步选项。包含此前自定义图像协议和ICAN更新；保留用户配置、模型及素材。",
-  "content_fingerprint": "63445896f0e5972e9c60b2d915a3ad3c4b906f8b1c1a02a5f655a76a6a9775e9"
+  "notes": "新增 RunningHub 工作流（RH币）视频接口，支持自定义节点映射、运行规格、上传、任务续查和成品下载；内置 aiwood 黑科技 H3 映射预设。显式开启输出保存，按指定节点取成品，提交结果不明时保留任务身份避免重复扣费。包含统一制作工作区、制作桥1.5、号池10并发及诊断包升级。工作流接入已通过本地回归，实际运行费用和结果以RH服务为准。",
+  "content_fingerprint": "27fd050ab696583a35ec4f0635078e2653c5ff154b05487ba52e700ae33a0f65"
 }
