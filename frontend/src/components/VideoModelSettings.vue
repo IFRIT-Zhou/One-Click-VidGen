@@ -1,9 +1,16 @@
 <script setup>
 import {computed,onMounted,ref} from 'vue'
 import {requestJSON} from '../api'
+import {readResolution,updateResolution,resolutionSize} from '../rhWorkflowResolution'
 
 const model=ref(null),busy=ref(false),message=ref(''),error=ref('')
 const workflow=ref(emptyWorkflow()),imageNodesText=ref(''),outputNodesText=ref(''),overridesText=ref('[]')
+const customResolution=ref(false)
+const rhResolution=computed(()=>{try{return readResolution(overridesText.value)}catch{return null}})
+const rhSize=computed(()=>rhResolution.value?resolutionSize(rhResolution.value):'')
+const rhPreset=computed(()=>customResolution.value?'custom':rhResolution.value?.megapixels===1?'1':rhResolution.value?.megapixels===2?'2':'custom')
+function changeRhResolution(field,value){try{overridesText.value=updateResolution(overridesText.value,field,value);error.value=''}catch(e){error.value='请先修正下方固定节点参数 JSON：'+e.message}}
+function chooseRhResolution(event){customResolution.value=event.target.value==='custom';if(!customResolution.value)changeRhResolution('megapixels',Number(event.target.value))}
 function emptyWorkflow(){return {workflow_id:'2108955980238266370',image_nodes:[],prompt_node:{node_id:'',field:'text'},duration_node:{node_id:'',field:'value'},output_nodes:[],preferred_output:'',instance_type:'default',use_personal_queue:false,overrides:[]}}
 function useWorkflowPreset(preset){hydrateWorkflow(preset.config);message.value='已填入 '+preset.name+' 节点映射，点击保存后生效。';error.value=''}
 function hydrateWorkflow(value){workflow.value={...emptyWorkflow(),...value,prompt_node:value?.prompt_node||{node_id:'',field:'text'},duration_node:value?.duration_node||{node_id:'',field:'value'}};if(!workflow.value.workflow_id)workflow.value.workflow_id='2108955980238266370';imageNodesText.value=(value?.image_nodes||[]).map(n=>`${n.node_id}.${n.field}`).join(', ');outputNodesText.value=(value?.output_nodes||[]).join(', ');overridesText.value=JSON.stringify(value?.overrides||[],null,2)}
@@ -35,7 +42,16 @@ onMounted(load)
   </div>
   <section v-if="draft.protocol==='runninghub_workflow'" class="workflow-config">
    <div class="video-settings-actions"><strong>工作流预设</strong><button v-for="preset in model?.workflow_presets||[]" :key="preset.id" type="button" class="ghost-btn" :disabled="busy" @click="useWorkflowPreset(preset)">使用 {{preset.name}}</button></div>
-   <small v-if="workflow.workflow_id==='2108955980238266370'">aiwood 预设：单张核心图，16:9 横屏、约 1MP、24 帧；时长自动跟随本镜。参考音频未启用。可在下方固定参数中调整分辨率。</small>
+   <small v-if="workflow.workflow_id==='2108955980238266370'">aiwood 预设：单张核心图、24 帧；时长自动跟随本镜。参考音频未启用。</small>
+   <div v-if="workflow.workflow_id==='2108955980238266370'" class="workflow-config">
+    <strong>视频生成分辨率</strong>
+    <div class="video-settings-grid">
+     <label><span>清晰度</span><select :value="rhPreset" :disabled="busy||!rhResolution" @change="chooseRhResolution"><option value="1">720P 级 · 1MP（默认）</option><option value="2">1080P 级 · 2MP</option><option value="custom">自定义像素规模</option></select></label>
+     <label v-if="rhPreset==='custom'"><span>像素规模（MP）</span><input type="number" min="0.1" max="16" step="0.1" :value="rhResolution?.megapixels" :disabled="busy||!rhResolution" @change="changeRhResolution('megapixels',Number($event.target.value))"></label>
+     <label><span>预计生成尺寸</span><span>{{rhSize||'请检查高级节点参数'}} 像素</span></label>
+    </div>
+    <small>尺寸按工作流比例及对齐规则计算。默认横屏 1080P 级为 1920 × 1088，并非精确 1920 × 1080；本选项不裁剪视频。更高分辨率会增加资源消耗。保存后用于新提交任务，不改变已生成视频或已提交任务。</small>
+   </div>
    <div><strong>RH 币工作流</strong><p>按每镜的核心图、视频提示词和请求秒数运行已发布工作流。分辨率、采样及音频开关由工作流决定；请核对节点后保存。</p></div>
    <div class="video-settings-grid">
     <label><span>工作流 ID</span><input v-model.trim="workflow.workflow_id" placeholder="2108955980238266370"></label>
@@ -69,3 +85,4 @@ header,.video-settings-actions,.video-key-hints,.video-concurrency{display:flex;
 .saved-video-key{display:inline-flex;align-items:center;border-radius:6px;background:var(--bg,#141918);overflow:hidden}.video-key-hints code{padding:4px 7px}.saved-video-key button{border:0;border-left:1px solid var(--border,#35423f);padding:4px 7px;border-radius:0}.video-key-inputs{display:grid;gap:8px}.video-key-inputs>button{justify-self:start}.video-concurrency{padding:11px;border:1px solid var(--border,#35423f);border-radius:9px}.video-concurrency>div{display:grid;margin-right:auto}.video-concurrency label{min-width:100px}.video-setting-message{margin:0;color:#82d9bd}
 @media(max-width:760px){.video-settings-grid{grid-template-columns:1fr}.video-concurrency{align-items:stretch}.video-concurrency label{width:100%}}
 </style>
+

@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.11.2",
-  "release_order": 2026101102,
-  "display_version": "2026.10.11 RH币工作流视频接入",
+  "release_id": "2026.10.12.1",
+  "release_order": 2026101201,
+  "display_version": "2026.10.12 RH工作流分辨率设置",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.11.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.12.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增 RunningHub 工作流（RH币）视频接口，支持自定义节点映射、运行规格、上传、任务续查和成品下载；内置 aiwood 黑科技 H3 映射预设。显式开启输出保存，按指定节点取成品，提交结果不明时保留任务身份避免重复扣费。包含统一制作工作区、制作桥1.5、号池10并发及诊断包升级。工作流接入已通过本地回归，实际运行费用和结果以RH服务为准。",
-  "content_fingerprint": "27fd050ab696583a35ec4f0635078e2653c5ff154b05487ba52e700ae33a0f65"
+  "notes": "RH币 aiwood 工作流新增720P级、1080P级及自定义像素规模选项，显示预计实际生成尺寸并同步节点参数。默认横屏1080P级为1920×1088，不裁剪视频；保存后用于新提交任务。保留其他高级参数与自定义工作流配置。",
+  "content_fingerprint": "0ee6ebf5162af48cb6437b30943b8231eefe3bddd98f9faf7e73cbba15833e41"
 }
