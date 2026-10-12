@@ -109,7 +109,22 @@ class IndexTTS25IntegrationTests(unittest.TestCase):
                 [{"index": 3, "start": 30.708, "end": 46.44}],
                 {3: "能看见不等于就理解了。"},
             )
-        self.assertEqual(updates, {"scene_011": "能看见不等于就理解了。"})
+        self.assertEqual(''.join(updates.values()), "能看见不等于就理解了。")
+        self.assertEqual(len(updates), 4)
+
+    def test_professor_to_doctor_preserves_all_subtitle_cues(self):
+        from backend.app.tts_alignment import spoken_cues
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            (project / 'other').mkdir()
+            parts = ['张教授介绍研究。', '研究取得进展。', '感谢李教授团队。']
+            import json
+            rows = [dict(slide_id=f's{i}', start=i, end=i+1, text_content=text) for i, text in enumerate(parts)]
+            (project / 'other' / '画面时间线.json').write_text(json.dumps(rows), encoding='utf-8')
+            new_text = ''.join(parts).replace('教授', '医生')
+            updates = TtsEditor._subtitle_updates_for_segments(project, [dict(index=1, start=0, end=3)], {1:new_text})
+            self.assertEqual(list(updates.values()), [p.replace('教授','医生') for p in parts])
+            self.assertEqual(len(spoken_cues(list(updates.values()), new_text)), 3)
 
     def test_tts_reading_copy_normalizes_windows_hostile_typography(self):
         original = "IndexTTS‑2.5\u00a0支持“特殊”字符\u200b。"

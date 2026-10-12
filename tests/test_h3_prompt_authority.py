@@ -15,6 +15,27 @@ INLINE = ('subject_definitions: <Picture 1> is the visual reference. '
 
 
 class H3PromptAuthorityTests(unittest.TestCase):
+    def test_invalid_json_retries_same_inputs_then_succeeds(self):
+        with patch.object(agent, 'generate_gemini_text', side_effect=['{"h3_prompt" "broken"}', json.dumps({'h3_prompt': INLINE})]) as generate:
+            prompt, _ = agent.convert_for_h3({'video_prompt': 'Approved scene.'}, 10)
+        self.assertIn('white-robed man', prompt)
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(generate.call_args_list[0].kwargs['user_prompt'], generate.call_args_list[1].kwargs['user_prompt'])
+
+    def test_format_retry_is_bounded_and_does_not_mutate_shot(self):
+        shot = {'video_prompt': 'Approved scene.'}
+        with patch.object(agent, 'generate_gemini_text', return_value='{"h3_prompt" "broken"}') as generate:
+            with self.assertRaisesRegex(ValueError, '已自动重试 2 次.*尚未提交 ComfyUI'):
+                agent.convert_for_h3(shot, 10)
+        self.assertEqual(generate.call_count, 3)
+        self.assertEqual(shot, {'video_prompt': 'Approved scene.'})
+
+    def test_semantic_error_is_not_retried(self):
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({'h3_prompt': INLINE + ' summary: Duplicate.'})) as generate:
+            with self.assertRaisesRegex(ValueError, '重复'):
+                agent.convert_for_h3({'video_prompt': 'Approved scene.'}, 10)
+        self.assertEqual(generate.call_count, 1)
+
     def test_inline_sections_preserve_real_bodies_without_placeholders(self):
         result = agent._validate(INLINE, 10)
         for name in agent._SECTIONS:

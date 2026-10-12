@@ -436,22 +436,37 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         ] + ([{"label": "<Audio 1>", "role": "final TTS segment / timing and performance reference"}]
              if reference_audio else []),
     }
-    raw = generate_gemini_text(
-        system_prompt=_SYSTEM,
-        user_prompt=json.dumps(payload, ensure_ascii=False),
-        temperature=0.1,
-        max_output_tokens=7000,
-        response_mime_type="application/json",
-        json_root="object",
-        image_data=image_data,
-    )
-    result = parse_json_response(raw)
-    for _ in range(2):
-        if not isinstance(result, str):
+    # Retry malformed envelopes only. Never salvage truncated creative text,
+    # silently use a stale prompt, or retry semantic/safety validation failures.
+    for attempt in range(3):
+        format_instruction = '' if attempt == 0 else (
+            '\nYour previous response could not be parsed as the required JSON object. '
+            'Regenerate from the same approved inputs. Return only one valid JSON object '
+            'with a non-empty string field "h3_prompt". Escape newlines as \\n and '
+            'double quotes as \\" inside JSON strings; no Markdown or extra commentary.'
+        )
+        raw = generate_gemini_text(
+            system_prompt=_SYSTEM + format_instruction,
+            user_prompt=json.dumps(payload, ensure_ascii=False),
+            temperature=0.1,
+            max_output_tokens=7000,
+            response_mime_type="application/json",
+            json_root="object",
+            image_data=image_data,
+        )
+        try:
+            result = parse_json_response(raw)
+            for _ in range(2):
+                if not isinstance(result, str):
+                    break
+                result = parse_json_response(result)
+            if not isinstance(result, dict) or not isinstance(result.get('h3_prompt'), str) or not result['h3_prompt'].strip():
+                raise ValueError('missing h3_prompt string')
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            if attempt == 2:
+                raise ValueError('H3 提示词转换返回格式不正确，已自动重试 2 次仍未取得有效 JSON；尚未提交 ComfyUI，原提示词及素材保留。请稍后重试或切换语言模型。') from exc
+        else:
             break
-        result = parse_json_response(result)
-    if not isinstance(result, dict) or not isinstance(result.get("h3_prompt"), str):
-        raise ValueError("H3 提示词 Agent 未返回有效 JSON 对象")
     prompt = _validate(result["h3_prompt"], duration, reference_audio=reference_audio, lipsync=lipsync)
     # Only the playback description instructs H3 to render new on-screen
     # content.  Scanning subject_definitions with the generic quote matcher can

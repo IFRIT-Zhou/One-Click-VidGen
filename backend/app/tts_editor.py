@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import difflib
 import os
 import re
 import shutil
@@ -1026,6 +1027,9 @@ class TtsEditor:
         timeline_path.write_text(json.dumps(timeline, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def set_pause(self, *, job: Any, user_id: int, left_index: int, seconds: float) -> dict[str, Any]:
+        return self.rebuild_audio(job=job, user_id=user_id, pauses={left_index: seconds})
+
+    def rebuild_audio(self, *, job: Any, user_id: int, pauses: dict[int, float]) -> dict[str, Any]:
         if self.status(job.id).get("status") == "running":
             raise RuntimeError("该项目已有音频编辑任务正在运行")
         project_dir = self._project_dir(job.id, user_id)
@@ -1033,23 +1037,29 @@ class TtsEditor:
         self._migrate_legacy_archive(job.id, project_dir)
         manifest = self._load_manifest(project_dir)
         segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
-        if left_index < 1 or left_index >= len(segments):
-            raise ValueError("只能在两句配音的交界处设置停顿")
-        seconds = round(max(0.0, min(30.0, float(seconds))), 3)
-        left = segments[left_index - 1]
-        old_pause = max(0.0, float(left.get("pause_after") or 0))
-        delta = seconds - old_pause
-        if abs(delta) < 0.0005:
-            return {"ok": True, "history_count": len(self._history_entries(project_dir)), "message": "停顿时长未变化"}
-        boundary = float(left.get("end") or 0) + old_pause
-        history_count, pruned = self._snapshot_history(project_dir, manifest, [], "修改额外停顿")
+        changes = []
+        for left_index, seconds in pauses.items():
+            if left_index < 1 or left_index >= len(segments):
+                raise ValueError("只能在两句配音的交界处设置停顿")
+            seconds = float(seconds)
+            if not 0 <= seconds <= 30:
+                raise ValueError("额外停顿应为 0 至 30 秒")
+            seconds = round(seconds, 3)
+            left = segments[left_index - 1]
+            old_pause = max(0.0, float(left.get('pause_after') or 0))
+            changes.append((float(left.get('end') or 0) + old_pause, seconds - old_pause, left_index, seconds))
+        history_count, pruned = self._snapshot_history(project_dir, manifest, [], "重新合成完整配音")
         try:
-            left["pause_after"] = seconds
+            # Apply original boundaries from right to left so earlier edits do
+            # not move the coordinates used for later subtitle/timeline edits.
+            for boundary, delta, left_index, seconds in sorted(changes, reverse=True):
+                if abs(delta) >= 0.0005:
+                    self._apply_boundary_delta(project_dir, boundary, delta)
+                segments[left_index - 1]['pause_after'] = seconds
             manifest["segments"] = segments
             manifest["total_duration"] = self._refresh_segment_timing(segments, self._segment_dir(project_dir))
             manifest["revision"] = int(manifest.get("revision") or 0) + 1
             manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            self._apply_boundary_delta(project_dir, boundary, delta)
             temp_audio = project_dir / "input" / ".配音.pause-edit.wav"
             _concat_segment_wavs(segments, self._segment_dir(project_dir), temp_audio)
             temp_audio.replace(project_dir / "input" / "配音.wav")
@@ -1061,10 +1071,10 @@ class TtsEditor:
         except Exception:
             self._restore_history(project_dir, self._history_entries(project_dir)[-1], consume=True)
             raise
-        store.log(job, f"已将第 {left_index}、{left_index + 1} 句之间的额外停顿设为 {seconds:.1f} 秒")
+        store.log(job, f"已按现有配音重新合成完整音频，应用 {len(changes)} 处停顿设置")
         return {
             "ok": True, "history_count": history_count, "history_pruned": pruned,
-            "message": f"已保存 {seconds:.1f} 秒额外停顿",
+            "message": "完整配音已重新合成，停顿与时间轴已同步；请在上方播放器试听。未调用 TTS。",
         }
 
     @staticmethod
@@ -1375,35 +1385,41 @@ class TtsEditor:
                 subtitle_start = float(raw.get("start") or 0)
                 subtitle_end = float(raw.get("end") or 0)
                 overlap = max(0.0, min(end, subtitle_end) - max(start, subtitle_start))
-                if overlap > 0.001:
+                if overlap > 0.001 and start <= (subtitle_start + subtitle_end) / 2 < end:
                     candidates.append((subtitle_start, position, raw))
             if not candidates:
                 raise ValueError(f"第 {index} 句找不到对应字幕")
-            # One TTS segment can span several subtitle rows and even several
-            # posters.  The subtitle to edit is its source anchor: the row that
-            # contains the segment start, or the first row immediately after it.
-            # Choosing the largest overlap would incorrectly jump to a later
-            # poster whenever the selected audio segment is long.
-            anchored = [
-                value for value in candidates
-                if value[0] <= start + 0.001
-                and float(value[2].get("end") or 0) > start + 0.001
-            ]
-            if anchored:
-                _subtitle_start, _position, target = sorted(
-                    anchored, key=lambda value: (abs(value[0] - start), value[1])
-                )[0]
-            else:
-                _subtitle_start, _position, target = sorted(
-                    candidates, key=lambda value: (value[0], value[1])
-                )[0]
-            if bool(target.get("subtitle_hidden")):
-                raise ValueError(f"第 {index} 句对应字幕已隐藏，请先恢复后再同步")
-            slide_id = str(target["slide_id"])
-            previous = updates.get(slide_id)
-            if previous is not None and previous != text:
-                raise ValueError(f"第 {index} 句与其他选中句对应同一字幕，不能同时同步不同文字")
-            updates[slide_id] = text
+            # A speech segment spans multiple subtitle cues. Distribute the
+            # edit across their text boundaries instead of duplicating the
+            # entire new paragraph into its first cue.
+            ordered = sorted(candidates, key=lambda value: (value[0], value[1]))
+            old_parts = [str(row.get('text_content') or '') for _, _, row in ordered]
+            old_text = ''.join(old_parts)
+            if not old_text:
+                raise ValueError(f"第 {index} 句原字幕为空，无法同步")
+            operations = difflib.SequenceMatcher(None, old_text, text, autojunk=False).get_opcodes()
+            def mapped_cut(position):
+                for tag, a, b, c, d in operations:
+                    if tag == 'insert' and a == position:
+                        return c
+                    if a <= position < b:
+                        return c + position - a if tag == 'equal' else c + round((position-a)*(d-c)/(b-a))
+                return len(text)
+            cuts, cursor = [0], 0
+            for part in old_parts[:-1]:
+                cursor += len(part)
+                cuts.append(mapped_cut(cursor))
+            cuts.append(len(text))
+            for (_, _, target), left, right in zip(ordered, cuts, cuts[1:]):
+                replacement = text[left:right]
+                if not replacement.strip():
+                    raise ValueError(f"第 {index} 句修改删除了完整字幕行，请先在字幕编辑中合并或调整该行，再重配")
+                if target.get('subtitle_hidden'):
+                    raise ValueError(f"第 {index} 句对应字幕已隐藏，请先恢复后再同步")
+                slide_id = str(target['slide_id'])
+                if slide_id in updates and updates[slide_id] != replacement:
+                    raise ValueError(f"第 {index} 句与其他选中句对应同一字幕，不能同时同步不同文字")
+                updates[slide_id] = replacement
         return updates
 
     def regenerate(

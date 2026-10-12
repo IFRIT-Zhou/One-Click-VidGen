@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.12.1",
-  "release_order": 2026101201,
-  "display_version": "2026.10.12 RH工作流分辨率设置",
+  "release_id": "2026.10.12.2",
+  "release_order": 2026101202,
+  "display_version": "2026.10.12 集群接入与配音视频修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.12.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.12.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "RH币 aiwood 工作流新增720P级、1080P级及自定义像素规模选项，显示预计实际生成尺寸并同步节点参数。默认横屏1080P级为1920×1088，不裁剪视频；保存后用于新提交任务。保留其他高级参数与自定义工作流配置。",
-  "content_fingerprint": "0ee6ebf5162af48cb6437b30943b8231eefe3bddd98f9faf7e73cbba15833e41"
+  "notes": "同步云端H3集群接入及TTS按需调度更新；修复多字幕称谓同步、重绘分页跳转、视频重跑编号冲突；新增完整配音重合成、H3格式有限重试、本地与不同API出口并行。服务费5%说明仅适用于稳定版。保留用户配置和已有素材。",
+  "content_fingerprint": "b5b8ddc180e3ab7a9311e3654941d544aa9018fb0d2e68f7753f60222b452b18"
 }

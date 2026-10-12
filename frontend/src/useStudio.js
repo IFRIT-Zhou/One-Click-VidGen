@@ -181,7 +181,7 @@ export function useStudio(w) {
     const index=studioSelectedImageIndex.value+Number(offset||0),item=w.visualEditor.value.items[index]
     if(item)w.visualTimingSelectedId.value=item.id
   }
-  const studioAudio = computed(()=>studioJob.value?.artifacts?.audio||'')
+  const studioAudio = computed(()=>{const url=studioJob.value?.artifacts?.audio||'';return url?`${url}${url.includes('?')?'&':'?'}tts_revision=${Number(w.ttsEditor.value?.revision||0)}`:''})
   const studioVideo = computed(() => {
     const url = studioJob.value?.artifacts?.video_with_subtitles
       || studioJob.value?.artifacts?.video_raw

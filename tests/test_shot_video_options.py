@@ -287,14 +287,16 @@ class ShotVideoOptionsTests(unittest.TestCase):
              patch.object(video, '_account_slots', return_value=['test']), \
              patch.object(video, '_config_for_shot', side_effect=lambda config, shot, index: config), \
              patch.object(video, '_freeze_request') as freeze, \
+             patch.object(video, '_start_worker') as api_start, \
              patch.object(video, '_start_local_worker') as start:
             video.generate('test', video.GenerateClips(revision=1, shot_ids=['a', 'b'], shot_options={
                 'a': {'backend': 'api', 'resolution': '480p'},
                 'b': {'backend': 'comfyui', 'profile_id': 'local', 'resolution': '720p'}}), None)
         self.assertEqual(self.record['active_video_backend'], 'mixed')
         self.assertEqual(freeze.call_args.args[2]['id'], 'a')
-        self.assertEqual(start.call_args.kwargs['api_configs']['a']['resolution'], '480p')
-        self.assertNotIn('b', start.call_args.kwargs['api_configs'])
+        self.assertEqual(api_start.call_args.args[3]['a']['resolution'], '480p')
+        self.assertEqual(api_start.call_args.args[2], ['a'])
+        self.assertEqual(start.call_args.args[2], ['b'])
 
     def test_all_static_images_can_confirm_and_export(self):
         from backend.app import video_export

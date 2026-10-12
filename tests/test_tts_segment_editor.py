@@ -249,6 +249,38 @@ class TtsSegmentEditorTest(unittest.TestCase):
                 with wave.open(str(project / "input" / "配音.wav"), "rb") as audio:
                     self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 2.0, places=2)
 
+    def test_rebuild_applies_multiple_pauses_in_one_history_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            segment_dir = project / 'other' / 'tts_segments'
+            segment_dir.mkdir(parents=True)
+            (project / 'input').mkdir()
+            segments = []
+            for i in range(1, 4):
+                filename = f'segment_{i:04d}.wav'
+                write_silent_wav(segment_dir / filename, 1.0)
+                segments.append(dict(index=i, text=f'句{i}', filename=filename, start=i-1, end=i, duration=1))
+            (segment_dir / 'manifest.json').write_text(json.dumps({'segments': segments}), encoding='utf-8')
+            (project / 'other' / '最终字幕.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\n句1\n\n2\n00:00:01,000 --> 00:00:02,000\n句2\n\n3\n00:00:02,000 --> 00:00:03,000\n句3\n', encoding='utf-8')
+            _concat_wavs([segment_dir / s['filename'] for s in segments], project / 'input' / '配音.wav')
+            editor = TtsEditor()
+            job = SimpleNamespace(id='job', request={}, user_id=1)
+            with (patch.object(editor, '_project_dir', return_value=project),
+                  patch.object(editor, '_ensure_module1_layout'),
+                  patch.object(editor, '_migrate_legacy_archive'),
+                  patch.object(editor, '_apply_boundary_delta', wraps=editor._apply_boundary_delta) as shift,
+                  patch('backend.app.tts_editor.store.log')):
+                result = editor.rebuild_audio(job=job, user_id=1, pauses={1: 0.5, 2: 0.8})
+                self.assertEqual(result['history_count'], 1)
+                self.assertEqual([c.args[1:] for c in shift.call_args_list], [(2.0, 0.8), (1.0, 0.5)])
+                with wave.open(str(project / 'input' / '配音.wav'), 'rb') as audio:
+                    self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 4.3, places=2)
+                updated = json.loads((segment_dir / 'manifest.json').read_text(encoding='utf-8'))
+                self.assertAlmostEqual(updated['segments'][2]['start'], 3.3)
+                editor.undo(job=job, user_id=1)
+                with wave.open(str(project / 'input' / '配音.wav'), 'rb') as audio:
+                    self.assertAlmostEqual(audio.getnframes() / audio.getframerate(), 3.0, places=2)
+
     def test_structural_split_revoices_two_parts_and_is_undoable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)

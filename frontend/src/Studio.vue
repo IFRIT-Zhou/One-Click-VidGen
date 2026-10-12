@@ -140,7 +140,7 @@
             <span class="switch-track"><span></span></span>
           </label>
         </div>
-        <p class="cloud-pool-price-note">无需自行配置语言和图像 API；其他云端服务收取 5% 服务费；ICAN 按原价向上取整到分计费。平价gpt image2.5 每张图片约 0.105 元，ICAN 每张 0.04 元（0.04 积分）；每 1000 字文案的 LLM 消耗通常约 0.1 元，实际费用会随模型、输出长度及重试次数略有浮动。</p>
+        <p class="cloud-pool-price-note">无需自行配置语言和图像 API；稳定版渠道仅收取 5% 服务费（该比例仅适用于稳定版）。稳定版与 ICAN 每张图片约 0.05 积分；每 1000 字文案的 LLM 消耗通常约 0.1 元，实际费用会随模型、输出长度及重试次数略有浮动。</p>
         <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
         <div v-if="form.use_cloud_image_pool" class="cloud-pool-status" :class="cloudSession.authenticated ? 'ready' : 'warning'">
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
@@ -547,9 +547,13 @@
     <template v-else-if="studioTab==='文案'"><div class="studio-original-script"><h2>本次任务文案</h2><p class="muted">原始文案用于核对。发音修正请在“配音”里操作，显示文字请在“画面与字幕”里修改。</p><textarea :value="studioJob?.request?.script||''" readonly rows="14"/></div></template>
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
+     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
      <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
      <button v-if="codexBridgeAvailable && studioJob?.request?.dynamic_video && guidedStage==='audio_review' && !editingDynamicAudio" :disabled="studioBusy||guidedSubtitleSaving||ttsEditor.task?.status==='running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
-     <div class="studio-audio-player"><audio v-if="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
+     <button class="ghost-btn" :disabled="ttsBoundaryBusy||ttsEditor.task?.status==='running'||!ttsEditor.segments.length" @click="rebuildTtsAudio">{{ttsBoundaryBusy?'正在处理配音…':'重新合成完整配音'}}</button>
+     </div>
+     <p class="muted">调整句末“额外停顿”后，点击重新合成即可试听整段；复用已有配音，不重新调用 TTS。</p>
+     <div class="studio-audio-player"><audio v-if="studioAudio" :key="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
      <div class="studio-audio-layout"><aside class="studio-sentence-list"><div class="list-heading">全部句子 <span>{{ttsEditor.segments.length}} 句</span></div><div v-for="segment in ttsEditor.segments" :key="segment.index" :class="{selected:studioSentence===segment.index}"><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="segment.index" :aria-label="'选中第'+segment.index+'句'"/><button @click="studioSentence=segment.index"><small>{{segment.index}}</small><span>{{segment.text}}</span><small>{{Number(segment.duration).toFixed(1)}}s</small></button></div></aside><div class="studio-sentence-detail"><section class="tts-segment-editor">
                 <div class="visual-timing-head">
                   <div>

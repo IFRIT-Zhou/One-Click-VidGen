@@ -26,6 +26,45 @@ class ParallelEditingTests(unittest.TestCase):
         self.assertEqual(self.record['status'], 'video_generating')
         self.assertEqual(self.record['shots'][0]['video_prompt'], '新的提示词')
 
+    def test_api_and_local_can_start_concurrently(self):
+        self.running_project()
+        with patch.dict(video.VIDEO_WORKERS, {str(self.path): {'api-worker': {'api:example.com'}}}, clear=True), patch.object(video, '_start_local_worker') as start:
+            video.generate('test', video.GenerateClips(revision=1, shot_ids=['a'], options={'backend':'comfyui','profile_id':'new','resolution':'720p'}), None)
+        start.assert_called_once()
+        self.assertFalse(self.record['shots'][0].get('video_waiting'))
+        self.assertEqual(self.record['shots'][1]['video_status'], 'running')
+
+    def test_worker_release_preserves_other_outlet_and_cancel_event(self):
+        with patch.dict(video.VIDEO_WORKERS, {}, clear=True):
+            one, event = video._register_video_worker(self.path, {'comfyui'})
+            two, other = video._register_video_worker(self.path, {'api:example.com'})
+            self.assertIs(event, other)
+            video._release_video_worker(self.path, one)
+            self.assertIn(str(self.path), video.studio.ACTIVE)
+            self.assertIs(video.studio.CANCEL_EVENTS[str(self.path)], event)
+            video._release_video_worker(self.path, two)
+            self.assertNotIn(str(self.path), video.studio.ACTIVE)
+
+    def test_api_outlet_normalizes_host_but_distinguishes_services(self):
+        self.assertEqual(video._api_outlet({'base_url':'https://EXAMPLE.com/v1/'}), video._api_outlet({'base_url':'https://example.com/v1'}))
+        self.assertNotEqual(video._api_outlet({'base_url':'https://a.com'}), video._api_outlet({'base_url':'https://b.com'}))
+
+    def test_different_api_outlet_starts_while_original_runs(self):
+        self.running_project()
+        config = {'api_key':'test', 'resolution':'720p', 'base_url':'https://second.example/v1'}
+        with patch.dict(video.VIDEO_WORKERS, {str(self.path): {'first': {'api:first.example/v1'}}}, clear=True), \
+             patch.object(video, 'load_config', return_value=config), \
+             patch.object(video, '_sync_identity', return_value=None), \
+             patch.object(video, 'validate_request'), \
+             patch.object(video, '_account_slots', return_value=['test']), \
+             patch.object(video, '_config_for_shot', side_effect=lambda config, shot, index:config), \
+             patch.object(video, '_freeze_request'), \
+             patch.object(video, '_start_worker') as start:
+            video.generate('test', video.GenerateClips(revision=1, shot_ids=['a'], options={'backend':'api','resolution':'720p'}), None)
+        start.assert_called_once()
+        self.assertEqual(start.call_args.args[3]['a']['base_url'], config['base_url'])
+        self.assertEqual(self.record['shots'][1]['video_status'], 'running')
+
     def test_queued_and_running_shots_cannot_be_edited(self):
         self.running_project()
         for fields in ({'video_queued': True}, {'video_waiting': True}, {'video_status': 'running'}):

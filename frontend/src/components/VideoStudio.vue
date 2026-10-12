@@ -1,6 +1,7 @@
 <script setup>
 import {computed,ref,watch,nextTick,onMounted,onUnmounted} from 'vue'
 import {requestJSON} from '../api'
+import {sceneReferenceReadiness} from '../sceneReferenceReadiness'
 import { imageSize } from '../icanImageSizes'
 import ParameterReview from './ParameterReview.vue'
 import VideoShotNavigator from './VideoShotNavigator.vue'
@@ -168,7 +169,14 @@ const videoUrl=shot=>base+'/'+project.value.id+'/videos/'+encodeURIComponent(sho
 const historyVideoUrl=(shot,index)=>base+'/'+project.value.id+'/videos/'+encodeURIComponent(shot.id)+'/history/'+index+'?v='+encodeURIComponent(project.value.revision)
 function defaultProjectView(record){return ['exporting','export_failed','completed'].includes(record?.status)?'export':videoStages.includes(record?.status)?'motions':'storyboard'}
 const pendingAudioShots=computed(()=>project.value?.shots?.filter(s=>s.audio_timing_adjustment?.needs_review)||[])
-watch(()=>[project.value?.id,project.value?.audio_version],async()=>{await nextTick();const index=project.value?.shots?.findIndex(s=>s.audio_timing_adjustment?.needs_review)??-1;if(index>=0){selected.value=index;view.value=defaultProjectView(project.value)}})
+watch([()=>project.value?.id,()=>project.value?.audio_version],async([id,version],previous,onCleanup)=>{
+ let cancelled=false
+ onCleanup(()=>{cancelled=true})
+ await nextTick()
+ if(cancelled||project.value?.id!==id||project.value?.audio_version!==version)return
+ const index=project.value?.shots?.findIndex(s=>s.audio_timing_adjustment?.needs_review)??-1
+ if(index>=0){selected.value=index;view.value=defaultProjectView(project.value)}
+})
 const narrationUrl=computed(()=>project.value?base+'/'+project.value.id+'/audio?v='+encodeURIComponent(project.value.audio_version||project.value.revision):'')
 const previewAdaptRate=ref(1)
 function nextAudioReview(){const shots=project.value?.shots||[];const indices=shots.map((s,i)=>s.audio_timing_adjustment?.needs_review?i:-1).filter(i=>i>=0);if(indices.length){selected.value=indices.find(i=>i>selected.value)??indices[0];view.value=videoStageReady.value?'motions':'storyboard'}}
@@ -233,7 +241,7 @@ async function regenerateVideo(shot){
   :'本镜不会注入参考音频。'
  const options=optionsFor(shot),profile=comfyProfiles.value.find(item=>item.id===options.profile_id)
  const detail=options.backend==='comfyui'?`ComfyUI · ${profile?.name||'所选工作流'} · ${options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||'工作流默认'}`:`视频 API · ${options.resolution||videoModel.value?.resolution}（可能再次计费）`
- if(!confirm('将按本镜生成设置重新生成：'+detail+'。\n\n'+audioNote+'\n原片段会保留在历史记录中，但新片段生成后将替代它参与合成。是否继续？'))return
+ if(!confirm('将按本镜生成设置重新生成：'+detail+'。\n\n'+audioNote+'\n系统自动分配新的生成编号，保留旧任务记录和视频。若原云端任务仍在运行或提交结果未知，新请求可能造成重复扣费，且不会取消原任务。\n新片段生成后将替代旧片段参与合成。确认新建生成？'))return
  await run(async()=>{acceptImageUpdate(await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:[shot.id],regenerate_completed:true,options}));productionPanel.value='video';videoLogsOpen.value=true})
 }
 async function regenerateAllVideos(){
@@ -298,8 +306,9 @@ const sceneReferencesEnabled=computed(()=>{
 })
 const sceneReferencesBusy=computed(()=>['image_generating','image_stopping'].includes(project.value?.status)&&['planning','generating'].includes(project.value?.scene_references_status))
 const sceneReferenceMessage=computed(()=>project.value?.scene_references_message||project.value?.scene_references_error||project.value?.scene_reference_plan?.message||'')
-const sceneReferencesNeedGeneration=computed(()=>project.value?.scene_references_status!=='completed'||sceneAssets.value.some(asset=>asset.image_status!=='completed'))
-const sceneReferencesBlockConfirm=computed(()=>sceneReferencesEnabled.value&&sceneReferencesNeedGeneration.value)
+const sceneReadiness=computed(()=>sceneReferenceReadiness(project.value))
+const sceneReferencesNeedGeneration=computed(()=>!sceneReadiness.value.can_confirm)
+const sceneReferencesBlockConfirm=computed(()=>!sceneReadiness.value.can_confirm)
 const allImageAssets=computed(()=>[...(project.value?.shots||[]),...sceneAssets.value])
 const sceneAssetFor=shot=>sceneAssets.value.find(asset=>asset.id===shot.scene_reference_id)
 const isSceneAsset=asset=>sceneAssets.value.some(scene=>scene.id===asset.id)
@@ -588,7 +597,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </nav>
  <div class="page-heading workspace-stage-heading"><div><h2>{{project?workspaceTitles[view]||'动态视频':'动态视频'}}</h2><p class="muted">{{project?workspaceHints[view]:'从文案开始制作动态视频，或继续已有任务。'}}</p></div><span v-if="project?.shots.length" class="readonly-badge">{{project.shots.length}} 镜 · {{project.settings.ratio||'16:9'}}</span></div>
  <div v-if="project&&autoAdvanceEnabled&&project.status!=='completed'" class="auto-pilot-status" role="status"><span class="auto-pilot-dot"></span><div><strong>{{autoAdvanceBusy?'一键制作正在进入下一阶段':'一键制作已开启'}}</strong><p>成功的确认步骤会自动继续；失败或需要人工处理时会停留在对应阶段。</p></div></div>
- <p v-if="error" class="studio-notice error">{{error}}</p>
+ <div v-if="error" class="studio-notice error"><p>{{error}}</p><button v-if="selectedShot&&/同编号.*视频.*资产/.test(error)" type="button" :disabled="busy||rerunQueued(selectedShot)" @click="regenerateVideo(selectedShot)">确认新建编号并重新生成当前镜头</button></div>
  <section v-if="project&&pendingAudioShots.length" class="single-shot-refresh" role="status">
   <div><strong>配音已更新 · {{pendingAudioShots.length}} 镜待检查</strong><p>时间轴已同步，原画面保留。请试看裁切或降速后的效果；不满意时只重新生成对应镜头。</p></div>
   <button @click="nextAudioReview">下一个待检查</button>
@@ -675,7 +684,8 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <details v-if="promptWarnings.length" :key="selected" class="shot-subtitles current-shot-warning"><summary>第 {{String(selected+1).padStart(2,'0')}} 镜{{shotHasPromptWarning(selectedShot)?'核对详情':'措辞比对记录'}} · {{promptWarnings.length}} 条</summary><p class="muted">以下来自字面比对，不是语义判定。称呼、说法或气泡名称不同，不一定影响画面；请结合实际提示词判断。</p><p v-for="(note,i) in promptWarnings" :key="i" :class="{'prompt-note-warning':note.severity==='warning'}"><span class="prompt-note-level">{{note.severity==='warning'?'建议核对':'措辞记录'}}</span>{{note.label}}</p></details>
   <details v-if="project.planning_recovery&&project.shots[selected]?.visual_description&&!project.shots[selected]?.image_prompt" open class="shot-subtitles"><summary>当前镜头已保存的核心画面草案（尚未定稿）</summary><p>{{project.shots[selected].visual_description}}</p><p class="muted">可参考此草案，在下方补齐核心分镜图提示词和视频提示词；保存并确认前不会生成图片。</p></details>
   <details v-if="project.logs.length&&!project.shots.length" class="planning-log" open><summary>任务日志 <span class="muted">{{project.logs.length}} 条</span></summary><div class="video-logs" role="log" aria-live="polite"><div v-for="(line,i) in project.logs" :key="i">{{line}}</div></div></details>
-  <p v-if="sceneReferencesBusy||project.scene_references_status==='failed'" class="studio-notice">{{sceneReferenceMessage||'正在准备场景参考…'}}</p>
+  <p v-if="project.status==='image_review'&&sceneReferencesBlockConfirm" class="studio-notice">{{sceneReadiness.blockers.map(item=>item.message).join('；')}}</p>
+  <p v-else-if="sceneReferencesBusy||project.scene_references_status==='failed'" class="studio-notice">{{sceneReferenceMessage||'正在准备场景参考…'}}</p>
   <button v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" :disabled="busy||imageEditRunning" @click="generateSceneReferences">补充 / 重试场景参考（调用 API）</button>
   <template v-if="videoStageReady">   <audio v-if="project.audio" ref="motionAudio" :key="narrationUrl" preload="auto" :src="narrationUrl" class="motion-narration-audio"/>
    <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{project.creation_parameters?.video_generation_backend==='cloud_h3'?'集群 H3（测试免费）':localVideo?(project.creation_parameters.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'):'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
@@ -721,7 +731,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
       <a :href="videoUrl(selectedShot)" :download="'镜头'+String(selected+1).padStart(2,'0')+'.mp4'" class="motion-download">↓ 下载本镜原片</a>
      </div>
      <OperationStatus v-if="selectedShot.kind==='video'" title="本镜运行状态" :task="videoTask(selectedShot)"/>
-     <p v-if="selectedShot.video_error" class="studio-notice error">{{selectedShot.video_error}}</p>
+     <div v-if="selectedShot.video_error" class="studio-notice error"><p>{{selectedShot.video_error}}</p><button v-if="/同编号.*视频.*资产/.test(selectedShot.video_error)" type="button" :disabled="busy||rerunQueued(selectedShot)" @click="regenerateVideo(selectedShot)">确认新建编号并重新生成</button></div>
      <p v-if="selectedShot.video_task_id" class="motion-task-id muted">云端任务编号：<code>{{selectedShot.video_task_id}}</code><span v-if="selectedShot.video_attempt"> · 第 {{selectedShot.video_attempt}} 次请求</span></p>
      <p v-if="selectedShot.kind==='video'&&selectedShot.video_status==='unknown'&&!selectedShot.video_resume_available" class="duration-repair-note needs-review">本次提交结果未知，且无法安全查询原任务。请先向服务商核实，不要重新提交，避免重复扣费。</p>
      <p v-if="selectedShot.kind==='video'" class="motion-preview-note muted">原始视频音轨保持静音；试看时可同步本镜对应的项目配音。为覆盖字幕时长，请求秒数可能向上取整，试看和最终合成都只使用本镜字幕时长。</p>

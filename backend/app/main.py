@@ -380,6 +380,10 @@ class TtsBoundaryPauseRequest(BaseModel):
     seconds: float = Field(ge=0, le=30)
 
 
+class TtsRebuildAudioRequest(BaseModel):
+    pauses: dict[int, float] = Field(default_factory=dict)
+
+
 class TtsTokenCountRequest(BaseModel):
     texts: list[str] = Field(min_length=1, max_length=2)
 
@@ -3550,6 +3554,20 @@ def save_tts_boundary_pause(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post('/api/jobs/{job_id}/tts-editor/rebuild-audio')
+def rebuild_tts_audio(job_id: str, payload: TtsRebuildAudioRequest, request: Request) -> dict[str, Any]:
+    job, user_id = _owned_completed_job(job_id, request)
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get('task', {}).get('status') == 'running' or visual_status.get('has_active_image_tasks'):
+        raise HTTPException(status_code=409, detail='请等待当前重绘或重新渲染完成后再合成配音')
+    try:
+        return tts_editor.rebuild_audio(job=job, user_id=user_id, pauses=payload.pauses)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

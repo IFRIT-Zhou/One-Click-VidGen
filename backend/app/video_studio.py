@@ -1208,7 +1208,8 @@ def get(identity: str, request: Request):
         if record.get('status') == 'completed':
             from .video_export import reconcile_source_job
             reconcile_source_job(record, user_id)
-        return record
+        from .video_scene_readiness import scene_readiness
+        return {**record, 'scene_reference_readiness': scene_readiness(record, directory(user_id, identity))}
 
 @router.put('/{identity}')
 def update(identity: str, data: Edit, request: Request):
@@ -1918,8 +1919,10 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
             raise HTTPException(409, '请先完成并检查全部核心分镜图')
         if any((shot.get('image_task') or {}).get('status') == 'running' for shot in record['shots']):
             raise HTTPException(409, '请等待正在重绘的核心分镜图完成')
-        if scene_references.enabled(record) and record.get('scene_references_status') != 'completed':
-            raise HTTPException(409, '该任务启用了场景参考，请先完成场景参考准备并检查关联镜头')
+        from .video_scene_readiness import scene_readiness
+        readiness = scene_readiness(record, path)
+        if not readiness['can_confirm']:
+            raise HTTPException(409, '；'.join(item['message'] for item in readiness['blockers']))
         missing = [str(i + 1) for i, shot in enumerate(record['shots'])
                    if shot['kind'] == 'video' and not str(shot.get('video_prompt') or '').strip()]
         if missing:

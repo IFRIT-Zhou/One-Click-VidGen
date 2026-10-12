@@ -249,6 +249,9 @@ export const api = {
   saveTtsPause: (id, leftIndex, seconds) => requestJSON(`/api/jobs/${id}/tts-editor/pause`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_index: leftIndex, seconds }),
   }),
+  rebuildTtsAudio: (id, pauses) => requestJSON(`/api/jobs/${id}/tts-editor/rebuild-audio`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pauses }),
+  }),
   undoTtsEdit: (id) => requestJSON(`/api/jobs/${id}/tts-editor/undo`, { method: 'POST' }),
   countTtsTokens: (id, texts) => requestJSON(`/api/jobs/${id}/tts-editor/token-count`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts }),
