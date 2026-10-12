@@ -131,10 +131,12 @@
   async function checkHealth() {
     const node = element("#cloud-state");
     try {
-      const health = await api("/health", {}, false); state.cloudReady = Boolean(health.ok && health.control_api && !health.ray_error);
+      const health = await api("/health", {}, false);
+      const availability = window.OCVGClusterHealth.describe(health); state.cloudReady = availability.accepting;
       node.className = `cloud-state ${state.cloudReady ? "online" : "offline"}`;
-      node.querySelector("strong").textContent = state.cloudReady ? "服务运行正常" : "配音集群维护中";
-    } catch (_) { state.cloudReady = false; node.className = "cloud-state offline"; node.querySelector("strong").textContent = "无法连接服务"; }
+      node.querySelector("strong").textContent = availability.label;
+      node.title = availability.detail;
+    } catch (_) { state.cloudReady = false; node.className = "cloud-state offline"; node.querySelector("strong").textContent = "无法连接服务"; node.title = "无法确认配音服务状态，请稍后重试。"; }
     updateSubmit();
   }
 
@@ -596,7 +598,7 @@
   function updateSubmit() {
     const button = element("#submit-job"); const ready = Boolean(state.session && state.selectedVoice && state.storyboard.length && state.quote && state.cloudReady && !state.composing);
     button.disabled = state.session ? !ready : !element("#script-input").value.trim(); updateVideoJobButton();
-    if (!state.session) button.textContent = "登录后开始创作"; else if (!state.storyboard.length) button.textContent = "请先生成 AI 分镜"; else if (!state.cloudReady) button.textContent = "配音集群维护中"; else if (!state.selectedVoice) button.textContent = "请选择音色"; else if (!state.quote) button.textContent = "正在计算配音报价…"; else button.textContent = `并行生成全部素材 · 配音 ${state.quote.estimated_credits} 积分`;
+    if (!state.session) button.textContent = "登录后开始创作"; else if (!state.storyboard.length) button.textContent = "请先生成 AI 分镜"; else if (!state.cloudReady) button.textContent = "配音服务暂不可用"; else if (!state.selectedVoice) button.textContent = "请选择音色"; else if (!state.quote) button.textContent = "正在计算配音报价…"; else button.textContent = `并行生成全部素材 · 配音 ${state.quote.estimated_credits} 积分`;
   }
 
   async function submitJob() {

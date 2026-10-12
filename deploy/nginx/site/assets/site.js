@@ -7,11 +7,13 @@
       const response = await fetch("/api/v1/health", { cache: "no-store", headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const health = await response.json();
-      const online = Boolean(health.ok && health.control_api);
+      const availability = window.OCVGClusterHealth.describe(health);
+      const online = availability.accepting;
       healthNodes.forEach((node) => {
         node.classList.remove("online", "offline");
         node.classList.add(online ? "online" : "offline");
-        node.innerHTML = `<i></i>${online ? "云端服务运行正常" : "部分云端服务异常"}`;
+        node.innerHTML = `<i></i>${availability.label}`;
+        node.title = availability.detail;
       });
     } catch (error) {
       healthNodes.forEach((node) => {
