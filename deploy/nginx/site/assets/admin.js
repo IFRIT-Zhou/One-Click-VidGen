@@ -21,7 +21,42 @@
   function filteredUsers() { const query = $("user-search").value.trim().toLowerCase(); return query ? state.users.filter((user) => String(user.email).toLowerCase().includes(query)) : state.users; }
   function renderUsers() { const users = filteredUsers(); $("users-count").textContent = `${state.usersTotal} 个账户`; $("admin-users-body").innerHTML = users.length ? users.map((user) => { const source = Number(user.source) === 2 ? { label: "二维码", className: "source-2" } : { label: "B站", className: "source-1" }; return `<tr><td><strong>${escapeHtml(user.email)}</strong><small>${escapeHtml(user.id)}</small></td><td><span class="source-badge ${source.className}">${source.label}</span></td><td><span class="role-badge ${user.role}">${escapeHtml(user.role === "admin" ? "管理员" : "用户")}</span></td><td><span class="status-badge ${user.status}">${escapeHtml(user.status === "active" ? "正常" : "已停用")}</span></td><td>${formatDate(user.created_at)}</td><td><div class="table-actions"><button class="table-button" data-credit="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">积分</button><button class="table-button" data-quota="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">额度</button>${user.status === "active" ? `<button class="table-button danger" data-disable="${escapeHtml(user.id)}" data-email="${escapeHtml(user.email)}">停用</button>` : ""}</div></td></tr>`; }).join("") : `<tr><td colspan="6" class="admin-empty">没有匹配的账户</td></tr>`; $("admin-users-body").querySelectorAll("[data-credit]").forEach((b) => b.addEventListener("click", () => openCredits(b.dataset.credit, b.dataset.email))); $("admin-users-body").querySelectorAll("[data-quota]").forEach((b) => b.addEventListener("click", () => openQuota(b.dataset.quota, b.dataset.email))); $("admin-users-body").querySelectorAll("[data-disable]").forEach((b) => b.addEventListener("click", () => disableUser(b.dataset.disable, b.dataset.email))); }
   async function loadUsers() { const data = await api(`/admin/users?page=${state.usersPage}&page_size=20`); state.users = data.items || []; state.usersTotal = Number(data.total || 0); $("users-page").textContent = `第 ${state.usersPage} 页`; $("users-prev").disabled = state.usersPage <= 1; $("users-next").disabled = state.usersPage * 20 >= state.usersTotal; $("stat-users").textContent = state.usersTotal.toLocaleString("zh-CN"); renderUsers(); }
-  async function loadCluster() { const data = await api("/admin/cluster/summary"); const ray = data.ray || {}; const dispatcher = ray.dispatcher || {}; const dependencies = dispatcher.dependencies || {}; const ready = Boolean(data.ok && ray.ok); $("stat-cluster").textContent = ready ? "正常" : "异常"; $("stat-cluster").className = ready ? "online" : "offline"; $("stat-cluster-detail").textContent = dispatcher.ready ? "调度器就绪" : "模型 Worker 检查失败"; $("stat-queue").textContent = Number(dispatcher.queue_depth || 0).toLocaleString("zh-CN"); $("cluster-hero-title").textContent = ready ? "GPU 集群运行正常" : "GPU 集群需要关注"; $("cluster-hero-copy").textContent = dispatcher.ready ? "调度器和 Worker 已就绪" : String(dependencies.model_worker?.probe_error || "Worker 尚未就绪"); $("cluster-gpu-replicas").textContent = `${dependencies.model_worker?.registered_gpu || 0} / ${ray.gpu_replicas_configured || 0}`; $("cluster-active-jobs").textContent = dispatcher.active_jobs || 0; $("cluster-queue-depth").textContent = dispatcher.queue_depth || 0; $("cluster-json").textContent = JSON.stringify(data, null, 2); setHealth("health-control-bar", Boolean(data.control_api)); setHealth("health-redis-bar", Boolean(dispatcher.redis_ready)); setHealth("health-model-bar", Boolean(dependencies.model_worker?.ready)); setHealth("health-audio-bar", Boolean(dependencies.audio_finalizer?.ready)); ["control", "redis", "model", "audio"].forEach((key) => { const source = key === "control" ? data.control_api : key === "redis" ? dispatcher.redis_ready : key === "model" ? dependencies.model_worker?.ready : dependencies.audio_finalizer?.ready; $(`health-${key}-label`).textContent = source ? "正常" : "异常"; }); }
+  async function loadCluster() {
+    const data = await api("/admin/cluster/summary");
+    const ray = data.ray || {}, dispatcher = ray.dispatcher || {}, dependencies = dispatcher.dependencies || {};
+    const runtime = data.runtime || {}, healthy = runtime.healthy === true || (!data.runtime && data.ok && ray.ok);
+    const label = runtime.label || (healthy ? "正常" : "异常"), detail = runtime.detail || "请检查模型与调度器";
+    $("stat-cluster").textContent = label;
+    $("stat-cluster").className = healthy ? "online" : "offline";
+    $("stat-cluster-detail").textContent = detail;
+    $("stat-queue").textContent = Number(dispatcher.queue_depth || 0).toLocaleString("zh-CN");
+    $("cluster-hero-title").textContent = `GPU 集群 · ${label}`;
+    $("cluster-hero-copy").textContent = detail;
+    $("cluster-gpu-replicas").textContent = `${dependencies.model_worker?.registered_gpu || 0} / ${ray.gpu_replicas_configured || 0}`;
+    $("cluster-active-jobs").textContent = dispatcher.active_jobs || 0;
+    $("cluster-queue-depth").textContent = dispatcher.queue_depth || 0;
+    $("cluster-json").textContent = JSON.stringify(data, null, 2);
+    const services = data.services || {};
+    for (const [id, service] of [['model', services.tts], ['h3', services.h3]]) {
+      if (!service) continue;
+      const bar = $(`health-${id}-bar`), labelNode = $(`health-${id}-label`);
+      setHealth(`health-${id}-bar`, service.healthy && service.ready);
+      labelNode.textContent = service.label;
+      labelNode.title = service.detail;
+      bar.style.background = service.healthy && !service.ready ? '#c68a2b' : '';
+      bar.style.width = service.healthy && !service.ready ? '65%' : service.ready ? '100%' : '30%';
+    }
+    ["control", "redis", "audio"].forEach((key) => {
+      const ready = key === "control" ? data.control_api : key === "redis" ? dispatcher.redis_ready : key === "model" ? dependencies.model_worker?.ready : dependencies.audio_finalizer?.ready;
+      setHealth(`health-${key}-bar`, ready === true);
+      $(`health-${key}-label`).textContent = key === "model" ? (runtime.model_label || (ready ? "已加载" : "未就绪")) : (ready ? "正常" : "异常");
+      if (key === "model" && healthy && !ready) {
+        $(`health-${key}-bar`).style.width = "65%";
+        $(`health-${key}-bar`).className = "";
+        $(`health-${key}-bar`).style.background = "#c68a2b";
+      } else $(`health-${key}-bar`).style.background = "";
+    });
+  }
   async function loadJobs() { const data = await api("/admin/cloud/jobs?page=1&page_size=20"); const items = data.items || []; $("stat-jobs").textContent = Number(data.total || items.length).toLocaleString("zh-CN"); $("admin-jobs-body").innerHTML = items.length ? items.map((job) => `<tr><td><strong>${escapeHtml(job.job_id)}</strong><small>${formatDate(job.created_at)}</small></td><td>${escapeHtml(job.user_id || "—")}</td><td><span class="status-badge">${escapeHtml(job.status)}</span></td><td><div class="progress-cell"><b style="width:${Math.min(100, Number(job.progress || 0))}%"></b><span>${escapeHtml(job.progress ?? 0)}%</span></div></td><td>${formatDate(job.created_at)}</td></tr>`).join("") : `<tr><td colspan="5" class="admin-empty">暂无任务</td></tr>`; }
   async function loadAudit() { const data = await api("/admin/audit-logs?page=1&page_size=20"); const items = data.items || []; $("admin-audit-body").innerHTML = items.length ? items.map((entry) => `<tr><td>${formatDate(entry.created_at)}</td><td><span class="audit-action">${escapeHtml(entry.action)}</span></td><td>${escapeHtml(entry.target_id)}</td><td class="audit-detail">${escapeHtml(JSON.stringify(entry.details || {}))}</td></tr>`).join("") : `<tr><td colspan="4" class="admin-empty">暂无审计记录</td></tr>`; }
   async function loadAll() { setMessage($("admin-global-message"), ""); const tasks = [[loadUsers, "用户列表"], [loadCluster, "集群状态"], [loadJobs, "任务列表"], [loadAudit, "审计日志"]]; const errors = []; await Promise.all(tasks.map(async ([task, label]) => { try { await task(); } catch (error) { errors.push(`${label}：${error.message}`); } })); $("admin-last-refresh").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`; if (errors.length) setMessage($("admin-global-message"), errors.join("；")); }

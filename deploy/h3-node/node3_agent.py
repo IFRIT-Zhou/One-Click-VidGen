@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""Fixed H3 execution adapter, invoked over the existing administrative SSH path."""
+import base64
+import fcntl
+import hashlib
+import json
+import pathlib
+import os
+import math
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+ROOT = pathlib.Path('/opt/ocv-h3')
+URL = 'http://127.0.0.1:18188'
+TTS = 'ray-worker-managed'
+H3 = 'ocv-h3-comfyui'
+
+def atomic(path, value):
+    tmp = path.with_suffix('.tmp')
+    with tmp.open('w') as handle:
+        json.dump(value, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp.replace(path)
+
+def api(path, data=None):
+    request = urllib.request.Request(URL + path, data=json.dumps(data).encode() if data is not None else None,
+                                     headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        raw = response.read()
+    return json.loads(raw) if raw else {}
+
+def docker(*args):
+    return subprocess.check_output(['docker', *args], text=True).strip()
+
+def running(name):
+    return json.loads(docker('inspect', name))[0]['State']['Running']
+
+def drain_status():
+    c = json.loads(pathlib.Path('/etc/ray-worker/lifecycle-control.json').read_text())
+    req = urllib.request.Request('http://10.250.0.1:8000/api/tts/internal/workers/'+c['node_ip']+'/drain',
+        headers={'Authorization': 'Bearer '+c['token'], 'If-Match': str(c['generation'])})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+TERMINAL = ('succeeded', 'failed', 'cancelled')
+
+
+def unfinished(except_job=None):
+    result=[]
+    for file in (ROOT/'jobs').glob('h3job_*.json'):
+        item=json.loads(file.read_text())
+        if item.get('status') not in TERMINAL and item.get('job_id')!=except_job:
+            result.append(item)
+    return result
+
+
+def queue_ids(queue):
+    return {row[1] for key in ('queue_running','queue_pending') for row in queue[key]}
+
+
+def reset_owned(req, path, job):
+    """End an uncertain HTTP execution before releasing its durable fence."""
+    if unfinished(req['job_id']):
+        raise RuntimeError('OTHER_H3_EXECUTION_UNRESOLVED')
+    if running(H3):
+        queue=api('/queue')
+        own={job['prompt_id']} if job and job.get('prompt_id') else set()
+        if queue_ids(queue)-own:
+            raise RuntimeError('FOREIGN_H3_QUEUE')
+        # An empty queue is not proof a timed-out POST cannot still enqueue.
+        docker('stop','--time','30',H3)
+        if running(H3):raise RuntimeError('H3_STOP_NOT_CONFIRMED')
+    job=job or {'job_id':req['job_id'],'attempt_token':req['attempt_token']}
+    job.update(status='cancelled',cancel_requested=True,error_code=None,error_message=None)
+    path.parent.mkdir(exist_ok=True);atomic(path,job)
+    return {'status':'cancelled'}
+
+
+def output_file(job, output):
+    file=(ROOT/'output'/output.get('subfolder','')/output['filename']).resolve()
+    expected=(ROOT/'output'/'jobs').resolve()
+    if file.parent!=expected or not re.fullmatch(re.escape(job['job_id'])+r'(?:_[A-Za-z0-9_-]+)?\.mp4',file.name) or not file.is_file():
+        raise ValueError('INVALID_OUTPUT_PATH')
+    return file
+
+
+def container_path(file):
+    info=json.loads(docker('inspect',H3))[0]
+    for mount in sorted(info.get('Mounts',[]),key=lambda m:len(m['Source']),reverse=True):
+        source=pathlib.Path(mount['Source']).resolve()
+        if file.is_relative_to(source):
+            return str(pathlib.PurePosixPath(mount['Destination'])/file.relative_to(source).as_posix())
+    raise ValueError('OUTPUT_NOT_MOUNTED')
+
+
+def idle_h3():
+    if unfinished():raise RuntimeError('H3_EXECUTION_UNRESOLVED')
+    if running(H3):
+        q = api('/queue')
+        if q['queue_running'] or q['queue_pending']:
+            raise RuntimeError('H3_BUSY')
+
+def stop_h3():
+    idle_h3()
+    if running(H3):
+        docker('stop', '--time', '30', H3)
+
+def stopped_tts():
+    s = drain_status()
+    if not s.get('draining') or not s.get('drained') or s['active_jobs']:
+        raise RuntimeError('TTS_NOT_DRAINED')
+    if running(TTS):
+        docker('stop', '--time', '60', TTS)
+
+def job_path(req):
+    import re
+    if not re.fullmatch(r'h3job_[0-9a-f]{32}', req['job_id']):
+        raise ValueError('INVALID_JOB')
+    if not re.fullmatch(r'[0-9a-f]{32,64}', req['attempt_token']):
+        raise ValueError('INVALID_TOKEN')
+    return ROOT/'jobs'/(req['job_id']+'.json')
+
+def read_job(req):
+    p = job_path(req)
+    j = json.loads(p.read_text()) if p.exists() else None
+    if j is not None and j['attempt_token'] != req['attempt_token']:
+        raise RuntimeError('STALE_ATTEMPT')
+    return p, j
+
+def poll(req):
+    p, j = read_job(req)
+    if j is None:
+        return {'status': 'unknown', 'idle': not running(H3) or not any(api('/queue').values())}
+    if j['status'] in TERMINAL:
+        return {k:v for k,v in j.items() if k not in ('result_path',)}
+    if not running(H3):
+        j.update(status='failed', error_code='WORKER_LOST', error_message='视频引擎已停止，请手动重试。')
+        atomic(p,j)
+        return poll(req)
+    h = api('/history/'+j['prompt_id']).get(j['prompt_id'])
+    if h:
+        status = h.get('status',{})
+        if status.get('status_str') == 'success':
+            try:
+                node=h.get('outputs',{}).get('149',{})
+                outputs=[v for values in node.values() if isinstance(values,list) for v in values
+                         if isinstance(v,dict) and str(v.get('filename','')).endswith('.mp4')]
+                if len(outputs)!=1:raise ValueError('RESULT_MISSING_OR_AMBIGUOUS')
+                file=output_file(j,outputs[0])
+                probe=json.loads(docker('exec',H3,'ffprobe','-v','error','-show_streams','-show_format','-of','json',container_path(file)))
+                video=next(stream for stream in probe['streams'] if stream['codec_type']=='video')
+                duration=float(probe['format']['duration'])
+                expected=j['spec']['num_frames']/j['spec']['fps']
+                if video['width']!=j['spec']['width'] or video['height']!=j['spec']['height'] or not math.isfinite(duration) or duration<=0 or abs(duration-expected)>max(.15,2/j['spec']['fps']):
+                    raise ValueError('RESULT_MEDIA_MISMATCH')
+                j.update(status='succeeded',result_path=str(file),metadata={'width':video['width'],'height':video['height'],'duration':duration})
+            except (ValueError,KeyError,StopIteration,OSError,subprocess.SubprocessError) as exc:
+                j.update(status='failed',error_code='RESULT_VALIDATION_FAILED',error_message='视频输出校验失败。')
+        else:
+            cancelled=j.get('cancel_requested') or any(m[0]=='execution_interrupted' for m in status.get('messages',[]))
+            j.update(status='cancelled' if cancelled else 'failed',error_code=None if cancelled else 'ENGINE_ERROR',error_message=None if cancelled else 'H3 推理失败，请查看管理员日志。')
+        events = status.get('messages', [])
+        starts = [e[1].get('timestamp') for e in events if e[0]=='execution_start' and isinstance(e[1].get('timestamp'),(int,float))]
+        ends = [e[1].get('timestamp') for e in events if e[0] in ('execution_success','execution_error','execution_interrupted') and isinstance(e[1].get('timestamp'),(int,float))]
+        elapsed = (max(ends)-min(starts))/1000 if starts and ends else time.time()-j['submitted_at']
+        j['timings']={'execution_seconds':max(0,elapsed)}
+        atomic(p,j)
+        return poll(req)
+    q=api('/queue')
+    ids={row[1] for name in ('queue_running','queue_pending') for row in q[name]}
+    if j['prompt_id'] not in ids:
+        return {'status':'unknown','prompt_id':j['prompt_id'],'stage':'reconciling','idle':False}
+    return {'status':'running','prompt_id':j['prompt_id'],'stage':'generating'}
+
+def service_health():
+    tts_live, h3_live = running(TTS), running(H3)
+    ready, busy = False, False
+    if h3_live:
+        try:
+            with urllib.request.urlopen(URL+'/system_stats', timeout=3) as response:
+                stats = json.load(response)
+            with urllib.request.urlopen(URL+'/queue', timeout=3) as response:
+                queue = json.load(response)
+            ready = any(d.get('type')=='cuda' for d in stats.get('devices', []))
+            busy = bool(queue.get('queue_running') or queue.get('queue_pending'))
+        except (OSError, ValueError, KeyError):
+            pass
+    return {'tts_running':tts_live, 'h3_running':h3_live, 'h3_ready':ready,
+            'h3_busy':busy, 'exclusive':not(tts_live and h3_live), 'checked_at':time.time()}
+
+
+def dispatch(req):
+    action=req['action']
+    if action=='status':
+        live=running(H3)
+        q=api('/queue') if live else {'queue_running':[],'queue_pending':[]}
+        return {'tts_running':running(TTS),'h3_running':live,'ready':live,
+                'busy':bool(q['queue_running'] or q['queue_pending'] or unfinished())}
+    if action in ('start_tts','start_h3','stop_all'):
+        if action == 'start_h3' and (ROOT / 'model-cache-copy.active').exists():
+            raise RuntimeError('MODEL_CACHE_COPY_IN_PROGRESS')
+        started=time.monotonic()
+        if action=='start_tts':
+            stop_h3()
+            if not running(TTS):docker('start',TTS)
+        else:
+            stopped_tts()
+            if action=='stop_all':stop_h3()
+            else:
+                if not running(H3):docker('start',H3)
+                deadline=time.monotonic()+120
+                while True:
+                    try:
+                        stats=api('/system_stats')
+                        assert any(d['type']=='cuda' for d in stats['devices'])
+                        break
+                    except (OSError,AssertionError):
+                        if time.monotonic()>deadline:raise RuntimeError('H3_START_TIMEOUT')
+                        time.sleep(2)
+        return {'startup_seconds':time.monotonic()-started}
+    if action=='submit':
+        p,j=read_job(req)
+        if j:return poll(req)
+        if running(TTS):raise RuntimeError('TTS_STILL_RUNNING')
+        idle_h3()
+        spec=req['spec'];raw=base64.b64decode(req['image_b64'],validate=True)
+        if len(raw)>64*1024*1024:raise ValueError('IMAGE_TOO_LARGE')
+        image=req['job_id']+'.png';(ROOT/'input'/image).write_bytes(raw)
+        g=json.loads((ROOT/'profiles-linux.json').read_text())[0]['workflow']
+        g['137']['inputs']['image']=image;g['157']['inputs']['value']=spec['prompt']
+        g['131']['inputs']['expression']='round(a)';g['131']['inputs']['values.a']=spec['num_frames']
+        g['181']['inputs']['width']=spec['width'];g['181']['inputs']['height']=spec['height']
+        g['129']['inputs']['noise_seed']=spec['seed'];g['149']['inputs']['filename_prefix']='jobs/'+req['job_id']
+        j={'job_id':req['job_id'],'attempt_token':req['attempt_token'],'prompt_id':str(uuid.uuid4()),'status':'submitting','submitted_at':time.time(),'spec':spec}
+        p.parent.mkdir(exist_ok=True);atomic(p,j)
+        try:
+            accepted=api('/prompt',{'prompt':g,'prompt_id':j['prompt_id'],'client_id':req['job_id']})
+        except urllib.error.HTTPError as exc:
+            if exc.code!=400:raise
+            j.update(status='failed',error_code='INVALID_WORKFLOW',error_message='工作流校验失败。');atomic(p,j);return poll(req)
+        returned=accepted.get('prompt_id')
+        if not isinstance(returned,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',returned):
+            raise RuntimeError('SUBMIT_ID_UNKNOWN')
+        j.update(prompt_id=returned,status='running');atomic(p,j)
+        return {'status':'running','prompt_id':j['prompt_id']}
+    if action=='poll':return poll(req)
+    if action=='cancel':
+        p,j=read_job(req)
+        if not j:return reset_owned(req,p,j)
+        if j['status'] in TERMINAL:return poll(req)
+        j['cancel_requested']=True;atomic(p,j)
+        if running(H3):
+            queue=api('/queue')
+            if queue_ids(queue)-{j['prompt_id']}:
+                raise RuntimeError('FOREIGN_H3_QUEUE')
+            if any(row[1]==j['prompt_id'] for row in queue['queue_pending']):
+                api('/queue',{'delete':[j['prompt_id']]})
+            if any(row[1]==j['prompt_id'] for row in queue['queue_running']):
+                api('/interrupt',{'prompt_id':j['prompt_id']})
+        report=poll(req)
+        return reset_owned(req,p,j) if report['status']=='unknown' else report
+    if action=='result':
+        p,j=read_job(req)
+        if not j or j['status']!='succeeded':raise RuntimeError('RESULT_NOT_READY')
+        file=pathlib.Path(j['result_path'])
+        verified=output_file(j,{'subfolder':'jobs','filename':file.name})
+        if verified!=file.resolve():raise RuntimeError('INVALID_OUTPUT_PATH')
+        if verified.stat().st_size>250*1024*1024:raise RuntimeError('RESULT_TOO_LARGE')
+        raw=verified.read_bytes()
+        return {'data_b64':base64.b64encode(raw).decode(),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'metadata':j.get('metadata',{})}
+    raise ValueError('UNKNOWN_ACTION')
+
+if __name__=='__main__':
+    request=json.load(sys.stdin)
+    if request.get('action')=='health':
+        try:print(json.dumps({'ok':True,'result':service_health()}))
+        except Exception:print(json.dumps({'ok':False,'error':'HEALTH_PROBE_FAILED'}));sys.exit(1)
+        sys.exit(0)
+    with open('/run/lock/ocv-gpu-phase.lock','w') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        try:print(json.dumps({'ok':True,'result':dispatch(request)}))
+        except Exception as exc:print(json.dumps({'ok':False,'error':str(exc)[:300]}));sys.exit(1)

@@ -60,6 +60,7 @@ def config_for(user: int, data: ImageRequest):
                       upload_url=base+'/image-pool/media/upload',
                       api_key=runtime['access_token'], refresh_token=runtime['refresh_token'],
                       cloud_base_url=base, cloud_pool='1')
+        config.update({key: runtime[key] for key in ('cloud_user_id', 'cloud_session_store_path') if key in runtime})
         from .cloud_image_channel import configure_channel
         config = configure_channel(config, data.method, data.size)
     else:
@@ -123,7 +124,7 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
         if config.get('cloud_pool') == '1':
             payload['clientJobId'] = 'image-studio-' + record['id']
         with requests.Session() as session:
-            if record['references']:
+            if record['references'] and not record.get('remote_task_id'):
                 if config.get('reference_images') is False:
                     raise ValueError('所选图像模型配置未启用参考图能力')
                 if config.get('cloud_pool') == '1':
@@ -147,12 +148,16 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
             # A 401 therefore resumes polling the original task instead of creating
             # another billed image job.
             generation_attempted = True
-            response = visual._request_with_cloud_refresh(
-                session, 'POST', endpoint, json=payload, headers=headers, config=config, timeout=60
-            )
-            response.raise_for_status()
-            result = response.json()
-            task_id = visual._find_first_key(result, {'taskId', 'taskID', 'id'})
+            task_id = record.get('remote_task_id')
+            if not task_id:
+                response = visual._request_with_cloud_refresh(
+                    session, 'POST', endpoint, json=payload, headers=headers, config=config, timeout=60
+                )
+                response.raise_for_status()
+                result = response.json()
+                task_id = visual._find_first_key(result, {'taskId', 'taskID', 'id'})
+            else:
+                result = {}
             if not task_id:
                 raise RuntimeError(visual._runninghub_error_message(result) or '服务未返回任务 ID，提交结果尚未确认')
             record['remote_task_id'] = str(task_id)
@@ -205,12 +210,12 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
                 except ValueError:
                     pass
             message = f'网络或接口错误：{type(exc).__name__}；{detail or message}。结果尚未确认，请核对扣费后再生成。'
-        record.update(status='failed', message=message)
+        record.update(status='paused' if isinstance(exc, visual.CloudImageLoginRequired) else 'failed', message=message)
     finally:
         try:
             save(path, record)
         finally:
-            if cloud_pool_client is not None and config.get('cloud_pool') == '1':
+            if cloud_pool_client is not None and config.get('cloud_pool') == '1' and not config.get('cloud_user_id'):
                 cloud_pool_client.adopt_image_pool_runtime({
                     'access_token': config.get('api_key'),
                     'refresh_token': config.get('refresh_token'),
@@ -269,7 +274,36 @@ def create(data: ImageRequest, request: Request):
     except Exception as exc:
         with LOCK:
             ACTIVE.discard(user)
+        if getattr(exc, 'code', '') == 'CLOUD_LOGIN_REQUIRED':
+            raise HTTPException(401, '[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录') from exc
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/{identity}/resume')
+def resume_image(identity: str, request: Request):
+    user = int(require_user(request)['id'])
+    path = folder(user, identity)
+    with LOCK:
+        if user in ACTIVE:
+            raise HTTPException(409, '请等待当前图片生成完成')
+        if not (path / 'record.json').is_file():
+            raise HTTPException(404, '图片记录不存在')
+        record = json.loads((path / 'record.json').read_text(encoding='utf-8'))
+        if record.get('status') != 'paused':
+            raise HTTPException(409, '只有等待重新登录的图片可以继续')
+        try:
+            config, client = config_for(user, ImageRequest(**{
+                key: record[key] for key in ('prompt', 'provider', 'method', 'size', 'profile_id', 'ratio', 'references') if key in record
+            }, resolution=record['resolution'] if record['resolution'] in ('1k', '2k', '4k') else ''))
+        except Exception as exc:
+            if getattr(exc, 'code', '') == 'CLOUD_LOGIN_REQUIRED':
+                raise HTTPException(401, '[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录') from exc
+            raise
+        record.update(status='running', message='继续获取原任务结果')
+        save(path, record)
+        ACTIVE.add(user)
+        threading.Thread(target=execute, args=(user, path, record, config, client), daemon=True).start()
+    return record
 
 
 @router.get('')

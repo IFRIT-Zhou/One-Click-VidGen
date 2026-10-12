@@ -879,7 +879,10 @@ class JobStore:
                         )
                 else:
                     self.log(job, f"失败: {exc}")
-                    self.update(job, status="failed", error=str(exc), message="生成失败")
+                    login_required = "[CLOUD_LOGIN_REQUIRED]" in str(exc) or getattr(exc, "code", "") == "CLOUD_LOGIN_REQUIRED"
+                    self.update(job, status="failed", error=str(exc),
+                                message="登录已过期，请重新登录后继续；已完成图片已保留" if login_required else "生成失败",
+                                step="cloud_login_required" if login_required else job.step)
             finally:
                 if is_step_workflow_v2(job.request) and job.status in {"failed", "cancelled"}:
                     try:
@@ -1722,6 +1725,8 @@ def run_command(
                 store.log(job, line)
             if label == "断句、配音、原始字幕" and "【致命错误】" in line:
                 fatal_error = line.strip()
+            if "[CLOUD_LOGIN_REQUIRED]" in line:
+                fatal_error = "[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录。当前批次已暂停，已完成图片和剩余任务已保留。"
         return_code = process.wait()
     finally:
         store.detach_process(job, process)
@@ -2430,6 +2435,8 @@ def render_semantic_visual_video(
                 "CLOUD_IMAGE_POOL_RATIO": "9:16" if request.get("video_orientation") == "portrait" else "16:9",
                 "CLOUD_IMAGE_POOL_BASE_URL": cloud_runtime["base_url"],
                 "CLOUD_IMAGE_POOL_ACCESS_TOKEN": cloud_runtime["access_token"],
+                "CLOUD_IMAGE_POOL_USER_ID": cloud_runtime.get("cloud_user_id", ""),
+                "CLOUD_SESSION_STORE_PATH": cloud_runtime.get("cloud_session_store_path", ""),
                 "CLOUD_IMAGE_POOL_REFRESH_TOKEN": cloud_runtime["refresh_token"],
                 "CLOUD_IMAGE_POOL_SESSION_UPDATE_PATH": str(cloud_session_update_path),
                 "LANGUAGE_PROVIDER": "runninghub",

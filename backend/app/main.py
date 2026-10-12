@@ -25,7 +25,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .config import _parse_env_lines, save_project_env_values
-from .cloud_client import CloudApiError, cloud_client_for, load_cloud_config
+from .cloud_client import CloudApiError, cloud_client_for, load_cloud_config, tts_queue_accepting
 from .cloud_tts import build_quote_payload
 from .diagnostics import create_diagnostic_package
 from .db import (
@@ -214,7 +214,7 @@ class GenerateRequest(BaseModel):
     # accept each successful review gate on the user's behalf.
     dynamic_auto_advance: bool = False
     dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'text_assisted'
-    video_generation_backend: Literal['api', 'comfyui'] = 'api'
+    video_generation_backend: Literal['api', 'comfyui', 'cloud_h3'] = 'api'
     comfyui_profile_id: str = Field(default='', max_length=80)
     comfyui_h3_prompt_agent: bool = False
     comfyui_reference_audio: bool = False
@@ -1364,6 +1364,8 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
 
 
 def _cluster_health_error(payload: dict[str, Any]) -> str | None:
+    if tts_queue_accepting(payload):
+        return None
     # The deployed health response has a top-level ``ok`` plus a nested Ray
     # and dispatcher status.  Older deployments only returned ``ok``; keep
     # those compatible, but never treat a partially unhealthy nested response
@@ -1704,6 +1706,16 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         raise ValueError('所选 ComfyUI 工作流没有配置参考音频节点')
                 add('video_backend', '动态镜头生成', 'passed', f"本地 ComfyUI · {profile.get('name') or profile['id']}{h3_note}{audio_note}")
             except ValueError as exc:
+                add('video_backend', '动态镜头生成', 'error', str(exc))
+        elif data.get('dynamic_video') and data.get('video_generation_backend') == 'cloud_h3':
+            try:
+                from .cloud_video import workflow
+                capabilities = cloud_client_for(int(user['id'])).video_capabilities()
+                workflow(capabilities)
+                if data.get('presenter_mode') or data.get('comfyui_reference_audio'):
+                    raise ValueError('集群 H3 测试阶段暂不支持参考音频或对口型，请关闭该功能')
+                add('video_backend', '动态镜头生成', 'passed', '集群 H3（测试免费）；配音和核心图确认后提交，容器按需启停')
+            except (CloudApiError, ValueError) as exc:
                 add('video_backend', '动态镜头生成', 'error', str(exc))
         elif data.get('dynamic_video'):
             add('video_backend', '动态镜头生成', 'passed', '使用已配置的视频 API；核心分镜确认前不会提交视频任务')

@@ -1,16 +1,18 @@
 <script setup>
 import {computed,ref,watch,onUnmounted} from 'vue'
 import {requestJSON} from '../api'
+import CloudH3Options from './CloudH3Options.vue'
 import ModelInstallGuide from './ModelInstallGuide.vue'
-const props=defineProps({modelValue:{type:Object,required:true},profiles:{type:Array,default:()=>[]},disabled:Boolean,loading:Boolean,apiReady:Boolean,apiResolution:{type:String,default:'720p'},ratio:{type:String,default:'16:9'},seconds:{type:Number,default:10},imageSrc:{type:String,default:''},dirty:Boolean,saved:Boolean,saveDisabled:Boolean})
-const emit=defineEmits(['update:modelValue','refresh','save','apply-all'])
+const props=defineProps({modelValue:{type:Object,required:true},profiles:{type:Array,default:()=>[]},disabled:Boolean,loading:Boolean,apiReady:Boolean,apiResolution:{type:String,default:'720p'},ratio:{type:String,default:'16:9'},seconds:{type:Number,default:10},imageSrc:{type:String,default:''},dirty:Boolean,saved:Boolean,saveDisabled:Boolean,batch:Boolean,mixed:Boolean})
+const emit=defineEmits(['update:modelValue','refresh','save','apply-all','reset'])
 const local=computed(()=>props.modelValue.backend==='comfyui')
 const profile=computed(()=>props.profiles.find(item=>item.id===props.modelValue.profile_id))
 const managedProfiles=computed(()=>props.profiles.filter(item=>item.engine==='managed'))
 const externalProfiles=computed(()=>props.profiles.filter(item=>item.engine!=='managed'))
-const generationRoute=computed(()=>!local.value?'api':profile.value?.engine==='managed'?'managed':'external')
+const generationRoute=computed(()=>props.modelValue.backend==='cloud_h3'?'cloud_h3':!local.value?'api':profile.value?.engine==='managed'?'managed':'external')
 const routeProfiles=computed(()=>generationRoute.value==='managed'?managedProfiles.value:externalProfiles.value)
 function chooseRoute(value){
+ if(value==='cloud_h3'){update({backend:'cloud_h3',profile_id:'h3-fast',resolution:'',h3_prompt_agent:true});return}
  if(value==='api'){backend('api');return}
  const items=value==='managed'?managedProfiles.value:externalProfiles.value
  const selected=items.find(item=>item.id===props.modelValue.profile_id)||items[0]
@@ -46,7 +48,7 @@ function toggleRatio(event){lockRatio.value=event.target.checked;if(lockRatio.va
 const estimate=ref(null),estimateError=ref(''),checking=ref(false)
 let timer,sequence=0
 async function refreshEstimate(){
- if(!local.value||!profile.value)return
+ if(props.batch||!local.value||!profile.value)return
  const ticket=++sequence
  checking.value=true;estimateError.value=''
  try{
@@ -59,12 +61,13 @@ async function refreshEstimate(){
 }
 watch(()=>[props.modelValue.backend,props.modelValue.profile_id,profile.value?.id,props.modelValue.resolution,props.modelValue.width,props.modelValue.height,props.ratio,props.seconds],()=>{
  clearTimeout(timer);sequence++;estimate.value=null;estimateError.value=''
- if(local.value&&profile.value)timer=setTimeout(refreshEstimate,220)
+ if(!props.batch&&local.value&&profile.value)timer=setTimeout(refreshEstimate,220)
 },{immediate:true})
 onUnmounted(()=>{clearTimeout(timer);sequence++})
 function update(patch){emit('update:modelValue',{...props.modelValue,...patch})}
 function backend(value){update({backend:value,resolution:value==='api'&&['1080p','custom'].includes(props.modelValue.resolution)?'720p':props.modelValue.resolution,profile_id:props.modelValue.profile_id||props.profiles[0]?.id||''})}
 const dimensions=computed(()=>{
+ if(props.modelValue.backend==='cloud_h3')return props.modelValue.resolution==='custom'?[props.modelValue.width,props.modelValue.height].join(' × '):''
  if(local.value&&props.modelValue.resolution==='custom')return [props.modelValue.width,props.modelValue.height].join(' × ')
  const preset=props.modelValue.resolution||(local.value?profile.value?.resolution_preset:props.apiResolution)
  let pair=({'480p':[854,480],'720p':[1280,720],'1080p':[1920,1080]})[preset]
@@ -76,14 +79,15 @@ const dimensions=computed(()=>{
 </script>
 
 <template>
- <section class="shot-video-options" aria-label="本镜生成设置">
-  <div class="options-heading"><strong>本镜生成设置</strong><span role="status">{{dirty?'有未保存配置':saved?'已保存 · 下次生成使用':'沿用项目或上次生成配置'}}</span><button type="button" class="refresh-options" :disabled="disabled||saveDisabled||(!dirty&&saved)" @click="emit('save')">保存配置</button><button type="button" class="refresh-options" :disabled="disabled||saveDisabled" @click="emit('apply-all')">应用到全部动态镜头</button></div>
+ <section class="shot-video-options" :aria-label="batch?'批量视频生成设置':'本镜生成设置'">
+  <div class="options-heading"><strong>{{batch?'批量视频生成设置':'本镜生成设置'}}</strong><span role="status">{{batch?(dirty?'尚未应用，请应用或取消修改':mixed?'各镜头配置不同，下方以第一镜为起点':'当前动态镜头使用相同配置'):dirty?'有未保存配置':saved?'已保存 · 下次生成使用':'沿用项目或上次生成配置'}}</span><button v-if="!batch" type="button" class="refresh-options" :disabled="disabled||saveDisabled||(!dirty&&saved)" @click="emit('save')">保存配置</button><button v-if="batch&&dirty" type="button" class="refresh-options" :disabled="disabled" @click="emit('reset')">取消修改</button><button type="button" class="refresh-options" :disabled="disabled||saveDisabled" @click="emit('apply-all')">应用到全部动态镜头</button></div>
   <div class="options-fields">
-   <label><span>生成方式</span><select :value="generationRoute" :disabled="disabled||loading" @change="chooseRoute($event.target.value)"><option value="managed" :disabled="!managedProfiles.length">OCV 内置 ComfyUI{{managedProfiles.length?'':'（未就绪，请刷新）'}}</option><option value="external">外部 ComfyUI</option><option value="api">视频 API</option></select></label>
+   <label><span>生成方式</span><select :value="generationRoute" :disabled="disabled||loading" @change="chooseRoute($event.target.value)"><option value="cloud_h3">集群 H3（测试免费）</option><option value="managed" :disabled="!managedProfiles.length">OCV 内置 ComfyUI{{managedProfiles.length?'':'（未就绪，请刷新）'}}</option><option value="external">外部 ComfyUI</option><option value="api">视频 API</option></select></label>
    <label v-if="local" class="workflow-field"><span>工作流</span><select :value="modelValue.profile_id" :disabled="disabled||loading" @change="update({profile_id:$event.target.value,resolution:''})"><option value="">{{loading?'正在读取…':'请选择工作流'}}</option><option v-for="item in routeProfiles" :key="item.id" :value="item.id">{{item.name}}</option></select></label>
-   <label><span>分辨率</span><select :value="modelValue.resolution" :disabled="disabled" @change="chooseResolution($event.target.value)"><option value="">{{local?'跟随工作流':'跟随接口设置'}}</option><option value="480p">480P · 轻量</option><option value="720p">720P · 标准</option><option v-if="local" value="1080p">1080P · 高清</option><option v-if="local" value="custom">自定义尺寸</option></select></label>
+   <label v-if="modelValue.backend!=='cloud_h3'"><span>分辨率</span><select :value="modelValue.resolution" :disabled="disabled" @change="chooseResolution($event.target.value)"><option value="">{{local?'跟随工作流':'跟随接口设置'}}</option><option value="480p">480P · 轻量</option><option value="720p">720P · 标准</option><option v-if="local" value="1080p">1080P · 高清</option><option v-if="local" value="custom">自定义尺寸</option></select></label>
    <button v-if="local" type="button" class="refresh-options" :disabled="loading||disabled" title="刷新已保存的工作流" @click="emit('refresh')">刷新</button>
   </div>
+  <CloudH3Options v-if="modelValue.backend==='cloud_h3'" :model-value="modelValue" :disabled="disabled" :ratio="ratio" :seconds="seconds" @update:model-value="emit('update:modelValue',$event)"/>
   <p v-if="local" role="status">{{generationRoute==='managed'?'由 OCV 自动启动内置引擎，无需另开 ComfyUI；首次生成需要加载模型。':'使用你配置的外部 ComfyUI 地址，请先自行启动对应服务；不会启动 OCV 内置引擎。'}}</p>
   <ModelInstallGuide v-if="generationRoute==='managed'" :profile-id="modelValue.profile_id" />
   <div v-if="local&&modelValue.resolution==='custom'" class="custom-size">
@@ -93,18 +97,20 @@ const dimensions=computed(()=>{
    <label class="ratio-lock"><input type="checkbox" :checked="lockRatio" :disabled="disabled" @change="toggleRatio">锁定分镜图比例</label>
    <small>{{sourceSize?'依据分镜图 '+sourceSize.join(' × '):'图片比例读取中或不可用，暂用项目比例 '+ratio}}；修改任一边后自动计算另一边，取整到像素。</small>
   </div>
-  <div class="options-footer"><label v-if="local" class="h3-toggle"><input type="checkbox" :checked="modelValue.h3_prompt_agent" :disabled="disabled" @change="update({h3_prompt_agent:$event.target.checked})">H3 提示词转换</label><span v-if="dimensions">{{dimensions}} · {{ratio==='9:16'?'竖屏':'横屏'}}</span><span v-if="!local">{{apiReady?'使用已保存的视频 API，生成可能计费':'请先在「接口与服务」配置视频 API'}}</span></div>
-  <div v-if="local&&profile" class="resource-estimate" :class="estimate?.risk">
+  <div class="options-footer"><label v-if="local" class="h3-toggle"><input type="checkbox" :checked="modelValue.h3_prompt_agent" :disabled="disabled" @change="update({h3_prompt_agent:$event.target.checked})">H3 提示词转换</label><span v-if="dimensions">{{dimensions}} · {{ratio==='9:16'?'竖屏':'横屏'}}</span><span v-if="!local&&modelValue.backend!=='cloud_h3'">{{apiReady?'使用已保存的视频 API，生成可能计费':'请先在「接口与服务」配置视频 API'}}</span></div>
+  <div v-if="!batch&&local&&profile" class="resource-estimate" :class="estimate?.risk">
    <div class="resource-title"><strong>本镜资源预估</strong><button type="button" :disabled="checking" @click="refreshEstimate">刷新余量</button></div>
    <template v-if="estimate"><span>显存预计 {{estimate.vram_estimate_gb.join('–')}} GB · 当前空闲 {{estimate.vram_free_gb??'未知'}} GB</span><span>内存预计 {{estimate.ram_estimate_gb.join('–')}} GB · 当前可用 {{estimate.ram_available_gb??'未知'}} GB</span><strong>{{({low:'余量较充足',caution:'接近资源上限',high:'溢出风险较高',unknown:'无法判断风险'})[estimate.risk]}}</strong></template>
    <span v-else>{{checking?'正在读取本机资源…':estimateError||'等待工作流参数…'}}</span>
    <small>按 {{seconds}} 秒、{{estimate?.frames||'约'}} 帧粗估；实际峰值受模型、节点和同时运行的程序影响。此预估不能保证不会溢出。</small>
   </div>
-  <p>保存只影响本镜的下次生成，现有视频保持不变；单镜和批量生成都会使用各镜头配置。点击生成也会同时保存当前配置。{{disabled?'当前任务已提交或排队，结束后可调整。':''}}</p>
+  <p v-if="batch">应用后会统一全部动态镜头的下次生成配置，并覆盖各镜头尚未保存的生成设置；现有视频保留，不会开始生成。之后仍可逐镜调整。{{disabled?'当前有任务正在处理或尚未确认结束，暂不能批量修改。':''}}</p>
+  <p v-else>保存只影响本镜的下次生成，现有视频保持不变；单镜和批量生成都会使用各镜头配置。点击生成也会同时保存当前配置。{{disabled?'当前任务已提交或排队，结束后可调整。':''}}</p>
  </section>
 </template>
 
 <style scoped>
+.options-heading{flex-wrap:wrap}.options-heading strong{flex-shrink:0}.options-heading span{flex:1 1 180px}
 .custom-size{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px;margin-top:12px;background:rgba(0,0,0,.12);border-radius:8px}.custom-size>label:not(.ratio-lock){display:grid;gap:6px;flex:1 1 130px;font-size:12px}.custom-size input[type=number]{width:100%;box-sizing:border-box;height:38px}.size-cross{align-self:center;padding-top:18px;color:var(--muted)}.custom-size .ratio-lock{display:flex;align-items:center;gap:7px;min-height:38px;font-size:12px;margin:0}.ratio-lock input{width:15px;height:15px;margin:0}.custom-size small{flex-basis:100%;color:var(--muted);line-height:1.6}
 .shot-video-options{padding:14px 16px;margin:0 0 16px;border:1px solid var(--border,#35423f);border-radius:12px;background:color-mix(in srgb,var(--accent,#81d9bd) 5%,var(--panel,#1e2625))}.options-heading{display:flex;align-items:center;gap:12px;margin-bottom:12px;font-size:13px}.options-heading span,.options-footer,.shot-video-options p{color:var(--muted,#aab8b3);font-size:12px}.options-fields{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}.options-fields label{display:grid;gap:6px;flex:1 1 140px;margin:0;font-size:12px}.options-fields .workflow-field{flex:2 1 230px;min-width:0}.options-fields select{width:100%;min-width:0;height:40px}.refresh-options{height:40px;font-size:12px}.options-footer{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:12px}.options-footer .h3-toggle{display:flex;align-items:center;gap:7px;margin:0}.h3-toggle input{width:15px;height:15px;margin:0;accent-color:var(--accent,#81d9bd)}.shot-video-options p{margin:10px 0 0;line-height:1.6}@media(max-width:600px){.options-fields label,.options-fields .workflow-field{flex-basis:100%}.refresh-options{margin-left:auto}}
 .refresh-options{padding:0 12px;border:1px solid var(--border,#35423f);border-radius:8px;background:var(--panel,#1e2625);color:var(--text,#e7eeeb);cursor:pointer}.refresh-options:disabled{opacity:.5;cursor:default}

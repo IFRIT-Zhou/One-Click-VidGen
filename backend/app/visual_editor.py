@@ -1561,6 +1561,8 @@ class VisualEditor:
                         "ratio": "9:16" if (job.request or {}).get("video_orientation") == "portrait" else "16:9",
                         "api_key": runtime["access_token"],
                         "refresh_token": runtime["refresh_token"],
+                        "cloud_user_id": runtime.get("cloud_user_id", ""),
+                        "cloud_session_store_path": runtime.get("cloud_session_store_path", ""),
                         "cloud_base_url": base_url,
                         "account_label": "云端号池",
                         "cloud_pool": "1",
@@ -1596,7 +1598,7 @@ class VisualEditor:
                 redraw_output = redraw_dir / f"{macro_id}_{time.time_ns()}.jpg"
                 render_item["_output_path"] = str(redraw_output)
                 rendered = visual._render_poster_with_retry(render_item, account_pool)
-                if cloud_pool_client is not None and provider_configs:
+                if cloud_pool_client is not None and provider_configs and not provider_configs[0].get("cloud_user_id"):
                     active_config = provider_configs[0]
                     cloud_pool_client.adopt_image_pool_runtime({
                         "access_token": active_config.get("api_key"),

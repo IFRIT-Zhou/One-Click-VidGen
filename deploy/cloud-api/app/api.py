@@ -274,11 +274,13 @@ def _raise_ray_gateway_error(exc: httpx.HTTPError) -> None:
 
 @router.get("/health")
 def health() -> dict[str, Any]:
+    from .gpu_admission import tts_admission
+    admission = tts_admission()
     try:
         ray = ray_tts.health()
-        return {"ok": bool(ray.get("ok")), "control_api": True, "ray": ray}
+        return {"ok": bool(ray.get("ok")), "control_api": True, "ray": ray, "tts_admission": admission}
     except Exception as exc:
-        return {"ok": False, "control_api": True, "ray_error": str(exc)}
+        return {"ok": False, "control_api": True, "ray_error": str(exc), "tts_admission": admission}
 
 @router.post("/auth/register", status_code=201)
 def register(payload: RegisterRequest, db: Db) -> dict[str, Any]:
@@ -1906,11 +1908,18 @@ def admin_cluster_device_profile_placeholder(device_id: str, admin: CurrentAdmin
 
 @router.get("/admin/cluster/summary")
 def cluster_summary(admin: CurrentAdmin) -> dict[str, Any]:
+    from .admin_runtime import cluster_runtime, service_statuses
     try:
         ray = ray_tts.health()
-        return {"ok": ray.get("ok") is True, "control_api": True, "ray": ray}
+        runtime = cluster_runtime(ray)
+        services = service_statuses(ray, runtime)
+        if runtime['on_demand'] and not all(v['healthy'] for v in services.values()):
+            runtime = {**runtime, 'healthy':False, 'state':'error', 'label':'需要关注', 'detail':'请检查 TTS 与 H3 独立服务状态'}
+        return {"ok": runtime["healthy"], "execution_ready": ray.get("ok") is True,
+                "control_api": True, "ray": ray, "runtime": runtime, "services": services}
     except Exception:
-        return {"ok": False, "control_api": True, "ray": {}, "error": "Ray 服务暂不可达"}
+        return {"ok": False, "control_api": True, "ray": {},
+                "runtime": cluster_runtime({}), "services": service_statuses({}, cluster_runtime({})), "error": "Ray 服务暂不可达"}
 
 @router.get("/admin/cloud/jobs")
 def admin_jobs(admin: CurrentAdmin, db: Db, page: int = Query(1, ge=1),

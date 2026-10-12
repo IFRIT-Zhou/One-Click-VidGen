@@ -6,6 +6,7 @@ from starlette.responses import JSONResponse
 
 # Additional upload routes can declare their own cap without changing the wrapper.
 UPLOAD_LIMITS = {
+    "/api/v1/cloud/video/assets": 21 * 1024 * 1024,
     "/api/v1/image-pool/media/upload": 21 * 1024 * 1024,
     "/api/v1/editor/exports": 232 * 1024 * 1024,
     "/api/v1/editor/timeline": 232 * 1024 * 1024,

@@ -43,7 +43,7 @@ LOCAL_VIDEO_RUNNING: dict[str, str] = {}
 
 
 class ClipGenerationOptions(BaseModel):
-    backend: Literal['api', 'comfyui']
+    backend: Literal['api', 'comfyui', 'cloud_h3']
     profile_id: str = Field(default='', max_length=80)
     resolution: Literal['', '480p', '720p', '1080p', 'custom'] = ''
     width: int | None = Field(default=None, ge=32, le=8192)
@@ -83,12 +83,23 @@ def _resolve_generation_options(record, shot, user_id, override=None):
         profile = video_profile(user_id, options['profile_id'])
         if options['resolution'] == 'custom' and not (options['width'] and options['height']):
             raise ValueError('自定义分辨率需要填写宽度与高度')
+    elif options['backend'] == 'cloud_h3':
+        options['profile_id'] = 'h3-fast'
     else:
         options.update(profile_id='', h3_prompt_agent=False)
         allowed = {'', '480p', '720p', '1080p'} if load_config().get('protocol') in {'ark', 'runninghub_workflow'} else {'', '480p', '720p'}
         if options['resolution'] not in allowed:
             raise ValueError('当前视频 API 支持 480p 和 720p')
     return options
+
+
+@router.get('/cloud/capabilities')
+def cloud_capabilities(request: Request):
+    from .cloud_client import cloud_client_for, CloudApiError
+    try:
+        return cloud_client_for(int(studio.require_user(request)['id'])).video_capabilities()
+    except CloudApiError as exc:
+        raise HTTPException(exc.status_code or 503, str(exc)) from exc
 
 
 @router.put('/{identity}/shots/{shot_id}/generation-options')
@@ -206,6 +217,9 @@ def recover_interrupted(path, record):
     for shot in record.get('shots', []):
         if shot.get('kind') != 'video' or shot.get('video_status') != 'running':
             continue
+        if shot.get('video_backend') == 'cloud_h3':
+            shot.update(video_status='unknown', video_error='集群任务身份已保留，请继续查询。', video_resume_available=True, video_terminal=False)
+            continue
         if shot.get('video_backend') == 'comfyui':
             shot.update(video_status='failed', video_error='上次本地 ComfyUI 生成被 OCV 关闭中断，可重新生成本镜。',
                         video_resume_available=False, video_terminal=True)
@@ -240,7 +254,10 @@ def recover_missing_clips(path, record):
                             video_resume_available=False, video_terminal=True)
                 changed = True
                 continue
-            _sync_identity(path, shot)
+            if shot.get('video_backend') == 'cloud_h3':
+                shot.update(video_resume_available=True, video_terminal=False)
+            else:
+                _sync_identity(path, shot)
         except (OSError, ValueError) as exc:
             shot.update(video_resume_available=False, video_terminal=False)
             message = str(exc)
@@ -955,6 +972,9 @@ def generate(identity: str, data: GenerateClips, request: Request):
 
 
 def _generate_for_user(identity, data, user_id):
+    from .cloud_video import handles, generate_cloud
+    if handles(identity, data, user_id):
+        return generate_cloud(identity, data, user_id)
     with studio.LOCK:
         path = studio.directory(user_id, identity)
         record = studio.read(path)
@@ -1214,6 +1234,8 @@ def stop(identity: str, request: Request):
                 record.update(status='video_stopping', revision=record['revision'] + 1)
                 if (record.get('active_video_backend') or record.get('creation_parameters', {}).get('video_generation_backend')) == 'comfyui':
                     record['logs'].append('已请求停止本地 ComfyUI 当前任务，并且不再提交后续镜头。')
+                elif record.get('active_video_backend') == 'cloud_h3':
+                    record['logs'].append('已请求取消当前集群 H3 任务，等待云端确认并释放资源；不再提交后续镜头。')
                 else:
                     record['logs'].append('已请求停止本地处理，不再提交后续镜头；已提交的云端付费任务不能保证撤销。')
                 studio.save(path, record)

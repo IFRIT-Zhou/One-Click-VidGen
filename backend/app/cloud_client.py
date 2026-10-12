@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -25,6 +26,18 @@ ALIPAY_GATEWAY_HOSTS = {
     "openapi-sandbox.dl.alipaydev.com",
     "openapi.alipaydev.com",
 }
+
+
+def tts_queue_accepting(payload: dict[str, Any]) -> bool:
+    """Only an explicit healthy on-demand admission contract permits cold GPUs."""
+    admission=payload.get('tts_admission')
+    if payload.get('control_api') is not True or not isinstance(admission,dict):
+        return False
+    if not all(admission.get(key) is True for key in ('accepting','on_demand','scheduler_ready','queue_ready')):
+        return False
+    ray=payload.get('ray') if isinstance(payload.get('ray'),dict) else {}
+    dispatcher=ray.get('dispatcher') if isinstance(ray.get('dispatcher'),dict) else {}
+    return not any(dispatcher.get(key) is False for key in ('redis_ready','consumer_alive'))
 
 
 def _float_env(name: str, default: float, *, minimum: float = 0.1) -> float:
@@ -114,16 +127,17 @@ class CloudSessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[int, CloudAuthSession] = {}
-        self._locks: dict[int, threading.RLock] = {}
         self._lock = threading.RLock()
         configured_path = os.getenv("CLOUD_SESSION_STORE_PATH", "").strip()
-        self._path = Path(configured_path or (Path.cwd() / ".cloud_sessions.json"))
+        self._path = Path(configured_path or (Path.cwd() / ".cloud_sessions.json")).resolve()
+        self._disk_depth = 0
         self._load()
 
     def _load(self) -> None:
         import json
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
+            self._sessions = {}
             for user_id, value in raw.items():
                 if not isinstance(value, dict) or not value.get("refresh_token"):
                     continue
@@ -134,6 +148,7 @@ class CloudSessionStore:
                     user=dict(value.get("user") or {}),
                 )
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            self._sessions = {}
             return
 
     def _save(self) -> None:
@@ -151,26 +166,81 @@ class CloudSessionStore:
         os.chmod(temporary, 0o600)
         os.replace(temporary, self._path)
 
-    def lock_for(self, user_id: int) -> threading.RLock:
+    @contextmanager
+    def lock_for(self, user_id: int):
+        """Serialize token rotation across backend threads AND image subprocesses."""
         with self._lock:
-            return self._locks.setdefault(int(user_id), threading.RLock())
+            if self._disk_depth:
+                self._disk_depth += 1
+                try:
+                    yield
+                finally:
+                    self._disk_depth -= 1
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with open(str(self._path) + ".lock", "a+b") as handle:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0, 2)
+                    if handle.tell() == 0:
+                        handle.write(b"0")
+                        handle.flush()
+                    while True:
+                        handle.seek(0)
+                        try:
+                            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                            break
+                        except OSError:
+                            time.sleep(0.05)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                self._disk_depth = 1
+                try:
+                    yield
+                finally:
+                    self._disk_depth = 0
+                    if os.name == "nt":
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def get(self, user_id: int) -> CloudAuthSession | None:
-        with self._lock:
+        with self.lock_for(user_id):
+            self._load()
             return self._sessions.get(int(user_id))
 
     def set(self, user_id: int, session: CloudAuthSession) -> None:
-        with self._lock:
+        with self.lock_for(user_id):
+            self._load()
             self._sessions[int(user_id)] = session
             self._save()
 
     def clear(self, user_id: int) -> None:
-        with self._lock:
+        with self.lock_for(user_id):
+            self._load()
             self._sessions.pop(int(user_id), None)
             self._save()
 
 
 cloud_sessions = CloudSessionStore()
+_runtime_stores: dict[str, CloudSessionStore] = {}
+_runtime_stores_lock = threading.Lock()
+
+
+def cloud_client_for_image(config: dict) -> "CloudClient":
+    path = str(config["cloud_session_store_path"])
+    with _runtime_stores_lock:
+        store = _runtime_stores.get(path)
+        if store is None:
+            store = CloudSessionStore()
+            store._path = Path(path).resolve()
+            store._sessions = {}
+            store._load()
+            _runtime_stores[path] = store
+    return CloudClient(int(config["cloud_user_id"]), session_store=store,
+                       config=CloudConfig(base_url=config["cloud_base_url"]))
 
 
 class CloudClient:
@@ -243,6 +313,7 @@ class CloudClient:
         *,
         authenticated: bool = True,
         retry_auth: bool = True,
+        raise_errors: bool = True,
         stream: bool = False,
         headers: dict[str, str] | None = None,
         **kwargs: Any,
@@ -293,7 +364,7 @@ class CloudClient:
         assert response is not None
         if response.status_code == 401 and authenticated and retry_auth:
             response.close()
-            self._refresh_access_token(force=True)
+            self._refresh_access_token(force=True, failed_token=session.access_token)
             files = kwargs.get("files")
             if isinstance(files, dict):
                 for value in files.values():
@@ -305,11 +376,20 @@ class CloudClient:
                 path,
                 authenticated=True,
                 retry_auth=False,
+                raise_errors=raise_errors,
                 stream=stream,
                 headers=headers,
                 **kwargs,
             )
-        if not 200 <= response.status_code < 300:
+        if response.status_code == 401 and authenticated:
+            response.close()
+            with self.sessions.lock_for(self.user_id):
+                current = self.sessions.get(self.user_id)
+                if current and current.access_token == session.access_token:
+                    self.sessions.clear(self.user_id)
+            raise CloudApiError("登录已过期，请重新登录；已完成图片和剩余任务已保留。",
+                                status_code=401, code="CLOUD_LOGIN_REQUIRED")
+        if raise_errors and not 200 <= response.status_code < 300:
             error = self._error_from_response(response)
             response.close()
             raise error
@@ -351,11 +431,13 @@ class CloudClient:
             return self._refresh_access_token(force=False)
         return session
 
-    def _refresh_access_token(self, *, force: bool) -> CloudAuthSession:
+    def _refresh_access_token(self, *, force: bool, failed_token: str | None = None) -> CloudAuthSession:
         with self.sessions.lock_for(self.user_id):
             session = self.sessions.get(self.user_id)
             if session is None:
                 raise CloudApiError("请先登录集群云端账户", status_code=401, code="CLOUD_LOGIN_REQUIRED")
+            if force and failed_token is not None and session.access_token != failed_token:
+                return session
             if not force and session.expires_at > time.time() + 30:
                 return session
             try:
@@ -366,8 +448,11 @@ class CloudClient:
                     json={"refresh_token": session.refresh_token},
                 )
                 refreshed = self._session_from_payload({**payload, "user": payload.get("user") or session.user})
-            except CloudApiError:
-                self.sessions.clear(self.user_id)
+            except CloudApiError as exc:
+                if exc.status_code == 401:
+                    self.sessions.clear(self.user_id)
+                    raise CloudApiError("登录已过期，请重新登录；已完成图片和剩余任务已保留。",
+                                        status_code=401, code="CLOUD_LOGIN_REQUIRED") from exc
                 raise
             self.sessions.set(self.user_id, refreshed)
             return refreshed
@@ -392,7 +477,7 @@ class CloudClient:
         payload: dict[str, Any] = {}
         for attempt in range(attempts):
             payload = self._json_request("GET", "/health", authenticated=False)
-            if payload.get("ok") is not False:
+            if payload.get("ok") is not False or tts_queue_accepting(payload):
                 return payload
             detail = str(payload.get("ray_error") or "").strip().lower()
             transient = any(
@@ -415,6 +500,8 @@ class CloudClient:
             "base_url": self.config.base_url,
             "access_token": session.access_token,
             "refresh_token": session.refresh_token,
+            "cloud_user_id": str(self.user_id),
+            "cloud_session_store_path": str(self.sessions._path),
         }
 
     def image_pool_status(self, method: str = "running") -> dict[str, Any]:
@@ -434,6 +521,10 @@ class CloudClient:
         access_token = str(payload.get("access_token") or "").strip()
         refresh_token = str(payload.get("refresh_token") or "").strip()
         if current is None or not access_token or not refresh_token:
+            return
+        # Modern workers update the shared store at refresh time; do not extend
+        # token expiry simply because an unchanged snapshot was returned.
+        if current.access_token == access_token and current.refresh_token == refresh_token:
             return
         try:
             expires_in = max(30, int(payload.get("expires_in") or 900))
@@ -546,6 +637,31 @@ class CloudClient:
 
     def cancel_job(self, job_id: str) -> dict[str, Any]:
         return self._json_request("POST", f"/cloud/jobs/{job_id}/cancel")
+
+    def video_capabilities(self):
+        return self._json_request("GET", "/cloud/video/capabilities")
+
+    def video_asset(self, path: Path, kind="image"):
+        import mimetypes
+        with path.open("rb") as source:
+            return self._json_request("POST", "/cloud/video/assets", data={"kind": kind},
+                files={"file": (path.name, source, mimetypes.guess_type(path.name)[0] or "application/octet-stream")})
+
+    def video_quote(self, spec):
+        return self._json_request("POST", "/cloud/video/quotes", json={"spec": spec})
+
+    def create_video_job(self, quote_id, client_job_id):
+        return self._json_request("POST", "/cloud/video/jobs", headers={"Idempotency-Key": client_job_id},
+                                  json={"quote_id": quote_id, "client_job_id": client_job_id})
+
+    def video_job(self, identity, *, by_client=False):
+        from urllib.parse import quote
+        segment = "by-client-id/" if by_client else ""
+        return self._json_request("GET", "/cloud/video/jobs/" + segment + quote(str(identity), safe=""))
+
+    def cancel_video_job(self, identity):
+        from urllib.parse import quote
+        return self._json_request("POST", "/cloud/video/jobs/" + quote(str(identity), safe="") + "/cancel")
 
     def create_recharge_order(self, payload: dict[str, Any], *, idempotency_key: str) -> dict[str, Any]:
         order = self._json_request(

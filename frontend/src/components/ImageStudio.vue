@@ -1,6 +1,6 @@
 <script setup>
 import CloudImageQuality from './CloudImageQuality.vue'
-import {ref,computed,reactive,onMounted,onUnmounted} from 'vue'
+import {ref,computed,reactive,onMounted,onUnmounted,watch} from 'vue'
 import {requestJSON} from '../api'
 const prompt=ref(''),provider=ref('custom'),method=ref('running'),size=ref('2560x1440'),profileId=ref(''),profiles=ref([]),ratio=ref('2:1'),resolution=ref(''),refs=ref([null,null,null,null]),items=ref([]),error=ref(''),busy=ref(false),preview=ref('')
 const cloudImageForm=reactive({size,method,ratio,image_resolution:resolution})
@@ -8,6 +8,22 @@ const running=computed(()=>items.value.some(x=>x.status==='running'))
 const selectedProfile=computed(()=>profiles.value.find(x=>x.id===profileId.value)||null)
 const url=(id,name='result.png')=>`/api/image-studio/${id}/files/${name}`
 let timer
+const loginNeeded = item => String(item?.message || '').includes('[CLOUD_LOGIN_REQUIRED]')
+async function resumeImage(item) {
+ busy.value = true
+ try { await requestJSON('/api/image-studio/'+item.id+'/resume', {method:'POST'}); await refresh() }
+ catch(e) { error.value = e.message; if(e.status===401) requestCloudLogin() }
+ finally { busy.value = false }
+}
+function requestCloudLogin() { window.dispatchEvent(new Event('ocv-cloud-login-required')) }
+const alerted = new Set()
+watch(items, rows => {
+  for (const item of rows || []) if (loginNeeded(item) && !alerted.has(item.id)) {
+    alerted.add(item.id)
+    requestCloudLogin()
+  }
+})
+
 async function refresh(){try{items.value=(await requestJSON('/api/image-studio')).items}catch(e){error.value=e.message}}
 async function loadProfiles(){try{profiles.value=(await requestJSON('/api/image-profiles')).profiles||[];if(!profiles.value.some(x=>x.id===profileId.value))profileId.value=profiles.value.find(x=>x.configured)?.id||''}catch(e){error.value=e.message}}
 function add(item){const i=refs.value.findIndex(x=>!x);if(i<0){error.value='最多4张参考图，请先移除一张';return}refs.value[i]=item;error.value=`已添加为图${i+1}`}
@@ -27,7 +43,7 @@ onMounted(()=>{refresh();loadProfiles();timer=setInterval(refresh,3000)});onUnmo
  <p class="muted">参考图可选，最多4张，点击放大。移除后保留编号，新图片优先填补空位。</p><div class="actions"><span class="muted">提示词原样提交；失败报错，不自动重试。</span><button class="primary" :disabled="busy||running||!prompt.trim()" @click="generate">{{running?'正在生成…':busy?'正在处理…':'生成图片'}}</button></div></div>
  <p v-if="error" role="alert" class="studio-notice">{{error}}<button @click="error=''">×</button></p>
  <div class="section-heading"><h2>生成历史 <small>{{items.length}}</small></h2><button :disabled="running||!items.length" @click="remove()">清空历史</button></div>
- <div class="history"><article v-for="item in items" :key="item.id"><button v-if="item.status==='completed'" class="result" @click="preview=url(item.id)"><img :src="url(item.id)" alt="生成结果" /></button><p>{{item.message}}</p><small class="muted">{{new Date(item.created_at*1000).toLocaleString()}} · {{item.provider==='pool'?(item.method==='ican'?'ICAN':'平价gpt image2.5'):'自己的 API'}} · {{item.ratio}} · {{item.resolution.toUpperCase()}}<template v-if="item.width"> · {{item.width}} × {{item.height}}</template></small><details><summary>提示词与参考图</summary><p class="prompt">{{item.prompt}}</p><div class="refs"><button v-for="(name,i) in item.references" :key="name" @click="preview=url(item.id,name)">图{{i+1}}<img :src="url(item.id,name)" width="64" /></button></div></details><div class="actions"><template v-if="item.status==='completed'"><a :href="url(item.id)" :download="'OCV-'+item.id+'.png'">下载图片</a><button @click="add({id:'history:'+item.id,url:url(item.id)})">用作参考图</button></template><button @click="reuse(item)">复用参数</button><button :disabled="running" @click="remove(item.id)">删除</button></div></article></div>
+ <div class="history"><article v-for="item in items" :key="item.id"><button v-if="item.status==='completed'" class="result" @click="preview=url(item.id)"><img :src="url(item.id)" alt="生成结果" /></button><p>{{item.message}} <button v-if="loginNeeded(item)" @click="requestCloudLogin">重新登录</button></p><small class="muted">{{new Date(item.created_at*1000).toLocaleString()}} · {{item.provider==='pool'?(item.method==='ican'?'ICAN':'平价gpt image2.5'):'自己的 API'}} · {{item.ratio}} · {{item.resolution.toUpperCase()}}<template v-if="item.width"> · {{item.width}} × {{item.height}}</template></small><details><summary>提示词与参考图</summary><p class="prompt">{{item.prompt}}</p><div class="refs"><button v-for="(name,i) in item.references" :key="name" @click="preview=url(item.id,name)">图{{i+1}}<img :src="url(item.id,name)" width="64" /></button></div></details><div class="actions"><template v-if="item.status==='completed'"><a :href="url(item.id)" :download="'OCV-'+item.id+'.png'">下载图片</a><button @click="add({id:'history:'+item.id,url:url(item.id)})">用作参考图</button></template><button v-if="item.status==='paused'" :disabled="busy||running" @click="resumeImage(item)">登录后继续此图片</button><button @click="reuse(item)">复用参数</button><button :disabled="running" @click="remove(item.id)">删除</button></div></article></div>
  <div v-if="preview" class="preview" @click.self="preview=''"><button @click="preview=''">关闭 ×</button><img :src="preview" alt="图片预览" /></div>
 </section>
 </template>

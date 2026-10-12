@@ -173,6 +173,17 @@ class PreflightProbeTest(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 400)
         self.assertIn("Base URL", raised.exception.detail)
 
+    def test_cold_gpu_accepts_explicit_healthy_on_demand_admission(self):
+        payload={'ok':False,'control_api':True,'ray':{'ok':False,'dispatcher':{'ready':False,'redis_ready':True,'consumer_alive':True}},
+                 'tts_admission':{'accepting':True,'on_demand':True,'scheduler_ready':True,'queue_ready':True}}
+        self.assertIsNone(main._cluster_health_error(payload))
+        for key in ('accepting','on_demand','scheduler_ready','queue_ready'):
+            with self.subTest(key=key):
+                changed={**payload,'tts_admission':{**payload['tts_admission'],key:False}}
+                self.assertIsNotNone(main._cluster_health_error(changed))
+        payload['ray']['dispatcher']['redis_ready']=False
+        self.assertIsNotNone(main._cluster_health_error(payload))
+
     def test_cluster_health_error_blocks_only_unhealthy_service(self) -> None:
         self.assertIsNone(main._cluster_health_error({"ok": True}))
         message = main._cluster_health_error({"ok": False, "ray_error": "timed out"})

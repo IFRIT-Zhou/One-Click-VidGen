@@ -301,6 +301,7 @@
         </div>
       </header>
 
+      <div v-if="cloudLoginNotice" class="studio-notice error" role="alert">{{ cloudLoginNotice }} <button type="button" @click="openCloudLogin">重新登录</button></div>
       <div v-if="cloudLoginOpen" class="cloud-auth-overlay" @click.self="cloudLoginOpen = false">
         <section class="cloud-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-auth-title">
           <div class="cloud-auth-dialog-head">

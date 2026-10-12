@@ -97,6 +97,13 @@ class CloudClientTest(unittest.TestCase):
         self.assertNotIn("Authorization", request.call_args_list[0].kwargs["headers"])
         self.assertEqual(request.call_args_list[0].args[1], "https://cluster.example/api/v1/health")
 
+    def test_cold_gpu_with_healthy_scheduler_does_not_retry_probe(self):
+        response=json_response({'ok':False,'control_api':True,'ray_error':'timed out',
+            'tts_admission':{'accepting':True,'on_demand':True,'scheduler_ready':True,'queue_ready':True}})
+        with patch('backend.app.cloud_client.requests.request',return_value=response) as request:
+            payload=self.client.cluster_health()
+        self.assertFalse(payload['ok']);self.assertEqual(request.call_count,1)
+
     def test_cluster_health_returns_persistent_non_transient_failure_without_retry(self) -> None:
         response = json_response({"ok": False, "control_api": True, "ray_error": "GPU service stopped"})
         with patch("backend.app.cloud_client.requests.request", return_value=response) as request:

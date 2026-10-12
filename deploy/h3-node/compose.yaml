@@ -1,0 +1,21 @@
+services:
+  h3:
+    image: ocv-h3-runtime:torch2.11-cu130-sage2.2
+    container_name: ocv-h3-comfyui
+    entrypoint: ["/bin/bash", "/opt/ocv-h3/start.sh"]
+    restart: "no"
+    shm_size: "4gb"
+    ports: ["127.0.0.1:18188:8188"]
+    environment:
+      PYTHONNOUSERSITE: "1"
+      HF_HOME: /opt/ocv-h3/cache
+    volumes:
+      - /opt/ocv-h3/models-cache:/models:ro
+      - /opt/ocv-h3:/opt/ocv-h3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

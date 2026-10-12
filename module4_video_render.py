@@ -975,6 +975,8 @@ def _provider_configs() -> list[dict[str, str]]:
             "ratio": os.getenv("CLOUD_IMAGE_POOL_RATIO", "").strip() or ('9:16' if portrait else os.getenv("RUNNINGHUB_TARGET_RATIO", "2:1").strip()),
             "api_key": access_token,
             "refresh_token": os.getenv("CLOUD_IMAGE_POOL_REFRESH_TOKEN", "").strip(),
+            "cloud_user_id": os.getenv("CLOUD_IMAGE_POOL_USER_ID", "").strip(),
+            "cloud_session_store_path": os.getenv("CLOUD_SESSION_STORE_PATH", "").strip(),
             "cloud_base_url": base_url,
             "account_label": "云端号池",
             "cloud_pool": "1",
@@ -2738,6 +2740,13 @@ def _persist_cloud_pool_session(config: dict[str, str], *, expires_in: int = 900
     temporary.replace(path)
 
 
+class CloudImageLoginRequired(RuntimeError):
+    """Non-retryable until the user signs in; never classify as network failure."""
+    def __init__(self):
+        super().__init__("[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录。"
+                         "当前批次已暂停，已完成图片和剩余任务已保留，登录后可继续。")
+
+
 def _request_with_cloud_refresh(
     session: requests.Session,
     method: str,
@@ -2747,6 +2756,18 @@ def _request_with_cloud_refresh(
     timeout: float = 60,
     **kwargs: Any,
 ) -> requests.Response:
+    if config and config.get("cloud_pool") == "1" and config.get("cloud_user_id"):
+        from backend.app.cloud_client import CloudApiError, cloud_client_for_image
+        try:
+            return cloud_client_for_image(config)._send(method, url, raise_errors=False, **kwargs)
+        except CloudApiError as exc:
+            if exc.status_code == 401:
+                raise CloudImageLoginRequired() from exc
+            if exc.status_code in {408, 429, 500, 502, 503, 504}:
+                raise RunningHubTransientError(str(exc)) from exc
+            raise
+    if config and config.get("_cloud_login_required"):
+        raise CloudImageLoginRequired()
     headers = dict(kwargs.pop("headers", {}) or {})
     if config and config.get("cloud_pool") == "1":
         headers["Authorization"] = f"Bearer {config['api_key']}"
@@ -2756,12 +2777,19 @@ def _request_with_cloud_refresh(
     failed_token = config.get("api_key", "")
     response.close()
     with _CLOUD_TOKEN_REFRESH_LOCK:
+        if config.get("_cloud_login_required"):
+            raise CloudImageLoginRequired()
         if config.get("api_key", "") == failed_token:
             refresh_token = config.get("refresh_token", "")
             refresh_url = f"{config.get('cloud_base_url', '').rstrip('/')}/auth/refresh"
             if not refresh_token or not refresh_url.startswith(("http://", "https://")):
-                raise RuntimeError("云端号池登录已过期，请重新登录后断点续跑")
+                config["_cloud_login_required"] = True
+                raise CloudImageLoginRequired()
             refreshed = requests.post(refresh_url, json={"refresh_token": refresh_token}, timeout=30)
+            if refreshed.status_code == 401:
+                refreshed.close()
+                config["_cloud_login_required"] = True
+                raise CloudImageLoginRequired()
             refreshed.raise_for_status()
             payload = refreshed.json()
             access_token = str(payload.get("access_token") or "").strip()
@@ -2776,7 +2804,12 @@ def _request_with_cloud_refresh(
                 expires_in = 900
             _persist_cloud_pool_session(config, expires_in=expires_in)
     headers["Authorization"] = f"Bearer {config['api_key']}"
-    return session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+    response = session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+    if response.status_code == 401:
+        response.close()
+        config["_cloud_login_required"] = True
+        raise CloudImageLoginRequired()
+    return response
 
 
 def _request_json(
@@ -3660,6 +3693,11 @@ def render_posters_concurrently(
                 completed[index] = future.result()
                 _record_partial_poster_success(mapping, index, completed[index])
                 print(f"[POSTER_PROGRESS] {len(completed)}/{len(mapping)}", flush=True)
+            except CloudImageLoginRequired as exc:
+                for pending in futures:
+                    pending.cancel()
+                fatal_error = exc
+                failures[index] = str(exc)
             except RunningHubAllAccountsPowerInsufficient as exc:
                 for pending in futures:
                     pending.cancel()
@@ -3973,6 +4011,8 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
                     timeout=120,
                 )
             payload = response.json()
+        except CloudImageLoginRequired:
+            raise
         except (OSError, requests.RequestException, ValueError, RuntimeError) as exc:
             # The cloud proxy currently returns HTTP 500 for some valid image
             # uploads. Keep the generation request usable: image-pool/generate

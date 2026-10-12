@@ -82,7 +82,7 @@ class ProjectSettingsEdit(Review):
     world: str = Field(default='', max_length=10000)
     dynamic_text_mode: Literal['text_assisted', 'visual_first', 'medical_paper'] = 'visual_first'
     scene_references_enabled: bool = True
-    video_generation_backend: Literal['api', 'comfyui'] = 'api'
+    video_generation_backend: Literal['api', 'comfyui', 'cloud_h3'] = 'api'
     comfyui_profile_id: str = Field(default='', max_length=80)
     comfyui_h3_prompt_agent: bool = False
     comfyui_reference_audio: bool = False
@@ -169,6 +169,8 @@ def _image_configs(record, user_id=None):
             if not base or not token:
                 raise ValueError('missing runtime')
         except Exception as exc:
+            if getattr(exc, 'code', '') == 'CLOUD_LOGIN_REQUIRED':
+                raise ValueError(str(visual.CloudImageLoginRequired())) from exc
             raise ValueError('云端图像号池登录状态不可用，请检查云端连接并重新登录；未改用个人 API。') from exc
         from .cloud_image_channel import configure_channel
         configs = [configure_channel({
@@ -178,6 +180,8 @@ def _image_configs(record, user_id=None):
             'account_url': base + '/image-pool/account-status',
             'resolution': str(parameters.get('image_resolution') or '1k'),
             'api_key': token, 'refresh_token': runtime.get('refresh_token', ''),
+            'cloud_user_id': runtime.get('cloud_user_id', ''),
+            'cloud_session_store_path': runtime.get('cloud_session_store_path', ''),
             'cloud_base_url': base, 'account_label': '云端号池', 'cloud_pool': '1',
         }, parameters.get('method', 'running'), parameters.get('size', '2560x1440'))]
     elif isinstance(snapshot, dict):
@@ -500,6 +504,8 @@ def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
 def _start_storyboard_images(path, record, configs, *, scenes_only=False):
     import module4_video_render as visual
     cancelled = threading.Event()
+    record.pop('cloud_login_required', None)
+    record.pop('error', None)
     CANCEL_EVENTS[str(path)] = cancelled
     ACTIVE.add(str(path))
 
@@ -581,7 +587,12 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                         save(path, record)
                 except Exception as exc:
                     with LOCK:
-                        shot.update(image_status='failed', image_error=str(exc))
+                        if isinstance(exc, visual.CloudImageLoginRequired):
+                            cancelled.set()
+                            record['cloud_login_required'] = True
+                            record['error'] = str(exc)
+                        shot.update(image_status='pending' if isinstance(exc, visual.CloudImageLoginRequired) else 'failed',
+                                    image_error=str(exc))
                         record['logs'].append(f'核心分镜图 {index}/{len(record["shots"])}：失败：{exc}')
                         save(path, record)
                     return 'failed'
@@ -613,6 +624,8 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                 save(path, record)
         except Exception as exc:
             with LOCK:
+                if '[CLOUD_LOGIN_REQUIRED]' in str(exc):
+                    record['cloud_login_required'] = True
                 record.update(status='image_review', error=str(exc), revision=record['revision'] + 1)
                 if record.get('scene_references_status') != 'completed':
                     record['scene_references_status'] = 'failed'

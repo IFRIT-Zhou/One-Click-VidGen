@@ -1,0 +1,24 @@
+[Unit]
+Description=OCV TTS and H3 exclusive GPU scheduler
+After=network-online.target postgresql.service cloud-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=cloudapi
+WorkingDirectory=/opt/cloud-api
+EnvironmentFile=/etc/cloud-api.env
+EnvironmentFile=-/etc/cloud-api-h3.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/cloud-api/.venv/bin/python -m app.cloud_gpu_scheduler
+Restart=always
+RestartSec=5
+RuntimeDirectory=ocv-gpu-scheduler
+RuntimeDirectoryMode=0750
+UMask=0007
+NoNewPrivileges=true
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

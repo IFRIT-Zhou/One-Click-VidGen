@@ -48,6 +48,10 @@ export async function requestJSON(url, options = {}) {
     }
     const error = new Error(readableError(message, `Request failed with ${response.status}`))
     error.status = response.status
+    if (typeof window !== 'undefined' && (
+      message.includes('CLOUD_LOGIN_REQUIRED') ||
+      (response.status === 401 && (message.includes('云端') || message.includes('登录已过期')))
+    )) window.dispatchEvent(new Event('ocv-cloud-login-required'))
     error.retryAfter = response.headers.get("Retry-After")
     throw error
   }
