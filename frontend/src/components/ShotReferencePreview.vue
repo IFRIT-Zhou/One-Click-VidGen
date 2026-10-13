@@ -1,18 +1,15 @@
 <script setup>
 import {computed,ref,watch} from 'vue'
-const props=defineProps({shot:{type:Object,required:true},references:{type:Array,default:()=>[]},scene:Object,sceneEnabled:Boolean,referenceUrl:Function,imageUrl:Function})
+import {resolvePlannedReferences} from '../plannedReferences.js'
+const props=defineProps({shot:{type:Object,required:true},references:{type:Array,default:()=>[]},redrawReferences:{type:Array,default:()=>[]},scene:Object,sceneEnabled:Boolean,referenceUrl:Function,imageUrl:Function})
 const enlarged=ref(null)
-const kinds={character:'人物参考',person:'人物参考',style:'画风参考',scene:'场景参考',object:'物件参考'}
+const failedUrls=ref(new Set())
 const materials=computed(()=>{
- const ids=props.shot.reference_ids??props.shot.reference_image_ids??[]
- const rows=ids.map(id=>{
-  const asset=props.references.find(row=>String(row.id)===String(id))
-  return {id,asset,name:asset?.description||asset?.label||String(id),purpose:kinds[asset?.kind]||asset?.kind||'参考素材',url:asset?props.referenceUrl(asset):'',state:asset?'':'素材缺失，请检查'}
- })
+ const rows=resolvePlannedReferences(props.shot,props.references,props.redrawReferences,props.referenceUrl)
  if(props.sceneEnabled&&props.scene)rows.push({id:'scene:'+props.scene.id,name:props.scene.name||'场景参考',purpose:'场景参考 · 自动追加',url:props.scene.image_status==='completed'?props.imageUrl(props.scene):'',state:props.scene.image_status==='failed'?'场景参考生成失败':'场景参考待生成'})
  return rows
 })
-watch(()=>props.shot.id,()=>{enlarged.value=null})
+watch(()=>props.shot.id,()=>{enlarged.value=null;failedUrls.value=new Set()})
 </script>
 
 <template>
@@ -20,8 +17,8 @@ watch(()=>props.shot.id,()=>{enlarged.value=null})
   <header><strong>本镜规划参考图</strong><small>{{materials.length?`${materials.length} 张 · 按出图提交顺序`:'纯文生图 · 未使用参考图'}}</small></header>
   <p class="reference-help">{{materials.length?'点击图片放大核对；参考图用于约束内容，不代表最终画面。重绘时以“重绘参考素材”中的选择为准。':'本镜仅依据提示词生成，不会自动使用其他镜头或素材库中的图片。'}}</p>
   <div v-if="materials.length" class="planned-reference-grid">
-   <button v-for="(row,index) in materials" :key="row.id+':'+index" type="button" :disabled="!row.url" @click="enlarged=row">
-    <img v-if="row.url" :src="row.url" :alt="row.name"><span v-else class="reference-placeholder">{{row.state}}</span>
+   <button v-for="(row,index) in materials" :key="row.id+':'+index" type="button" :disabled="!row.url||failedUrls.has(row.url)" @click="enlarged=row">
+    <img v-if="row.url&&!failedUrls.has(row.url)" :src="row.url" :alt="row.name" @error="failedUrls.add(row.url)"><span v-else class="reference-placeholder">{{failedUrls.has(row.url)?'图片加载失败，请刷新后重试':row.state}}</span>
     <span class="reference-caption"><b>图{{index+1}} · {{row.purpose}}</b><small>{{row.name}}</small></span>
    </button>
   </div>

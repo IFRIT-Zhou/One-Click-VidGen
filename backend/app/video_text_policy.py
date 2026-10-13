@@ -135,13 +135,18 @@ _NEGATIVE_VISIBLE_TEXT = re.compile(
     r'不|无|禁止|避免|移除|消失|删去|清除|不要|不得|\b(?:no|not|without|remove|omit|avoid|disappear)\b', re.I)
 
 
+def _visible_text_key(text: str) -> str:
+    # Only normalize punctuation width, not words, numbers, units or operators.
+    return text.strip().translate(str.maketrans('？，！：；（）', '?,!:;()'))
+
+
 def visual_first_prompt_issues(prompt: str, plan: Any) -> list[str]:
     """Find finalizers that reintroduced narration as visible dialogue."""
-    allowed = set(approved_visible_texts(plan))
+    allowed = {_visible_text_key(text) for text in approved_visible_texts(plan)}
     issues = []
     for match in _VISIBLE_TEXT_INSTRUCTION.finditer(str(prompt or '')):
         text = match.group('text').strip()
-        if text in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
+        if _visible_text_key(text) in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
             continue
         issues.append(f'擅自新增未入选的画中文字“{text}”；应改用动作、表情或具体图案')
     return list(dict.fromkeys(issues))
@@ -149,11 +154,11 @@ def visual_first_prompt_issues(prompt: str, plan: Any) -> list[str]:
 
 def remove_unapproved_visible_text(prompt: str, plan: Any) -> str:
     """On finalizer retry, turn invented displayed words into a non-text visual."""
-    allowed = set(approved_visible_texts(plan))
+    allowed = {_visible_text_key(text) for text in approved_visible_texts(plan)}
 
     def replace(match: re.Match[str]) -> str:
         text = match.group('text').strip()
-        if text in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
+        if _visible_text_key(text) in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
             return match.group(0)
         return match.group('context') + '无字图案'
 
