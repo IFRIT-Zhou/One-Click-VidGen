@@ -357,6 +357,19 @@ async function run(fn){busy.value=true;error.value='';try{await fn()}catch(e){er
 async function list(){items.value=(await call('')).items}
 async function open(id){await run(async()=>{if(dirty.value)await save();const fresh=await call('/'+id);let cached;try{cached=JSON.parse(sessionStorage.getItem(draftKey(id))||'null')}catch{}dirty.value=false;resetProjectImageState();motionDrafts.value={};project.value=fresh;selected.value=0;view.value=defaultProjectView(fresh);if(cached&&cached.revision===fresh.revision){if(['draft','storyboard_review'].includes(fresh.status)){project.value=cached;dirty.value=true;error.value='已恢复本页暂存的镜头修改，请确认后保存。'}else if(fresh.status==='image_review'){for(const shot of fresh.shots){const draft=cached.shots?.find(row=>row.id===shot.id);if(draft&&(draft.action!==shot.action||draft.video_prompt!==shot.video_prompt)){shot.action=draft.action||'';shot.video_prompt=draft.video_prompt||'';rememberMotionDraft(shot)}}if(dirty.value)error.value='已恢复暂存的动态表达与视频提示词，请确认后保存。'}}})}
 async function create(){await run(async()=>{if(dirty.value)await save();project.value=await call('','POST',input.value);selected.value=0;view.value='storyboard';dirty.value=false;await list()})}
+const projectLanguageCloud=computed(()=>{
+ const params=project.value?.creation_parameters||{}
+ return params.language_route==='cloud'||(params.language_route!=='personal'&&Boolean(params.use_cloud_image_pool))
+})
+async function changeLanguageRoute(event){
+ const route=event.target.value
+ await run(async()=>{
+  if(dirty.value)await save()
+  try{project.value=await call('/'+project.value.id+'/language-route','POST',{revision:project.value.revision,route})}
+  catch(e){if(e.status===401)requestCloudLogin();throw e}
+ })
+ event.target.value=project.value?.creation_parameters?.language_route||'project'
+}
 async function plan(automated=false){
  const message=planningCanResume.value?'将复用已保存的规划，仅继续未完成的步骤；仍需调用语言 API，是否继续？':(dirty.value?'将先保存当前镜头修改，再重新规划。':'')+(project.value.manual_groups?.length?'将保留已确认的手动字幕分组，重新设计各镜头，会消耗 LLM 额度。是否继续？':'使用当前语言 API 规划分镜，会消耗 LLM 额度。已有镜头将在成功后被替换，是否继续？')
  if(!automated&&!confirm(message))return
@@ -607,7 +620,14 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <button :disabled="!videoStageReady" @click="view='motions'">试看本镜</button>
   <button :disabled="busy" @click="confirmAudioReview(selectedShot)">确认沿用</button>
  </section>
- <LanguageModelPresets v-if="project&&view==='storyboard'" :disabled="busy||!canEditStructure" :cloud-pool="Boolean(project.creation_parameters?.use_cloud_image_pool)">
+ <section v-if="project&&view==='storyboard'" class="language-presets project-language-route">
+  <label>本项目规划渠道 <select :value="project.creation_parameters?.language_route||'project'" :disabled="busy||!canEditStructure||videoRunning" @change="changeLanguageRoute">
+   <option value="project">沿用项目号池设置</option><option value="cloud">云端语言模型号池</option><option value="personal">个人 API 配置</option>
+  </select></label>
+  <p>当前使用：{{projectLanguageCloud?'云端语言模型号池':'个人 API 配置'}}。选择后保存到本项目，影响分镜规划和 H3 提示词转换，暂停自动继续，请手动重试；已有配音、图片和视频保留。首页号池开关不修改已有项目，H3 视频渠道与规划渠道分别设置。</p>
+  <p v-if="projectLanguageCloud">请保持云端登录，语言模型调用按号池规则结算。</p>
+ </section>
+ <LanguageModelPresets v-if="project&&view==='storyboard'" :disabled="busy||!canEditStructure" :cloud-pool="projectLanguageCloud">
   <template #actions="{unavailable,pendingSwitch}">
    <div class="replan-description"><strong>重新规划画面</strong><small class="muted">保留配音与字幕时间轴。确认新方案后再生成素材，不自动重做。</small><small v-if="pendingSwitch" class="muted">请先点击“使用此模型”，再重新规划。</small>
     <details class="replan-options"><summary>规划选项 · {{ dynamicTextModeLabel(replanMode) }} · {{ replanRegroup?'重新划分镜头':'保留镜头边界' }}</summary>

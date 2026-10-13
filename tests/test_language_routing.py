@@ -182,3 +182,110 @@ class LanguageRoutingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '未改用个人 API'):
                 studio._image_configs({'creation_parameters': {'use_cloud_image_pool': True}}, 1)
             local.assert_not_called()
+
+
+class CloudH3PlanningRoutingTests(unittest.TestCase):
+    def test_agent0_saved_personal_route_reproduces_401_then_explicit_cloud_recovers(self):
+        """Reproduce a valid cloud H3 project with an invalid personal relay key."""
+        from backend.app import video_studio as studio
+        record = dict(id='h3-route-repro', revision=1, status='draft', shots=[], scenes=[], references=[],
+                      settings=dict(style='', characters='', world=''), narration_groups=[], logs=[],
+                      creation_parameters={'video_generation_backend': 'cloud_h3', 'use_cloud_image_pool': False})
+        observed = []
+        def transport(url, **kwargs):
+            observed.append(url)
+            response = Mock()
+            if url.startswith('https://personal.invalid/'):
+                response.ok = False; response.status_code = 401
+                response.json.return_value = {'message': 'APIKEY_USER_NOT_FOUND'}
+            else:
+                response.ok = True
+                response.json.return_value = {'choices': [{'message': {'content': 'OK'}, 'finish_reason': 'stop'}]}
+            return response
+        def planner(*args, **kwargs):
+            client.generate_gemini_text(system_prompt='Agent 0 test', user_prompt='short storyboard')
+            return {}, []
+        env = {'LANGUAGE_PROVIDER': 'gemini', 'GEMINI_API_BASE': 'https://personal.invalid/v1',
+               'GEMINI_API_KEY': 'invalid-test-key', 'GEMINI_MODEL': 'google/gemini-3.1-flash-lite-preview',
+               'GEMINI_FALLBACK_MODELS': ''}
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(routing, 'cloud_client_for', side_effect=LanguageRoutingTests().runtime), \
+             patch.object(client.requests, 'post', side_effect=transport), \
+             patch.object(studio, 'require_user', return_value={'id': 1}), \
+             patch.object(studio, 'directory', return_value=Path('h3-route-repro')), \
+             patch.object(studio, 'read', side_effect=lambda _: copy.deepcopy(record)), \
+             patch.object(studio, 'save'), patch.object(studio, 'ACTIVE', set()), \
+             patch.object(studio, 'plan_storyboard', side_effect=planner), \
+             patch.object(studio.threading, 'Thread', side_effect=lambda target, **kw: SimpleNamespace(start=target)):
+            result = studio.plan('h3-route-repro', None)
+            self.assertIn('HTTP 401 APIKEY_USER_NOT_FOUND', result['error'])
+            self.assertEqual(observed, ['https://personal.invalid/v1/chat/completions'])
+            observed.clear()
+            record['creation_parameters']['language_route'] = 'cloud'
+            result = studio.plan('h3-route-repro', None)
+        self.assertEqual(result.get('error', ''), '', result.get('error'))
+        self.assertEqual(observed, ['https://pool.example/model-pool/v1/chat/completions'])
+        self.assertEqual(result['status'], 'storyboard_review')
+        self.assertFalse(record['creation_parameters']['use_cloud_image_pool'])
+
+    def test_cloud_h3_login_failure_never_uses_personal_key(self):
+        with patch.object(routing, 'cloud_client_for', side_effect=RuntimeError('login unavailable')), \
+             patch.object(client.requests, 'post') as post:
+            with self.assertRaisesRegex(RuntimeError, '未改用个人 API'):
+                with routing.project_language_scope(1, {'video_generation_backend': 'cloud_h3', 'language_route': 'cloud'}):
+                    pass
+            post.assert_not_called()
+
+class ProjectLanguageRouteApiTests(unittest.TestCase):
+    def record(self):
+        return dict(id='route-project', revision=3, status='storyboard_review', logs=[],
+                    creation_parameters={'use_cloud_image_pool':False,'video_generation_backend':'cloud_h3'},
+                    shots=[{'id':'shot','image':'existing.jpg','video':'existing.mp4'}], audio='existing.wav',
+                    planning_state={'completed':{'core':['shot']}}, error='original failure')
+
+    def invoke(self, record, route='cloud', revision=3, login_fails=False):
+        from backend.app import video_studio as studio
+        saved=[]
+        with patch.object(studio,'require_user',return_value={'id':7}), \
+             patch.object(studio,'directory',return_value=Path('route-project')), \
+             patch.object(studio,'read',return_value=copy.deepcopy(record)), \
+             patch.object(studio,'save',side_effect=lambda p,r:saved.append(copy.deepcopy(r))), \
+             patch.object(studio,'ACTIVE',set()), \
+             patch.object(routing,'cloud_client_for',side_effect=RuntimeError('expired') if login_fails else LanguageRoutingTests().runtime), \
+             patch.object(client.requests,'post') as post:
+            try:
+                result=studio.set_language_route('route-project',studio.LanguageRouteEdit(revision=revision,route=route),None)
+            except Exception:
+                self.assertEqual(saved, [])
+                raise
+            finally:
+                post.assert_not_called()
+        return result,saved
+
+    def test_save_route_preserves_assets_and_checkpoint_and_does_not_generate(self):
+        original=self.record();result,saved=self.invoke(original)
+        self.assertEqual(result['creation_parameters']['language_route'],'cloud')
+        self.assertFalse(result['creation_parameters']['use_cloud_image_pool'])
+        for key in ['shots','audio','planning_state','error','status']:
+            self.assertEqual(result[key],original[key])
+        self.assertFalse(result['creation_parameters']['dynamic_auto_advance'])
+        self.assertEqual(result['revision'],4);self.assertEqual(len(saved),1)
+
+    def test_stale_revision_and_busy_project_rejected(self):
+        from fastapi import HTTPException
+        for data,revision in [(self.record(),2),({**self.record(),'status':'planning'},3)]:
+            with self.assertRaises(HTTPException) as raised:self.invoke(data,revision=revision)
+            self.assertEqual(raised.exception.status_code,409)
+
+    def test_missing_login_does_not_persist_route(self):
+        from fastapi import HTTPException
+        from backend.app import video_studio as studio
+        with patch.object(studio,'save') as save:
+            with self.assertRaises(HTTPException) as raised:self.invoke(self.record(),login_fails=True)
+            self.assertEqual(raised.exception.status_code,401)
+            save.assert_not_called()
+
+    def test_personal_override_and_legacy_default(self):
+        self.assertFalse(routing.uses_cloud_language({'language_route':'personal','use_cloud_image_pool':True}))
+        self.assertTrue(routing.uses_cloud_language({'use_cloud_image_pool':True}))
+        self.assertFalse(routing.uses_cloud_language({'video_generation_backend':'cloud_h3'}))

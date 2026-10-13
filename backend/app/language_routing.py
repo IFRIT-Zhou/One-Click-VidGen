@@ -5,9 +5,15 @@ from .cloud_client import cloud_client_for
 from .gemini_client import language_environment, language_model
 
 
+def uses_cloud_language(parameters):
+    """Explicit project choice; older projects retain their saved pool preference."""
+    route = parameters.get("language_route", "project")
+    return route == "cloud" or (route != "personal" and bool(parameters.get("use_cloud_image_pool")))
+
+
 @contextmanager
 def project_language_scope(user_id, parameters, progress=None):
-    if not parameters.get('use_cloud_image_pool'):
+    if not uses_cloud_language(parameters):
         if progress:
             progress(f'语言模型路由：用户 API 配置 · {language_model()}')
         yield

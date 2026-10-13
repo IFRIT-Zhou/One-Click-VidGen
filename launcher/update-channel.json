@@ -1,16 +1,15 @@
 {
-  "release_id": "2026.10.12.2",
-  "release_order": 2026101202,
-  "display_version": "2026.10.12 集群接入与配音视频修复",
+  "release_id": "2026.10.13.1",
+  "release_order": 2026101301,
+  "display_version": "2026.10.13 项目规划渠道与认证提示修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.12.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "同步云端H3集群接入及TTS按需调度更新；修复多字幕称谓同步、重绘分页跳转、视频重跑编号冲突；新增完整配音重合成、H3格式有限重试、本地与不同API出口并行。服务费5%说明仅适用于稳定版。保留用户配置和已有素材。",
-  "content_fingerprint": "b5b8ddc180e3ab7a9311e3654941d544aa9018fb0d2e68f7753f60222b452b18"
+  "notes": "已有分镜项目可单独选择云端语言模型号池或个人API，选择后保存到项目并保留素材；修正APIKEY_USER_NOT_FOUND提示。H3视频渠道与规划渠道分别设置，切换不自动生成。",
+  "content_fingerprint": "7b87ee1360ef1dfba6f4acd5dc113453ec20c6adbf645324eb364a19d6a4ccfb"
 }

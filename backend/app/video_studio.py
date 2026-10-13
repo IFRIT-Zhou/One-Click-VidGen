@@ -20,7 +20,7 @@ from .video_plan import parse_srt, normalize_shots, edit_structure, plan_storybo
 from .video_sources import list_sources, source_project, copy_assets, narration_groups
 from . import video_scene_references as scene_references
 from .video_text_policy import normalize_text_mode
-from .language_routing import project_language_scope
+from .language_routing import project_language_scope, uses_cloud_language
 
 router = APIRouter(prefix='/api/video-studio')
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'video_studio'
@@ -435,7 +435,7 @@ def _invalidate_shot_video(record, shot, reason):
 def _image_language_scope(path, record):
     """Resolve routing inside each image worker; thread contexts are not inherited."""
     parameters = planning_parameters(record)
-    user_id = int(path.parent.name) if parameters.get('use_cloud_image_pool') else None
+    user_id = int(path.parent.name) if uses_cloud_language(parameters) else None
     return project_language_scope(user_id, parameters)
 
 
@@ -867,6 +867,37 @@ def create(data: Create, request: Request):
     with LOCK:
         save(directory(user['id'], record['id']), record)
     return record
+
+class LanguageRouteEdit(Review):
+    route: Literal['project', 'cloud', 'personal']
+
+
+@router.post('/{identity}/language-route')
+def set_language_route(identity: str, data: LanguageRouteEdit, request: Request):
+    user_id = int(require_user(request)['id'])
+    with LOCK:
+        path = directory(user_id, identity)
+        record = read(path)
+        editable(record, data.revision)
+        if str(path) in ACTIVE:
+            raise HTTPException(409, '项目仍有任务运行，请等待完成后切换规划渠道')
+        parameters = copy.deepcopy(record.get('creation_parameters', {}))
+        parameters['language_route'] = data.route
+        parameters['dynamic_auto_advance'] = False
+        if uses_cloud_language(parameters):
+            # Validate login before saving. This does not invoke or charge the model.
+            try:
+                with project_language_scope(user_id, parameters):
+                    pass
+            except RuntimeError as exc:
+                raise HTTPException(401, '请先登录云端账户，再切换本项目的规划渠道') from exc
+        record['creation_parameters'] = parameters
+        record['revision'] += 1
+        label = '云端语言模型号池' if uses_cloud_language(parameters) else '个人 API 配置'
+        record.setdefault('logs', []).append('本项目规划渠道已切换为' + label + '；已有素材保留，已暂停自动继续，请手动重试规划或生成。')
+        save(path, record)
+        return record
+
 
 @router.get('/sources')
 def sources(request: Request):

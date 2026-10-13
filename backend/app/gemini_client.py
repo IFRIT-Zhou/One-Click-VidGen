@@ -590,6 +590,12 @@ def _generate_openai_compatible_text(
                 break
 
             message = _extract_error_message(response)
+            if response.status_code == 401 and 'APIKEY_USER_NOT_FOUND' in message:
+                raise GeminiError(
+                    f"{config['label']} 调用失败: {model}: HTTP 401 APIKEY_USER_NOT_FOUND。"
+                    "当前接口不认可已配置的 API Key。请检查密钥与接口地址是否匹配；"
+                    "如需云端号池，请在当前项目的规划渠道中切换，首页开关不会修改已有项目。"
+                )
             errors.append(f"{model}: HTTP {response.status_code} {message}")
             if response.status_code in RETRYABLE_STATUS_CODES and attempt < _gemini_retry_count():
                 time.sleep(_gemini_retry_delay(attempt))

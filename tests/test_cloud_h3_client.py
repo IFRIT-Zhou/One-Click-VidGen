@@ -113,7 +113,7 @@ class CloudVideoTests(unittest.TestCase):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         path=Path(temp.name);Image.new('RGB',(32,32),'green').save(path/'core.jpg')
         record={'id':'project','revision':1,'status':'video_generation_ready','logs':[], 'references':[],
-            'settings':{'ratio':'16:9'}, 'creation_parameters':{'video_generation_backend':'cloud_h3'},
+            'settings':{'ratio':'16:9'}, 'creation_parameters':{'video_generation_backend':'cloud_h3','language_route':'cloud','use_cloud_image_pool':False,'comfyui_h3_prompt_agent':True},
             'shots':[{'id':'s1','kind':'video','duration':1.2,'generation_duration':4,'video_prompt':'green tree',
                 'image':'core.jpg','image_status':'completed','video_status':'pending'}]}
         client=self.client();client.video_capabilities.return_value=CAPS
@@ -132,10 +132,16 @@ class CloudVideoTests(unittest.TestCase):
         client.download_to.side_effect=download
         def read(_):return copy.deepcopy(record)
         def save(_,value):record.clear();record.update(copy.deepcopy(value))
-        with patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'read',side_effect=read),patch.object(c.studio,'save',side_effect=save),patch.object(c.studio,'directory',return_value=path),patch.object(vg,'_inputs',return_value=(path/'core.jpg',)),patch('backend.app.presenter_mode.audio_policy',return_value=(False,False)),patch.object(c.threading,'Thread') as thread,patch('backend.app.pipeline.probe_media_duration',return_value=4):
+        from backend.app import language_routing, gemini_client
+        client.image_pool_runtime.return_value={'base_url':'https://pool.example','access_token':'test-token'}
+        def convert(*args,**kwargs):
+            self.assertEqual(gemini_client.language_base_url(),'https://pool.example/model-pool/v1')
+            return 'converted prompt','fixture-hash'
+        with patch.object(language_routing,'cloud_client_for',return_value=client),patch.object(vg,'convert_for_h3',side_effect=convert) as converter,patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'read',side_effect=read),patch.object(c.studio,'save',side_effect=save),patch.object(c.studio,'directory',return_value=path),patch.object(vg,'_inputs',return_value=(path/'core.jpg',)),patch('backend.app.presenter_mode.audio_policy',return_value=(False,False)),patch.object(c.threading,'Thread') as thread,patch('backend.app.pipeline.probe_media_duration',return_value=4):
             c.generate_cloud('project',vg.GenerateClips(revision=1,shot_ids=['s1']),1)
             args=thread.call_args.kwargs['args'];c._worker(*args)
         self.assertEqual(record['shots'][0]['video_status'],'completed')
+        converter.assert_called_once()
         self.assertEqual(client.video_quote.call_args.args[0]['duration_seconds'],4)
         self.assertEqual(record['shots'][0]['duration'],1.2)
         self.assertEqual(client.create_video_job.call_count,1)
