@@ -195,8 +195,16 @@ def _image_configs(record, user_id=None):
     return [{**config, 'ratio': ratio} for config in configs]
 
 
+def _material_references(record):
+    catalog = {}
+    for source, rows in (('project', record.get('references', [])), ('redraw', record.get('redraw_references', []))):
+        for row in rows:
+            catalog.setdefault(str(row['id']), {**row, 'source': source})
+    return list(catalog.values())
+
+
 def _shot_reference_paths(path, record, shot):
-    catalog = {str(row.get('id')): row for row in record.get('references', [])}
+    catalog = {str(row.get('id')): row for row in _material_references(record)}
     result = []
     for reference_id in shot.get('reference_ids', shot.get('reference_image_ids', [])):
         row = catalog.get(str(reference_id))
@@ -218,7 +226,7 @@ def _bind_material_numbers(record, shot, prompt):
     """Translate project labels to this request's selected material order once."""
     if shot.get('image_material_numbers_bound'):
         return prompt
-    catalog = {row['id']: row for row in record.get('references', [])}
+    catalog = {row['id']: row for row in _material_references(record)}
     rename = {catalog[identity].get('label', ''): f'图{index + 1}'
               for index, identity in enumerate(shot.get('reference_ids', [])) if identity in catalog}
     return re.sub(r'图\s*(\d+)(?!\d)', lambda match: rename.get('图' + match[1], match[0]), prompt)
@@ -1259,7 +1267,7 @@ def update(identity: str, data: Edit, request: Request):
                 old = previous.get(row.get('id'), {})
                 row['design_needs_review'] = bool(old.get('design_needs_review'))
                 row['previous_designs'] = old.get('previous_designs', [])
-            normalized = normalize_shots(incoming, record['scenes'], [r['id'] for r in record['references']])
+            normalized = normalize_shots(incoming, record['scenes'], [r['id'] for r in _material_references(record)])
             for shot in normalized:
                 old = previous.get(shot['id'], {})
                 if old.get('design_needs_review'):
@@ -1289,7 +1297,7 @@ def structure(identity: str, data: Structure, request: Request):
         asset_stage = record['status'] == 'image_review' or record['status'] in VIDEO_STAGE_STATUSES
         try:
             changed = edit_structure(record['shots'], record['scenes'], data.action, data.index,
-                                             data.boundary, [r['id'] for r in record['references']])
+                                             data.boundary, [r['id'] for r in _material_references(record)])
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if asset_stage:

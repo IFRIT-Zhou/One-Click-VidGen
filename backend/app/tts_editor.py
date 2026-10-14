@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import difflib
 import os
 import re
@@ -340,6 +341,49 @@ class TtsEditor:
     def status(self, job_id: str) -> dict[str, Any]:
         with self._lock:
             return dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
+
+    def pending_alignment(self, job_id, user_id):
+        project = self._project_dir(job_id, user_id)
+        pending = self._segment_dir(project) / '.regenerate' / 'pending_alignment.json'
+        if not pending.is_file():
+            return None
+        data = json.loads(pending.read_text(encoding='utf-8'))
+        return {'token': data['token'], 'indices': data['indices'],
+                'message': '新配音尚未采用。请先试听；采用估算时间后需检查字幕同步，可撤回。'}
+
+    def _alignment_fingerprint(self, project):
+        digest = hashlib.sha256()
+        for path in (self._segment_dir(project)/SEGMENT_MANIFEST,
+                     project/'other'/SUBTITLE_FILENAME, project/'other'/TIMELINE_FILENAME):
+            digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def pending_audio(self, job_id, user_id, token, index):
+        pending = self.pending_alignment(job_id, user_id)
+        if not pending or token != pending['token'] or index not in pending['indices']:
+            raise ValueError('暂存配音已变化，请刷新后重试')
+        path = self._segment_dir(self._project_dir(job_id, user_id))/'.regenerate'/'segments'/f'aligned_segment_{index:04d}.wav'
+        if not path.is_file():
+            raise ValueError('暂存配音不存在')
+        return path
+
+    def adopt_estimated(self, job, user_id, token):
+        with self._lock:
+            if self._tasks.get(job.id, {}).get('status') == 'running':
+                raise RuntimeError('请等待当前配音任务完成')
+            project = self._project_dir(job.id, user_id)
+            path = self._segment_dir(project)/'.regenerate'/'pending_alignment.json'
+            data = json.loads(path.read_text(encoding='utf-8'))
+            if data['token'] != token or data['fingerprint'] != self._alignment_fingerprint(project):
+                raise RuntimeError('配音或字幕已修改，不能直接采用旧的暂存结果')
+            files = {int(i): self.pending_audio(job.id, user_id, token, int(i)) for i in data['indices']}
+            self._tasks[job.id] = {'status': 'running', 'message': '正在采用新配音并估算字幕时间'}
+        try:
+            self._regenerate_sync(job, user_id, data['indices'], data['settings'], {}, data['subtitles'], recovery=(data, files))
+            self._set_task(job.id, status='completed', message='已采用新配音，字幕时间为估算值，请试听检查同步；可撤回上一次音频编辑。')
+        except Exception as exc:
+            self._set_task(job.id, status='failed', message=str(exc))
+            raise
 
     def revision(self, job_id: str, user_id: int) -> int:
         """Return the persisted segment revision without rebuilding editor rows."""
@@ -1498,7 +1542,7 @@ class TtsEditor:
         threading.Thread(target=work, daemon=True, name=f"tts-edit-{job.id}").start()
 
     def _regenerate_sync(
-        self, job, user_id, indices, settings_override, text_overrides, subtitle_updates,
+        self, job, user_id, indices, settings_override, text_overrides, subtitle_updates, recovery=None,
     ):
         project_dir = self._project_dir(job.id, user_id)
         manifest = self._load_manifest(project_dir)
@@ -1514,6 +1558,12 @@ class TtsEditor:
                 if originals[path]:
                     shutil.copy2(path, Path(backup)/str(n))
             try:
+                if recovery is not None:
+                    data, files = recovery
+                    restored = data['manifest']
+                    restored['subtitle_timing_estimated'] = True
+                    return self._commit_regenerated(job, user_id, indices, settings_override,
+                        {int(k): v for k, v in data['reading_texts'].items()}, subtitle_updates, restored, files, {})
                 return self._regenerate_sync_impl(job, user_id, indices, settings_override, text_overrides, subtitle_updates)
             except Exception:
                 for n, path in enumerate(paths):
@@ -1579,6 +1629,10 @@ class TtsEditor:
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         work_dir = segment_dir / ".regenerate"
+        if (work_dir / 'pending_alignment.json').is_file():
+            archive = segment_dir / '.pending_history' / uuid.uuid4().hex
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(work_dir, archive)
         shutil.rmtree(work_dir, ignore_errors=True)
         output_dir = work_dir / "output"
         generated_dir = work_dir / "segments"
@@ -1684,15 +1738,25 @@ class TtsEditor:
             _concat_wavs([generated_dir / str(generated[p]['filename']) for p in chunk_positions[index]], pending)
             pending_files[index] = pending
         self._set_task(job.id, status='running', progress=85, message='新配音已生成，正在按实际声音重新定位字幕边界')
+        pending_data = dict(token=uuid.uuid4().hex, indices=indices, settings=settings_override,
+                            subtitles=subtitle_updates, reading_texts=reading_texts, manifest=manifest,
+                            fingerprint=self._alignment_fingerprint(project_dir))
+        (segment_dir/'.regenerate'/'pending_alignment.json').write_text(json.dumps(pending_data, ensure_ascii=False), encoding='utf-8')
         alignment = _speech_alignment(project_dir, segments, pending_files, subtitle_updates, reading_texts)
+        return self._commit_regenerated(job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment)
+
+    def _commit_regenerated(self, job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment):
+        project_dir = self._project_dir(job.id, user_id)
+        segment_dir = self._segment_dir(project_dir)
+        manifest_path = segment_dir / SEGMENT_MANIFEST
+        segments = [dict(item) for item in manifest["segments"]]
+        by_index = {int(item["index"]): item for item in segments}
+        old_ranges = [(float(item["start"]), float(item["end"])) for item in segments]
+        engine = str(manifest.get("engine") or job.request.get("tts_engine") or "indextts25")
         # Generation is complete and validated, but live audio has not been
         # replaced yet.  Capture the last good state at this exact boundary.
         self._snapshot_history(project_dir, manifest, indices, "重配选中句")
         for original_index in indices:
-            generated_sources = [
-                generated_dir / str(generated[position]["filename"])
-                for position in chunk_positions[original_index]
-            ]
             destination = segment_dir / str(by_index[original_index]["filename"])
             shutil.copy2(pending_files[original_index], destination)
             # Keep the display subtitle in ``text``.  Only the synthesis layer
@@ -1796,7 +1860,7 @@ class TtsEditor:
                 message="配音精修已保存",
             )
             store.update(job, request=job.request)
-        shutil.rmtree(work_dir, ignore_errors=True)
+        shutil.rmtree(segment_dir / ".regenerate", ignore_errors=True)
         return len(subtitle_updates)
 
 

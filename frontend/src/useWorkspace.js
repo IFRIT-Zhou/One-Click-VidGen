@@ -3579,11 +3579,21 @@ function stopTtsEditorPolling() {
 async function pollTtsEditorStatus() {
   const guidedAudioReview = form.step_mode && guidedStage.value === 'audio_review'
   const module1Review = activePage.value === 'module1' && module1Job.value?.status === 'completed'
-  if ((!visualEditorOpen.value && !guidedAudioReview && !module1Review) || !visualEditorProjectId.value) return
+  // The unified studio does not necessarily set the legacy editor visibility.
+  // Keep observing a submitted task until the backend reports its terminal state.
+  const taskRunning = ttsEditor.value.task?.status === 'running'
+  if ((!visualEditorOpen.value && !guidedAudioReview && !module1Review && !taskRunning) || !visualEditorProjectId.value) return
+  const projectId = visualEditorProjectId.value
   try {
-    const payload = await api.ttsEditorStatus(visualEditorProjectId.value)
+    const payload = await api.ttsEditorStatus(projectId)
+    if (visualEditorProjectId.value !== projectId) return
     const previous = ttsEditor.value.task?.status
-    ttsEditor.value.task = payload.task || ttsEditor.value.task
+    if (!payload.task?.status) throw new Error('状态接口未返回任务状态')
+    const currentUpdate = Number(ttsEditor.value.task?.updated_at || 0)
+    const incomingUpdate = Number(payload.task.updated_at || 0)
+    if (currentUpdate && incomingUpdate && incomingUpdate < currentUpdate) return
+    ttsEditor.value.task = { ...payload.task, poll_error: '' }
+    ttsEditor.value.pending_alignment = payload.pending_alignment || null
     const persistedRevision = Number(payload.revision || 0)
     const displayedRevision = Number(ttsEditor.value.revision || 0)
     const completedWithNewSegments = payload.task?.status === 'completed' && persistedRevision > displayedRevision
@@ -3603,8 +3613,9 @@ async function pollTtsEditorStatus() {
       }
       restoreTtsPreviewPlayers()
     }
-  } catch {
-    // Main job log remains visible if one polling request fails.
+  } catch (error) {
+    if (visualEditorProjectId.value !== projectId) return
+    ttsEditor.value.task = { ...ttsEditor.value.task, poll_error: '暂时无法同步重配状态，正在自动重试；请勿重复提交。' }
   }
 }
 

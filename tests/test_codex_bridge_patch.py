@@ -32,6 +32,52 @@ class PatchTests(unittest.TestCase):
     def run_patch(self, commit=True):
         return self.client.post(self.endpoint('patch-apply' if commit else 'patch-validate'), json=self.repair)
 
+    def test_redraw_library_bindings_reach_native_and_bridge_generation(self):
+        from backend.app import codex_image_generation as images
+        r = self.load()
+        r['redraw_references'] = [{'id': 'uploaded-photo', 'file': 'assets/other.jpg', 'label': '照片'}]
+        r['shots'][0]['redraw_selection'] = {'reference_ids': [], 'use_current_image': True, 'use_scene_reference': False}
+        bridge.studio.save(self.path, r)
+        self.repair['shots'][0].update(reference_ids=['uploaded-photo'], image_prompt='主体处于初始状态，图1为主体外观参考，清晰全景')
+        result = self.run_patch().json()
+        self.assertTrue(result['ok'], result)
+        after = self.load(); shot = after['shots'][0]
+        self.assertEqual(shot['reference_ids'], ['uploaded-photo'])
+        self.assertEqual(shot['redraw_selection']['reference_ids'], ['uploaded-photo'])
+        self.assertFalse(shot['redraw_selection']['use_current_image'])
+        self.assertEqual(bridge.studio._shot_reference_paths(self.path, after, shot), [str((self.path/'assets/other.jpg').resolve())])
+        pack = bridge.compact_pack(after, self.path)
+        row = next(r for r in pack['references'] if r['id']=='uploaded-photo')
+        self.assertEqual(row['source'], 'redraw')
+        self.assertEqual(self.client.get(row['url']).status_code, 200)
+        item = images.BatchItem(shot_id=shot['id'], request_id='reference-binding-test')
+        with patch.object(bridge.studio, '_image_configs', return_value=[{'method': 'mock'}]):
+            public, frozen = images.prepare(self.path, after, item, {'id': 1})
+        self.assertEqual(public['reference_ids'], ['uploaded-photo'])
+        self.assertEqual(public['actual_reference_count'], 1)
+        self.assertEqual(frozen['refs'], [str((self.path/'assets/other.jpg').resolve())])
+        self.assertEqual(after['audio'], self.before['audio'])
+        self.assertEqual(after['scenes'], self.before['scenes'])
+
+    def test_redraw_library_missing_or_external_files_rejected(self):
+        for file in ('assets/not-found.jpg', '../outside.jpg'):
+            r = self.load(); r['redraw_references'] = [{'id': 'bad-ref', 'file': file}]
+            bridge.studio.save(self.path, r)
+            self.repair['shots'][0].update(reference_ids=['bad-ref'])
+            result = self.run_patch(False).json()
+            self.assertFalse(result['ok'], result)
+            self.assertEqual(self.load()['shots'][0].get('reference_ids'), self.before['shots'][0].get('reference_ids'))
+
+    def test_clear_binding_clears_stale_redraw_selection(self):
+        r = self.load(); r['redraw_references'] = [{'id':'photo', 'file':'assets/other.jpg'}]
+        r['shots'][0]['reference_ids']=['photo']
+        r['shots'][0]['redraw_selection']={'reference_ids':['photo'], 'use_current_image':True}
+        bridge.studio.save(self.path,r)
+        self.repair['shots'][0]['reference_ids']=[]
+        result=self.run_patch().json()
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(self.load()['shots'][0]['redraw_selection']['reference_ids'],[])
+
     def test_patch_dry_run_no_writes(self):
         raw = (self.path/'record.json').read_bytes()
         result = self.run_patch(False).json()

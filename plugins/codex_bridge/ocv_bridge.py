@@ -24,11 +24,16 @@ def main(argv=None):
         sub.add_parser(name).add_argument('file')
     for name in ('draft-get', 'pack', 'scene-assets', 'generation-settings-get'):
         sub.add_parser(name).add_argument('id')
+    for name in ('shot-pack', 'references-preview'):
+        p = sub.add_parser(name); p.add_argument('id'); p.add_argument('shot_id')
+        if name == 'references-preview':
+            p.add_argument('--use-current-image', action=argparse.BooleanOptionalAction, default=None)
+            p.add_argument('--use-scene-reference', action=argparse.BooleanOptionalAction, default=None)
+    p = sub.add_parser('image-upload'); p.add_argument('id'); p.add_argument('file')
     p = sub.add_parser('image-status'); p.add_argument('id')
     p.add_argument('--request-id'); p.add_argument('--batch-id')
     for name in ('generation-settings-patch', 'image-batch-control'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('file')
-
     for name in ('draft-archive', 'draft-restore'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('--revision', type=int, required=True)
     p = sub.add_parser('from-audio')
@@ -36,7 +41,6 @@ def main(argv=None):
     for name in ('validate', 'apply', 'patch-validate', 'patch-apply', 'scene-validate', 'scene-apply', 'image-validate', 'image-apply', 'image-batch-validate', 'image-batch-apply'):
         p = sub.add_parser(name); p.add_argument('id'); p.add_argument('file')
         if name in ('scene-apply', 'image-apply', 'image-batch-apply'):
-
             p.add_argument('--confirmed', action='store_true', required=True,
                            help='Confirm the previously inspected affected-shot list')
     args = parser.parse_args(argv)
@@ -68,16 +72,18 @@ def main(argv=None):
             result = info
         elif args.command in ('guide', 'schema', 'projects', 'drafts', 'audio-tasks'):
             result = call(prefix + '/' + args.command)
-        elif args.command == 'upload':
+        elif args.command in ('upload', 'image-upload'):
             path = Path(args.file)
-            if not path.is_file() or path.stat().st_size > 100 * 1024 * 1024:
-                parser.error('Upload must be an existing file no larger than 100 MB')
+            limit = 30 if args.command == 'image-upload' else 100
+            if not path.is_file() or path.stat().st_size > limit * 1024 * 1024:
+                parser.error(f'Upload must be an existing file no larger than {limit} MB')
             boundary = uuid.uuid4().hex
             filename = 'reference' + path.suffix.lower()
             header = (f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
                       f'Content-Type: {mimetypes.guess_type(filename)[0] or "application/octet-stream"}\r\n\r\n')
             body = header.encode() + path.read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
-            result = call('/api/editor/uploads', method='POST', body=body,
+            endpoint = prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/uploads' if args.command == 'image-upload' else '/api/editor/uploads'
+            result = call(endpoint, method='POST', body=body,
                           headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
         elif args.command == 'draft-save':
             result = call(prefix + '/drafts', json.loads(Path(args.file).read_text(encoding='utf-8-sig')), 'PUT')
@@ -90,6 +96,13 @@ def main(argv=None):
             result = call(prefix + '/from-audio', {'job_id': args.job_id, 'audio_confirmed': args.confirmed}, 'POST')
         elif args.command == 'pack':
             result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/pack')
+        elif args.command in ('shot-pack', 'references-preview'):
+            endpoint = prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/shots/' + urllib.parse.quote(args.shot_id, safe='')
+            if args.command == 'references-preview':
+                query = urllib.parse.urlencode({k: str(v).lower() for k, v in {
+                    'use_current_image': args.use_current_image, 'use_scene_reference': args.use_scene_reference}.items() if v is not None})
+                endpoint += '/references-preview' + ('?' + query if query else '')
+            result = call(endpoint)
         elif args.command == 'scene-assets':
             result = call(prefix + '/projects/' + urllib.parse.quote(args.id, safe='') + '/scene-assets')
         elif args.command == 'image-status':
@@ -106,30 +119,38 @@ def main(argv=None):
             payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
             path = prefix + '/projects/' + urllib.parse.quote(args.id, safe='')
             if args.command in ('image-apply', 'image-batch-apply'):
-
                 payload['confirmed'] = args.confirmed
             result = call(path + '/' + args.command, payload, 'POST')
         else:
             payload = json.loads(Path(args.file).read_text(encoding='utf-8-sig'))
             path = prefix + '/projects/' + urllib.parse.quote(args.id, safe='')
             operation = 'scene-' if args.command.startswith('scene-') else 'patch-' if args.command.startswith('patch-') else ''
-            result = call(path + '/' + operation + 'validate', payload, 'POST')
+            # New servers validate + backup + read back in one atomic patch call.
+            if args.command == 'patch-apply' and 'patch_verification' in info.get('capabilities', []):
+                result = call(path + '/patch-apply', payload, 'POST')
+                if result.get('ok') and not result.get('readback_verified'):
+                    raise RuntimeError('Missing server-side patch verification')
+            else:
+                result = call(path + '/' + operation + 'validate', payload, 'POST')
             if args.command in ('apply', 'patch-apply', 'scene-apply') and result.get('ok'):
-                if args.command == 'scene-apply':
-                    # Never silently confirm a changed preview on behalf of the user.
-                    if payload.get('confirmation_token') != result.get('confirmation_token'):
-                        raise RuntimeError('Scene preview changed or token missing; run scene-validate and inspect impacts first')
-                    payload['confirmed'] = args.confirmed
-                result = call(path + '/' + operation + 'apply', payload, 'POST')
-                pack = call(path + '/pack')
-                if pack['revision'] != result['revision']:
-                    raise RuntimeError('Project changed after import; reread pack')
-                if args.command == 'scene-apply':
-                    state = hashlib.sha256(json.dumps(pack.get('scene_assets', []), ensure_ascii=False,
-                        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-                    if state != result.get('scene_state_token'):
-                        raise RuntimeError('Scene readback differs from applied proposal; reread pack')
-                result['readback_verified'] = True
+                if args.command == 'patch-apply' and 'patch_verification' in info.get('capabilities', []):
+                    pass  # No whole-project readback; receipt is already verified.
+                else:
+                    if args.command == 'scene-apply':
+                        # Never silently confirm a changed preview on behalf of the user.
+                        if payload.get('confirmation_token') != result.get('confirmation_token'):
+                            raise RuntimeError('Scene preview changed or token missing; run scene-validate and inspect impacts first')
+                        payload['confirmed'] = args.confirmed
+                    result = call(path + '/' + operation + 'apply', payload, 'POST')
+                    pack = call(path + '/pack')
+                    if pack['revision'] != result['revision']:
+                        raise RuntimeError('Project changed after import; reread pack')
+                    if args.command == 'scene-apply':
+                        state = hashlib.sha256(json.dumps(pack.get('scene_assets', []), ensure_ascii=False,
+                            sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                        if state != result.get('scene_state_token'):
+                            raise RuntimeError('Scene readback differs from applied proposal; reread pack')
+                    result['readback_verified'] = True
         if args.out:
             out = Path(args.out); out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -138,6 +159,8 @@ def main(argv=None):
                               'items': len(result.get('items', [])), 'shots': len(result.get('shots', [])),
                               'changed': result.get('changed', []), 'impacts': result.get('impacts', []),
                               'written': result.get('written', False), 'readback_verified': result.get('readback_verified', False),
+                              'upload_id': result.get('upload_id'), 'reference_id': result.get('reference_id'),
+                              'image': result.get('image'), 'verification': result.get('verification'),
                               'errors': result.get('errors', [])}, ensure_ascii=False))
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))

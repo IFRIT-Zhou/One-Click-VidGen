@@ -37,10 +37,9 @@ class ImageStudioTests(unittest.TestCase):
                 if results and str(results[-1].get('status','')).upper() == 'SUCCESS':
                     responses.append(download)
                 session.request.side_effect=responses
-            studio.ACTIVE.add(1)
+            # Queue worker owns ACTIVE lifecycle; this test exercises transport only.
             with patch.object(studio.requests,'Session',return_value=session):
                 studio.execute(1,path,record,dict(endpoint='https://example.com/generate',query_url='https://example.com/query',api_key='secret',refresh_token='refresh',cloud_base_url='https://example.com',cloud_pool='1'))
-            self.assertNotIn(1,studio.ACTIVE)
             stored=json.loads((path/'record.json').read_text(encoding='utf-8'))
             self.assertNotIn('secret',json.dumps(stored))
             return session,stored

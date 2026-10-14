@@ -1,4 +1,4 @@
-# Codex 制作桥（插件 1.4 / 接口 v1）
+# Codex 制作桥（插件 1.6 / 接口 v1）
 
 可选的 OCV 制作接口插件。宿主提供受控接口，清单启用后才可调用；不执行任意第三方代码。在“插件与设置”停用即可关闭接口，不删除项目。
 
@@ -9,7 +9,7 @@
 3. 在 OCV 生成并修正配音、字幕，点 **确认配音，交给 Codex 规划**，不必先跑 OCV 自动规划。
 4. Codex 导入方案后，重新打开分镜核查，再由你生成图片、视频。
 
-这是通用的动态视频交接插件，适用于故事、科普、产品介绍等领域。专业创作可另加私人 Skill，不捆绑任何人的稿件或私有规则。规划及场景管理不调用外部生成；用户明确授权后可提交指定镜头图片重绘（可能收费），并查询状态。用户交给 Codex 的资料仍受所用 Codex 服务的数据处理规则约束。
+这是通用的动态视频交接插件，适用于故事、科普、产品介绍等领域。专业创作可另加私人 Skill，不捆绑任何人的稿件或私有规则。插件本身不调用外部模型；用户交给 Codex 的资料仍受所用 Codex 服务的数据处理规则约束。
 
 ## 随软件附带的 Codex Skill
 
@@ -20,6 +20,10 @@
 目前桥接的是动态视频草稿与分镜规划，不是图文视频编辑或一键全自动出片；它也不是 MCP 服务。完整操作契约以随包 Skill 和接口 schema 为准。
 
 ## 固定客户端
+
+1.6 的局部返修优先用 `shot-pack <项目ID> <shot_id>`，不拉全片。新增 `image-upload <项目ID> <文件>` 将参考图/替换成图暂存并返回稳定 ID，不增加项目版本；在一次 `patch-apply` 中提交提示词、reference_ids、动态方案及 image_upload_id。旧素材保留，服务端校验、备份、原子保存并回读，只增加一次版本。只换图时可仅提交 id/image_upload_id。
+
+`references-preview <项目ID> <shot_id>` 在分镜审核阶段也可只读核对实际附图、顺序、哈希和图号映射，不要求配置生成 API。写入回执直接给出图片元数据、参考映射和配音/时间轴/其他镜头保护核查结果，无须再次下载全包比对。机械校验不替代视觉审核。详见通用 Skill 第5节；必须核对运行时 info 的 1.6 能力，旧后端需通过启动器重新加载。
 
 脚本只依赖 Python 标准库，不导入 OCV 内部模块。全局参数放在子命令之前。
 
@@ -37,6 +41,9 @@
 & '<python>' '<client>' apply '<动态项目ID>' '<plan.json>'
 & '<python>' '<client>' patch-validate '<动态项目ID>' '<patch.json>'
 & '<python>' '<client>' patch-apply '<动态项目ID>' '<patch.json>'
+& '<python>' '<client>' shot-pack '<动态项目ID>' '<shot_id>'
+& '<python>' '<client>' references-preview '<动态项目ID>' '<shot_id>'
+& '<python>' '<client>' image-upload '<动态项目ID>' '<图片.png>'
 ```
 
 默认地址 `http://127.0.0.1:8010`，用 `--base-url` 修改。需要登录时用用户提供的现有 Netscape cookie 文件 `--cookie-file`，不伪造会话。`--out` 保存全文，只打印小回执，避免重复读取巨大上下文。接口不可用时报告，不退回直接覆盖 record.json。
@@ -80,8 +87,8 @@ plan.json 示例（token 替换为资料包原值）：
 
 validate 不落盘；apply 再次校验版本、备份、原子提交并回读，重复请求有去重回执。失败只修指定镜头，不重新遍历源码或编写一次性写回脚本。机械检查不代表事实审核通过。
 
-完整导入仅用于无已生成素材的分镜草案。插件 1.2 提供已有素材的局部返修：`patch.json` 顶层仍为 revision、timeline_token、audio_confirmed:true、shots，但只提交要修改的镜头；每镜只允许 id 和 intent/image_prompt/reference_ids/motion_plan/video_prompt/evidence。省略字段保持原值，null 不合法。保持时间轴、动静类型、单镜生成配置与未指定镜头不变。
+完整导入仅用于无已生成素材的分镜草案。局部返修 `patch.json` 顶层仍为 revision、timeline_token、audio_confirmed:true、shots，但只提交要修改的镜头；每镜只允许 id 和 intent/image_prompt/reference_ids/motion_plan/video_prompt/evidence/image_upload_id。省略字段保持原值，null 不合法。保持时间轴、动静类型、单镜生成配置与未指定镜头不变。
 
-返修的图像提示词采用 **reference_ids 选中顺序的局部图号**；不同于完整导入的项目图号。更换引用时必须同时更新图像提示词。修改 motion_plan 而省略 video_prompt 时，确定性重编后者。先看 patch-validate 的 impacts，再 patch-apply；批量全部校验通过才写入，带版本/音轨校验、备份、原子提交与重复请求去重。
+返修的图像提示词采用 **reference_ids 选中顺序的局部图号**；不同于完整导入的项目图号。更换引用时必须同时更新图像提示词。修改 motion_plan 而省略 video_prompt 时，确定性重编后者。授权明确时直接 patch-apply；需要预览影响时先 patch-validate。批量全部校验通过才写入，带版本/音轨校验、备份、原子提交与重复请求去重。
 
-旧图保留并提示待核查，受影响的旧视频保留到历史、不再自动参与合成；旧成片文件不删除，但完成状态撤回到审核阶段。接口不自动重绘、生成或扣费。intent/evidence 单独变更不使素材过期。详见随包 Skill 的“已有素材的局部返修”。私人 Skill、项目证据及原始资料不进入公开更新。
+仅改方案时旧图保留并提示待核查；同时提交新图时旧图归档，新图与方案在同一版本生效。受影响的旧视频保留到历史、不再自动参与合成；旧成片文件不删除，但完成状态撤回到审核阶段。接口不自动重绘、生成或扣费。intent/evidence 单独变更不使素材过期。详见随包 Skill 的“已有素材的局部返修”。私人 Skill、项目证据及原始资料不进入公开更新。

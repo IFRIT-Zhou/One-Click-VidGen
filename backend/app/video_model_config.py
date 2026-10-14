@@ -13,7 +13,7 @@ from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from module6_dynamic_video import DEFAULT_BASE_URL, QUERY_PATH, SUBMIT_PATH, UPLOAD_PATH
 from .auth import require_user
@@ -42,6 +42,13 @@ class VideoModelRequest(BaseModel):
     per_key_concurrency: int = Field(default=1, ge=1, le=8)
     total_concurrency: int = Field(default=3, ge=1, le=32)
     use_image_credentials: bool = False
+
+    @model_validator(mode='before')
+    @classmethod
+    def protocol_concurrency_default(cls, values):
+        if isinstance(values, dict) and 'per_key_concurrency' not in values:
+            values = {**values, 'per_key_concurrency': 3 if values.get('protocol') == 'ark' else 1}
+        return values
 
 
 def _unique_keys(values: list[str]) -> list[str]:
@@ -155,8 +162,9 @@ def load_config() -> dict[str, Any]:
     usable_keys = keys if saved_base else []
     mode = str(values.get("VIDEO_CONCURRENCY_MODE") or "auto").lower()
     mode = mode if mode in {"auto", "manual"} else "auto"
-    try: per_key = max(1, min(8, int(values.get("VIDEO_PER_KEY_CONCURRENCY") or 1)))
-    except ValueError: per_key = 1
+    default_per_key = 3 if values.get('VIDEO_PROTOCOL') == 'ark' else 1
+    try: per_key = max(1, min(8, int(values.get("VIDEO_PER_KEY_CONCURRENCY") or default_per_key)))
+    except ValueError: per_key = default_per_key
     try: total = max(1, min(32, int(values.get("VIDEO_TOTAL_CONCURRENCY") or 3)))
     except ValueError: total = 3
     capacity = len(usable_keys) * per_key

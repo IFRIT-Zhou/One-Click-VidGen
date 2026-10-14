@@ -1,5 +1,6 @@
 """Independent single-image workspace. One submission, no automatic retries."""
 import base64
+import hashlib
 import json
 import mimetypes
 import os
@@ -21,7 +22,54 @@ from .cloud_image_channel import ImageSize
 router = APIRouter(prefix='/api/image-studio')
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'image_studio'
 LOCK = threading.RLock()
-ACTIVE: set[int] = set()
+ACTIVE: set[tuple[int, str]] = set()
+QUEUED = []
+RUNNING_LANES = {}
+
+
+def enqueue(user, path, record, config, client=None):
+    import module4_video_render as visual
+    lane = hashlib.sha256((str(user)+'|'+str(config.get('endpoint'))+'|'+str(config.get('api_key'))).encode()).hexdigest()
+    limit = min(32, visual._poster_worker_count([config], 32))
+    with LOCK:
+        key = (user, record['id'])
+        if key in ACTIVE:
+            raise RuntimeError('该图片已经在队列中')
+        if sum(u == user for u, _ in ACTIVE) >= 100:
+            raise RuntimeError('图片队列已满，请等待部分任务完成')
+        record.update(status='queued', message='已加入队列，等待出图名额')
+        save(path, record)
+        ACTIVE.add(key)
+        QUEUED.append((user, path, record, config, client, lane, limit))
+        dispatch()
+
+
+def dispatch():
+    # All callers hold LOCK; each worker owns an immutable submission snapshot.
+    for entry in list(QUEUED):
+        user, path, record, config, client, lane, limit = entry
+        if RUNNING_LANES.get(lane, 0) >= limit:
+            continue
+        QUEUED.remove(entry)
+        RUNNING_LANES[lane] = RUNNING_LANES.get(lane, 0) + 1
+        record.update(status='running', message='正在提交')
+        save(path, record)
+        def work(entry=entry):
+            user, path, record, config, client, lane, _ = entry
+            try:
+                execute(user, path, record, config, client)
+            finally:
+                with LOCK:
+                    ACTIVE.discard((user, record['id']))
+                    RUNNING_LANES[lane] -= 1
+                    dispatch()
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            ACTIVE.discard((user, record['id']))
+            RUNNING_LANES[lane] -= 1
+            record.update(status='failed', message='启动出图任务失败：'+str(exc))
+            save(path, record)
 
 
 class ImageRequest(BaseModel):
@@ -221,8 +269,6 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
                     'refresh_token': config.get('refresh_token'),
                     'expires_in': 900,
                 })
-            with LOCK:
-                ACTIVE.discard(user)
 
 
 @router.post('')
@@ -230,10 +276,6 @@ def create(data: ImageRequest, request: Request):
     user = int(require_user(request)['id'])
     if not data.prompt.strip():
         raise HTTPException(400, '请填写提示词')
-    with LOCK:
-        if user in ACTIVE:
-            raise HTTPException(409, '图片工作室已有图片正在生成')
-        ACTIVE.add(user)
     path = None
     try:
         config, cloud_pool_client = config_for(user, data)
@@ -269,11 +311,12 @@ def create(data: ImageRequest, request: Request):
             divisor = gcd(width, height)
             record['ratio'] = f'{width // divisor}:{height // divisor}'
         save(path, record)
-        threading.Thread(target=execute, args=(user,path,record,config,cloud_pool_client), daemon=True).start()
+        enqueue(user, path, record, config, cloud_pool_client)
         return record
     except Exception as exc:
-        with LOCK:
-            ACTIVE.discard(user)
+        if path is not None and (path/'record.json').is_file():
+            record.update(status='failed', message=str(exc))
+            save(path, record)
         if getattr(exc, 'code', '') == 'CLOUD_LOGIN_REQUIRED':
             raise HTTPException(401, '[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录') from exc
         raise HTTPException(400, str(exc)) from exc
@@ -284,8 +327,6 @@ def resume_image(identity: str, request: Request):
     user = int(require_user(request)['id'])
     path = folder(user, identity)
     with LOCK:
-        if user in ACTIVE:
-            raise HTTPException(409, '请等待当前图片生成完成')
         if not (path / 'record.json').is_file():
             raise HTTPException(404, '图片记录不存在')
         record = json.loads((path / 'record.json').read_text(encoding='utf-8'))
@@ -301,8 +342,7 @@ def resume_image(identity: str, request: Request):
             raise
         record.update(status='running', message='继续获取原任务结果')
         save(path, record)
-        ACTIVE.add(user)
-        threading.Thread(target=execute, args=(user, path, record, config, client), daemon=True).start()
+        enqueue(user, path, record, config, client)
     return record
 
 
@@ -313,10 +353,25 @@ def history(request: Request):
     with LOCK:
         for file in (ROOT/str(user)).glob('*/record.json'):
             record = json.loads(file.read_text(encoding='utf-8'))
-            if record['status'] == 'running' and user not in ACTIVE:
-                record.update(status='failed', message='后端已重启，远端结果尚未确认，请核对扣费后再生成')
+            if record['status'] in ('running', 'queued') and (user,record['id']) not in ACTIVE:
+                record.update(status='failed', message='后端已重启，排队任务未自动提交；如任务此前已运行，请核对远端结果后再生成')
             records.append(record)
     return {'items': sorted(records, key=lambda item:item['created_at'], reverse=True)}
+
+
+@router.post('/{identity}/cancel-queue')
+def cancel_queued(identity: str, request: Request):
+    user = int(require_user(request)['id'])
+    with LOCK:
+        entry = next((e for e in QUEUED if e[0] == user and e[2]['id'] == identity), None)
+        if entry is None:
+            raise HTTPException(409, '任务已经开始或不在队列中，不能取消排队')
+        QUEUED.remove(entry)
+        ACTIVE.discard((user, identity))
+        record = entry[2]
+        record.update(status='cancelled', message='已取消排队，未提交出图')
+        save(entry[1], record)
+        return record
 
 
 @router.get('/{identity}/files/{name}')
@@ -332,7 +387,7 @@ def image_file(identity: str, name: str, request: Request):
 def remove(request: Request, identity: str = ''):
     user = int(require_user(request)['id'])
     with LOCK:
-        if user in ACTIVE:
+        if any(u == user and (not identity or i == identity) for u, i in ACTIVE):
             raise HTTPException(409, '请等待当前生成完成后删除历史')
         paths = [folder(user,identity)] if identity else list((ROOT/str(user)).glob('*'))
         for path in paths:

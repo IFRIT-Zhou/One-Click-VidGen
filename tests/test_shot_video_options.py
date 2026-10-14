@@ -13,6 +13,22 @@ from backend.app import comfyui_bridge as bridge
 
 
 class ShotVideoOptionsTests(unittest.TestCase):
+    def test_merge_accepts_uploaded_reference_without_dropping_materials(self):
+        self.record.update(status='image_review', references=[],
+            redraw_references=[{'id': 'uploaded', 'file': 'assets/reference.png'}],
+            scenes=[{'slide_id': 's1', 'start': 0, 'end': 4, 'text': '前'},
+                    {'slide_id': 's2', 'start': 4, 'end': 8, 'text': '后'}],
+            shots=[{'id': 'a', 'kind': 'static', 'slide_ids': ['s1'],
+                    'reference_ids': ['uploaded'], 'video_status': 'pending'},
+                   {'id': 'b', 'kind': 'static', 'slide_ids': ['s2'], 'video_status': 'pending'}])
+        materials = copy.deepcopy(self.record['redraw_references'])
+        scenes = copy.deepcopy(self.record['scenes'])
+        video.studio.structure('test', video.studio.Structure(revision=1, action='merge', index=0), None)
+        self.assertEqual(len(self.record['shots']), 1)
+        self.assertEqual(self.record['shots'][0]['reference_ids'], ['uploaded'])
+        self.assertEqual(self.record['redraw_references'], materials)
+        self.assertEqual(self.record['scenes'], scenes)
+
     def test_split_inherits_independent_core_image(self):
         image = self.path / 'source.jpg'
         Image.new('RGB', (16, 16), 'red').save(image)

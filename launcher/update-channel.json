@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.13.2",
-  "release_order": 2026101302,
-  "display_version": "2026.10.13 规划渠道与参考图、H3校验修复",
+  "release_id": "2026.10.14.1",
+  "release_order": 2026101401,
+  "display_version": "2026.10.14 制作桥1.6与并发、配音修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.13.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.14.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "同步项目级规划渠道选择及密钥认证提示；修复后来上传的参考图被误报缺失，显示素材名称；修复H3将中文问号转换为英文问号时误判新增文字。保留用户配置、配音、模型及素材，不自动生成。",
+  "notes": "制作桥升级1.6，支持单镜资料、图片暂存和图文原子修改；图片工作室支持连续排队及并发；修复配音重配状态刷新，支持确认后采用保留的新配音与估算字幕时间；火山接口默认单Key并发3；修复合并分镜误拒绝后来上传的参考素材。保留用户配置、模型与项目，不自动生成。",
   "content_fingerprint": "4d12d532f48b33490af07d2b724406799c555cc26c4e0d3d188f8302ee9ce9fe"
 }

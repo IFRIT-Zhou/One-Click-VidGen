@@ -134,26 +134,8 @@ def prepare(path, record, item, user):
     shot = bridge.studio._find_shot(record, item.shot_id)
     if bridge.studio.image_edit_key(record['id'], item.shot_id) in bridge.studio.IMAGE_EDITS or (shot.get('image_task') or {}).get('status') in LIVE:
         fail('SHOT_BUSY', '本镜已有图片任务，请查询状态，不要重复提交。', shot_id=item.shot_id, retry_after=3)
-    selection = shot.get('redraw_selection') or {}
-    ids = list(selection.get('reference_ids', shot.get('reference_ids', [])))
-    current = item.use_current_image if item.use_current_image is not None else selection.get('use_current_image', False)
-    scene = item.use_scene_reference if item.use_scene_reference is not None else selection.get('use_scene_reference', True)
-    rows = {str(r['id']): r for r in [*record.get('references', []), *record.get('redraw_references', []),
-                                    *bridge.studio._scene_redraw_references(record)]}
-    if len(set(ids)) != len(ids) or any(i not in rows for i in ids) or len(ids) + int(current) > 3:
-        fail('INVALID_REFERENCES', '参考图选择无效或超过三张手动参考图。', 422)
-    refs, kinds = [], []
-    if current:
-        refs.append(str(bridge.studio._storyboard_image_path(path, shot).resolve())); kinds.append('current_image')
-    for i in ids:
-        refs.append(str((path / rows[i]['file']).resolve())); kinds.append('reference')
-    for p in refs:
-        if path.resolve() not in Path(p).parents or not Path(p).is_file():
-            fail('REFERENCE_MISSING', '选中的参考图文件不存在。', 422)
-    try:
-        prompt, refs, asset = bridge.studio._image_inputs(path, record, shot, shot['image_prompt'], references=refs, use_scene=scene)
-    except ValueError as exc:
-        fail('INVALID_REFERENCES', str(exc), 422)
+    prompt, refs, asset, ids, mapping = reference_inputs(path, record, shot,
+        use_current_image=item.use_current_image, use_scene_reference=item.use_scene_reference)
     try:
         configs = copy.deepcopy(bridge.studio._image_configs(record, user['id']))
     except Exception as exc:
@@ -169,15 +151,55 @@ def prepare(path, record, item, user):
     state = target_state(path, record, shot)
     snapshot = bridge.digest({'state': state, 'options': item.model_dump(), 'prompt': prompt, 'files': files, 'configs': configs})
     public = {'shot_id': item.shot_id, 'request_id': item.request_id, 'target_snapshot': snapshot,
-        'actual_reference_count': len(refs), 'reference_ids': ids,
-        'references': [{'local_image_number': n+1, 'kind': kinds[n] if n < len(kinds) else 'scene_reference',
-                        'file': str(Path(p).relative_to(path.resolve()))} for n, p in enumerate(refs)],
+        'actual_reference_count': len(refs), 'reference_ids': ids, 'references': mapping,
         'effective_image_config': {**effective(record), 'image_resolution': configs[0].get('resolution', effective(record)['image_resolution']),
             'providers': [{k: c.get(k) for k in ('method', 'model', 'resolution', 'size') if k in c} for c in configs],
             'configuration_version': bridge.digest(configs)}}
     frozen = {'record': copy.deepcopy(record), 'prompt': prompt, 'refs': refs, 'files': files, 'configs': configs,
         'state': state, 'scene_version': asset.get('image_version', '') if asset else '', 'item': item.model_dump(), 'user_id': user['id']}
     return public, frozen
+
+
+def reference_inputs(path, record, shot, *, use_current_image=None, use_scene_reference=None):
+    """Pure input resolution, shared by inspection and generation; no stage/API checks."""
+    selection = shot.get('redraw_selection') or {}
+    ids = list(selection.get('reference_ids', shot.get('reference_ids', [])))
+    current = use_current_image if use_current_image is not None else selection.get('use_current_image', False)
+    scene = use_scene_reference if use_scene_reference is not None else selection.get('use_scene_reference', True)
+    rows = {str(r['id']): r for r in [*bridge.studio._material_references(record),
+                                    *bridge.studio._scene_redraw_references(record)]}
+    material_ids = {str(r['id']) for r in bridge.studio._material_references(record)}
+    if len(set(ids)) != len(ids) or any(i not in rows for i in ids) or len(ids) + int(current) > 4:
+        fail('INVALID_REFERENCES', '参考图选择无效或超过四张参考图。', 422)
+    refs, mapping_by_path = [], {}
+    if current:
+        p = str(bridge.studio._storyboard_image_path(path, shot).resolve())
+        refs.append(p)
+        mapping_by_path[p] = {'kind': 'current_image', 'id': shot['id'],
+            'url': f"/api/codex-bridge/projects/{record['id']}/shots/{shot['id']}/image"}
+    for i in ids:
+        p = str((path / rows[i]['file']).resolve())
+        refs.append(p)
+        mapping_by_path.setdefault(p, {'kind': 'reference' if i in material_ids else 'scene_reference', 'id': i,
+            'url': f"/api/codex-bridge/projects/{record['id']}/references/{i}" if i in material_ids
+                   else f"/api/video-studio/{record['id']}/images/{i}"})
+    for p in refs:
+        if path.resolve() not in Path(p).parents or not Path(p).is_file():
+            fail('REFERENCE_MISSING', '选中的参考图文件不存在。', 422)
+    try:
+        prompt = bridge.studio._bind_material_numbers(record, shot, shot.get('image_prompt', ''))
+        prompt, refs, asset = bridge.studio._image_inputs(path, record, shot, prompt, references=refs, use_scene=scene)
+    except ValueError as exc:
+        fail('INVALID_REFERENCES', str(exc), 422)
+    mapping = []
+    for n, p in enumerate(refs):
+        if path.resolve() not in Path(p).resolve().parents or not Path(p).is_file():
+            fail('REFERENCE_MISSING', '参考图文件不可用。', 422)
+        source = mapping_by_path.get(p) or {'kind': 'scene_reference', 'id': (asset or {}).get('id'),
+            'url': f"/api/video-studio/{record['id']}/images/{(asset or {}).get('id')}"}
+        mapping.append({**source, 'local_image_number': n + 1, 'sha256': bridge.file_hash(Path(p)),
+                        'file': str(Path(p).relative_to(path.resolve()))})
+    return prompt, refs, asset, ids, mapping
 
 
 def execute(identity, data, request, commit):

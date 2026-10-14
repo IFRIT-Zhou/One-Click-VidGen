@@ -3486,7 +3486,37 @@ def get_tts_editor(job_id: str, request: Request) -> dict[str, Any]:
 @app.get("/api/jobs/{job_id}/tts-editor/status")
 def get_tts_editor_status(job_id: str, request: Request) -> dict[str, Any]:
     _job, user_id = _owned_completed_job(job_id, request)
-    return {"task": tts_editor.status(job_id), "revision": tts_editor.revision(job_id, user_id)}
+    return {"task": tts_editor.status(job_id), "revision": tts_editor.revision(job_id, user_id),
+            "pending_alignment": tts_editor.pending_alignment(job_id, user_id)}
+
+
+class TtsEstimatedAdoption(BaseModel):
+    token: str
+    confirmed: bool = False
+
+
+@app.get('/api/jobs/{job_id}/tts-editor/pending-audio/{index}')
+def preview_pending_tts(job_id: str, index: int, token: str, request: Request):
+    _job, user_id = _owned_completed_job(job_id, request)
+    try:
+        return FileResponse(tts_editor.pending_audio(job_id, user_id, token, index), media_type='audio/wav', headers={'Cache-Control': 'no-store'})
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post('/api/jobs/{job_id}/tts-editor/adopt-estimated')
+def adopt_estimated_tts(job_id: str, payload: TtsEstimatedAdoption, request: Request):
+    job, user_id = _owned_completed_job(job_id, request)
+    if not payload.confirmed:
+        raise HTTPException(400, '需明确确认采用估算字幕时间')
+    visual_status = visual_editor.status(job_id)
+    if visual_status.get('task', {}).get('status') == 'running' or visual_status.get('has_active_image_tasks'):
+        raise HTTPException(409, '请等待当前画面任务完成')
+    try:
+        tts_editor.adopt_estimated(job, user_id, payload.token)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {'ok': True}
 
 
 @app.get("/api/jobs/{job_id}/tts-editor/audio/{index}")

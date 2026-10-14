@@ -74,6 +74,7 @@ class ShotPatch(StrictModel):
     motion_plan: dict[str, Any] | None = None
     video_prompt: str | None = Field(default=None, max_length=20000)
     evidence: str | None = Field(default=None, max_length=6000)
+    image_upload_id: str | None = Field(default=None, pattern=r'^img_[a-f0-9]{64}$')
 
     @model_validator(mode='after')
     def explicit_values(self):
@@ -147,7 +148,6 @@ def brief(record):
 def compact_pack(record, path):
     from .codex_scene_management import scene_pack
     from .codex_image_generation import effective
-
     keys = ('id', 'slide_ids', 'kind', 'intent', 'image_prompt', 'video_prompt', 'motion_plan', 'reference_ids',
             'image_material_numbers_bound', 'image_prompt_out_of_sync', 'image_status', 'video_status', 'prompt_refresh_note')
     return {'schema_version': 1, **brief(record), 'timeline_token': timeline_token(record, path),
@@ -155,9 +155,9 @@ def compact_pack(record, path):
             'subtitles': [{k: row.get(k) for k in ('slide_id', 'start', 'end', 'text')} for row in record.get('scenes', [])],
             'narration_groups': record.get('narration_groups', []),
             'effective_image_config': effective(record),
-            'references': [{k: row.get(k, '') for k in ('id', 'label', 'description', 'kind')} |
+            'references': [{k: row.get(k, '') for k in ('id', 'label', 'description', 'kind', 'source')} |
                            {'url': f"/api/codex-bridge/projects/{record['id']}/references/{row['id']}"}
-                           for row in record.get('references', [])],
+                           for row in studio._material_references(record)],
             'shots': [{k: row.get(k) for k in keys if k in row} for row in record.get('shots', [])],
             'scene_assets': scene_pack(record),
             'scene_history': record.get('codex_bridge', {}).get('scene_history', []),
@@ -179,10 +179,10 @@ def info(request: Request):
     return {'version': 1, 'name': 'Codex 制作桥', 'client_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'ocv_bridge.py'),
             'skill_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'skills' / 'ocv-production-bridge' / 'SKILL.md'),
             'guide_url': '/api/codex-bridge/guide',
-            'capabilities': ['drafts', 'draft_archive', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch', 'scene_management', 'image_generation'],
-            'plugin_version': '1.5.0', 'max_image_concurrency': 7, 'upstream_task_cancel_supported': False,
+            'capabilities': ['drafts', 'draft_archive', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch', 'scene_management', 'image_generation',
+                             'shot_pack', 'project_image_upload', 'atomic_shot_image_patch', 'reference_preview', 'patch_verification'],
+            'plugin_version': '1.6.0', 'max_image_concurrency': 7, 'upstream_task_cancel_supported': False,
             'image_capabilities': ['image_redraw', 'image_edit_current', 'image_batch', 'image_generation_config', 'image_batch_pause', 'image_cancel_pending'],
-
             'generates_media': True, 'generation_requires_confirmation': True, 'schema_url': '/api/codex-bridge/schema'}
 
 
@@ -205,7 +205,6 @@ def schema(request: Request):
     return {'image_generate': ImageGenerate.model_json_schema(), 'scene_edit': SceneEdit.model_json_schema(), 'plan': Plan.model_json_schema(), 'draft': Draft.model_json_schema(), 'shot_patch': ShotPatches.model_json_schema(),
             'image_batch': ImageBatch.model_json_schema(), 'generation_settings': GenerationSettings.model_json_schema(),
             'image_batch_control': BatchControl.model_json_schema(),
-
             'draft_fields': sorted(DRAFT_FIELDS),
             'motion_example': {'version': 2, 'scene_anchor': '固定构图，显示本镜空间关系',
                 'participants': ['主体'], 'reference_participants': ['主体'], 'reference_texts': [],
@@ -215,6 +214,10 @@ def schema(request: Request):
             'notes': ['静态镜头不填 motion_plan/video_prompt。动态必须填写 motion_plan。',
                       'shot_patch 只提交稳定 id 与要改的字段；禁止字幕、时间、动静类型、素材路径和生成设置。',
                       '局部返修 image_prompt 图号按本次 reference_ids 顺序；更换引用必须同时提交提示词。',
+                      'reference_ids 支持 project、redraw 和 image-upload 返回的当前项目暂存 ID；上传不改版本，提交绑定时纳入素材库。',
+                      '局部返修优先 shot-pack，参考图只读预检用 references-preview（不受生成阶段或 API 配置限制）。',
+                      'image_upload_id 可与提示词、参考绑定、动态方案一起 patch-apply；一次版本更新，旧图保留。只替换图片时可仅提交此字段。',
+                      'patch-apply 已含校验、备份和回读；直接检查 verification 与 readback_verified，无须再获取全片 pack。',
                       '修改 motion_plan 但省略 video_prompt 时会确定性重编视频提示词，不沿用旧文本。',
                       'video_prompt 可省略，工具按阶段方案生成；不会调用 LLM。',
                       'evidence 可保存来源位置、创作依据及表述边界，不会放进画面提示词。',
@@ -348,7 +351,7 @@ def reference(identity: str, reference_id: str, request: Request):
     user = user_for(request)
     path = studio.directory(user['id'], identity)
     record = read_record(path)
-    row = next((r for r in record.get('references', []) if r['id'] == reference_id), None)
+    row = next((r for r in studio._material_references(record) if r['id'] == reference_id), None)
     target = (path / str((row or {}).get('file', ''))).resolve()
     if not row or path.resolve() not in target.parents or not target.is_file():
         raise HTTPException(404, '参考图不存在')
@@ -422,7 +425,7 @@ def compile_plan(record, path, data, user_id=None):
             raise ValueError(f"{row['id']} 静态镜头不应包含动态阶段/视频提示词")
     if record.get('manual_groups') and [(r['id'], r['slide_ids']) for r in rows] != [(r['id'], r['slide_ids']) for r in record['shots']]:
         raise ValueError('当前项目有手动分组，整体方案必须保留镜头ID与字幕范围')
-    refs = [r['id'] for r in record.get('references', [])]
+    refs = [r['id'] for r in studio._material_references(record)]
     result = audit_storyboard(normalize_shots(rows, record['scenes'], refs), set(refs))
     return result
 
@@ -478,6 +481,7 @@ def apply(identity: str, data: Plan, request: Request):
 
 def compile_patches(record, path, data):
     """Validate only requested designs. Never renormalize the existing timeline."""
+    from .codex_shot_edit import attach_staged_references, use_replacement
     original = {s['id']: s for s in record.get('shots', [])}
     ids = [s.id for s in data.shots]
     if len(original) != len(record.get('shots', [])) or len(ids) != len(set(ids)):
@@ -486,14 +490,30 @@ def compile_patches(record, path, data):
     if unknown:
         raise ValueError('不存在的镜头 ID：' + ', '.join(sorted(unknown)))
     updated = copy.deepcopy(record)
+    attach_staged_references(path, updated, data.shots)
     target = {s['id']: s for s in updated['shots']}
     evidence = updated.setdefault('codex_bridge', {}).setdefault('evidence', {})
-    refs = {r['id']: r for r in record.get('references', [])}
+    refs = {r['id']: r for r in studio._material_references(updated)}
     impacts = []
     for patch in data.shots:
         old, row = original[patch.id], target[patch.id]
         values = patch.model_dump(exclude_unset=True, exclude={'id'})
+        upload_id = values.pop('image_upload_id', None)
         changed = {k for k, v in values.items() if v != (evidence.get(patch.id, '') if k == 'evidence' else old.get(k))}
+        if upload_id:
+            from .codex_shot_edit import staged_image
+            target_image, metadata = staged_image(path, upload_id)
+            old_image = (path / str(old.get('image') or '')).resolve()
+            same_image = (old.get('bridge_image_upload_id') == upload_id and
+                          old.get('image_version') == metadata['sha256'] and
+                          path.resolve() in old_image.parents and old_image.is_file() and
+                          file_hash(old_image) == metadata['sha256'])
+            if not same_image:
+                changed.add('image_upload_id')
+        if 'reference_ids' in values and old.get('redraw_selection') and (
+                old['redraw_selection'].get('reference_ids') != values['reference_ids'] or
+                old['redraw_selection'].get('use_current_image')):
+            changed.add('reference_ids')
         if not changed:
             continue
         if 'reference_ids' in changed and 'image_prompt' not in values:
@@ -501,7 +521,7 @@ def compile_patches(record, path, data):
         if 'evidence' in values:
             evidence[patch.id] = values.pop('evidence')
         row.update(values)
-        design_changed = bool(changed - {'evidence', 'intent'})
+        design_changed = bool(changed - {'evidence', 'intent', 'image_upload_id'})
         image_changed = bool(changed & {'image_prompt', 'reference_ids'})
         video_changed = bool(changed & {'motion_plan', 'video_prompt'})
         if 'intent' in changed and not row['intent'].strip():
@@ -539,23 +559,42 @@ def compile_patches(record, path, data):
                     if issues:
                         raise ValueError(f'{patch.id} {field}：' + '；'.join(issues))
                 video_changed |= row.get('video_prompt') != old.get('video_prompt')
+                if row.get('video_prompt') != old.get('video_prompt'):
+                    changed.add('video_prompt')
             elif row.get('motion_plan') or str(row.get('video_prompt') or '').strip():
                 raise ValueError(f'{patch.id} 静态镜头不应包含动态阶段/视频提示词')
-            audit_storyboard([row], set(refs))
+            # image_upload_id is a transport field, never a storyboard field.
+            if changed - {'image_upload_id', 'intent', 'evidence'}:
+                audit_storyboard([row], set(refs))
         if 'image_prompt' in values:
             # Repair uses the same local reference numbering as the native editor.
             row['image_material_numbers_bound'] = True
+        if 'reference_ids' in values:
+            # Native redraw choices have precedence at generation time; update
+            # that saved selection too so it cannot silently retain old IDs.
+            selection = copy.deepcopy(row.get('redraw_selection') or {})
+            selection['reference_ids'] = list(row['reference_ids'])
+            selection['use_current_image'] = False
+            row['redraw_selection'] = selection
         if image_changed:
             row['image_prompt_out_of_sync'] = bool(row.get('image') or row.get('image_file') or row.get('image_status') == 'completed')
             row['image_prompt_warnings'] = []
         if video_changed:
             row['video_prompt_warnings'] = []
+        replacement = bool(upload_id and (changed & {'image_upload_id', 'image_prompt', 'reference_ids', 'motion_plan'}))
+        if replacement:
+            use_replacement(path, row, upload_id)
+            image_changed = True
+            if 'image_upload_id' not in changed:
+                changed.add('image_upload_id')
         impacts.append({'id': patch.id, 'fields': sorted(changed), 'image_needs_review': image_changed,
+                        'image_replaced': replacement,
                         'video_needs_review': row['kind'] == 'video' and (image_changed or video_changed)})
     return updated, impacts
 
 
 def review_patches(identity, data, request, commit):
+    from .codex_shot_edit import materialize_replacement, reference_preview, verification
     user = user_for(request)
     with studio.LOCK:
         path = studio.directory(user['id'], identity)
@@ -572,6 +611,14 @@ def review_patches(identity, data, request, commit):
             # Still reject stale source audio, even when the last write was ours.
             retry = data.model_copy(update={'revision': record['revision']})
             check_edit_context(record, path, retry, user['id'])
+            if previous['summary'].get('verification'):
+                try:
+                    checked = verification(path, record, record, set(previous['summary']['changed']),
+                                           previous['summary']['verification']['audio_sha256'])
+                except (OSError, ValueError) as exc:
+                    raise HTTPException(409, '已提交的素材发生变化，请重新读取单镜资料包') from exc
+                if checked['shots'] != previous['summary']['verification']['shots']:
+                    raise HTTPException(409, '已提交的素材发生变化，请重新读取单镜资料包')
             return {**previous['summary'], 'written': False, 'already_applied': True}
         try:
             check_edit_context(record, path, data, user['id'])
@@ -581,8 +628,14 @@ def review_patches(identity, data, request, commit):
         summary = {'ok': True, 'project_id': identity, 'revision': record['revision'], 'changed': [r['id'] for r in impacts],
                    'impacts': impacts, 'written': False, 'generation_started': False,
                    'preserved': ['audio', 'subtitles', 'timing', 'shot_order', 'shot_kind', 'generation_settings', 'asset_files']}
+        if not commit:
+            summary['reference_checks'] = [reference_preview(path, updated, s) for s in updated['shots'] if s['id'] in summary['changed']]
         if not commit or not impacts:
+            if commit:
+                summary['verification'] = verification(path, record, record, {s.id for s in data.shots}, file_hash(path / record['audio']))
+                summary['readback_verified'] = True
             return summary
+        audio_hash = file_hash(path / record['audio'])
         backup_id = f"patch-{record['revision']}-{uuid.uuid4().hex}"
         studio.save(path / 'codex_bridge_backups' / backup_id, copy.deepcopy(record))
         by_id = {s['id']: s for s in updated['shots']}
@@ -593,10 +646,19 @@ def review_patches(identity, data, request, commit):
             updated.pop('export', None)
         for impact in impacts:
             row = by_id[impact['id']]
+            if impact['image_replaced']:
+                old = copy.deepcopy(next(s for s in record['shots'] if s['id'] == row['id']))
+                old_image = (path / str(old.get('image') or '')).resolve()
+                if old.get('image') and path.resolve() in old_image.parents and old_image.is_file():
+                    studio._archive_storyboard_image(path, old)
+                    row['image_history'] = old['image_history']
+                    row['baseline_image_prompt'] = old['baseline_image_prompt']
+                materialize_replacement(path, row)
             if impact['video_needs_review']:
                 studio._invalidate_shot_video(updated, row, 'Codex 局部返修已更新画面方案')
             row['prompt_refresh_note'] = ('Codex 局部返修已保存。' +
-                ('旧图保留，请检查并按新提示词重绘。' if impact['image_needs_review'] else '') +
+                ('新图与方案已一起保存，旧图已归档，请核查新图。' if impact['image_replaced'] else
+                 '旧图保留，请检查并按新提示词重绘。' if impact['image_needs_review'] else '') +
                 ('旧视频保留在历史记录，请核查后重新生成或手动选用历史版本。' if impact['video_needs_review'] else '') +
                 '配音、字幕、时长与其他镜头未变，未启动生成。')
         if any(i['image_needs_review'] for i in impacts):
@@ -610,14 +672,22 @@ def review_patches(identity, data, request, commit):
         updated.setdefault('creation_parameters', {})['dynamic_auto_advance'] = False
         updated['revision'] += 1
         summary.update(revision=updated['revision'], written=True, backup_id=backup_id)
+        summary['verification'] = verification(path, record, updated, set(summary['changed']), audio_hash)
+        summary['readback_verified'] = True
         updated['codex_bridge']['patch_receipt'] = {'receipt': receipt, 'revision': updated['revision'], 'summary': summary}
         studio.discard_planning_resume(updated)
         updated.setdefault('logs', []).append('Codex 制作桥：局部返修 ' + '、'.join(summary['changed']) + '；素材已保留，未启动生成。')
-        studio.save(path, updated)
-        actual = read_record(path)
-        if any(actual.get(k) != updated.get(k) for k in ('shots', 'scenes', 'audio', 'revision', 'codex_bridge')):
+        try:
+            studio.save(path, updated)
+            actual = read_record(path)
+            if any(actual.get(k) != updated.get(k) for k in ('shots', 'scenes', 'audio', 'revision', 'codex_bridge', 'redraw_references')):
+                raise ValueError('记录回读不一致')
+            checked = verification(path, record, actual, set(summary['changed']), audio_hash)
+            if checked != summary['verification']:
+                raise ValueError('素材回读不一致')
+        except Exception as exc:
             studio.save(path, record)
-            raise HTTPException(500, '局部返修回读不一致，已恢复原记录')
+            raise HTTPException(500, '局部返修写入或回读失败，已恢复原记录') from exc
         return summary
 
 
@@ -635,3 +705,5 @@ from .codex_scene_management import register as register_scene_management
 register_scene_management(router)
 from .codex_image_generation import register as register_image_generation
 register_image_generation(router)
+from .codex_shot_edit import register as register_shot_edit
+register_shot_edit(router)
