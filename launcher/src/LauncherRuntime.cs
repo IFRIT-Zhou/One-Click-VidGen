@@ -183,6 +183,7 @@ namespace OcvLauncher
             "tools/deploy_indextts25.ps1",
             "tools/portable_preflight.py",
             "backend/app/codex_bridge.py",
+            "backend/app/codex_shot_edit.py",
             "backend/app/codex_scene_management.py",
             "backend/app/codex_image_generation.py",
             "backend/app/openai_image_adapter.py",
