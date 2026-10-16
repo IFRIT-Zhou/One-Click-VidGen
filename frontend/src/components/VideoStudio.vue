@@ -119,13 +119,13 @@ async function applyGenerationOptionsToAll(value){
 }
 async function applyAllShotOptions(){if(selectedShot.value)await applyGenerationOptionsToAll(optionsFor(selectedShot.value))}
 function generationSummary(shot){return generationOptionsSummary(optionsFor(shot))}
-function generationOptionsSummary(options){const profile=comfyProfiles.value.find(item=>item.id===options.profile_id);return (options.backend==='cloud_h3'?'集群 H3（测试免费）':options.backend==='comfyui'?(profile?.engine==='managed'?'OCV 内置 ComfyUI · ':'外部 ComfyUI · ')+(profile?.name||'未选择工作流'):'视频 API')+' · '+(options.resolution==='custom'?options.width+' × '+options.height:options.resolution||(options.backend==='cloud_h3'?'跟随集群尺寸':profile?.resolution_preset||videoModel.value?.resolution||'跟随设置'))}
+function generationOptionsSummary(options){const profile=comfyProfiles.value.find(item=>item.id===options.profile_id);return (options.backend==='cloud_h3'?'集群 H3':options.backend==='comfyui'?(profile?.engine==='managed'?'OCV 内置 ComfyUI · ':'外部 ComfyUI · ')+(profile?.name||'未选择工作流'):'视频 API')+' · '+(options.resolution==='custom'?options.width+' × '+options.height:options.resolution||(options.backend==='cloud_h3'?'跟随集群尺寸':profile?.resolution_preset||videoModel.value?.resolution||'跟随设置'))}
 const shotConfigured=shot=>{const options=optionsFor(shot);return options.backend==='cloud_h3'?true:options.backend==='comfyui'?comfyProfiles.value.some(item=>item.id===options.profile_id):Boolean(apiVideoReady.value)}
 function confirmLongApiShots(shots){
  const invalid=shots.filter(shot=>{
   if(shot.video_request&&!shot.video_terminal&&shot.video_status!=='completed')return false
   const configured=project.value.creation_parameters?.dynamic_max_shot_duration
-  const maximum=optionsFor(shot).backend==='cloud_h3'?10:[10,15,30].includes(configured)?configured:15
+  const maximum=optionsFor(shot).backend==='cloud_h3'?15:[10,15,30].includes(configured)?configured:15
   const seconds=Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))
   return !Number.isFinite(seconds)||seconds>maximum||seconds<Number(shot.duration)
  })
@@ -149,7 +149,7 @@ async function submitVideoBatch(shots,{automated=false,regenerate=false}={}){
  if(!confirmLongApiShots(shots))return
  const lines=shots.map(shot=>'第 '+String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0')+' 镜：'+generationSummary(shot))
  const paid=shots.filter(shot=>optionsFor(shot).backend==='api').length
- if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'按各镜头的 ComfyUI 或集群 H3 配置执行；集群 H3 当前测试免费。')+'\n是否开始？'))return
+ if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'按各镜头的 ComfyUI 或集群 H3 配置执行。')+'\n是否开始？'))return
  const shot_options=Object.fromEntries(shots.map(shot=>[shot.id,normalizedOptions(optionsFor(shot))]))
  await run(async()=>{project.value=await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:shots.map(shot=>shot.id),shot_options,regenerate_completed:regenerate});for(const shot of shots)delete shotOptionDrafts.value[project.value.id+':'+shot.id];view.value='motions';videoLogsOpen.value=true})
 }
@@ -248,7 +248,7 @@ async function regenerateVideo(shot){
   ?'本镜将继续注入对应 TTS 参考音频'+(shot.reference_audio_lipsync!==false?'并要求人物对口型。':'，但不要求人物对口型。')
   :'本镜不会注入参考音频。'
  const options=optionsFor(shot),profile=comfyProfiles.value.find(item=>item.id===options.profile_id)
- const detail=options.backend==='cloud_h3'?`集群 H3 · ${options.resolution==='custom'?options.width+' × '+options.height:'集群默认 2K'}（测试免费）`:options.backend==='comfyui'?`ComfyUI · ${profile?.name||'所选工作流'} · ${options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||'工作流默认'}`:`视频 API · ${options.resolution||videoModel.value?.resolution}（可能再次计费）`
+ const detail=options.backend==='cloud_h3'?`集群 H3 · ${options.resolution==='custom'?options.width+' × '+options.height:'集群默认尺寸'}`:options.backend==='comfyui'?`ComfyUI · ${profile?.name||'所选工作流'} · ${options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||'工作流默认'}`:`视频 API · ${options.resolution||videoModel.value?.resolution}（可能再次计费）`
  if(!confirm('将按本镜生成设置重新生成：'+detail+'。\n\n'+audioNote+'\n系统自动分配新的生成编号，保留旧任务记录和视频。若原云端任务仍在运行或提交结果未知，新请求可能造成重复扣费，且不会取消原任务。\n新片段生成后将替代旧片段参与合成。确认新建生成？'))return
  await run(async()=>{acceptImageUpdate(await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:[shot.id],regenerate_completed:true,options}));productionPanel.value='video';videoLogsOpen.value=true})
 }
@@ -719,7 +719,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <p v-else-if="sceneReferencesBusy||project.scene_references_status==='failed'" class="studio-notice">{{sceneReferenceMessage||'正在准备场景参考…'}}</p>
   <button v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" :disabled="busy||imageEditRunning" @click="generateSceneReferences">补充 / 重试场景参考（调用 API）</button>
   <template v-if="videoStageReady">   <audio v-if="project.audio" ref="motionAudio" :key="narrationUrl" preload="auto" :src="narrationUrl" class="motion-narration-audio"/>
-   <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{project.creation_parameters?.video_generation_backend==='cloud_h3'?'集群 H3（测试免费）':localVideo?(project.creation_parameters.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'):'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
+   <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{project.creation_parameters?.video_generation_backend==='cloud_h3'?'集群 H3':localVideo?(project.creation_parameters.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'):'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
    <ShotVideoOptions v-if="dynamicShots.length" v-model="batchOptions" batch :mixed="mixedBatchOptions" :dirty="Boolean(batchOptionDraft)" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="batchOptionsLocked" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="0" @refresh="loadComfyProfiles" @reset="batchOptionDraft=null" @apply-all="applyGenerationOptionsToAll(batchOptions)"/>
    <p v-if="videoModelError&&dynamicShots.some(shot=>optionsFor(shot).backend==='api')" class="studio-notice error">{{videoModelError}}</p>
    <div v-if="dynamicShots.length" class="motion-generation-bar">
@@ -851,6 +851,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
     </section>
     <div v-if="i>=0&&canEditStructure" class="video-actions"><button v-if="!storyboardLocked" class="primary-btn" :disabled="busy||!dirty||['planning','stopping'].includes(project.status)" @click="run(save)">保存镜头修改</button><button :disabled="busy||(shot.slide_ids.length<2&&i===project.shots.length-1)||['planning','stopping'].includes(project.status)" @click="openBoundaryEditor()">调整分镜…</button><button v-if="!storyboardLocked&&project.structure_history?.length" :disabled="busy||['planning','stopping'].includes(project.status)" @click="undoStructure">撤回结构调整</button><button :disabled="busy||shot.slide_ids.length<2||['planning','stopping'].includes(project.status)" @click="openBoundaryEditor('split')">新增分镜（选择字幕切口）</button><button :disabled="busy||project.shots.length<2||['planning','stopping'].includes(project.status)" @click="structure('delete')">删除画面并合并字幕</button></div>
     <p v-if="structureFeedback" class="studio-notice" :class="{error:!!error}" role="status">{{structureFeedback}}</p>
+    <p v-if="structureFeedback && project.duration_check" class="studio-notice" role="status">{{project.duration_check.passed?'拆分后时长复核通过：全部动态镜头均在各自通道时限内。检查并确认变更镜头的设计后即可继续生成。':'时长复核：'+project.duration_check.blockers.map(item=>'第 '+item.index+' 镜：'+item.message).join('；')}}</p>
    </div>
   </ResizableShotWorkspace>
  </section>

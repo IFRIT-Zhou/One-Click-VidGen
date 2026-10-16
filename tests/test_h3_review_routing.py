@@ -67,15 +67,15 @@ class H3ReviewRoutingTests(unittest.TestCase):
         self.assertEqual(self.record['creation_parameters']['video_generation_backend'], 'api')
         self.assertEqual(self.saved[-1]['status'], 'generation_ready')
 
-    def test_cloud_twelve_second_review_is_rejected_atomically_even_in_api_project(self):
-        self.set_scenes([6, 6])
+    def test_cloud_sixteen_second_review_is_rejected_atomically_even_in_api_project(self):
+        self.set_scenes([8, 8])
         self.save_cloud_options()
         before = copy.deepcopy(self.record)
         save_count = len(self.saved)
         with self.assertRaises(HTTPException) as failure:
             studio.review(self.record['id'], studio.Review(revision=self.record['revision']), None)
         self.assertEqual(failure.exception.status_code, 400)
-        self.assertIn('10 秒上限', failure.exception.detail)
+        self.assertIn('15 秒上限', failure.exception.detail)
         self.assertEqual(self.record, before)
         self.assertEqual(len(self.saved), save_count)
 
@@ -106,6 +106,40 @@ class H3ReviewRoutingTests(unittest.TestCase):
                          self.record['shots'][1]['video_generation_options'])
 
     def test_confirm_adjusted_design_preserves_route_and_existing_media(self):
+        self._check_confirmation_preserves_media()
+
+    def test_split_rechecks_children_and_clears_old_duration_repair(self):
+        self.set_scenes([2.4, 12.48])
+        self.save_cloud_options()
+        self.record['status'] = 'video_review'
+        (self.path / 'core.png').write_bytes(b'original image')
+        self.record['shots'][0].update(image='core.png', image_status='completed',
+            video_status='failed', video_request={'id': 'old'}, video_task_id='old',
+            duration_repair={'method': 'boundary_fallback', 'note': 'old overlimit'})
+        original_scenes = copy.deepcopy(self.record['scenes'])
+        studio.structure(self.record['id'], studio.Structure(revision=self.record['revision'],
+            action='split', index=0, boundary=1), None)
+        self.assertEqual(self.record['scenes'], original_scenes)
+        self.assertEqual(self.record['duration_check'], {'passed': True, 'blockers': []})
+        self.assertEqual([s['generation_duration'] for s in self.record['shots']], [4, 13])
+        for shot in self.record['shots']:
+            self.assertNotIn('duration_repair', shot)
+            self.assertFalse(shot.get('video_request'))
+            self.assertFalse(shot.get('video_task_id'))
+            self.assertEqual(shot['warning'], '')
+            self.assertEqual((self.path / shot['image']).read_bytes(), b'original image')
+        studio._validate_project_video_durations(self.record, self.record['shots'])
+
+    def test_split_reports_remaining_overlimit_child(self):
+        self.set_scenes([2, 16])
+        self.save_cloud_options()
+        studio.structure(self.record['id'], studio.Structure(revision=self.record['revision'],
+            action='split', index=0, boundary=1), None)
+        check = self.record['duration_check']
+        self.assertFalse(check['passed'])
+        self.assertEqual([r['index'] for r in check['blockers']], [2])
+
+    def _check_confirmation_preserves_media(self):
         options = self.save_cloud_options()
         self.record['shots'][0].update(design_needs_review=True, image='original.png',
                                        video='original.mp4', video_status='completed')
@@ -118,19 +152,19 @@ class H3ReviewRoutingTests(unittest.TestCase):
         self.assertFalse(shot['design_needs_review'])
 
     def test_confirm_adjusted_cloud_design_also_rejects_overlimit_without_mutation(self):
-        self.set_scenes([6, 6])
+        self.set_scenes([8, 8])
         self.save_cloud_options()
         self.record['shots'][0]['design_needs_review'] = True
         before = copy.deepcopy(self.record)
         with self.assertRaises(HTTPException) as failure:
             studio.confirm_adjusted_design(self.record['id'], studio.DesignConfirmation(
                 revision=self.record['revision'], shot_id='shot'), None)
-        self.assertIn('10 秒上限', failure.exception.detail)
+        self.assertIn('15 秒上限', failure.exception.detail)
         self.assertEqual(self.record, before)
 
 
 class H3StepWorkflowRoutingTests(unittest.TestCase):
-    def test_start_visual_persists_changed_cloud_route_and_ten_second_limit(self):
+    def test_start_visual_preserves_route_and_overrides_legacy_ten_second_limit(self):
         job = SimpleNamespace(id='h3-step', user_id=1, status='waiting_confirmation', message='',
             request=dict(step_mode=True, _step_workflow_version=2, _step_mode_stage='visual_setup',
                          video_generation_backend='api', dynamic_max_shot_duration=30,
@@ -156,7 +190,7 @@ class H3StepWorkflowRoutingTests(unittest.TestCase):
         for key, expected in parameters.items():
             self.assertEqual(job.request[key], expected)
             self.assertEqual(snapshots[-1]['request'][key], expected)
-        self.assertEqual(max_video_duration(snapshots[-1]['request']), 10)
+        self.assertEqual(max_video_duration(snapshots[-1]['request']), 15)
         cloud.assert_not_called()
         regenerate.assert_not_called()
 

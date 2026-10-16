@@ -5,7 +5,7 @@ const props=defineProps({modelValue:Object,disabled:Boolean,ratio:String,seconds
 const emit=defineEmits(['update:modelValue'])
 const capabilities=ref(null),error=ref('')
 const generatedSeconds=computed(()=>{const c=capabilities.value;if(!c?.fps||!c?.frame_divisor||!props.seconds)return null;let frames=Math.ceil(props.seconds*c.fps);frames+=(c.frame_remainder-frames%c.frame_divisor+c.frame_divisor)%c.frame_divisor;return (frames/c.fps).toFixed(2)})
-const sizes=computed(()=>capabilities.value?.resolutions||[])
+const sizes=computed(()=>(capabilities.value?.resolutions||[]).filter(item=>item.width>0&&item.height>0&&item.width*item.height<=1536*864))
 const selected=computed(()=>props.modelValue.resolution==='custom'?`${props.modelValue.width}x${props.modelValue.height}`:props.modelValue.resolution||'')
 const unavailableSelected=computed(()=>Boolean(selected.value)&&!sizes.value.some(item=>`${item.width}x${item.height}`===selected.value))
 const defaultDimensions=computed(()=>{
@@ -25,7 +25,8 @@ onMounted(refresh)
 </script>
 <template>
  <div class="cluster-h3-options">
-  <strong>集群 H3（测试免费）</strong>
+  <strong>集群 H3</strong>
+  <p>输出总像素不超过 1,327,104（1536 × 864）；竖屏同样适用。已保存的超限尺寸需重新选择。</p>
   <p>由集群排队并按需启动；模型首次加载会增加等待时间。参考配音、对口型暂不支持，原配音在导出时合成。</p>
   <label>视频尺寸 <select :value="selected" :disabled="disabled" @change="choose"><option value="">跟随集群默认尺寸与项目画幅{{defaultDimensions?`（${defaultDimensions.width} × ${defaultDimensions.height}）`:""}}</option><option v-if="unavailableSelected" :value="selected" disabled>已保存 {{selected}}，请明确重新选择尺寸</option><option v-for="item in sizes" :key="item.width+'x'+item.height" :value="item.width+'x'+item.height">{{item.width}} × {{item.height}}</option></select></label>
   <p v-if="unavailableSelected" role="alert">当前保存的尺寸未出现在集群能力列表，请选择实际支持的尺寸；不会自动降低分辨率。</p>

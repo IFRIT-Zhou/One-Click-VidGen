@@ -1351,6 +1351,7 @@ def structure(identity: str, data: Structure, request: Request):
                     merged = {**copy.deepcopy(original), **row}
                     if original['slide_ids'] != row['slide_ids']:
                         merged.pop('motion_plan', None)
+                        merged.pop('duration_repair', None)
                         _invalidate_shot_video(record, merged, '字幕范围调整，需重新检查本镜动态提示词并生成片段')
                     changed[index] = merged
                 else:
@@ -1372,6 +1373,22 @@ def structure(identity: str, data: Structure, request: Request):
             record.pop('reedit_return_status', None)
             record['logs'].append('已调整分镜：配音和字幕原文保留；未受影响的图片与视频保留，请检查变更镜头后重新合成。')
         record['shots'] = changed
+        # Recheck the current children, never the pre-split parent's duration.
+        from .video_duration_limits import generation_duration, validate_video_duration
+        duration_blockers = []
+        for index, shot in enumerate(changed):
+            if shot.get('kind') != 'video':
+                continue
+            parameters = dict(record.get('creation_parameters', {}))
+            backend = (shot.get('video_generation_options') or {}).get('backend')
+            if backend:
+                parameters['video_generation_backend'] = backend
+            shot['generation_duration'] = generation_duration(shot['duration'])
+            try:
+                validate_video_duration(shot['duration'], parameters)
+            except ValueError as exc:
+                duration_blockers.append(dict(shot_id=shot['id'], index=index + 1, message=str(exc)))
+        record['duration_check'] = dict(passed=not duration_blockers, blockers=duration_blockers)
         lock_manual_groups(record)
         record.update(revision=record['revision']+1, status=(record['status'] if record['status'] in VIDEO_STAGE_STATUSES
                       else 'image_review' if asset_stage else 'storyboard_review'))

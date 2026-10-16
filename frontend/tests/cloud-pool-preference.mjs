@@ -1,9 +1,29 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { readCloudPoolPreference, saveCloudPoolPreference, workspaceParameters } from '../src/cloudPoolPreference.js'
+import { readCloudPoolPreference, saveCloudPoolPreference, readCloudChannelPreference, saveCloudChannelPreference, workspaceParameters } from '../src/cloudPoolPreference.js'
 
 const values = new Map()
 const storage = { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) }
+assert.equal(readCloudChannelPreference(storage), 'ican')
+assert.equal(readCloudChannelPreference({getItem(){throw Error('blocked')}}), 'ican')
+saveCloudChannelPreference('ican', storage)
+assert.equal(readCloudChannelPreference(storage), 'ican')
+const oldProject = workspaceParameters({method:'running'})
+assert.equal(oldProject.method, 'running')
+assert.equal(readCloudChannelPreference(storage), 'ican')
+saveCloudChannelPreference('invalid', storage)
+assert.equal(readCloudChannelPreference(storage), 'ican')
+saveCloudPoolPreference(false, storage)
+assert.equal(readCloudChannelPreference(storage), 'ican')
+saveCloudChannelPreference('running', storage)
+assert.equal(readCloudChannelPreference(storage), 'running')
+saveCloudPoolPreference(true, storage)
+assert.equal(readCloudChannelPreference(storage), 'running')
+saveCloudPoolPreference(false, storage)
+const studio = readFileSync(new URL('../src/useStudio.js', import.meta.url), 'utf8')
+assert.match(studio, /if\(page==='services'\)w.form.method=readCloudChannelPreference\(\)/)
+assert.match(studio, /if\(studioPage.value==='services'\)saveCloudChannelPreference\(method\)/)
+assert.match(studio, /if\(!draft\)w.form.method=readCloudChannelPreference\(\)/)
 assert.equal(readCloudPoolPreference(storage), false)
 saveCloudPoolPreference(true, storage)
 assert.equal(readCloudPoolPreference(storage), true)

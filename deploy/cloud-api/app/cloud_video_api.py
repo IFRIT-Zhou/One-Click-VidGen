@@ -34,9 +34,10 @@ from .models import User
 router = APIRouter(prefix="/api/v1/cloud/video", tags=["cloud-video-test"])
 MODEL = "minimax-h3"
 REVISION = "h3-fast-linux-v1"
-RESOLUTIONS = ((640, 384), (384, 640), (512, 512), (1280, 720), (720, 1280), (2048, 1152), (1152, 2048))
-DEFAULT_RESOLUTIONS = {"landscape": {"width": 2048, "height": 1152},
-                       "portrait": {"width": 1152, "height": 2048}}
+MAX_VIDEO_PIXELS = 1536 * 864
+RESOLUTIONS = ((640, 384), (384, 640), (512, 512), (1280, 720), (720, 1280), (1536, 864), (864, 1536))
+DEFAULT_RESOLUTIONS = {"landscape": {"width": 1536, "height": 864},
+                       "portrait": {"width": 864, "height": 1536}}
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 16_000_000
@@ -149,7 +150,7 @@ class VideoSpec(BaseModel):
     reference_image_asset_id: str = Field(pattern=r"^h3asset_[0-9a-f]{32}$")
     width: int
     height: int
-    duration_seconds: float = Field(ge=2, le=10, allow_inf_nan=False)
+    duration_seconds: float = Field(ge=2, le=15, allow_inf_nan=False)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
@@ -165,6 +166,8 @@ class JobRequest(BaseModel):
 
 
 def normalize_spec(spec):
+    if spec.width <= 0 or spec.height <= 0 or spec.width * spec.height > MAX_VIDEO_PIXELS:
+        raise HTTPException(422, "H3 output exceeds the 1536 x 864 total-pixel limit")
     if (spec.width, spec.height) not in RESOLUTIONS:
         raise HTTPException(422, "Unsupported H3 resolution")
     prompt = spec.prompt.strip()
@@ -199,7 +202,8 @@ def capabilities(user: CurrentUser):
     return {"enabled": feature_enabled(user), "test_mode": True, "credits": "0", "model": MODEL,
             "workflow_revision": REVISION, "fps": 24, "resolutions": [{"width": w, "height": h} for w, h in RESOLUTIONS],
             "default_resolutions": DEFAULT_RESOLUTIONS,
-            "duration_seconds": {"min": 2, "max": 10}, "audio_supported": False,
+            "max_output_pixels": MAX_VIDEO_PIXELS,
+            "duration_seconds": {"min": 2, "max": 15}, "audio_supported": False,
             "max_upload_bytes": MAX_UPLOAD, "frame_divisor": 17, "frame_remainder": 5,
             "frame_rule": {"divisor": 17, "remainder": 5}}
 
@@ -286,6 +290,8 @@ def create_job(body: JobRequest, db: Db, user: CurrentUser):
         return snapshot(existing)
     if aware(record.expires_at) <= utcnow():
         raise HTTPException(409, "Quote expired; request a new quote")
+    if record.spec['width'] * record.spec['height'] > MAX_VIDEO_PIXELS:
+        raise HTTPException(422, "H3 output exceeds the 1536 x 864 total-pixel limit; request a new quote")
     asset = db.get(CloudVideoAsset, record.spec["reference_image_asset_id"])
     if asset is None or asset.user_id != user.id or not storage_path(asset.storage_key).is_file():
         raise HTTPException(404, "Reference image unavailable")

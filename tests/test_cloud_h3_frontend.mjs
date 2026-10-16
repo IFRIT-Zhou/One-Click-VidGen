@@ -34,8 +34,8 @@ test('explicit cloud dimension selection sends exact pixels without lowering',()
  assert.equal(events[0].resolution,'custom');assert.equal(events[0].width,1280);assert.equal(events[0].height,720)
 })
 
-test('cloud default uses declared 2K orientation without overwriting explicit saved dimensions',async()=>{
- const resolutions=[{width:640,height:384},{width:384,height:640},{width:2048,height:1152},{width:1152,height:2048}]
+test('cloud default uses declared safe orientation without overwriting explicit saved dimensions',async()=>{
+ const resolutions=[{width:640,height:384},{width:384,height:640},{width:1536,height:864},{width:864,height:1536}]
  const defaults={landscape:resolutions[2],portrait:resolutions[3]}
  for(const [ratio,expected] of [['16:9',defaults.landscape],['9:16',defaults.portrait]]){
   const events=[],modelValue={backend:'cloud_h3',resolution:'custom',width:640,height:384}
@@ -55,7 +55,7 @@ test('older cloud capabilities choose largest supported orientation, invalid adv
   await state.refresh()
   assert.deepEqual(state.defaultDimensions.value,expected)
  }
- const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio:'16:9'},async()=>({resolutions,default_resolutions:{landscape:{width:2048,height:1152}}}))
+ const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio:'16:9'},async()=>({resolutions,default_resolutions:{landscape:{width:1536,height:864}}}))
  await state.refresh()
  assert.equal(state.defaultDimensions.value,undefined)
  assert.equal(state.invalidDefault.value,true)

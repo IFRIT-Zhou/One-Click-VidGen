@@ -115,18 +115,18 @@ class ApiTests(unittest.TestCase):
     def test_capabilities_declare_supported_2k_defaults_and_preserve_quote_pixels(self):
         caps=client.get(PREFIX + "/capabilities", headers=self.headers).json()
         self.assertEqual(caps['default_resolutions'],{
-            'landscape':{'width':2048,'height':1152},'portrait':{'width':1152,'height':2048}})
-        self.assertEqual(caps['duration_seconds'],{'min':2,'max':10})
+            'landscape':{'width':1536,'height':864},'portrait':{'width':864,'height':1536}})
+        self.assertEqual(caps['duration_seconds'],{'min':2,'max':15})
         for dimensions in list(caps['default_resolutions'].values())+[{'width':640,'height':384}]:
             with self.subTest(dimensions=dimensions):
                 self.assertIn(dimensions,caps['resolutions'])
-                response=self.quote(**dimensions,duration_seconds=10)
+                response=self.quote(**dimensions,duration_seconds=15)
                 self.assertEqual(response.status_code,201,response.text)
                 spec=response.json()['spec']
                 self.assertEqual({key:spec[key] for key in ('width','height')},dimensions)
-                self.assertEqual(spec['duration_seconds'],10)
-                self.assertGreaterEqual(spec['actual_duration_seconds'],10)
-        for seconds in (1.9,10.01):
+                self.assertEqual(spec['duration_seconds'],15)
+                self.assertGreaterEqual(spec['actual_duration_seconds'],15)
+        for seconds in (1.9,15.01):
             self.assertEqual(self.quote(duration_seconds=seconds).status_code,422)
 
     def test_idempotency_and_payload_conflict(self):

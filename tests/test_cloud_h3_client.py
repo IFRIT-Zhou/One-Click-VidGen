@@ -8,10 +8,10 @@ from backend.app import cloud_video as c
 from backend.app.cloud_client import CloudApiError
 
 CAPS={'enabled':True,'workflow_revision':'h3-fast-linux-v1','model':'minimax-h3','resolutions':[{'width':640,'height':384},{'width':384,'height':640}], 'duration_seconds':{'min':2,'max':10}}
-CAPS_2K={**CAPS,'resolutions':CAPS['resolutions']+[
+CAPS_SAFE={**CAPS,'resolutions':CAPS['resolutions']+[
     {'width':1280,'height':720},{'width':720,'height':1280},
-    {'width':2048,'height':1152},{'width':1152,'height':2048}],
-    'default_resolutions':{'landscape':{'width':2048,'height':1152},'portrait':{'width':1152,'height':2048}}}
+    {'width':1536,'height':864},{'width':864,'height':1536}],
+    'default_resolutions':{'landscape':{'width':1536,'height':864},'portrait':{'width':864,'height':1536}}}
 
 class CloudVideoTests(unittest.TestCase):
     def test_expired_quote_renews_only_after_verified_miss_same_identity(self):
@@ -44,28 +44,33 @@ class CloudVideoTests(unittest.TestCase):
         client.video_job.assert_not_called();client.video_quote.assert_not_called()
 
     def test_capabilities_respect_orientation_and_no_downgrade(self):
+        unsafe = {**CAPS, 'resolutions': [{'width': 1664, 'height': 932}]}
+        with self.assertRaisesRegex(ValueError, '总像素上限'):
+            c.dimensions_for(unsafe, {'resolution': 'custom', 'width': 1664, 'height': 932}, '16:9')
+        with self.assertRaises(ValueError):
+            c.dimensions_for(unsafe, {}, '16:9')
         self.assertEqual(c.dimensions_for(CAPS,{},'9:16')[1],(384,640))
         with self.assertRaises(ValueError):c.dimensions_for(CAPS,{'resolution':'720p'},'16:9')
         with self.assertRaises(ValueError):c.dimensions_for({**CAPS,'enabled':False},{},'16:9')
 
     def test_explicit_defaults_and_legacy_capabilities_select_largest_size(self):
-        for ratio,expected in [('16:9',(2048,1152)),('9:16',(1152,2048))]:
+        for ratio,expected in [('16:9',(1536,864)),('9:16',(864,1536))]:
             with self.subTest(ratio=ratio):
-                self.assertEqual(c.dimensions_for(CAPS_2K,{},ratio)[1],expected)
-                legacy={key:value for key,value in CAPS_2K.items() if key!='default_resolutions'}
+                self.assertEqual(c.dimensions_for(CAPS_SAFE,{},ratio)[1],expected)
+                legacy={key:value for key,value in CAPS_SAFE.items() if key!='default_resolutions'}
                 self.assertEqual(c.dimensions_for(legacy,{},ratio)[1],expected)
         # An explicit server default wins even when larger sizes are available.
-        caps={**CAPS_2K,'default_resolutions':{'landscape':{'width':1280,'height':720}}}
+        caps={**CAPS_SAFE,'default_resolutions':{'landscape':{'width':1280,'height':720}}}
         self.assertEqual(c.dimensions_for(caps,{},'16:9')[1],(1280,720))
         with self.assertRaisesRegex(ValueError,'默认尺寸'):
             c.dimensions_for(caps,{},'9:16')
 
     def test_explicit_saved_size_survives_new_default_and_unsupported_size_rejected(self):
-        self.assertEqual(c.dimensions_for(CAPS_2K,{'resolution':'custom','width':640,'height':384},'16:9')[1],(640,384))
-        self.assertEqual(c.dimensions_for(CAPS_2K,{'resolution':'720p'},'9:16')[1],(720,1280))
-        for caps,options in [(CAPS,{'resolution':'custom','width':2048,'height':1152}),
-                             (CAPS_2K,{'resolution':'1080p'}),
-                             ({**CAPS,'default_resolutions':CAPS_2K['default_resolutions']},{})]:
+        self.assertEqual(c.dimensions_for(CAPS_SAFE,{'resolution':'custom','width':640,'height':384},'16:9')[1],(640,384))
+        self.assertEqual(c.dimensions_for(CAPS_SAFE,{'resolution':'720p'},'9:16')[1],(720,1280))
+        for caps,options in [(CAPS,{'resolution':'custom','width':1536,'height':864}),
+                             (CAPS_SAFE,{'resolution':'1080p'}),
+                             ({**CAPS,'default_resolutions':CAPS_SAFE['default_resolutions']},{})]:
             with self.subTest(options=options),self.assertRaises(ValueError):
                 c.dimensions_for(caps,options,'16:9')
 
@@ -78,7 +83,7 @@ class CloudVideoTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.validate_duration({'duration':8,'generation_duration':8},{'duration_seconds':{'min':2,'max':6}})
         with self.assertRaises(ValueError):
-            c.validate_duration({'duration':12,'generation_duration':12},{'duration_seconds':{'min':2,'max':30}})
+            c.validate_duration({'duration':16,'generation_duration':16},{'duration_seconds':{'min':2,'max':30}})
 
     def test_unknown_task_keeps_frozen_identity_and_dimensions_when_defaults_change(self):
         from backend.app import video_generation as vg
@@ -89,7 +94,7 @@ class CloudVideoTests(unittest.TestCase):
                 'settings':{'ratio':'16:9'},'creation_parameters':{'video_generation_backend':'cloud_h3'},
                 'shots':[{'id':'s1','kind':'video','duration':12,'generation_duration':12,'video_prompt':'tree',
                           'image':'core.jpg','image_status':'completed','video_status':'unknown','video_terminal':False,'video_request':copy.deepcopy(frozen)}]}
-        client=self.client();client.video_capabilities.return_value=CAPS_2K
+        client=self.client();client.video_capabilities.return_value=CAPS_SAFE
         try:
             with patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'directory',return_value=path),patch.object(c.studio,'read',return_value=record),patch.object(c.studio,'save'),patch.object(vg,'_inputs'),patch.object(c.threading,'Thread') as thread:
                 c.generate_cloud('project',vg.GenerateClips(revision=1,shot_ids=['s1']),1)
@@ -110,7 +115,7 @@ class CloudVideoTests(unittest.TestCase):
                 'shots':[{'id':'s1','kind':'video','duration':12,'generation_duration':10,'video_prompt':'tree',
                           'image':'core.jpg','image_status':'completed','video_status':'pending'}]}
         before=copy.deepcopy(record)
-        client=self.client();client.video_capabilities.return_value=CAPS_2K
+        client=self.client();client.video_capabilities.return_value=CAPS_SAFE
         with patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'directory',return_value=path),patch.object(c.studio,'read',return_value=record),patch.object(c.studio,'save') as save,patch.object(vg,'_inputs'),patch.object(c.threading,'Thread') as thread:
             with self.assertRaises(HTTPException) as error:
                 c.generate_cloud('project',vg.GenerateClips(revision=1,shot_ids=['s1']),1)
@@ -192,7 +197,7 @@ class CloudVideoTests(unittest.TestCase):
             'settings':{'ratio':'16:9'}, 'creation_parameters':{'video_generation_backend':'cloud_h3','language_route':'cloud','use_cloud_image_pool':False,'comfyui_h3_prompt_agent':True},
             'shots':[{'id':'s1','kind':'video','duration':1.2,'generation_duration':4,'video_prompt':'green tree',
                 'image':'core.jpg','image_status':'completed','video_status':'pending'}]}
-        client=self.client();client.video_capabilities.return_value=CAPS_2K
+        client=self.client();client.video_capabilities.return_value=CAPS_SAFE
         client.video_job.side_effect=CloudApiError('missing',status_code=404)
         client.video_asset.return_value={'asset_id':'asset-fixture'}
         def quote(spec):return {'quote_id':'quote-frozen','credits':'0','test_mode':True,'spec':dict(spec,num_frames=107)}
@@ -219,7 +224,7 @@ class CloudVideoTests(unittest.TestCase):
         self.assertEqual(record['shots'][0]['video_status'],'completed')
         converter.assert_called_once()
         self.assertEqual(client.video_quote.call_args.args[0]['duration_seconds'],4)
-        self.assertEqual((client.video_quote.call_args.args[0]['width'],client.video_quote.call_args.args[0]['height']),(2048,1152))
+        self.assertEqual((client.video_quote.call_args.args[0]['width'],client.video_quote.call_args.args[0]['height']),(1536,864))
         self.assertEqual(record['shots'][0]['duration'],1.2)
         self.assertEqual(client.create_video_job.call_count,1)
 

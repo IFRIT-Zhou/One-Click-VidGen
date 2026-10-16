@@ -4,10 +4,10 @@ import math
 
 def max_video_duration(parameters=None):
     parameters = parameters or {}
-    # The cluster H3 API currently advertises a hard ten-second maximum.
+    # Keep this limit aligned with the cluster API capability contract.
     # A saved personal-workflow preference must never override that capability.
     if parameters.get('video_generation_backend') == 'cloud_h3':
-        return 10
+        return 15
     configured = parameters.get('dynamic_max_shot_duration')
     return configured if configured in (10, 15, 30) else 15
 

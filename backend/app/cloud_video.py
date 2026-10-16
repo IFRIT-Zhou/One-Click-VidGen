@@ -56,9 +56,12 @@ def dimensions_for(capabilities, options, ratio):
     selected = workflow(capabilities)
     raw = selected.get('dimensions') or selected.get('supported_dimensions') or selected.get('resolutions') or []
     allowed = [(int(row['width']), int(row['height'])) if isinstance(row, dict) else tuple(map(int, row)) for row in raw]
+    allowed = [pair for pair in allowed if 0 < pair[0] and 0 < pair[1] and pair[0] * pair[1] <= 1536 * 864]
     portrait = ratio == '9:16'
     if options.get('resolution') == 'custom':
         dimensions = (options.get('width'), options.get('height'))
+        if dimensions[0] * dimensions[1] > 1536 * 864:
+            raise ValueError('集群 H3 总像素上限为 1536 × 864（1,327,104 像素），请重新选择尺寸')
     elif options.get('resolution'):
         candidates = [pair for pair in allowed if (pair[1] > pair[0]) == portrait and min(pair) == {'480p':480,'720p':720,'1080p':1080}.get(options['resolution'])]
         if not candidates:
@@ -92,7 +95,7 @@ def validate_duration(shot, selected):
         timeline = float(shot.get('duration') or 0)
         limits = selected.get('duration_seconds') or selected.get('duration', {})
         minimum = max(2, float(selected.get('min_duration_seconds', limits.get('min', 2))))
-        maximum = min(10, float(selected.get('max_duration_seconds', limits.get('max', 10))))
+        maximum = min(15, float(selected.get('max_duration_seconds', limits.get('max', 15))))
     except (TypeError, ValueError, OverflowError):
         raise ValueError('镜头时长无效，请重新规划分镜') from None
     if not all(math.isfinite(value) for value in (seconds, timeline, minimum, maximum)):

@@ -2,7 +2,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 import { normalizeDynamicTextMode } from './dynamicTextMode'
-import { readCloudPoolPreference, saveCloudPoolPreference, workspaceParameters } from './cloudPoolPreference'
+import { readCloudPoolPreference, saveCloudPoolPreference, readCloudChannelPreference, workspaceParameters } from './cloudPoolPreference'
 import { imageChoice, imageSize } from './icanImageSizes'
 
 // Shared task state: each mounted workspace owns one polling lifecycle.
@@ -570,7 +570,7 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   use_cloud_image_pool: readCloudPoolPreference(),
-  method: 'running',
+  method: readCloudChannelPreference(),
   size: '2560x1440',
   image_profile_id: '',
   image_resolution: '2k',
@@ -4564,7 +4564,7 @@ function guidedVisualParameters() {
     image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
     visual_pacing_preset: form.visual_pacing_preset,
-    dynamic_max_shot_duration: form.video_generation_backend === 'cloud_h3' ? 10 : form.dynamic_max_shot_duration,
+    dynamic_max_shot_duration: form.video_generation_backend === 'cloud_h3' ? 15 : form.dynamic_max_shot_duration,
     visual_min_duration: form.visual_min_duration,
     visual_target_duration: form.visual_target_duration,
     visual_max_duration: form.visual_max_duration,

@@ -128,6 +128,14 @@ class NodeSafetyTests(unittest.TestCase):
                 agent.dispatch({'action':'start_h3'})
         docker.assert_not_called()
 
+    def test_oversize_submit_is_rejected_before_gpu_or_image_work(self):
+        self.path.unlink()
+        with patch.object(agent, 'guard_windows_h3'), patch.object(agent, 'idle_h3') as idle:
+            with self.assertRaisesRegex(ValueError, 'H3_OUTPUT_PIXEL_LIMIT_EXCEEDED'):
+                agent.dispatch({**self.req, 'action': 'submit',
+                                'spec': {'width': 1664, 'height': 932}})
+        idle.assert_not_called()
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.root=Path(temp.name)

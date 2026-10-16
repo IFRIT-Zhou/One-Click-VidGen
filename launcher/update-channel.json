@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.16.3",
-  "release_order": 2026101603,
-  "display_version": "2026.10.16 H3 2K 与生成链路修复",
+  "release_id": "2026.10.17.1",
+  "release_order": 2026101701,
+  "display_version": "2026.10.17 渠道记忆与集群安全限制",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.16.3/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.17.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "H3默认原生2K，按10秒上限拆分并校验；修复RunningHub上传filename字段兼容、分镜确认丢失单镜通道和尺寸、分步设置漏存；2K H3成片导出保持2K。保留旧任务与素材，不自动重新生成。",
-  "content_fingerprint": "0bcb7cb769d6d89feb34e8d6b38c22a4d9cca9934d96448cbc59d6043c1517ab"
+  "notes": "修复ICAN渠道选择记忆，未选择时默认ICAN，明确选择稳定版后保留；拆分后重新核查动态镜头时长并清理旧提示。集群H3客户端支持15秒，输出总像素限制为1536×864，移除测试免费文案。集群15秒及执行节点防护需服务端同步部署；保留已有项目、配音与素材，不自动重新生成。",
+  "content_fingerprint": "ef704c689b5da7948a559ac5f0e4eb5191c9d245b707c5a11087845ad94a32c6"
 }
