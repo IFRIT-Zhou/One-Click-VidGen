@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.14.1",
-  "release_order": 2026101401,
-  "display_version": "2026.10.14 制作桥1.6与并发、配音修复",
+  "release_id": "2026.10.16.1",
+  "release_order": 2026101601,
+  "display_version": "2026.10.16 参考素材与视频生成修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.14.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.16.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "制作桥升级1.6，支持单镜资料、图片暂存和图文原子修改；图片工作室支持连续排队及并发；修复配音重配状态刷新，支持确认后采用保留的新配音与估算字幕时间；火山接口默认单Key并发3；修复合并分镜误拒绝后来上传的参考素材。保留用户配置、模型与项目，不自动生成。",
-  "content_fingerprint": "d597061d9acd42b21529af450cdf512651522f1eae9ddff5af4752dfc0e31528"
+  "notes": "修复视频仅使用核心图时被已丢失的旧出图参考素材阻塞；保留明确引用额外图片的校验。重绘参考图可选8张，上传不再受选满限制，停止静默截断和淘汰旧记录；支持会话内收起与恢复素材，保护仍被引用的素材免遭删除。H3新增未批准文字时进行有限纠正重试，不放宽文字校验。保留已有项目和成图，不自动生成。",
+  "content_fingerprint": "4bf647f1df4d56b34962e0ee4a02c7c0399a78e0d0be82d45d93789bc30eb047"
 }

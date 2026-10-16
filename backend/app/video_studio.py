@@ -102,7 +102,7 @@ class DesignConfirmation(Review):
 class StoryboardRedraw(BaseModel):
     revision: int
     prompt: str = Field(min_length=1, max_length=20000)
-    reference_ids: list[str] = Field(default_factory=list, max_length=3)
+    reference_ids: list[str] = Field(default_factory=list, max_length=8)
     use_current_image: bool = False
     use_scene_reference: bool = True
     image_resolution: str | None = Field(default=None, pattern=r'^(1k|2k|4k)$')
@@ -255,8 +255,8 @@ def _image_inputs(path, record, shot, prompt, references=None, use_scene=True):
         if scene_path not in paths:
             paths.append(scene_path)
         prompt = scene_references.scene_prompt(prompt, paths.index(scene_path) + 1)
-    if len(paths) > 4:
-        raise ValueError('核心图最多接收 4 张参考图，启用场景参考时最多再使用 3 张人物或其他素材；请减少本镜头的参考素材')
+    if len(paths) > 9:
+        raise ValueError('核心图最多接收 8 张所选参考图，另预留 1 张场景参考图')
     return prompt, paths, asset
 
 
@@ -1517,7 +1517,7 @@ async def upload_storyboard_reference(identity: str, request: Request, file: Upl
     with LOCK:
         path = directory(user['id'], identity)
         record = read(path)
-        if record['status'] != 'image_review':
+        if record['status'] not in SHOT_EDIT_STAGES:
             raise HTTPException(409, '请在核心分镜图检查阶段上传重绘参考图')
         if project_has_image_edits(record['id']):
             raise HTTPException(409, '请等待当前重绘完成后再上传参考图')
@@ -1535,7 +1535,7 @@ async def upload_storyboard_reference(identity: str, request: Request, file: Upl
         rows = list(record.get('redraw_references') or [])
         rows.append({'id': identity_value, 'name': Path(file.filename or '参考图').name,
                      'file': str(target.relative_to(path)).replace('\\', '/')})
-        record['redraw_references'] = rows[-30:]
+        record['redraw_references'] = rows
         record['revision'] += 1
         save(path, record)
         return record
@@ -1582,6 +1582,10 @@ def delete_storyboard_reference(identity: str, reference_id: str, revision: int,
         origin, row = _redraw_reference_row(record, reference_id)
         if origin != 'uploaded' or not row:
             raise HTTPException(400, '任务原始参考图只能取消选择，不能在这里删除')
+        users = [str(item.get('id')) for item in [*record.get('shots', []), *record.get('scene_assets', [])]
+                 if reference_id in item.get('reference_ids', item.get('reference_image_ids', []))]
+        if users:
+            raise HTTPException(409, '该素材仍被镜头或场景引用：' + '、'.join(users) + '；请先解除绑定，或使用收起功能')
         candidate = path / str(row.get('file') or '')
         if candidate.is_file() and path.resolve() in candidate.resolve().parents:
             candidate.unlink(missing_ok=True)
@@ -1608,6 +1612,9 @@ def clear_storyboard_references(identity: str, revision: int, request: Request):
         if project_has_image_edits(record['id']):
             raise HTTPException(409, '请等待当前重绘完成后再清空参考图')
         uploaded_ids = {str(row.get('id')) for row in record.get('redraw_references', [])}
+        if any(uploaded_ids.intersection(item.get('reference_ids', item.get('reference_image_ids', [])))
+               for item in [*record.get('shots', []), *record.get('scene_assets', [])]):
+            raise HTTPException(409, '新增素材仍被镜头或场景引用，不能直接清空；请先解除绑定或使用收起功能')
         for row in record.get('redraw_references', []):
             candidate = path / str(row.get('file') or '')
             if candidate.is_file() and path.resolve() in candidate.resolve().parents:
@@ -1639,8 +1646,8 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
                                                        *_scene_redraw_references(record)]}
         if len(set(data.reference_ids)) != len(data.reference_ids) or any(value not in references for value in data.reference_ids):
             raise HTTPException(400, '重绘参考图选择无效')
-        if len(data.reference_ids) + int(data.use_current_image) > 3:
-            raise HTTPException(400, '每次重绘最多使用 3 张参考图（包含当前画面）')
+        if len(data.reference_ids) + int(data.use_current_image) > 8:
+            raise HTTPException(400, '每次重绘最多使用 8 张参考图（包含当前画面），实际能力以所选接口为准')
         reference_paths = []
         if data.use_current_image:
             reference_paths.append(str(_storyboard_image_path(path, shot).resolve()))

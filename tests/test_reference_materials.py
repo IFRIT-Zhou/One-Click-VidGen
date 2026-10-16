@@ -33,7 +33,7 @@ class ReferenceMaterialsTests(unittest.TestCase):
         self.assertEqual(bound['reference_image_paths'], ['voice.png'])
         self.assertEqual(bound['reference_materials'][0]['label'], '图3')
         self.assertTrue(bound['image_prompt'].startswith('图1的配音界面'))
-        response = SimpleNamespace(ok=True, json=lambda: {'taskId': 'test-task'})
+        response = SimpleNamespace(ok=True, status_code=200, json=lambda: {'taskId': 'test-task'})
         with patch.object(visual, '_reference_image_url', side_effect=lambda config, path=None: path) as uploads, patch.object(
             visual, '_request_with_cloud_refresh', return_value=response
         ) as request:
@@ -45,7 +45,7 @@ class ReferenceMaterialsTests(unittest.TestCase):
 
     def test_empty_selection_does_not_inherit_protagonist_image(self):
         item = materials.bind_material_references([{'macro_scene_id': 'poster_001', 'image_prompt': '房间', 'reference_image_ids': [], 'character_ids': ['主角']}], {'图1': 'person.png'})[0]
-        with patch.object(visual, '_reference_image_url') as upload, patch.object(visual, '_request_with_cloud_refresh', return_value=SimpleNamespace(ok=True, json=lambda: {'taskId': 't'})) as request:
+        with patch.object(visual, '_reference_image_url') as upload, patch.object(visual, '_request_with_cloud_refresh', return_value=SimpleNamespace(ok=True, status_code=200, json=lambda: {'taskId': 't'})) as request:
             visual._submit_poster_request(item, {'endpoint': 'https://example.test/text-to-image', 'api_key': 'test', 'ratio': '2:1', 'resolution': '1k'}, object())
         upload.assert_not_called()
         self.assertNotIn('imageUrls', request.call_args.kwargs['json'])

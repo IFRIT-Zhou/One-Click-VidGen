@@ -449,7 +449,10 @@ const uploadedRedrawReferences=computed(()=>redrawReferences.value.map((asset,in
  ...asset,origin:'uploaded',displayName:asset.name||`新增参考图 ${index+1}`
 })))
 const sceneRedrawReferences=computed(()=>(project.value?.scene_assets||[]).filter(asset=>asset.image_status==='completed').map(asset=>({...asset,origin:'scene',displayName:asset.name||'场景图'})))
-const redrawReferenceGallery=computed(()=>[...projectRedrawReferences.value,...sceneRedrawReferences.value,...uploadedRedrawReferences.value])
+const hiddenRedrawIds=ref([])
+const showHiddenRedraw=ref(false)
+function hideRedrawReference(asset){hiddenRedrawIds.value=[...hiddenRedrawIds.value,asset.id];redrawReferenceIds.value=redrawReferenceIds.value.filter(id=>id!==asset.id)}
+const redrawReferenceGallery=computed(()=>[...projectRedrawReferences.value,...sceneRedrawReferences.value,...uploadedRedrawReferences.value].filter(asset=>showHiddenRedraw.value||!hiddenRedrawIds.value.includes(asset.id)))
 const redrawReferenceUrl=asset=>base+'/'+project.value.id+'/redraw-references/'+encodeURIComponent(asset.id)+'?v='+project.value.revision
 const imageEditRunning=computed(()=>sceneReferencesBusy.value||allImageAssets.value.some(asset=>asset.image_task?.status==='running'))
 const imageAssetRunning=asset=>shotRenderLocked(asset)||asset?.image_task?.status==='running'||motionQueueState(asset)==='running'
@@ -464,15 +467,15 @@ function hydrateRedrawSelection(shot){
  const saved=shot.redraw_selection
  const known=new Set(redrawReferenceGallery.value.map(asset=>String(asset.id)))
  const defaults=Array.isArray(saved?.reference_ids)?saved.reference_ids:(shot.reference_ids||shot.reference_image_ids||[])
- redrawReferenceIds.value=defaults.map(String).filter(id=>known.has(id)).slice(0,3)
+ redrawReferenceIds.value=defaults.map(String).filter(id=>known.has(id)).slice(0,8)
  useCurrentReference.value=Boolean(saved?.use_current_image)
  useSceneReference.value=saved?.use_scene_reference!==false
- if(useCurrentReference.value&&redrawReferenceIds.value.length>2)redrawReferenceIds.value=redrawReferenceIds.value.slice(0,2)
+ if(useCurrentReference.value&&redrawReferenceIds.value.length>7)redrawReferenceIds.value=redrawReferenceIds.value.slice(0,7)
 }
 function redrawReferenceNumber(id){return redrawReferenceIds.value.indexOf(id)+(useCurrentReference.value?2:1)}
-function toggleRedrawReference(id){const values=redrawReferenceIds.value;if(values.includes(id))redrawReferenceIds.value=values.filter(value=>value!==id);else if(values.length<3-(useCurrentReference.value?1:0))redrawReferenceIds.value=[...values,id];else error.value='每次重绘最多使用 3 张参考图（包含当前画面）。'}
-function toggleCurrentReference(){if(!useCurrentReference.value&&redrawReferenceIds.value.length>=3)redrawReferenceIds.value=redrawReferenceIds.value.slice(0,2);useCurrentReference.value=!useCurrentReference.value}
-async function uploadRedrawReferences(event){const files=[...(event.target.files||[])];event.target.value='';for(const file of files.slice(0,Math.max(0,3-(useCurrentReference.value?1:0)-redrawReferenceIds.value.length))){await run(async()=>{const data=new FormData();data.append('file',file);acceptImageUpdate(await requestJSON(base+'/'+project.value.id+'/redraw-references',{method:'POST',body:data}));const latest=project.value.redraw_references?.at(-1);if(latest)redrawReferenceIds.value=[...redrawReferenceIds.value,latest.id]})}}
+function toggleRedrawReference(id){const values=redrawReferenceIds.value;if(values.includes(id))redrawReferenceIds.value=values.filter(value=>value!==id);else if(values.length<8-(useCurrentReference.value?1:0))redrawReferenceIds.value=[...values,id];else error.value='每次重绘最多选择 8 张参考图（包含当前画面），可继续上传到素材库。'}
+function toggleCurrentReference(){if(!useCurrentReference.value&&redrawReferenceIds.value.length>=8){error.value='请先取消一张参考图，再选择当前核心图。';return}useCurrentReference.value=!useCurrentReference.value}
+async function uploadRedrawReferences(event){const files=[...(event.target.files||[])];event.target.value='';for(const file of files){await run(async()=>{const data=new FormData();data.append('file',file);acceptImageUpdate(await requestJSON(base+'/'+project.value.id+'/redraw-references',{method:'POST',body:data}));const latest=project.value.redraw_references?.at(-1);if(latest&&redrawReferenceIds.value.length<8-(useCurrentReference.value?1:0))redrawReferenceIds.value=[...redrawReferenceIds.value,latest.id]})}}
 async function deleteRedrawReference(asset){
  if(asset.origin!=='uploaded'||!confirm(`删除新增参考图“${asset.displayName}”？图片会从本项目素材库移除。`))return
  await run(async()=>{acceptImageUpdate(await requestJSON(base+'/'+project.value.id+'/redraw-references/'+encodeURIComponent(asset.id)+'?revision='+encodeURIComponent(project.value.revision),{method:'DELETE'}));redrawReferenceIds.value=redrawReferenceIds.value.filter(id=>id!==asset.id)})
@@ -809,16 +812,18 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <p v-if="shot.image_origin==='reference_redraw'||shot.image_origin==='upload'" class="muted">当前图片来自{{shot.image_origin==='upload'?'本地替换':'参考模式重绘'}}；第二个按钮会先识别最终图片，再更新视频提示词。</p>
     </section>
     <section v-if="shotEditingStage" class="storyboard-edit-tools">
-     <div class="storyboard-edit-heading"><div><strong>{{i<0?'修正这张场景图':'修正这张核心分镜图'}}</strong><p class="muted">提示词修改只在点击重绘时提交；参考图最多 3 张，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务清晰度</option><template v-if="redrawIcan"><option value="2K">2K</option><option value="2.5K">2.5K</option></template><template v-else><option value="1k">1K</option><option value="2k">2K</option><option value="4k">4K</option></template></select></div>
+     <div class="storyboard-edit-heading"><div><strong>{{i<0?'修正这张场景图':'修正这张核心分镜图'}}</strong><p class="muted">提示词修改只在点击重绘时提交；核心图重绘最多选择 8 张参考图，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务清晰度</option><template v-if="redrawIcan"><option value="2K">2K</option><option value="2.5K">2.5K</option></template><template v-else><option value="1k">1K</option><option value="2k">2K</option><option value="4k">4K</option></template></select></div>
      <div class="storyboard-reference-library">
       <div class="reference-library-heading"><div><strong>本次重绘参考图</strong><p class="muted">点击图片选择或取消；绿色卡片会按图号顺序传给图像模型。</p></div><div><label class="file-action">＋ 上传新参考图<input type="file" accept="image/jpeg,image/png,image/webp" multiple :disabled="busy||imageEditRunning" @change="uploadRedrawReferences"></label><button v-if="uploadedRedrawReferences.length" type="button" :disabled="busy||imageEditRunning" @click="clearUploadedRedrawReferences">清空新增图</button></div></div>
+      <p class="muted">素材上传不受当前选择数量限制；单次最多选择 8 张（含当前核心图），实际支持数量以接口为准。收起仅整理本次列表，不删除文件或解除其他镜头绑定。</p>
+      <button v-if="hiddenRedrawIds.length" type="button" @click="hiddenRedrawIds=[];showHiddenRedraw=false">恢复已收起的 {{hiddenRedrawIds.length}} 张素材</button>
       <div class="storyboard-reference-grid">
        <article v-if="shot.image_status==='completed'" class="reference-image-card" :class="{active:useCurrentReference}">
         <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="toggleCurrentReference"><img :src="imageUrl(shot)" alt="当前核心分镜图"><span><b>当前核心图</b><small>重绘前的本图</small></span><em>{{useCurrentReference?'图1 · 正在使用':'未选择'}}</em></button>
        </article>
        <article v-for="asset in redrawReferenceGallery" :key="asset.origin+':'+asset.id" class="reference-image-card" :class="{active:redrawReferenceIds.includes(asset.id)}">
         <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="toggleRedrawReference(asset.id)"><img :src="redrawReferenceUrl(asset)" :alt="asset.displayName"><span><b>{{asset.displayName}}</b><small>{{asset.origin==='project'?'创建任务时上传':asset.origin==='scene'?'项目场景资产':'本页后来上传'}}</small></span><em>{{redrawReferenceIds.includes(asset.id)?'图'+redrawReferenceNumber(asset.id)+' · 正在使用':'未选择'}}</em></button>
-        <button v-if="asset.origin==='uploaded'" type="button" class="reference-card-delete" :disabled="busy||imageEditRunning" title="删除这张新增参考图" @click.stop="deleteRedrawReference(asset)">删除</button>
+        <button type="button" class="reference-card-delete" :disabled="busy||imageEditRunning" title="从当前列表收起并取消本次选择；原文件和已有镜头绑定保留" @click.stop="hideRedrawReference(asset)">收起</button>
        </article>
        <p v-if="!redrawReferenceGallery.length" class="reference-library-empty">创建任务时没有上传参考图；可在右上角补充新图片。</p>
       </div>

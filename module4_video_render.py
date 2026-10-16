@@ -3189,7 +3189,7 @@ def _submit_poster_request(
     endpoint: str | None = None
     selected_reference_paths = [
         str(path).strip() for path in macro.get("reference_image_paths", []) if str(path).strip()
-    ][:4]
+    ]
     if selected_reference_paths and config.get("reference_images") is False:
         raise RunningHubAccessDenied("所选图像模型配置未启用参考图能力，请更换模型配置或移除参考图")
     if not selected_reference_paths and not macro.get('reference_binding_version'):

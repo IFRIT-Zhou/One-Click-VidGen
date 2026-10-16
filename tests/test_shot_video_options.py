@@ -11,8 +11,33 @@ from PIL import Image
 from backend.app import video_generation as video
 from backend.app import comfyui_bridge as bridge
 
+_real_video_inputs = video._inputs
+
 
 class ShotVideoOptionsTests(unittest.TestCase):
+    def test_video_core_only_ignores_missing_image_generation_references(self):
+        core = self.path / 'core.png'
+        Image.new('RGB', (16, 16)).save(core)
+        shot = {'id': 'a', 'image_status': 'completed', 'image': 'core.png',
+                'reference_ids': ['deleted'], 'video_prompt': '图1为核心图，镜头缓慢推进。'}
+        self.assertEqual(_real_video_inputs(self.path, {}, shot), (core,))
+        shot['video_prompt'] = '图1为背景，图2为人物参考。'
+        with self.assertRaisesRegex(ValueError, '额外图片'):
+            _real_video_inputs(self.path, {}, shot)
+        core.unlink()
+        shot['video_prompt'] = '图1'
+        with self.assertRaises(HTTPException):
+            _real_video_inputs(self.path, {}, shot)
+
+    def test_redraw_keeps_eight_selected_reference_paths(self):
+        refs = [str(self.path / f'ref_{i}.png') for i in range(8)]
+        payload = video.studio.StoryboardRedraw(revision=1, prompt='test',
+                                              reference_ids=[str(i) for i in range(8)])
+        self.assertEqual(len(payload.reference_ids), 8)
+        with patch.object(video.studio.scene_references, 'enabled', return_value=False):
+            _, paths, _ = video.studio._image_inputs(self.path, {}, {}, 'test', references=refs)
+        self.assertEqual(paths, refs)
+
     def test_merge_accepts_uploaded_reference_without_dropping_materials(self):
         self.record.update(status='image_review', references=[],
             redraw_references=[{'id': 'uploaded', 'file': 'assets/reference.png'}],

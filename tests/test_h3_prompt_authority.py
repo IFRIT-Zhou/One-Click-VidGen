@@ -15,6 +15,23 @@ INLINE = ('subject_definitions: <Picture 1> is the visual reference. '
 
 
 class H3PromptAuthorityTests(unittest.TestCase):
+    def test_invented_case_label_is_corrected_without_changing_source(self):
+        bad = INLINE.replace('The white-robed man stays still', '标签显示“病例 01”。 The white-robed man stays still')
+        shot = {'video_prompt': 'Three blank cards appear.'}
+        with patch.object(agent, 'generate_gemini_text', side_effect=[json.dumps({'h3_prompt': bad}), json.dumps({'h3_prompt': INLINE})]) as generate:
+            prompt, _ = agent.convert_for_h3(shot, 10)
+        self.assertEqual(generate.call_count, 2)
+        self.assertNotIn('病例 01', prompt)
+        self.assertIn('Cards may remain blank', generate.call_args.kwargs['system_prompt'])
+        self.assertEqual(shot, {'video_prompt': 'Three blank cards appear.'})
+
+    def test_invented_case_label_repair_remains_bounded(self):
+        bad = INLINE.replace('The white-robed man stays still', '标签显示“病例 01”。 The white-robed man stays still')
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({'h3_prompt': bad})) as generate:
+            with self.assertRaisesRegex(ValueError, '尚未提交视频生成'):
+                agent.convert_for_h3({'video_prompt': 'Three blank cards.'}, 10)
+        self.assertEqual(generate.call_count, 3)
+
     def test_invalid_json_retries_same_inputs_then_succeeds(self):
         with patch.object(agent, 'generate_gemini_text', side_effect=['{"h3_prompt" "broken"}', json.dumps({'h3_prompt': INLINE})]) as generate:
             prompt, _ = agent.convert_for_h3({'video_prompt': 'Approved scene.'}, 10)

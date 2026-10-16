@@ -436,8 +436,9 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         ] + ([{"label": "<Audio 1>", "role": "final TTS segment / timing and performance reference"}]
              if reference_audio else []),
     }
-    # Retry malformed envelopes only. Never salvage truncated creative text,
-    # silently use a stale prompt, or retry semantic/safety validation failures.
+    # Bounded repair for malformed JSON or invented visible text; never relax
+    # the approved text whitelist or submit an invalid result to generation.
+    text_feedback = ''
     for attempt in range(3):
         format_instruction = '' if attempt == 0 else (
             '\nYour previous response could not be parsed as the required JSON object. '
@@ -446,7 +447,7 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
             'double quotes as \\" inside JSON strings; no Markdown or extra commentary.'
         )
         raw = generate_gemini_text(
-            system_prompt=_SYSTEM + format_instruction,
+            system_prompt=_SYSTEM + format_instruction + text_feedback,
             user_prompt=json.dumps(payload, ensure_ascii=False),
             temperature=0.1,
             max_output_tokens=7000,
@@ -466,7 +467,23 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
             if attempt == 2:
                 raise ValueError('H3 提示词转换返回格式不正确，已自动重试 2 次仍未取得有效 JSON；尚未提交 ComfyUI，原提示词及素材保留。请稍后重试或切换语言模型。') from exc
         else:
-            break
+            prompt = _validate(result['h3_prompt'], duration, reference_audio=reference_audio, lipsync=lipsync)
+            issues = visual_first_prompt_issues(
+                _section_body(prompt, 'detailed_description'), shot.get('motion_plan'))
+            if not issues:
+                break
+            if attempt == 2:
+                raise ValueError('H3 转换结果重新加入了未选用的画中文字：' + '；'.join(issues)
+                                 + '；已自动纠正重试仍未通过，尚未提交视频生成。')
+            text_feedback = (
+                '\nThe previous conversion invented unapproved visible text: '
+                + json.dumps(issues, ensure_ascii=False)
+                + '\nRegenerate from the original approved inputs. Remove those invented labels, '
+                  'including case numbers and card headings. Cards may remain blank shapes; '
+                  'do not replace the forbidden words with synonyms or translated labels. '
+                  'Text visible in the reference image is NOT permission to render it. '
+                  'Only approved_visible_texts may be rendered. Preserve the approved actions '
+                  'and approved text exactly. Do not quote forbidden labels even in negative instructions.')
     prompt = _validate(result["h3_prompt"], duration, reference_audio=reference_audio, lipsync=lipsync)
     # Only the playback description instructs H3 to render new on-screen
     # content.  Scanning subject_definitions with the generic quote matcher can

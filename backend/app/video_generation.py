@@ -307,9 +307,28 @@ def _inputs(path, record, shot):
         raise ValueError('本镜字幕范围调整后尚未确认设计')
     if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', str(shot.get('id') or '')):
         raise ValueError('镜头编号无效')
-    # No global asset dump: exactly the numbers used by the video finalizer.
+    # Image-generation references are not automatically video inputs. Most
+    # finished shots use only their confirmed core image (Picture 1).
     core = studio._storyboard_image_path(path, shot)
-    selected = [Path(value) for value in studio._shot_reference_paths(path, record, shot)]
+    if not core.is_file() or path.resolve() not in core.resolve().parents:
+        raise ValueError('本镜核心分镜图不存在，请恢复或重新生成核心图')
+    prompt = str(shot.get('video_prompt') or '')
+    numbers = [int(value) for value in re.findall(r'(?:图\s*|<Picture\s*)(\d+)', prompt, re.I)]
+    highest = max(numbers, default=1)
+    if highest > 9 or highest < 1:
+        raise ValueError('视频提示词引用的图片编号无效，请核对图号')
+    if highest <= 1:
+        return (core,)
+    ids = list(shot.get('reference_ids', shot.get('reference_image_ids', [])))
+    if len(ids) < highest - 1:
+        raise ValueError(f'视频提示词引用了图{highest}，但对应视频参考素材未绑定；请修改提示词或恢复素材')
+    # Keep the original numbering: never silently drop a missing intermediate
+    # reference and make Picture N refer to a different file.
+    try:
+        selected = [Path(value) for value in studio._shot_reference_paths(
+            path, record, {**shot, 'reference_ids': ids[:highest - 1]})]
+    except ValueError as exc:
+        raise ValueError(f'视频提示词引用了额外图片（最高图{highest}），对应素材缺失；请恢复素材或将视频提示词改为仅使用图1核心图') from exc
     return (core, *selected)
 
 
