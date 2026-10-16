@@ -158,11 +158,12 @@ class TTSHTTP:
 
     def _request(self, action, method="GET"):
         config = json.loads(self.credentials.read_text())
-        if config["dispatch_node_ip"] != self.node_ip:
+        node_ip = config["dispatch_node_ip"] if self.node_ip is None else self.node_ip
+        if config["dispatch_node_ip"] != node_ip:
             raise RuntimeError("Lifecycle dispatch target changed")
-        worker = config["workers"][self.node_ip]
+        worker = config["workers"][node_ip]
         request = urllib.request.Request(
-            f"{self.base_url}/internal/workers/{self.node_ip}/{action}",
+            f"{self.base_url}/internal/workers/{node_ip}/{action}",
             method=method, headers={"Authorization": "Bearer " + worker["token"],
                                     "If-Match": str(worker["generation"])})
         with urllib.request.urlopen(request, timeout=self.timeout) as response:

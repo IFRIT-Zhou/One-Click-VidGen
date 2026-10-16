@@ -16,6 +16,9 @@
 
 ## 配置与部署
 
+RayWorker `.20` 的 2026-10-14 修复及后续 EXE 集成记录见
+[.20 TTS 修复与 EXE 修订交接](ops/worker20-exe-handoff-20261014.md)，含兼容补丁、依赖版本、实测结果及尚未完成的安装器回归项。
+
 Python 3.12+。参考 `smtp.env.example`，在服务器专用环境文件中设置 SMTP 参数；QQ 邮箱使用 SMTP 授权码，SSL 端口 465。不要填写 QQ 登录密码或把授权码提交到 Git。
 
 安装依赖：

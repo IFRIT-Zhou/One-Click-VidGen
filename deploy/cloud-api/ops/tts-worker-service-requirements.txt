@@ -1,0 +1,4 @@
+# Additional service dependencies missing from pytorch-env:2.11-tts25.
+# Match the currently deployed Ray TTS head; do not upgrade model dependencies.
+minio==7.2.16
+redis==6.2.0

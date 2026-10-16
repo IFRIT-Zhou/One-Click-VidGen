@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import signal
+import subprocess
 import threading
 import time
 import urllib.request
@@ -17,6 +18,8 @@ from tts_redis_status import TTSRedisHTTP
 
 from .cloud_video_worker import H3Queue
 from .db import SessionLocal
+from .device_control_executor import DeviceControlExecutor
+from .service_control import desired_state as service_control_desired_state
 
 LOG = logging.getLogger("ocv.gpu.scheduler")
 
@@ -55,7 +58,14 @@ def heartbeat_loop(scheduler, stop):
         except Exception:
             queue_ready = False
         payload = {'time': time.time(), 'mode': scheduler.mode, 'queue_ready': queue_ready,
-                   'scheduler_ready': queue_ready and scheduler.mode != 'recovering'}
+                   'scheduler_ready': queue_ready and scheduler.mode != 'recovering'
+                   and getattr(scheduler, 'tts_state', None) != 'unavailable'}
+        if hasattr(scheduler, 'target_node'):
+            payload.update(policy='dedicated', tts_node=scheduler.target_node, h3_node='10.250.0.3',
+                           primary_state=scheduler.primary_state, h3_state=scheduler.h3_state,
+                           primary_failure_reason=getattr(scheduler, 'primary_failure_reason', None),
+                           blocked_reason=scheduler.blocked_reason,
+                           tts_state=scheduler.tts_state, tts_blocked_reason=scheduler.tts_blocked_reason)
         try:
             root.mkdir(parents=True, exist_ok=True, mode=0o750)
             temporary = root / 'heartbeat.tmp'
@@ -133,6 +143,49 @@ class NodePhases:
         if state.get("tts_running") is not False or state.get("h3_running") is not False or state.get("busy") is not False:
             raise RuntimeError("Node did not confirm both GPU containers stopped")
 
+    def stop_tts(self):
+        self.node.call('stop_tts')
+
+    def stop_h3(self):
+        self.node.call('stop_h3')
+        state = self.node.call('health')
+        if state.get('h3_running') is not False:
+            raise RuntimeError('H3_STOP_NOT_CONFIRMED')
+
+    def ensure_idle(self):
+        self.stop_all()
+
+    def prepare_fallback(self):
+        # Node-side guard refuses foreign Windows H3 work and non-idle managed
+        # H3. Readiness is polled by the placement adapter, without blocking H3.
+        self.node.call('start_tts')
+
+    def h3_ready(self):
+        state = self.node.call('health')
+        return (state.get('h3_running') is True and state.get('h3_ready') is True
+                and state.get('tts_running') is False
+                and not (state.get('local_h3') or {}).get('blocked', False))
+
+
+class PlacementClient:
+    def _call(self, *args):
+        result = subprocess.run([
+            '/opt/ray-tts/head/.venv/bin/python', '/opt/cloud-api/tts_placement.py', *args],
+            capture_output=True, text=True, timeout=90)
+        try:
+            payload = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            raise RuntimeError('Placement helper returned invalid status') from None
+        if result.returncode or payload.get('ok') is not True:
+            raise RuntimeError('Placement helper requires reconciliation')
+        return payload
+
+    def snapshot(self):
+        return self._call('snapshot')
+
+    def select(self, target):
+        return self._call('select', '--target', target)
+
 
 def record_event(event):
     # Events contain scheduler-created scalar fields, never prompts/tokens.
@@ -155,18 +208,35 @@ def main():
     # all remote actions/DB claims. A forced shutdown is recovered on next start.
     with daemon_lock(os.environ.get("GPU_SCHEDULER_LOCK", "/run/ocv-gpu-scheduler/owner.lock")):
         node = Node3Client()
-        tts = CloudTTSStatus()
+        dedicated = os.environ.get('GPU_SCHEDULER_POLICY') == 'dedicated'
+        tts = CloudTTSStatus(node_ip=None if dedicated else '10.250.0.3')
         h3 = H3Queue(node)
         phases = NodePhases(node, tts_start_timeout=float(os.environ.get("GPU_TTS_START_TIMEOUT", "600")))
-        scheduler = Scheduler(tts, phases, h3,
+        control_executor = None
+        if dedicated:
+            from dedicated_scheduler import DedicatedScheduler
+            from node20_client import Node20Client
+            state_root = Path(os.environ.get('GPU_SCHEDULER_STATE_DIR', '/var/lib/cloud-api/gpu-scheduler'))
+            placement = PlacementClient()
+            control_state = lambda node_ip, service: service_control_desired_state(
+                node_ip, service, root=state_root)
+            scheduler = DedicatedScheduler(tts, phases, h3, placement, report=record_event,
+                state_path='/var/lib/cloud-api/tts-placement/dedicated-policy.json',
+                control_state=control_state)
+            control_executor = DeviceControlExecutor(node, Node20Client(), scheduler=scheduler,
+                tts=tts, phases=phases, placement=placement, root=state_root)
+        else:
+            scheduler = Scheduler(tts, phases, h3,
                               tts_quantum_seconds=float(os.environ.get("GPU_TTS_QUANTUM_SECONDS", "120")),
                               idle_grace_seconds=float(os.environ.get("GPU_IDLE_GRACE_SECONDS", "0")),
-                              report=record_event)
+                                  report=record_event)
         heartbeat = threading.Thread(target=heartbeat_loop, args=(scheduler, stop), daemon=True, name='admission-heartbeat')
         heartbeat.start()
         threading.Thread(target=node_health_loop, args=(node,stop), daemon=True, name="node-health").start()
         while not stop.is_set():
             try:
+                if control_executor is not None:
+                    control_executor.process_one()
                 scheduler.tick()
             except Exception as exc:
                 # Never log exception text: transport stderr may carry paths or

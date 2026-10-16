@@ -13,6 +13,114 @@ with patch.dict(sys.modules,{'fcntl':types.SimpleNamespace()}):
     agent=importlib.util.module_from_spec(spec);spec.loader.exec_module(agent)
 
 class NodeSafetyTests(unittest.TestCase):
+    def test_stopped_local_tts_does_not_require_global_drain(self):
+        with patch.object(agent,'running',return_value=False),patch.object(agent,'drain_status') as drain,patch.object(agent,'docker') as docker:
+            agent.stopped_tts()
+        drain.assert_not_called();docker.assert_not_called()
+
+    def test_running_local_tts_still_requires_drain(self):
+        with patch.object(agent,'running',return_value=True),patch.object(agent,'drain_status',return_value={'draining':False,'drained':False,'active_jobs':1}),patch.object(agent,'docker') as docker:
+            with self.assertRaisesRegex(RuntimeError,'TTS_NOT_DRAINED'):agent.stopped_tts()
+        docker.assert_not_called()
+
+    def test_stop_tts_preserves_h3(self):
+        states={agent.TTS:True,agent.H3:True}
+        def docker(*args):
+            self.assertEqual(args,('stop','--time','60',agent.TTS));states[agent.TTS]=False
+        with patch.object(agent,'running',side_effect=lambda name:states[name]),patch.object(agent,'drain_status',return_value={'draining':True,'drained':True,'active_jobs':0}),patch.object(agent,'docker',side_effect=docker):
+            result=agent.dispatch({'action':'stop_tts'})
+        self.assertFalse(result['tts_running']);self.assertTrue(states[agent.H3])
+
+    def test_dedicated_h3_can_start_with_other_node_tts_active(self):
+        states={agent.TTS:False,agent.H3:False}
+        def docker(*args):
+            self.assertEqual(args,('start',agent.H3));states[agent.H3]=True
+        with patch.object(agent,'running',side_effect=lambda name:states[name]),patch.object(agent,'guard_windows_h3'),patch.object(agent,'docker',side_effect=docker),patch.object(agent,'drain_status') as drain,patch.object(agent,'api',return_value={'devices':[{'type':'cuda'}]}):
+            agent.dispatch({'action':'prepare_dedicated_h3'})
+        drain.assert_not_called();self.assertTrue(states[agent.H3])
+
+    def test_windows_local_h3_blocks_container_switch_without_mutation(self):
+        for action in ['start_h3','start_tts','prepare_dedicated_h3']:
+            for status,error in [({'known':True,'busy':True,'blocked':True},'WINDOWS_H3_BUSY'),({'known':True,'busy':False,'blocked':True},'WINDOWS_H3_RESOURCE_BLOCKED'),({'known':False,'blocked':True},'WINDOWS_H3_PROBE_FAILED')]:
+                with self.subTest(action=action,error=error),patch.object(agent,'windows_h3_status',return_value=status),patch.object(agent,'docker') as docker,patch.object(agent,'stop_h3') as h3,patch.object(agent,'stopped_tts') as tts:
+                    with self.assertRaisesRegex(RuntimeError,error):agent.dispatch({'action':action})
+                    docker.assert_not_called();h3.assert_not_called();tts.assert_not_called()
+
+    def test_scheduler_role_keeps_fallback_restart_disabled(self):
+        agent.SCHEDULER_ROLE.write_text(json.dumps({'schema':1,'owner':'ocv-gpu-scheduler',
+            'node_ip':'10.250.0.3','primary_role':'h3','tts_container':agent.TTS}))
+        with patch.object(agent,'guard_windows_h3'),patch.object(agent,'stop_h3'),patch.object(agent,'running',return_value=False),patch.object(agent,'docker') as docker:
+            agent.dispatch({'action':'start_tts'})
+        self.assertEqual(docker.call_args_list[0].args,('update','--restart=no',agent.TTS))
+        self.assertEqual(docker.call_args_list[1].args,('start',agent.TTS))
+
+    def test_scheduler_role_stop_does_not_contact_other_node_lifecycle(self):
+        agent.SCHEDULER_ROLE.write_text(json.dumps({'schema':1,'owner':'ocv-gpu-scheduler',
+            'node_ip':'10.250.0.3','primary_role':'h3','tts_container':agent.TTS}))
+        with patch.object(agent,'running',return_value=False),patch.object(agent,'drain_status') as drain,patch.object(agent,'docker') as docker:
+            agent.dispatch({'action':'stop_tts'})
+        drain.assert_not_called()
+        docker.assert_called_once_with('update','--restart=no',agent.TTS)
+
+    def test_corrupt_role_blocks_before_any_lifecycle_mutation(self):
+        agent.SCHEDULER_ROLE.write_text('{}')
+        with patch.object(agent,'stop_h3') as h3,patch.object(agent,'stopped_tts') as tts,patch.object(agent,'docker') as docker:
+            for action in ('start_h3','start_tts','stop_tts'):
+                with self.assertRaisesRegex(RuntimeError,'SCHEDULER_ROLE_INVALID'):
+                    agent.dispatch({'action':action})
+        h3.assert_not_called();tts.assert_not_called();docker.assert_not_called()
+
+    def test_malformed_role_blocks_before_any_lifecycle_mutation(self):
+        agent.SCHEDULER_ROLE.write_text('{broken')
+        with patch.object(agent,'stop_h3') as h3,patch.object(agent,'stopped_tts') as tts,patch.object(agent,'docker') as docker:
+            with self.assertRaisesRegex(RuntimeError,'SCHEDULER_ROLE_INVALID'):
+                agent.dispatch({'action':'stop_tts'})
+        h3.assert_not_called();tts.assert_not_called();docker.assert_not_called()
+
+    def test_stop_h3_requires_scheduler_role_and_keeps_tts_untouched(self):
+        agent.SCHEDULER_ROLE.write_text(json.dumps({'schema':1,'owner':'ocv-gpu-scheduler',
+            'node_ip':'10.250.0.3','primary_role':'h3','tts_container':agent.TTS}))
+        states={agent.TTS:True,agent.H3:True}
+        def docker(*args):
+            self.assertEqual(args,('stop','--time','30',agent.H3));states[agent.H3]=False
+        with patch.object(agent,'running',side_effect=lambda name:states[name]),patch.object(agent,'idle_h3'),patch.object(agent,'docker',side_effect=docker):
+            result=agent.dispatch({'action':'stop_h3'})
+        self.assertFalse(result['h3_running']);self.assertTrue(states[agent.TTS])
+
+    def test_stop_h3_missing_scheduler_role_fails_before_idle_check(self):
+        with patch.object(agent,'idle_h3') as idle,patch.object(agent,'docker') as docker:
+            with self.assertRaisesRegex(RuntimeError,'SCHEDULER_ROLE_REQUIRED'):
+                agent.dispatch({'action':'stop_h3'})
+        idle.assert_not_called();docker.assert_not_called()
+
+    def test_windows_probe_reports_idle_resident_model_blocker(self):
+        result=types.SimpleNamespace(stdout=json.dumps({'known':True,'source':'windows_process_and_queue','processes':[{'pid':123,'queue_known':True,'memory_known':True,'busy':False,'dedicated_bytes':1024**3,'shared_bytes':0}]}).encode())
+        with patch.object(agent,'WINDOWS_POWERSHELL') as exe,patch.object(agent.subprocess,'run',return_value=result):
+            exe.exists.return_value=True
+            status=agent.windows_h3_status()
+        self.assertTrue(status['known']);self.assertFalse(status['busy']);self.assertTrue(status['blocked'])
+
+    def test_windows_probe_fails_closed_when_queue_cannot_be_read(self):
+        result=types.SimpleNamespace(stdout=json.dumps({'known':True,'processes':[{'pid':123,'queue_known':False}]}).encode())
+        with patch.object(agent,'WINDOWS_POWERSHELL') as exe,patch.object(agent.subprocess,'run',return_value=result):
+            exe.exists.return_value=True
+            self.assertTrue(agent.windows_h3_status()['blocked'])
+
+    def test_health_includes_windows_queue_without_container_mutation(self):
+        local={'known':True,'busy':True,'blocked':True,'source':'windows_process_and_queue'}
+        with patch.object(agent,'running',return_value=False),patch.object(agent,'windows_h3_status',return_value=local):
+            status=agent.service_health()
+        self.assertEqual(status['local_h3'],local)
+
+    def test_windows_guard_blocks_fresh_submit_but_allows_existing_poll(self):
+        with patch.object(agent,'guard_windows_h3',side_effect=RuntimeError('WINDOWS_H3_BUSY')) as guard,patch.object(agent,'poll',return_value={'status':'running'}):
+            self.assertEqual(agent.dispatch({**self.req,'action':'submit'}),{'status':'running'})
+            guard.assert_not_called()
+            self.path.unlink()
+            with self.assertRaisesRegex(RuntimeError,'WINDOWS_H3_BUSY'):
+                agent.dispatch({**self.req,'action':'submit'})
+        self.assertFalse(self.path.exists())
+
     def test_copy_marker_blocks_h3_start_without_touching_containers(self):
         (self.root/'model-cache-copy.active').write_text('123')
         with patch.object(agent,'docker') as docker:
@@ -24,6 +132,8 @@ class NodeSafetyTests(unittest.TestCase):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.root=Path(temp.name)
         self.patch=patch.object(agent,'ROOT',self.root);self.patch.start();self.addCleanup(self.patch.stop)
+        role_patch=patch.object(agent,'SCHEDULER_ROLE',self.root/'gpu-scheduler-role.json')
+        role_patch.start();self.addCleanup(role_patch.stop)
         (self.root/'jobs').mkdir();(self.root/'input').mkdir();(self.root/'output'/'jobs').mkdir(parents=True)
         self.req={'job_id':'h3job_'+'a'*32,'attempt_token':'b'*32}
         self.job={**self.req,'status':'submitting','prompt_id':'prompt-owned','submitted_at':0,
@@ -89,7 +199,7 @@ class NodeSafetyTests(unittest.TestCase):
             self.assertEqual(data['prompt']['131']['inputs'],{'expression':'round(a)','values.a':56})
             self.assertEqual(json.loads(self.path.read_text())['status'],'submitting')
             return {'prompt_id':'server-returned'}
-        with patch.object(agent,'running',side_effect=lambda name:name==agent.H3),patch.object(agent,'api',side_effect=api):
+        with patch.object(agent,'guard_windows_h3'),patch.object(agent,'running',side_effect=lambda name:name==agent.H3),patch.object(agent,'api',side_effect=api):
             agent.dispatch(request)
         self.assertEqual(json.loads(self.path.read_text())['prompt_id'],'server-returned')
 

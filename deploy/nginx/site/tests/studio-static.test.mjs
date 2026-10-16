@@ -21,7 +21,7 @@ test("vertical workflow exposes all frozen cloud contracts", () => {
     "/cloud/quotes",
     "/cloud/jobs",
     "/model-pool/status",
-    "/model-pool/v1/chat/completions",
+    "/storyboard/plan-stage",
     "/image-pool/generate",
     "/image-pool/query",
   ].forEach((path) => assert.ok(javascript.includes(path), `missing ${path}`));
@@ -55,18 +55,19 @@ test("image submissions share a stable batch-scoped idempotency key", () => {
 });
 
 test("protected studio links require login before entering their target", () => {
-  assert.match(javascript, /new Set\(\["script-panel", "one-click-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"\]\)/);
+  assert.match(javascript, /const protectedTargets = new Set\(\[[^\]]*"script-panel"[^\]]*"compose-panel"[^\]]*\]\)/);
   assert.match(javascript, /guardProtectedTarget\(\)/);
   assert.match(javascript, /pendingProtectedTarget = target/);
   assert.match(javascript, /enterPendingProtectedTarget\(\)/);
-  assert.match(javascript, /scrollIntoView\(\{ block: "start" \}\)/);
+  assert.match(javascript, /scrollIntoView\(\{[^}]*block:\s*"start"/);
 });
 
 test("one-click video is the primary workflow and keeps the advanced flow", () => {
   assert.match(html, /id="one-click-panel"/);
   assert.match(html, /id="create-video-job"/);
   assert.match(html, /id="video-job"[^>]+aria-live="polite"/);
-  assert.match(html, /<details class="advanced-workflow" id="advanced-workflow">/);
+  assert.match(html, /<details class="advanced-workflow" id="storyboard-panel" data-wizard-step="2" hidden>/);
+  assert.match(html, /<details class="advanced-workflow" id="advanced-creation" data-wizard-step="3" hidden>/);
   ["storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]
     .forEach((id) => assert.ok(html.includes(`id="${id}"`), `advanced workflow lost ${id}`));
 });
@@ -75,7 +76,7 @@ test("one-click video uses the frozen server orchestration contracts", () => {
   assert.match(javascript, /api\("\/video-jobs", \{ method: "POST"/);
   assert.match(javascript, /api\("\/video-jobs\?page=1&page_size=8"\)/);
   assert.match(javascript, /api\(`\/video-jobs\/\$\{encodeURIComponent\(jobId\)\}`\)/);
-  assert.match(javascript, /`\/video-jobs\/\$\{encodeURIComponent\(state\.videoJob\.job_id\)\}\/cancel`/);
+  assert.match(javascript, /`\/video-jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel`/);
   assert.match(javascript, /`\/api\/v1\/video-jobs\/\$\{encodeURIComponent\(state\.videoJob\.job_id\)\}\/result`/);
   ["client_job_id", "script", "voice", "aspect_ratio", "resolution", "scene_count", "visual_style", "speed", "pitch", "emotion", "emotion_weight"]
     .forEach((field) => assert.match(javascript, new RegExp(`${field}:`), `missing create field ${field}`));
@@ -89,6 +90,22 @@ test("recent complete video jobs recover across refresh and download MP4", () =>
   assert.match(javascript, /localStorage\.getItem\("ocvg-recent-video-job"\)/);
   assert.match(javascript, /pollVideoJob\(job\.job_id\)/);
   assert.match(javascript, /downloadBlob\(blob, `OneClickVidGen_\$\{state\.videoJob\.job_id\}\.mp4`\)/);
+});
+
+test("studio wizard restores browser history and edits one storyboard scene at a time", () => {
+  assert.match(html, /id="wizard-prev"/);
+  assert.match(html, /id="wizard-next"/);
+  assert.match(html, /id="script-panel" data-wizard-step="1"/);
+  assert.match(html, /id="one-click-panel" data-wizard-step="4" hidden/);
+  assert.match(html, /id="compose-panel" data-wizard-step="5" hidden/);
+  assert.match(javascript, /history\.pushState\(historyState/);
+  assert.match(javascript, /history\.replaceState\(historyState/);
+  assert.match(javascript, /addEventListener\("popstate", guardProtectedTarget\)/);
+  assert.match(javascript, /const scene = state\.storyboard\[selected\]/);
+  assert.match(javascript, /id="storyboard-scene-select"/);
+  assert.match(javascript, /state\.selectedStoryboardIndex = Math\.min\(state\.storyboard\.length - 1, selected \+ 1\)/);
+  assert.match(javascript, /action === "merge"/);
+  assert.match(javascript, /action === "delete"/);
 });
 
 test("video job stages and statuses never expose internal English values", () => {

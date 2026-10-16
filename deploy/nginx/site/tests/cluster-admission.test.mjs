@@ -38,7 +38,8 @@ test('all affected pages load shared contract before consumers with new cache ve
  for (const path of ['index.html','studio/index.html','services/index.html','contact/index.html','recharge/index.html']) {
   const html=fs.readFileSync(new URL('../'+path,import.meta.url),'utf8');
   const shared=html.indexOf('/assets/cluster-health.js?v=20261012-admission1');
-  const consumer=html.search(/\/assets\/(site|studio)\.js\?v=20261012-admission1/);
-  assert.ok(shared>=0 && consumer>shared,path);
+  const consumer=html.match(/\/assets\/(site|studio)\.js\?v=(\d{8})-[A-Za-z0-9.-]+/);
+  assert.ok(shared>=0 && consumer && consumer.index>shared,path);
+  assert.ok(Number(consumer[2])>=20261012,`${path}: consumer must include the admission update`);
  }
 });

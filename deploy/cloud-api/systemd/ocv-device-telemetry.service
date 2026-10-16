@@ -1,0 +1,21 @@
+[Unit]
+Description=OCV read-only per-device service observations
+After=network-online.target cloud-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=cloudapi
+WorkingDirectory=/opt/cloud-api
+Environment=PYTHONUNBUFFERED=1
+Environment=GPU_SCHEDULER_STATE_DIR=/var/lib/cloud-api/gpu-scheduler
+ExecStart=/opt/cloud-api/.venv/bin/python -m app.device_telemetry
+Restart=on-failure
+RestartSec=10
+UMask=0027
+NoNewPrivileges=true
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

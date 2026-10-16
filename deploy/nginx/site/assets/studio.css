@@ -2,6 +2,46 @@
 .continue-creation{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:18px 0;padding:18px;border:1px solid #b4d8cb;border-radius:14px;background:#effaf6}.continue-creation>div{flex:1 1 260px}.continue-creation p{margin:6px 0;color:#486d64;font-size:13px;line-height:1.6}.continue-creation a{color:#126c59}.continue-creation [hidden]{display:none}
 .continue-creation>div>strong{display:block;margin-top:5px}.continue-creation [role=status]{font-size:12px}.studio-page .auth-wall{padding:14px 18px;box-shadow:none}.studio-page .auth-wall h2{font-size:18px}.studio-page .auth-wall p{font-size:13px}.studio-page .quote-card{margin:0 24px 24px}.studio-page .workspace-help{display:none}.studio-page .workspace-summary{display:block}.studio-page .advanced-workflow>summary{min-height:56px}.studio-page .workspace-main{min-width:0}
 @media(max-width:760px){.studio-page .auth-wall .button{width:auto;min-height:40px}.studio-page .quote-card{margin:0 12px 12px}.continue-creation{padding:14px}.continue-creation button{min-height:42px}.studio-page .workspace-summary{display:none}.studio-page .auth-wall h2{font-size:17px}.studio-page .workspace-steps a{min-width:110px}.studio-page .workspace-steps strong{font-size:13px}}
+
+/* The studio is a five-step workspace. Only the active step occupies the page;
+   long storyboard and asset lists stay inside their own controls. */
+.studio-wizard-mode [data-wizard-step][hidden]{display:none!important}
+.studio-wizard-mode .workspace-form{display:block}
+.studio-wizard-mode .continue-creation{display:none!important}
+.studio-wizard-mode .workspace-form>.workspace-card,
+.studio-wizard-mode .workspace-form>.advanced-workflow,
+.studio-wizard-mode .workspace-form>.quote-card{margin-bottom:18px}
+.wizard-toolbar{position:sticky;top:var(--studio-header-height,76px);z-index:20;display:flex;align-items:center;gap:18px;margin:0 0 18px;padding:12px 14px;border:1px solid #cfe3df;border-radius:14px;background:rgba(255,255,255,.96);box-shadow:0 10px 28px rgba(13,62,66,.08)}
+.wizard-nav-button{flex:0 0 auto;min-width:132px;min-height:42px;padding:0 14px;font-size:13px}
+.wizard-nav-button:disabled{cursor:not-allowed;opacity:.42}
+.wizard-toolbar-progress{min-width:0;flex:1;display:grid;grid-template-columns:auto minmax(70px,1fr);align-items:center;column-gap:10px;row-gap:5px}
+.wizard-toolbar-progress>span{color:var(--teal-dark);font-size:10px;font-weight:850;letter-spacing:.08em}
+.wizard-toolbar-progress>strong{grid-column:1/-1;font-size:15px}
+.wizard-toolbar-progress>small{grid-column:1/-1;color:var(--muted);font-size:12px;line-height:1.45}
+.wizard-progress-track{overflow:hidden;height:5px;border-radius:99px;background:#dfece9}
+.wizard-progress-track i{display:block;width:20%;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--teal),#63d3b9);transition:width .25s ease}
+.wizard-step-hint.error{color:#a34436}
+.studio-wizard-mode .workspace-steps a[aria-current="step"]{background:rgba(50,202,178,.12);color:white}
+.studio-wizard-mode .workspace-steps a[aria-current="false"]{background:transparent}
+.studio-wizard-mode #storyboard-panel,.studio-wizard-mode #advanced-creation{overflow:visible}
+.studio-wizard-mode #storyboard-panel[open]>summary,.studio-wizard-mode #advanced-creation[open]>summary{border-color:rgba(22,168,149,.35);box-shadow:0 8px 22px rgba(15,64,68,.05)}
+.studio-wizard-mode #generation-estimate{margin:0 0 18px;padding:22px}
+.studio-wizard-mode #generation-estimate .button{font-size:14px}
+.manual-generation-actions{padding:18px;border:1px solid var(--line);border-radius:12px;background:#f6faf8}
+.manual-generation-actions p{margin:0 0 12px;color:var(--muted);font-size:13px;line-height:1.6}
+
+@media(max-width:620px){
+  .wizard-toolbar{align-items:stretch;flex-wrap:wrap;gap:10px;padding:10px}
+  .wizard-toolbar-progress{order:-1;flex-basis:100%}
+  .wizard-nav-button{flex:1;min-width:0}
+  .wizard-toolbar-progress>strong{font-size:14px}
+}
+@media(max-width:760px){
+  .studio-wizard-mode .workspace-intro{display:none}
+  .studio-wizard-mode .workspace-topbar{min-height:0;gap:0;margin:0 0 8px;padding:0}
+  .studio-wizard-mode .workspace-topbar>div:first-child{display:none}
+  .studio-wizard-mode .cloud-state{width:100%;padding:8px 12px}
+}
 .studio-page .document-upload-button span{background:var(--ink-deep);border-color:var(--ink-deep);color:white}
 .continue-creation[hidden]{display:none}
 .storyboard-actions{display:flex;align-items:flex-end;flex-wrap:wrap;gap:16px}
@@ -11,12 +51,18 @@
 .storyboard-count[hidden],.storyboard-manual[hidden],#undo-storyboard-delete[hidden]{display:none}
 .storyboard-manual{margin-top:16px;display:flex;flex-wrap:wrap;align-items:center;gap:12px}
 .storyboard-manual>p{flex-basis:100%;margin:0;color:var(--muted);font-size:12px;line-height:1.7}
+.storyboard-scene-picker{display:grid;grid-template-columns:auto minmax(180px,1fr) auto auto;align-items:end;gap:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#f5faf8}
+.storyboard-scene-picker>label{display:grid;gap:5px;color:var(--muted);font-size:12px;font-weight:700}
+.storyboard-scene-picker select{width:100%;min-height:40px;padding:7px 10px;border:1px solid #cfe0dc;border-radius:9px;background:white;color:var(--ink);font:inherit}
+.storyboard-scene-picker>strong{align-self:center;padding:0 4px;color:var(--teal-dark);font-size:13px;white-space:nowrap}
+.storyboard-scene-picker button:disabled{cursor:not-allowed;opacity:.45}
 .story-scene-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:10px;margin-top:12px}
 .story-scene-actions .scene-delete{color:#a34436}
 .story-scene-actions button:disabled{opacity:.45;cursor:not-allowed}
 .continue-creation>div{flex:1 1 100%}
 .continue-creation #save-to-project,.continue-creation #start-new-creation{display:inline-flex;align-items:center;justify-content:center;flex:0 0 150px;width:150px;min-width:150px;height:48px;min-height:48px;padding:0 14px;border-radius:12px;font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap}
 @media(max-width:480px){.continue-creation #save-to-project,.continue-creation #start-new-creation{flex:1 1 140px;width:auto;min-width:0}}
+@media(max-width:520px){.storyboard-scene-picker{grid-template-columns:1fr 1fr}.storyboard-scene-picker>label{grid-column:1/-1;grid-row:1}.storyboard-scene-picker>strong{justify-self:center}.storyboard-scene-picker button{min-width:0}}
 .studio-page .reference-upload-box{min-height:150px;padding:24px;gap:18px;border-top:1px solid #b4d8cb;background:#eff9f5}
 .studio-page .reference-upload-box>div:first-child{flex:1 1 220px;min-width:0}
 .studio-page .reference-upload-box strong{margin-bottom:8px;font-size:20px;line-height:1.4}

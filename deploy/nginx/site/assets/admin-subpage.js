@@ -12,14 +12,87 @@
   const esc = (v) => String(v ?? "").replace(/[&<>'"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
   const date = (v) => v ? new Date(v).toLocaleString("zh-CN", {dateStyle:"short", timeStyle:"short", timeZone:"Asia/Shanghai"}) : "—";
   const money = (v) => Number(v || 0).toLocaleString("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2});
-  const connectivity = (x) => {
-    if (x?.ray_connected === true) return '<span class="status-pill status-online">Ray 在线</span>';
-    const value = x?.connectivity_status;
-    if (value === "online") return '<span class="status-pill status-online">在线</span>';
-    if (value === "stale") return '<span class="status-pill status-stale">心跳超时</span>';
-    return '<span class="status-pill status-unknown">未上报</span>';
+  const agentState = (x) => {
+    if (!x?.last_seen_at) return "unreported";
+    const age = x.heartbeat_age_seconds;
+    if (typeof age === "number" && Number.isFinite(age) && age >= 0) return age > 90 ? "stale" : "online";
+    return ["online", "stale"].includes(x.heartbeat_status) ? x.heartbeat_status : "unknown";
   };
-  const heartbeat = (x) => x?.last_seen_at ? date(x.last_seen_at) : "暂无上报";
+  const connectivity = (x) => {
+    const state = agentState(x);
+    const label = {online:"心跳正常",stale:"心跳超时",unreported:"心跳未上报",unknown:"心跳状态未知"}[state];
+    return `<span class="status-pill status-${state === "unreported" ? "unknown" : state}">${label}</span>`;
+  };
+  const heartbeat = (x) => x?.last_seen_at ? `${date(x.last_seen_at)}${typeof x.heartbeat_age_seconds === "number" ? `<small>${esc(x.heartbeat_age_seconds)} 秒前</small>` : ""}` : "暂无上报";
+  const serviceState = (x, kind) => {
+    const s = x?.services?.[kind];
+    if (!s || !["ready", "running", "stopped", "unknown", "not_installed"].includes(s.status)) return "unknown";
+    if (s.status === "ready" && (s.ready !== true || s.container_running !== true || (kind === "tts" && s.ray_connected !== true))) return "unknown";
+    return s.status;
+  };
+  const serviceControlInFlight = new Set();
+  const serviceOperationWatches = new Map();
+  let serviceConfirmationOpen = false;
+  const serviceControlState = (x, kind) => {
+    const s = x?.services?.[kind] || {}, control = s.control || {}, key = `${x?.device_id || ""}:${kind}`;
+    const status = String(control.status || control.state || "").toLowerCase();
+    const watched = serviceOperationWatches.has(key);
+    const busy = serviceControlInFlight.has(key) || watched || control.busy === true || control.pending === true || control.in_flight === true || ["pending", "accepted", "queued", "starting", "stopping", "busy", "in_progress"].includes(status);
+    const observedRunning = typeof s.container_running === "boolean" ? s.container_running : null;
+    const desiredRunning = typeof control.desired_running === "boolean" ? control.desired_running : null;
+    return {
+      supported: control.supported === true,
+      busy,
+      unknown: observedRunning === null,
+      running: observedRunning,
+      desiredRunning,
+      status,
+      reason: control.reason || "",
+      operationId: control.operation_id || control.operationId || "",
+      key,
+    };
+  };
+  const serviceControlLabel = (kind) => kind === "tts" ? "TTS 容器" : "H3 容器";
+  function serviceControlMarkup(x, kind, compact = false) {
+    const state = serviceControlState(x, kind), label = serviceControlLabel(kind);
+    if (!state.supported) return `<div class="device-service-controls${compact ? " compact" : ""}"><span class="device-control-unavailable"${state.reason ? ` title="${esc(state.reason)}"` : ""}>不可控制</span>${!compact && state.reason ? `<small>${esc(state.reason)}</small>` : ""}</div>`;
+    const watched = serviceOperationWatches.get(state.key);
+    const desired = state.desiredRunning ?? (watched ? watched.action === "start" : null);
+    const statusLabel = compact
+      ? (state.busy ? `正在${desired === true ? "启动" : desired === false ? "停止" : "处理"}` : state.unknown ? "状态未知" : state.running ? "运行中" : "已停止")
+      : (state.busy ? `正在${desired === true ? "启动" : desired === false ? "停止" : "处理"}，等待设备反馈` : state.unknown ? "容器状态未知，暂不可操作" : state.running ? "容器当前运行中" : "容器当前已停止");
+    const disabled = (action) => state.busy || state.unknown || (action === "start" ? state.running === true : state.running === false);
+    const titleFor = (action) => state.busy ? "已有容器操作正在处理" : state.unknown ? "等待节点上报明确的容器状态" : disabled(action) ? (action === "start" ? "容器已在运行" : "容器已停止") : "";
+    const button = (action, text) => `<button type="button" class="table-button service-control-button${action === "stop" ? " service-control-stop" : ""}" data-service-action="${action}" data-service-kind="${kind}" data-device-id="${esc(x?.device_id || "")}"${disabled(action) ? " disabled" : ""}${titleFor(action) ? ` title="${esc(titleFor(action))}"` : ""}>${text}</button>`;
+    const detail = state.busy && state.reason ? `<small>${esc(state.reason)}</small>` : "";
+    return `<div class="device-service-controls${compact ? " compact" : ""}" role="group" aria-label="${esc(x?.device_id || "设备")} ${label}控制">${button("start", "启动")}${button("stop", "停止")}<span class="device-control-state" role="status" aria-live="polite">${esc(statusLabel)}</span>${detail}</div>`;
+  }
+  function serviceStatus(x, kind, detailed = false) {
+    const s = x?.services?.[kind] || {}, state = serviceState(x, kind);
+    const label = {ready:"已就绪",running:"运行中",stopped:"已停止",unknown:"状态未知",not_installed:"未安装"}[state];
+    const css = {ready:"online",running:"installing",stopped:"paused",unknown:"unknown",not_installed:"unknown"}[state];
+    const value = (v, yes, no) => v === true ? yes : v === false ? no : "未知";
+    const reason = s.reason || "尚无独立服务探测数据";
+    const rows = [`<div>容器：${value(s.container_running, "运行", "停止")}</div>`];
+    if (kind === "tts") rows.push(`<div>Ray：${value(s.ray_connected, "已连接", "未连接")}</div>`);
+    rows.push(`<div>${kind === "tts" ? "模型" : "服务"}：${value(s.ready, "就绪", "未就绪")}</div>`);
+    if (detailed) {
+      rows.push(`<div>容器名：<code>${esc(s.container_name || "未确认")}</code></div>`);
+      if (kind === "h3") rows.push('<div>H3 使用独立服务，Ray 不适用</div>');
+      rows.push(`<div>采样：${s.checked_at ? date(s.checked_at) : "暂无采样"}</div><div>来源：${esc(s.source || "未知")}</div>`);
+    }
+    return `<div class="device-service"><span class="status-pill status-${css}">${label}</span><div class="device-service-facts">${rows.join("")}</div><small class="device-service-reason">${esc(reason)}</small>${serviceControlMarkup(x, kind)}</div>`;
+  }
+  function deviceServiceCompact(x, kind) {
+    const s = x?.services?.[kind] || {}, state = serviceState(x, kind);
+    const label = {ready:"就绪",running:"运行中",stopped:"已停止",unknown:"未知",not_installed:"未安装"}[state];
+    const css = {ready:"online",running:"installing",stopped:"paused",unknown:"unknown",not_installed:"unknown"}[state];
+    const container = s.container_running === true ? "容器运行" : s.container_running === false ? "容器停止" : "容器未知";
+    const extra = kind === "tts"
+      ? `Ray ${s.ray_connected === true ? "在线" : s.ray_connected === false ? "离线" : "未知"} · 模型 ${s.ready === true ? "就绪" : s.ready === false ? "未就绪" : "未知"}`
+      : `服务 ${s.ready === true ? "就绪" : s.ready === false ? "未就绪" : "未知"}`;
+    return `<section class="device-service-compact" aria-label="${kind.toUpperCase()} 服务"><div class="device-service-compact-head"><strong>${kind.toUpperCase()}</strong><span class="status-pill status-${css}">${label}</span></div><div class="device-service-compact-facts">${container} · ${extra}</div>${serviceControlMarkup(x, kind, true)}</section>`;
+  }
   function getSession() { try { return JSON.parse(sessionStorage.getItem(sessionKey)) || null; } catch (_) { return null; } }
   function save(v) { if (v) sessionStorage.setItem(sessionKey, JSON.stringify(v)); else sessionStorage.removeItem(sessionKey); }
   async function refresh(s) {
@@ -59,6 +132,106 @@
       if (error.name === "AbortError") throw new Error("请求超时，请稍后刷新重试");
       throw error;
     } finally { clearTimeout(timeout); }
+  }
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const serviceActionLabel = (action) => action === "start" ? "启动" : "停止";
+  const serviceIdempotencyKey = (deviceId, kind, action) => {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    } catch (_) {}
+    return `admin-service-${action}-${kind}-${deviceId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  };
+  function closeServiceDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.close === "function" && dialog.open) dialog.close();
+    else dialog.removeAttribute?.("open");
+  }
+  function wireServiceControls() {
+    document.querySelectorAll("[data-service-action]").forEach((button) => {
+      button.onclick = () => {
+        if (button.disabled) return;
+        openServiceControlDialog(button.dataset.deviceId, button.dataset.serviceKind, button.dataset.serviceAction, button);
+      };
+    });
+  }
+  async function waitForServiceOperation(deviceId, kind, action, operationId) {
+    const key = `${deviceId}:${kind}`;
+    serviceOperationWatches.set(key, {action, operationId});
+    const deadline = Date.now() + 30000;
+    try {
+      for (;;) {
+        await renderCurrent();
+        let control = null;
+        try {
+          const latest = await api(`/admin/cluster/devices/${encodeURIComponent(deviceId)}`);
+          control = latest?.services?.[kind]?.control || null;
+        } catch (_) {}
+        const status = String(control?.status || control?.state || "").toLowerCase();
+        const terminal = ["completed", "succeeded", "failed", "error", "cancelled", "rejected"].includes(status) || (control && control.pending === false && !["pending", "accepted", "queued", "starting", "stopping", "busy", "in_progress"].includes(status));
+        if (terminal || Date.now() >= deadline) {
+          serviceOperationWatches.delete(key);
+          if (terminal && ["failed", "error", "cancelled", "rejected"].includes(status)) message(control?.reason || `容器${serviceActionLabel(action)}失败`);
+          else if (terminal) message(`容器${serviceActionLabel(action)}已完成。`, true);
+          else message(`容器${serviceActionLabel(action)}请求已提交，设备仍在处理，请稍后刷新。`, true);
+          await renderCurrent();
+          return;
+        }
+        await sleep(1500);
+      }
+    } finally {
+      serviceOperationWatches.delete(key);
+    }
+  }
+  function openServiceControlDialog(deviceId, kind, action, trigger) {
+    const key = `${deviceId}:${kind}`;
+    if (serviceControlInFlight.has(key) || serviceOperationWatches.has(key)) return;
+    let dialog = $("service-control-dialog");
+    if (!dialog) {
+      dialog = document.createElement("dialog");
+      dialog.id = "service-control-dialog";
+      dialog.className = "admin-dialog service-control-dialog";
+      document.body.append(dialog);
+    }
+    const actionLabel = serviceActionLabel(action), serviceLabel = serviceControlLabel(kind);
+    dialog.innerHTML = `<form class="admin-dialog-inner" aria-labelledby="service-control-heading"><div class="admin-dialog-heading"><div><span>SERVICE CONTROL</span><h2 id="service-control-heading">${actionLabel}${serviceLabel}</h2><p>${esc(deviceId)}</p></div><button type="button" class="dialog-close" aria-label="关闭">×</button></div><p class="service-control-warning">${action === "stop" ? "停止容器可能中断正在执行的任务，请确认设备当前没有需要继续的任务。" : "启动容器后，节点仍需要一些时间完成健康检查。"}</p><label class="admin-field" for="service-control-reason"><span>操作原因（至少 3 个字符）</span><textarea id="service-control-reason" data-service-reason rows="3" minlength="3" maxlength="500" required placeholder="例如：例行维护"></textarea></label><div class="admin-message" role="status" aria-live="polite" data-service-dialog-status></div><div class="admin-dialog-actions"><button type="button" class="button secondary" data-service-cancel>取消</button><button type="submit" class="button primary" data-service-submit>确认${actionLabel}</button></div></form>`;
+    const form = dialog.querySelector("form"), reasonInput = dialog.querySelector("[data-service-reason]"), statusNode = dialog.querySelector("[data-service-dialog-status]");
+    let submitting = false;
+    const close = () => { if (!submitting) closeServiceDialog(dialog); };
+    dialog.querySelectorAll("[data-service-cancel],.dialog-close").forEach((button) => { button.onclick = close; });
+    dialog.oncancel = (event) => { if (submitting) event.preventDefault(); };
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (submitting) return;
+      const reason = reasonInput.value.trim();
+      if (reason.length < 3) {
+        statusNode.textContent = "请填写至少 3 个字符的操作原因。";
+        statusNode.className = "admin-message show error";
+        reasonInput.focus();
+        return;
+      }
+      submitting = true;
+      serviceControlInFlight.add(key);
+      form.querySelectorAll("button,textarea").forEach((element) => { element.disabled = true; });
+      statusNode.textContent = `正在提交${actionLabel}请求…`;
+      statusNode.className = "admin-message show";
+      const idempotencyKey = serviceIdempotencyKey(deviceId, kind, action);
+      try {
+        const response = await api(`/admin/cluster/devices/${encodeURIComponent(deviceId)}/services/${encodeURIComponent(kind)}/${action}`, {method:"POST", headers:{"Idempotency-Key":idempotencyKey}, body:JSON.stringify({reason, idempotency_key:idempotencyKey})});
+        statusNode.textContent = response?.status === "pending" || response?.status === "accepted" ? "请求已提交，正在等待设备反馈…" : `请求已提交，正在刷新状态…`;
+        closeServiceDialog(dialog);
+        await waitForServiceOperation(deviceId, kind, action, response?.operation_id || response?.operationId || "");
+      } catch (error) {
+        serviceControlInFlight.delete(key);
+        statusNode.textContent = error.message;
+        statusNode.className = "admin-message show error";
+        form.querySelectorAll("button,textarea").forEach((element) => { element.disabled = false; });
+        return;
+      }
+      serviceControlInFlight.delete(key);
+    });
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    reasonInput.focus();
   }
   function message(text, ok = false) { const n = $("page-message"); if (!n) return; n.textContent = text || ""; n.className = `admin-message ${text ? `show ${ok ? "success" : "error"}` : ""}`.trim(); }
   const NAV_ITEMS = [["overview","概览","/admin/"],["analytics","数据分析","/admin/analytics.html"],["users","用户与权限","/admin/users.html"],["orders","充值订单","/admin/orders.html"],["jobs","任务监控","/admin/jobs.html"],["cluster","集群状态","/admin/cluster.html"],["devices","集群设备","/admin/devices.html"],["models","模型发布","/admin/models.html"],["enrollment","节点接入","/admin/enrollment.html"],["audit","审计日志","/admin/audit.html"]]; function normalizeNav(activePage) { const nav = document.querySelector(".admin-nav"); if (!nav) return; nav.innerHTML = NAV_ITEMS.map(([id,label,href]) => `<a data-page="${id}" href="${href}">${label}</a>`).join(""); nav.querySelector(`[data-page="${activePage}"]`)?.classList.add("active"); }
@@ -149,8 +322,14 @@
     $("page-content").innerHTML = `<div class="metric-grid order-metrics"><article><span>匹配订单</span><strong>${Number(s.orders ?? d.total ?? 0).toLocaleString("zh-CN")}</strong></article><article><span>已支付订单</span><strong>${Number(s.paid_orders || 0).toLocaleString("zh-CN")}</strong></article><article><span>已支付金额</span><strong>¥${money(s.paid_amount_cny ?? s.paid_cny)}</strong></article><article><span>已支付积分</span><strong>${Number(s.paid_credits || 0).toLocaleString("zh-CN")}</strong></article></div><div class="admin-table-wrap"><table class="admin-table order-table"><thead><tr><th>订单 / 支付流水</th><th>账户</th><th>金额 / 积分</th><th>状态</th><th>支付渠道 / 商品</th><th>创建时间</th><th>支付时间</th></tr></thead><tbody>${(d.items || []).map(o => `<tr><td><strong>${esc(o.id)}</strong><small>${esc(o.provider_order_id || "—")}</small></td><td><strong>${esc(o.email || o.user_email || "—")}</strong><small>${esc(o.user_id)}</small></td><td class="order-value"><strong>¥${money(o.amount_cny ?? Number(o.amount_fen || 0) / 100)}</strong><small>${Number(o.credits || 0).toLocaleString("zh-CN")} 积分</small></td><td><span class="status-pill ${o.status === "paid" ? "status-online" : ""}">${esc(statuses[o.status] || o.status)}</span></td><td>${esc(o.provider)}<small>${esc(o.product_id)}</small></td><td>${date(o.created_at)}</td><td>${date(o.paid_at)}</td></tr>`).join("") || '<tr><td colspan="7" class="admin-empty">暂无匹配订单</td></tr>'}</tbody></table></div>`;
   }
   async function enrollment() { $("page-content").innerHTML = '<form id="enrollment-form" class="enrollment-form"><div class="enrollment-grid"><label class="admin-field"><span>Profile（可编辑）</span><input id="enrollment-profile-id" list="enrollment-profile-options" value="tts-gpu-worker-v1" required pattern="[a-z0-9-]{3,64}" /><datalist id="enrollment-profile-options"><option value="gpu-worker-v1"></option><option value="tts-gpu-worker-v1"></option><option value="cpu-worker-v1"></option><option value="onboarding-probe-v1"></option></datalist><small>计划运行 TTS 的机器建议使用 tts-gpu-worker-v1；它仍保留普通 GPU 资源。</small></label><label class="admin-field"><span>有效期（秒）</span><input id="enrollment-expires" type="number" min="60" max="3600" value="900" required /></label></div><button class="button primary" type="submit">生成 enrollment token</button></form><pre id="enrollment-result" class="admin-json enrollment-result" hidden></pre>'; try { const catalog=await api("/admin/enrollment/profiles"); const profiles=catalog?.payload?.profiles || catalog?.profiles || {}; const options=$("enrollment-profile-options"); Object.keys(profiles).forEach((profile) => { if (![...options.options].some((o) => o.value===profile)) { const option=document.createElement("option"); option.value=profile; options.append(option); } }); } catch (_) {} $("enrollment-form").addEventListener("submit", async (e) => { e.preventDefault(); try { const p={profile_id:$("enrollment-profile-id").value.trim(),expires_in_seconds:Number($("enrollment-expires").value)}; const d=await api("/admin/enrollment/tokens",{method:"POST",body:JSON.stringify(p)}); $("enrollment-result").textContent=`Profile：${p.profile_id}\n有效期至：${d.expires_at||"—"}\nEnrollment API：https://oneclickvidgen.com/ray-worker/api/enrollment/v1\nToken：${d.token||""}`; $("enrollment-result").hidden=false; message("已生成一次性 token，请立即复制。",true); } catch(err) { message(err.message); } }); }
-  async function devices() { const d=await api("/admin/cluster/devices?limit=200"), items=d.items||[]; const notReported=items.filter(x=>!x.last_seen_at).length, rayOnline=items.filter(x=>x.ray_connected===true).length; $("page-summary").textContent=`共 ${d.total||0} 台设备 · Ray 在线 ${rayOnline} 台 · Agent heartbeat 未上报 ${notReported} 台`; $("page-content").innerHTML=`<div class="admin-callout">${esc(d.inventory_note||"节点尚未上报镜像/模型库存")}。</div><div class="admin-table-wrap"><table class="admin-table device-table"><thead><tr><th>设备</th><th>生命周期</th><th>连接</th><th>IP / Profile</th><th>Generation</th><th>Peer revision</th><th>最后心跳</th><th>操作</th></tr></thead><tbody>${items.map(x=>`<tr><td class="device-identity"><strong title="${esc(x.device_id)}">${esc(x.device_id)}</strong><small>${esc(x.profile_name||x.profile_id)}</small></td><td><span class="status-pill status-${String(x.lifecycle_state||'').toLowerCase()}">${esc(x.lifecycle_state)}</span></td><td title="${esc(x.connectivity_reason||'')}">${connectivity(x)}</td><td class="device-network"><code>${esc(x.ray_node_ip||"—")}</code><small>${esc(x.profile_id)}</small></td><td>${esc(x.generation)}</td><td>${esc(x.applied_revision)} / ${esc(x.desired_revision)} <small>${esc(x.peer_status)}</small></td><td>${heartbeat(x)}</td><td><a class="table-button" href="/admin/device.html?id=${encodeURIComponent(x.device_id)}">管理</a></td></tr>`).join("")||'<tr><td colspan="8" class="admin-empty">暂无设备记录</td></tr>'}</tbody></table></div>`; }
-  async function deviceDetail() { const id=new URLSearchParams(location.search).get("id"); if(!id){message("缺少设备 ID");return;} const x=await api(`/admin/cluster/devices/${encodeURIComponent(id)}`); $("page-summary").textContent=`${x.device_id} · 设备管理`; $("page-content").innerHTML=`<div class="detail-actions"><button class="button secondary" data-action="disable">停用并移出调度</button><button class="button secondary" data-action="rekey">生成下一代 rekey token</button><button class="button secondary" data-action="refresh">刷新状态</button></div><div class="detail-grid"><article><span>生命周期</span><strong>${esc(x.lifecycle_state)}</strong></article><article><span>连接状态</span><strong>${connectivity(x)}<small class="detail-hint">${esc(x.connectivity_reason||"")}</small></strong></article><article><span>Ray 节点 IP（预留修改）</span><strong><code>${esc(x.ray_node_ip||"—")}</code></strong></article><article><span>Profile（预留修改）</span><strong>${esc(x.profile_id)}</strong></article><article><span>设备 ID</span><strong>${esc(x.device_id)}</strong></article><article><span>Generation</span><strong>${esc(x.generation)}</strong></article><article><span>Peer revision</span><strong>${esc(x.applied_revision)} / ${esc(x.desired_revision)}</strong></article><article><span>最后 heartbeat</span><strong>${heartbeat(x)}</strong></article><article><span>凭据到期</span><strong>${date(x.credential_expires_at)}</strong></article></div><section class="inventory-section"><h2>镜像与模型</h2><p class="admin-callout">${esc(x.inventory_reason||"节点尚未上报镜像/模型库存")}。库存上报协议接通后，这里会提供查看、拉取和停用操作。</p><div class="inventory-empty"><span>镜像：未上报</span><span>模型：未上报</span></div></section><section class="readonly-note"><strong>IP / Profile / 设备 ID 修改入口已预留</strong><span>当前控制面没有安全迁移接口，按钮不会直接改数据库；待确定 WireGuard 重配、凭据轮换和审计流程后再开放。</span></section>`; const act=async(kind)=>{if(kind==="refresh"){await renderCurrent();return;}const reason=prompt("请输入操作原因（写入审计）");if(!reason||reason.trim().length<3)return;const key=`admin-device-${kind}-${id}-${Date.now()}`;try{const path=kind==="disable"?`/admin/cluster/devices/${encodeURIComponent(id)}/disable`:`/admin/cluster/devices/${encodeURIComponent(id)}/rekey-token`;const r=await api(path,{method:"POST",headers:{"Idempotency-Key":key},body:JSON.stringify({reason:reason.trim(),idempotency_key:key})});message(kind==="disable"?"设备已停用并移出调度。":"已生成新 token，请立即复制。",true);if(kind!=="disable")alert(JSON.stringify(r,null,2));await deviceDetail();}catch(e){message(e.message);}}; document.querySelector('[data-action="disable"]').onclick=()=>act("disable"); document.querySelector('[data-action="rekey"]').onclick=()=>act("rekey"); document.querySelector('[data-action="refresh"]').onclick=()=>act("refresh"); }
+  async function devices() {
+    const d = await api("/admin/cluster/devices?limit=200"), items = d.items || [];
+    const count = (fn) => items.filter(fn).length;
+    $("page-summary").textContent = `共 ${d.total || 0} 台 · 心跳正常 ${count(x => agentState(x) === "online")} 台 · TTS 就绪 ${count(x => serviceState(x, "tts") === "ready")} 台 · H3 就绪 ${count(x => serviceState(x, "h3") === "ready")} 台`;
+    $("page-content").innerHTML = `<div class="admin-callout">设备心跳与容器状态分别显示；列表保留常用状态和启停操作，详细配置请点“详情”。</div><div class="device-list" aria-label="设备列表">${items.map(x => `<article class="device-card"><header class="device-card-head"><div class="device-card-title"><strong title="${esc(x.device_id)}">${esc(x.device_id)}</strong><span class="status-pill status-${esc(String(x.lifecycle_state || "").toLowerCase())}">${esc(x.lifecycle_state || "未知")}</span></div><a class="table-button device-detail-link" href="/admin/device.html?id=${encodeURIComponent(x.device_id)}">详情</a></header><div class="device-card-meta">${connectivity(x)}<span>心跳 ${heartbeat(x)}</span></div><div class="device-card-network"><code>${esc(x.ray_node_ip || "—")}</code><span>${esc(x.profile_name || x.profile_id || "未配置")}</span></div><div class="device-card-services">${deviceServiceCompact(x,"tts")}${deviceServiceCompact(x,"h3")}</div></article>`).join("") || '<div class="admin-empty">暂无设备记录</div>'}</div>`;
+    wireServiceControls();
+  }
+  async function deviceDetail() { const id=new URLSearchParams(location.search).get("id"); if(!id){message("缺少设备 ID");return;} const x=await api(`/admin/cluster/devices/${encodeURIComponent(id)}`); $("page-summary").textContent=`${x.device_id} · 设备管理`; $("page-content").innerHTML=`<div class="detail-actions"><button class="button secondary" data-action="disable">停用并移出调度</button><button class="button secondary" data-action="rekey">生成下一代 rekey token</button><button class="button secondary" data-action="refresh">刷新状态</button></div><div class="detail-grid"><article><span>Agent 生命周期</span><strong>${esc(x.lifecycle_state)}</strong><small class="detail-hint">PAUSED 仅表示 TTS Agent 暂停，不代表 H3 或整机暂停</small></article><article><span>Agent 心跳</span><strong>${connectivity(x)}</strong><small class="detail-hint">仅表示 Agent 上报，不代表模型服务就绪</small></article><article><span>节点 IP（预留修改）</span><strong><code>${esc(x.ray_node_ip||"—")}</code></strong></article><article><span>Profile（预留修改）</span><strong>${esc(x.profile_id)}</strong></article><article><span>设备 ID</span><strong>${esc(x.device_id)}</strong></article><article><span>Generation</span><strong>${esc(x.generation)}</strong></article><article><span>Peer revision</span><strong>${esc(x.applied_revision)} / ${esc(x.desired_revision)}</strong></article><article><span>最后 Agent 心跳</span><strong>${heartbeat(x)}</strong></article><article><span>凭据到期</span><strong>${date(x.credential_expires_at)}</strong></article></div><section class="device-services-detail" aria-label="独立服务状态"><article><h2>TTS 服务</h2>${serviceStatus(x,"tts",true)}</article><article><h2>H3 服务</h2>${serviceStatus(x,"h3",true)}</article></section><section class="inventory-section"><h2>镜像与模型</h2><p class="admin-callout">${esc(x.inventory_reason||"节点尚未上报镜像/模型库存")}。库存上报协议接通后，这里会提供查看、拉取和停用操作。</p><div class="inventory-empty"><span>镜像：未上报</span><span>模型：未上报</span></div></section><section class="readonly-note"><strong>IP / Profile / 设备 ID 修改入口已预留</strong><span>当前控制面没有安全迁移接口，按钮不会直接改数据库；待确定 WireGuard 重配、凭据轮换和审计流程后再开放。</span></section>`; wireServiceControls(); const act=async(kind)=>{if(kind==="refresh"){await renderCurrent();return;}const reason=prompt("请输入操作原因（写入审计）");if(!reason||reason.trim().length<3)return;const key=`admin-device-${kind}-${id}-${Date.now()}`;try{const path=kind==="disable"?`/admin/cluster/devices/${encodeURIComponent(id)}/disable`:`/admin/cluster/devices/${encodeURIComponent(id)}/rekey-token`;const r=await api(path,{method:"POST",headers:{"Idempotency-Key":key},body:JSON.stringify({reason:reason.trim(),idempotency_key:key})});message(kind==="disable"?"设备已停用并移出调度。":"已生成新 token，请立即复制。",true);if(kind!=="disable")alert(JSON.stringify(r,null,2));await deviceDetail();}catch(e){message(e.message);}}; document.querySelector('[data-action="disable"]').onclick=()=>act("disable"); document.querySelector('[data-action="rekey"]').onclick=()=>act("rekey"); document.querySelector('[data-action="refresh"]').onclick=()=>act("refresh"); }
   async function models() { const d=await api("/admin/cluster/model-releases"),items=d.items||[]; $("page-summary").textContent=`${items.length} 个发布版本 · 启用状态控制模型下载授权`; $("page-content").innerHTML=`<div class="admin-callout">启用/停用只影响新模型下载授权，不会远程修改节点文件。</div><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>模型</th><th>版本</th><th>状态</th><th>发布时间</th><th>操作</th></tr></thead><tbody>${items.map(x=>`<tr><td><strong>${esc(x.model_id)}</strong></td><td><code>${esc(x.version)}</code></td><td><span class="status-pill ${x.enabled?"status-online":"status-disabled"}">${x.enabled?"已启用":"已停用"}</span></td><td>${date(x.published_at)}</td><td><button class="table-button" data-model-action="${x.enabled?"disable":"enable"}" data-model-id="${esc(x.model_id)}" data-model-version="${esc(x.version)}">${x.enabled?"停用":"启用"}</button></td></tr>`).join("")||'<tr><td colspan="5" class="admin-empty">暂无发布版本</td></tr>'}</tbody></table></div>`; document.querySelectorAll("[data-model-action]").forEach(b=>b.onclick=async()=>{const reason=prompt("请输入操作原因（写入审计）");if(!reason||reason.trim().length<3)return;const key=`admin-model-${b.dataset.modelAction}-${Date.now()}`;try{await api(`/admin/cluster/model-releases/${encodeURIComponent(b.dataset.modelId)}/${encodeURIComponent(b.dataset.modelVersion)}/${b.dataset.modelAction}`,{method:"POST",headers:{"Idempotency-Key":key},body:JSON.stringify({reason:reason.trim(),idempotency_key:key})});message("模型发布状态已更新。",true);await models();}catch(e){message(e.message);}}); }
   function installControls() {
     const toolbar = document.createElement("div");
@@ -251,7 +430,13 @@
     try {
       await ({users, jobs, orders, cluster, audit, analytics, enrollment, devices, device:deviceDetail, models}[page])();
       $("page-updated").textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN")}`;
-    } catch (error) { message(error.message); }
+    } catch (error) {
+      message(error.message);
+      if (page === "devices" || page === "device") {
+        $("page-updated").textContent = "刷新失败，当前设备状态未知";
+        $("page-content").innerHTML = '<p class="admin-empty">无法获取当前设备状态，正在等待重新查询。</p>';
+      }
+    }
     finally {
       loading = false;
       $("page-content").removeAttribute("aria-busy");
@@ -262,5 +447,11 @@
       }
     }
   }
-  if (wireShell()) { installControls(); renderCurrent(); }
+  if (wireShell()) {
+    installControls(); renderCurrent();
+    if (page === "devices" || page === "device") {
+      setInterval(() => { if (!document.hidden) renderCurrent(); }, 15000);
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) renderCurrent(); });
+    }
+  }
 }());

@@ -7,13 +7,13 @@
     <meta name="theme-color" content="#0a2b32" />
     <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
     <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
-    <link rel="stylesheet" href="/assets/studio.css?v=20261008-channels1-20260930-sceneedit1" />
+    <link rel="stylesheet" href="/assets/studio.css?v=20261016-wizard2" />
     <title>云端视频工作台｜One-Click VidGen</title>
   <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
     <link rel="stylesheet" href="/assets/public-nav.css?v=20260930-nav1" />
     <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
   </head>
-  <body class="studio-body" data-page="studio">
+  <body class="studio-body studio-wizard-mode" data-page="studio">
     <header class="site-header">
       <div class="shell header-inner">
         <a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a>
@@ -27,13 +27,13 @@
         <aside class="workspace-sidebar">
           <div class="workspace-intro"><span class="workspace-label">CLOUD STUDIO</span><h1>文案生成视频</h1><p>输入文案并按需设置画风、音色和参数，一键生成云端 MP4。</p></div>
           <nav class="workspace-steps" aria-label="创作步骤">
-            <a class="active" href="#script-panel"><b>01</b><span><strong>文案内容</strong><small>输入或粘贴配音文本</small></span></a>
-            <a href="#storyboard-panel"><b>02</b><span><strong>分镜规划</strong><small>生成与编辑每个镜头</small></span></a>
-            <a href="#advanced-creation"><b>03</b><span><strong>视频参数设置</strong><small>调整画风、音色和参数</small></span></a>
+            <a class="active" href="#script-panel" data-wizard-target="1" aria-current="step"><b>01</b><span><strong>文案内容</strong><small>输入或粘贴配音文本</small></span></a>
+            <a href="#storyboard-panel" data-wizard-target="2" aria-current="false"><b>02</b><span><strong>分镜规划</strong><small>可选：生成与编辑镜头</small></span></a>
+            <a href="#advanced-creation" data-wizard-target="3" aria-current="false"><b>03</b><span><strong>视频参数设置</strong><small>调整画风、音色和参数</small></span></a>
 
 
-            <a href="#one-click-panel"><b>04</b><span><strong>一键成片</strong><small>云端生成并导出 MP4</small></span></a>
-            <a href="#compose-panel"><b>05</b><span><strong>视频导出</strong><small>在线查看并下载视频</small></span></a>
+            <a href="#one-click-panel" data-wizard-target="4" aria-current="false"><b>04</b><span><strong>一键成片</strong><small>云端生成并查看进度</small></span></a>
+            <a href="#compose-panel" data-wizard-target="5" aria-current="false"><b>05</b><span><strong>视频导出</strong><small>在线查看并下载视频</small></span></a>
           </nav>
           <div class="workspace-help"><strong>隐私与性能</strong><p>云端密钥不会发送到浏览器。完整 MP4 由云端生成；高级流程的临时素材和 WebM 保留在当前设备。</p><a href="/services/">查看服务说明 →</a></div>
         </aside>
@@ -44,12 +44,18 @@
             <div class="cloud-state checking" id="cloud-state"><i></i><span><small>GPU 集群</small><strong>正在检测服务</strong></span></div>
           </section>
 
-          <section class="auth-wall" id="auth-wall">
+          <nav class="wizard-toolbar" id="wizard-toolbar" aria-label="创作步骤导航">
+            <button class="quiet-button wizard-nav-button" id="wizard-prev" type="button">← 上一步</button>
+            <div class="wizard-toolbar-progress"><span id="wizard-progress-count">STEP 01 / 05</span><div class="wizard-progress-track"><i id="wizard-progress-fill"></i></div><strong id="wizard-step-label">文案内容</strong><small id="wizard-step-hint">先输入或导入文案，再进入分镜规划。</small></div>
+            <button class="button primary wizard-nav-button" id="wizard-next" type="button">下一步：分镜规划 →</button>
+          </nav>
+
+          <section class="auth-wall" id="auth-wall" data-wizard-step="1">
             <div class="auth-wall-icon">↗</div><div><h2>先写文案，生成时再登录</h2><p>文案和选项会先保存在本机。登录后继续当前草稿，提交生成前确认费用。</p></div><button class="button primary" id="studio-login" type="button">登录 / 注册</button>
           </section>
 
           <div class="workspace-form" id="workspace-form">
-            <section class="workspace-card" id="script-panel">
+            <section class="workspace-card" id="script-panel" data-wizard-step="1">
               <div class="workspace-card-head"><div><span>STEP 01</span><h3>输入配音文案</h3></div><div class="counter" id="text-counter">0 / 5,000</div></div>
               <div class="script-box">
                 <textarea id="script-input" maxlength="5000" placeholder="在这里输入或粘贴需要配音的文案…&#10;&#10;建议使用完整的标点和自然段，系统会根据语义自动拆分长文本。"></textarea>
@@ -71,7 +77,7 @@
 
               <div class="continue-creation" hidden><div><span id="studio-draft-state" role="status">输入文案后自动保留草稿</span><span id="studio-cloud-state" role="status"></span><strong>当前创作</strong><p>草稿会持续保存。可进入作品工作台逐镜编辑，也可继续下方一键成片。</p></div><button class="button primary" id="save-to-project" type="button">继续编辑 →</button><a id="continue-existing" href="/projects/" hidden>查看已保存版本</a><button class="button secondary" id="start-new-creation" type="button">开始新的创作</button></div>
 
-            <details class="advanced-workflow" id="storyboard-panel">
+            <details class="advanced-workflow" id="storyboard-panel" data-wizard-step="2" hidden>
               <summary><span><strong>02 · 分镜规划（可选）</strong><small>免费按文案智能规划镜头；也可直接使用一键成片</small></span><b>展开</b></summary>
               <div class="advanced-workflow-content">
             <section class="workspace-card">
@@ -89,7 +95,7 @@
               </div>
             </details>
 
-            <details class="advanced-workflow" id="advanced-creation">
+            <details class="advanced-workflow" id="advanced-creation" data-wizard-step="3" hidden>
               <summary><span><strong>03 · 视频参数设置</strong><small>调整画风、配音音色、语速和视频画幅</small></span><b>展开</b></summary>
               <div class="advanced-workflow-content">
             <section class="workspace-card" id="style-panel">
@@ -121,19 +127,17 @@
               </div>
             </details>
 
-          <section class="quote-card" id="generation-estimate" aria-labelledby="generation-estimate-title">
+          <section class="quote-card" id="generation-estimate" data-wizard-step="4" hidden aria-labelledby="generation-estimate-title">
             <h3 id="generation-estimate-title">生成费用预估</h3>
             <div class="quote-line"><span>文案字符</span><strong id="summary-characters">0</strong></div>
             <div class="quote-line"><span>语音分段 / 镜头</span><strong id="summary-chunks">0 / 0</strong></div>
             <div class="quote-line"><span>配音预估</span><strong id="summary-cost">—</strong></div>
             <div class="quote-line"><span>图片生成</span><strong>按实际结算</strong></div>
             <div class="quote-divider"></div>
-            <button class="button primary full" id="submit-job" type="button" disabled>生成配音与画面</button>
-            <div class="inline-message" id="job-message" role="status"></div>
             <p>分镜规划免费。配音和图片按实际用量结算。</p>
           </section>
 
-            <section class="workspace-card one-click-card" id="one-click-panel">
+            <section class="workspace-card one-click-card" id="one-click-panel" data-wizard-step="4" hidden>
               <div class="workspace-card-head"><div><span>STEP 04 · ONE-CLICK VIDEO</span><h3>一键生成完整视频</h3></div><span class="one-click-badge">推荐</span></div>
               <p class="one-click-lead">自动完成全文分析、分镜规划、画面提示词、配音与视频合成。已有分镜时直接使用第 2 步的编辑结果，画风和配音采用第 3 步设置，画面渠道、画幅和清晰度在下方选择。</p>
               <div class="settings-grid one-click-image-settings">
@@ -149,7 +153,8 @@
               <div class="inline-message" id="video-job-message" role="status"></div>
             </section>
 
-            <details class="advanced-workflow" id="advanced-results"><summary><span><strong>手动流程素材与历史</strong><small>查看逐镜生成的语音和图片</small></span><b>展开</b></summary><div class="advanced-workflow-content">
+            <details class="advanced-workflow" id="advanced-results" data-wizard-step="4" hidden><summary><span><strong>手动生成素材与历史</strong><small>按当前分镜单独生成配音和图片，再查看历史</small></span><b>展开</b></summary><div class="advanced-workflow-content">
+            <div class="manual-generation-actions"><p>需要逐镜调整素材时，可在这里单独生成配音和画面，完成后到第 5 步使用本地 WebM 合成。</p><button class="button primary" id="submit-job" type="button" disabled>手动生成配音与画面</button><div class="inline-message" id="job-message" role="status"></div></div>
             <section class="workspace-card task-section" id="task-panel">
               <div class="workspace-card-head"><div><h3>语音和图片</h3></div><button class="quiet-button" id="refresh-jobs" type="button">刷新记录</button></div>
               <div class="asset-progress-grid"><div><span>配音素材</span><strong id="audio-progress-label">未开始</strong><div class="task-bar"><i id="audio-progress-bar"></i></div></div><div><span>画面素材</span><strong id="image-progress-label">未开始</strong><div class="task-bar image"><i id="image-progress-bar"></i></div></div></div>
@@ -159,7 +164,7 @@
             </section>
 
             </div></details>
-            <section class="workspace-card" id="compose-panel">
+            <section class="workspace-card" id="compose-panel" data-wizard-step="5" hidden>
               <div class="workspace-card-head"><div><span>STEP 05</span><h3>视频导出</h3></div><span class="local-badge">在线查看</span></div>
               <div class="online-video-viewer">
                 <div class="online-video-stage"><video class="hidden" id="online-video" controls playsinline preload="metadata"></video><div class="online-video-empty" id="online-video-empty"><strong>完整视频生成后可在这里在线播放</strong><p>完成“一键成片”后，可在线查看并下载 MP4。</p></div></div>
@@ -203,7 +208,7 @@
     <script src="/assets/storyboard-plan.js?v=20260930-sceneedit1" defer></script>
     <script src="/assets/studio-project.js?v=20260930-ux4" defer></script>
     <script src="/assets/cluster-health.js?v=20261012-admission1" defer></script>
-    <script src="/assets/studio.js?v=20261012-admission1" defer></script>
+    <script src="/assets/studio.js?v=20261016-wizard3" defer></script>
   <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
     <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
   </body>

@@ -20,6 +20,104 @@ ROOT = pathlib.Path('/opt/ocv-h3')
 URL = 'http://127.0.0.1:18188'
 TTS = 'ray-worker-managed'
 H3 = 'ocv-h3-comfyui'
+SCHEDULER_ROLE = pathlib.Path('/etc/ray-worker/gpu-scheduler-role.json')
+
+
+def scheduler_owns_gpu():
+    if not SCHEDULER_ROLE.exists():
+        return False
+    try:
+        role = json.loads(SCHEDULER_ROLE.read_text())
+    except (OSError, ValueError, TypeError):
+        raise RuntimeError('SCHEDULER_ROLE_INVALID') from None
+    if role != {'schema': 1, 'owner': 'ocv-gpu-scheduler', 'node_ip': '10.250.0.3',
+                'primary_role': 'h3', 'tts_container': TTS}:
+        raise RuntimeError('SCHEDULER_ROLE_INVALID')
+    return True
+
+
+def require_scheduler_owner():
+    if not scheduler_owns_gpu():
+        raise RuntimeError('SCHEDULER_ROLE_REQUIRED')
+
+
+def preserve_scheduler_restart_policy():
+    """Scheduler-owned fallback must not revive itself on a Docker/WSL boot."""
+    if scheduler_owns_gpu():
+        docker('update', '--restart=no', TTS)
+
+# A Windows desktop H3 process is outside Docker's GPU phase lock. Never stop it.
+WINDOWS_POWERSHELL = pathlib.Path('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
+LOCAL_H3_MEMORY_LIMIT = 512 * 1024 * 1024
+WINDOWS_H3_PROBE = r"""
+$ErrorActionPreference='Stop'
+$processes=@(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" | Where-Object {
+    $_.Name -match '^python(w)?[.]exe$' -and
+    ($_.ExecutablePath -match '(?i)(comfyui|h3[-_])' -or $_.CommandLine -match '(?i)(comfyui|h3[-_])')
+})
+$items=@()
+if ($processes.Count -gt 0) {
+    foreach ($process in $processes) {
+        $processId=[int]$process.ProcessId
+        $dedicated=0; $shared=0; $memoryKnown=$false
+        if ($process.CommandLine -match '--port(?:[ =]+)([0-9]+)') {$ports=@([int]$Matches[1])}
+        else {$ports=@(Get-NetTCPConnection -OwningProcess $processId -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort -Unique | Select-Object -First 4)}
+        $queueKnown=$false; $busy=$false
+        foreach ($port in $ports) {
+            try {
+                $queue=Invoke-RestMethod -Uri ('http://127.0.0.1:'+ $port +'/queue') -TimeoutSec 2
+                if ($null -ne $queue.queue_running -and $null -ne $queue.queue_pending) {
+                    $queueKnown=$true
+                    if (@($queue.queue_running).Count -gt 0 -or @($queue.queue_pending).Count -gt 0) {$busy=$true}
+                    if (-not $busy) {
+                        $stats=Invoke-RestMethod -Uri ('http://127.0.0.1:'+ $port +'/system_stats') -TimeoutSec 2
+                        foreach ($device in @($stats.devices)) {
+                            if ($device.type -eq 'cuda' -and $null -ne $device.torch_vram_total) {
+                                $memoryKnown=$true; $dedicated=[math]::Max($dedicated,[long]$device.torch_vram_total)
+                            }
+                        }
+                    }
+                }
+            } catch {}
+        }
+        $items+=@{pid=$processId;ports=$ports;queue_known=$queueKnown;memory_known=$memoryKnown;busy=$busy;dedicated_bytes=[long]$dedicated;shared_bytes=[long]$shared}
+    }
+}
+@{known=$true;source='windows_process_and_queue';processes=$items} | ConvertTo-Json -Depth 5 -Compress
+"""
+
+
+def windows_h3_status():
+    if not WINDOWS_POWERSHELL.exists():
+        return {'known': True, 'source': 'no_windows_host', 'present': False, 'busy': False, 'blocked': False}
+    try:
+        encoded = base64.b64encode(WINDOWS_H3_PROBE.encode('utf-16le')).decode('ascii')
+        result = subprocess.run([str(WINDOWS_POWERSHELL), '-NoProfile', '-NonInteractive',
+                                 '-EncodedCommand', encoded],
+                                capture_output=True, timeout=30, check=True)
+        report = json.loads(result.stdout.decode('utf-8-sig'))
+        processes = report['processes']
+        if not isinstance(processes, list) or not report.get('known'):
+            raise ValueError('INVALID_WINDOWS_PROBE')
+        busy = any(item.get('busy') for item in processes)
+        unknown_queue = any(not item.get('queue_known') or not (item.get('busy') or item.get('memory_known')) for item in processes)
+        resident = any(max(item.get('dedicated_bytes', 0), item.get('shared_bytes', 0)) >= LOCAL_H3_MEMORY_LIMIT for item in processes)
+        report.update(present=bool(processes), busy=busy, blocked=busy or unknown_queue or resident)
+        return report
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return {'known': False, 'source': 'windows_process_and_queue', 'present': None,
+                'busy': None, 'blocked': True, 'error': 'WINDOWS_H3_PROBE_FAILED'}
+
+
+def guard_windows_h3():
+    status = windows_h3_status()
+    if not status.get('known'):
+        raise RuntimeError('WINDOWS_H3_PROBE_FAILED')
+    if status.get('busy'):
+        raise RuntimeError('WINDOWS_H3_BUSY')
+    if status.get('blocked'):
+        raise RuntimeError('WINDOWS_H3_RESOURCE_BLOCKED')
+
 
 def atomic(path, value):
     tmp = path.with_suffix('.tmp')
@@ -113,6 +211,9 @@ def stop_h3():
         docker('stop', '--time', '30', H3)
 
 def stopped_tts():
+    # A global .20 dispatcher may remain active while this node serves H3.
+    if not running(TTS):
+        return
     s = drain_status()
     if not s.get('draining') or not s.get('drained') or s['active_jobs']:
         raise RuntimeError('TTS_NOT_DRAINED')
@@ -181,6 +282,10 @@ def poll(req):
 
 def service_health():
     tts_live, h3_live = running(TTS), running(H3)
+    try:
+        control_ready = scheduler_owns_gpu()
+    except RuntimeError:
+        control_ready = False
     ready, busy = False, False
     if h3_live:
         try:
@@ -193,25 +298,47 @@ def service_health():
         except (OSError, ValueError, KeyError):
             pass
     return {'tts_running':tts_live, 'h3_running':h3_live, 'h3_ready':ready,
-            'h3_busy':busy, 'exclusive':not(tts_live and h3_live), 'checked_at':time.time()}
+            'h3_busy':busy, 'exclusive':not(tts_live and h3_live),
+            'local_h3':windows_h3_status(), 'control_ready':control_ready,
+            'checked_at':time.time()}
 
 
 def dispatch(req):
     action=req['action']
+    if action in ('start_tts', 'stop_tts', 'start_h3', 'prepare_dedicated_h3', 'stop_all', 'stop_h3'):
+        scheduler_owns_gpu()  # Reject a corrupt ownership marker before mutation.
     if action=='status':
         live=running(H3)
         q=api('/queue') if live else {'queue_running':[],'queue_pending':[]}
         return {'tts_running':running(TTS),'h3_running':live,'ready':live,
                 'busy':bool(q['queue_running'] or q['queue_pending'] or unfinished())}
+    if action=='stop_tts':
+        stopped_tts()
+        preserve_scheduler_restart_policy()
+        return {'tts_running':running(TTS)}
+    if action == 'stop_h3':
+        # This narrow action is used by the scheduler's dedicated-phase
+        # recovery. It never drains or mutates the TTS container.
+        require_scheduler_owner()
+        idle_h3()
+        if running(H3):
+            docker('stop', '--time', '30', H3)
+        return {'h3_running': running(H3)}
+    if action=='prepare_dedicated_h3':
+        action='start_h3'
     if action in ('start_tts','start_h3','stop_all'):
         if action == 'start_h3' and (ROOT / 'model-cache-copy.active').exists():
             raise RuntimeError('MODEL_CACHE_COPY_IN_PROGRESS')
+        if action in ('start_tts', 'start_h3'):
+            guard_windows_h3()
         started=time.monotonic()
         if action=='start_tts':
             stop_h3()
+            preserve_scheduler_restart_policy()
             if not running(TTS):docker('start',TTS)
         else:
             stopped_tts()
+            preserve_scheduler_restart_policy()
             if action=='stop_all':stop_h3()
             else:
                 if not running(H3):docker('start',H3)
@@ -228,6 +355,7 @@ def dispatch(req):
     if action=='submit':
         p,j=read_job(req)
         if j:return poll(req)
+        guard_windows_h3()
         if running(TTS):raise RuntimeError('TTS_STILL_RUNNING')
         idle_h3()
         spec=req['spec'];raw=base64.b64decode(req['image_b64'],validate=True)

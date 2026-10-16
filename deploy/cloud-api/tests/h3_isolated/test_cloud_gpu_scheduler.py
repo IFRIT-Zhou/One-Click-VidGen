@@ -25,6 +25,12 @@ sys.modules['h3test.models'].CloudJob = FakeCloudJob
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tts"))
+# Load the scheduler's control dependencies into the isolated app package.
+for name in ("service_control", "device_control_executor"):
+    dependency_spec = importlib.util.spec_from_file_location("h3test." + name, ROOT / "app" / (name + ".py"))
+    dependency = importlib.util.module_from_spec(dependency_spec)
+    sys.modules[dependency_spec.name] = dependency
+    dependency_spec.loader.exec_module(dependency)
 spec = importlib.util.spec_from_file_location("h3test.cloud_gpu_scheduler", Path(__file__).parents[2] / "app/cloud_gpu_scheduler.py")
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -48,6 +54,35 @@ class FakeNode:
 
 
 class PhaseTests(unittest.TestCase):
+    def test_resident_h3_requires_current_exclusive_health(self):
+        node = FakeNode()
+        node.state.update(h3_running=True, h3_ready=True, tts_running=False)
+        phases = module.NodePhases(node)
+        self.assertTrue(phases.h3_ready())
+        node.state['local_h3'] = {'blocked': True}
+        self.assertFalse(phases.h3_ready())
+        node.state['local_h3'] = {'blocked': False}
+        node.state['tts_running'] = True
+        self.assertFalse(phases.h3_ready())
+
+    def test_unavailable_tts_closes_admission_heartbeat(self):
+        import tempfile
+        from types import SimpleNamespace
+        class Stop:
+            done = False
+            def is_set(self): return self.done
+            def wait(self, seconds): self.done = True
+        scheduler = SimpleNamespace(mode='dedicated_starting', tts_state='unavailable',
+            tts_blocked_reason='TTS_MODEL_START_TIMEOUT', target_node='10.250.0.20',
+            primary_state='online', h3_state='ready', blocked_reason=None,
+            tts=SimpleNamespace(admission_snapshot=lambda: {'redis_ready':True,'consumer_alive':True}))
+        with tempfile.TemporaryDirectory() as root, patch.dict(module.os.environ, {'GPU_SCHEDULER_STATE_DIR':root}):
+            module.heartbeat_loop(scheduler, Stop())
+            heartbeat = json.loads((Path(root)/'heartbeat.json').read_text())
+        self.assertTrue(heartbeat['queue_ready'])
+        self.assertFalse(heartbeat['scheduler_ready'])
+        self.assertEqual(heartbeat['tts_blocked_reason'], 'TTS_MODEL_START_TIMEOUT')
+
     def test_admission_proves_consumer_alive_without_model(self):
         adapter = object.__new__(module.CloudTTSStatus)
         adapter.base_url = 'http://127.0.0.1:8000/api/tts'

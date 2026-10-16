@@ -19,7 +19,7 @@
   const IMAGE_TERMINAL = new Set(["SUCCESS", "FAILED", "ERROR", "CANCELLED"]);
   const state = {
     session: readSession(), account: null, voices: [], selectedVoice: null,
-    quote: null, cloudReady: false, modelReady: false, storyboard: [], storyboardPlanning: false, videoSubmitting: false, videoSubmission: null,
+    quote: null, cloudReady: false, modelReady: false, storyboard: [], selectedStoryboardIndex: 0, storyboardPlanning: false, videoSubmitting: false, videoSubmission: null,
     currentJob: null, pollTimer: null, audioBlobs: new Map(),
     imageJobs: [], imageBlobs: new Map(), objectUrls: [], composing: false,
     videoJob: null, videoJobPolling: false, referenceImages: [],
@@ -28,8 +28,121 @@
   let audioEpoch = 0, imageEpoch = 0, videoEpoch = 0, videoRestoreRequest = 0;
   const element = (selector) => document.querySelector(selector);
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const siteHeader = document.querySelector(".site-header");
+  function updateWizardOffset() {
+    if (siteHeader) document.body.style.setProperty("--studio-header-height", `${Math.ceil(siteHeader.getBoundingClientRect().height)}px`);
+  }
+  updateWizardOffset();
+  if (siteHeader && window.ResizeObserver) new ResizeObserver(updateWizardOffset).observe(siteHeader);
   const protectedTargets = new Set(["script-panel", "advanced-creation", "one-click-panel", "storyboard-panel", "voice-panel", "settings-panel", "task-panel", "compose-panel"]);
   const advancedCreationTargets = new Set(["style-panel", "voice-panel", "settings-panel"]);
+  const wizardTargets = ["script-panel", "storyboard-panel", "advanced-creation", "one-click-panel", "compose-panel"];
+  const wizardLabels = ["文案内容", "分镜规划", "视频参数设置", "一键成片", "视频导出"];
+  const wizardHints = [
+    "先输入或导入文案，再进入分镜规划。",
+    "分镜规划免费，可直接生成、编辑、增加或合并镜头。",
+    "选择画风、音色和参数，确认后进入成片。",
+    "提交云端任务，查看分镜、配音、画面和合成进度。",
+    "已完成的视频可在线播放和下载；手动素材也可在此本地合成 WebM。",
+  ];
+  let currentWizardStep = 1;
+
+  function wizardStepForTarget(target) {
+    const index = wizardTargets.indexOf(String(target || ""));
+    if (index >= 0) return index + 1;
+    if (advancedCreationTargets.has(String(target || ""))) return 3;
+    return target === "task-panel" ? 4 : 0;
+  }
+
+  function wizardStateStep() {
+    if (state.videoJob) return state.videoJob.status === "completed" ? 5 : 4;
+    if (state.currentJob || state.imageJobs.length) return 4;
+    if (state.storyboard.length) return 2;
+    return 1;
+  }
+
+  function updateWizardControls() {
+    const previous = element("#wizard-prev");
+    const next = element("#wizard-next");
+    const count = element("#wizard-progress-count");
+    const fill = element("#wizard-progress-fill");
+    const label = element("#wizard-step-label");
+    if (!previous || !next || !count || !fill || !label) return;
+    const index = currentWizardStep - 1;
+    previous.disabled = currentWizardStep <= 1;
+    count.textContent = `STEP ${String(currentWizardStep).padStart(2, "0")} / 05`;
+    fill.style.width = `${currentWizardStep / wizardTargets.length * 100}%`;
+    label.textContent = wizardLabels[index];
+    const nextLabel = wizardLabels[index + 1];
+    if (currentWizardStep >= wizardTargets.length) {
+      next.textContent = "已到最后一步";
+      next.disabled = true;
+    } else if (currentWizardStep === 4) {
+      const manualExportReady = state.storyboard.length > 0
+        && state.audioBlobs.size === state.storyboard.length
+        && state.imageBlobs.size === state.storyboard.length
+        && !state.composing;
+      const videoExportReady = state.videoJob?.status === "completed";
+      next.textContent = videoExportReady || manualExportReady ? "查看导出页面 →" : "生成完成后可导出";
+      next.disabled = !(videoExportReady || manualExportReady);
+    } else {
+      next.textContent = `下一步：${nextLabel} →`;
+      next.disabled = false;
+    }
+  }
+
+  function setWizardStep(step, { updateHash = false, focus = false } = {}) {
+    const nextStep = Math.max(1, Math.min(wizardTargets.length, Number(step) || 1));
+    currentWizardStep = nextStep;
+    document.querySelectorAll("[data-wizard-step]").forEach((node) => {
+      node.hidden = Number(node.dataset.wizardStep) !== currentWizardStep;
+    });
+    document.querySelectorAll(".workspace-steps a[data-wizard-target]").forEach((link) => {
+      const active = Number(link.dataset.wizardTarget) === currentWizardStep;
+      link.classList.toggle("active", active);
+      link.setAttribute("aria-current", active ? "step" : "false");
+    });
+    if (currentWizardStep === 2 && state.storyboard.length) element("#storyboard-panel")?.setAttribute("open", "");
+    if (currentWizardStep === 3) element("#advanced-creation")?.setAttribute("open", "");
+    const hint = element("#wizard-step-hint");
+    if (hint) { hint.textContent = wizardHints[nextStep - 1]; hint.className = "wizard-step-hint"; }
+    updateWizardControls();
+    const historyState = { ...(window.history.state || {}), studioWizardStep: currentWizardStep };
+    if (updateHash && window.location.hash !== `#${wizardTargets[currentWizardStep - 1]}`) window.history.pushState(historyState, "", `${window.location.pathname}${window.location.search}#${wizardTargets[currentWizardStep - 1]}`);
+    else window.history.replaceState(historyState, "", window.location.href);
+    if (focus) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function wizardNotice(text, type = "error") {
+    const hint = element("#wizard-step-hint");
+    if (!hint) return;
+    hint.textContent = text;
+    hint.className = type === "error" ? "wizard-step-hint error" : "wizard-step-hint";
+    window.clearTimeout(wizardNotice.timer);
+    wizardNotice.timer = window.setTimeout(() => {
+      hint.textContent = wizardHints[currentWizardStep - 1];
+      hint.className = "wizard-step-hint";
+    }, 4500);
+  }
+
+  function canAdvanceWizard() {
+    if (currentWizardStep === 1 && !element("#script-input")?.value.trim()) {
+      wizardNotice("请先输入或导入文案，再进入下一步。");
+      element("#script-input")?.focus();
+      return false;
+    }
+    return true;
+  }
+
+  function advanceWizard() {
+    if (!canAdvanceWizard()) return;
+    const nextStep = currentWizardStep === 4 && state.videoJob?.status === "completed" ? 5 : currentWizardStep + 1;
+    setWizardStep(nextStep, { updateHash: true, focus: true });
+  }
+
+  function retreatWizard() {
+    if (currentWizardStep > 1) setWizardStep(currentWizardStep - 1, { updateHash: true, focus: true });
+  }
   let pendingProtectedTarget = protectedTargets.has(window.location.hash.slice(1)) ? window.location.hash.slice(1) : null;
   let navigationFocusTarget = null;
   let navigationFocusTimer = 0;
@@ -317,9 +430,18 @@
     element("#storyboard-manual").hidden = !hasScenes;
     element("#storyboard-count").value = hasScenes ? state.storyboard.length : "";
     element("#add-storyboard-scene").disabled = state.storyboard.length >= 16;
-    if (!hasScenes) state.storyboardUndo = null;
+    if (!hasScenes) { state.storyboardUndo = null; state.selectedStoryboardIndex = 0; }
+    else state.selectedStoryboardIndex = Math.max(0, Math.min(state.storyboard.length - 1, Number(state.selectedStoryboardIndex) || 0));
     element("#undo-storyboard-delete").hidden = !state.storyboardUndo;
-    const grid = element("#storyboard-grid"); grid.innerHTML = state.storyboard.map((scene, index) => `<article class="story-card"><div class="story-number">${String(index + 1).padStart(2, "0")}</div><div><input data-scene-title="${index}" value="${escapeAttribute(scene.title)}" aria-label="镜头标题" /><label>旁白<textarea data-scene-narration="${index}" maxlength="900">${escapeHtml(scene.narration)}</textarea></label><label>生图提示词<textarea data-scene-prompt="${index}" maxlength="4000">${escapeHtml(scene.prompt)}</textarea></label><div class="story-scene-actions">${index > 0 ? `<button class="quiet-button" type="button" data-scene-merge="${index}">合并到上一镜</button>` : ""}<button class="quiet-button scene-delete" type="button" data-scene-delete="${index}" ${state.storyboard.length === 1 ? "disabled" : ""}>删除此镜头</button></div></div></article>`).join("");
+    const grid = element("#storyboard-grid");
+    const selected = state.selectedStoryboardIndex;
+    const scene = state.storyboard[selected];
+    const scenePicker = hasScenes ? `<div class="storyboard-scene-picker"><button class="quiet-button" type="button" data-scene-previous ${selected === 0 ? "disabled" : ""}>← 上一镜</button><label><span>当前镜头</span><select id="storyboard-scene-select" aria-label="选择要编辑的镜头">${state.storyboard.map((item, index) => `<option value="${index}" ${index === selected ? "selected" : ""}>${String(index + 1).padStart(2, "0")} · ${escapeHtml(item.title || `镜头 ${index + 1}`)}</option>`).join("")}</select></label><strong>${selected + 1} / ${state.storyboard.length}</strong><button class="quiet-button" type="button" data-scene-next ${selected >= state.storyboard.length - 1 ? "disabled" : ""}>下一镜 →</button></div>` : "";
+    const sceneEditor = scene ? `<article class="story-card"><div class="story-number">${String(selected + 1).padStart(2, "0")}</div><div><input data-scene-title="${selected}" value="${escapeAttribute(scene.title)}" aria-label="镜头标题" /><label>旁白<textarea data-scene-narration="${selected}" maxlength="900">${escapeHtml(scene.narration)}</textarea></label><label>生图提示词<textarea data-scene-prompt="${selected}" maxlength="4000">${escapeHtml(scene.prompt)}</textarea></label><div class="story-scene-actions">${selected > 0 ? `<button class="quiet-button" type="button" data-scene-merge="${selected}">合并到上一镜</button>` : ""}<button class="quiet-button scene-delete" type="button" data-scene-delete="${selected}" ${state.storyboard.length === 1 ? "disabled" : ""}>删除此镜头</button></div></div></article>` : "";
+    grid.innerHTML = `${scenePicker}${sceneEditor}`;
+    grid.querySelector("#storyboard-scene-select")?.addEventListener("change", (event) => { state.selectedStoryboardIndex = Number(event.currentTarget.value); renderStoryboard(); });
+    grid.querySelector("[data-scene-previous]")?.addEventListener("click", () => { state.selectedStoryboardIndex = Math.max(0, selected - 1); renderStoryboard(); });
+    grid.querySelector("[data-scene-next]")?.addEventListener("click", () => { state.selectedStoryboardIndex = Math.min(state.storyboard.length - 1, selected + 1); renderStoryboard(); });
     grid.querySelectorAll("[data-scene-title]").forEach((input) => input.addEventListener("input", () => { state.storyboard[Number(input.dataset.sceneTitle)].title = input.value; clearStoryboardUndo(); scheduleStudioDraft(); }));
     grid.querySelectorAll("[data-scene-narration]").forEach((input) => input.addEventListener("input", () => { state.storyboard[Number(input.dataset.sceneNarration)].narration = input.value; clearStoryboardUndo(); syncStoryboardScript(); invalidateStudioResults("audio"); scheduleQuote(); }));
     grid.querySelectorAll("[data-scene-prompt]").forEach((input) => input.addEventListener("input", () => { state.storyboard[Number(input.dataset.scenePrompt)].prompt = input.value; clearStoryboardUndo(); invalidateStudioResults("image"); }));
@@ -334,13 +456,17 @@
       message(element("#storyboard-message"), "任务正在进行，请等待完成或取消后再增减镜头。"); return;
     }
     const original = state.storyboard.map(scene => ({ ...scene }));
+    const selectedBeforeEdit = state.selectedStoryboardIndex;
     if (action === "add") {
       if (original.length >= 16) return;
       state.storyboard.push({ index: original.length, title: `镜头 ${original.length + 1}`, narration: "", description: "", prompt: "", imageStatus: "pending" });
+      state.selectedStoryboardIndex = state.storyboard.length - 1;
       clearStoryboardUndo();
     } else if (action === "undo") {
       if (!state.storyboardUndo || state.storyboardUndo.account !== state.session?.user?.id) return;
-      state.storyboard = state.storyboardUndo.scenes; element("#script-input").value = state.storyboardUndo.script; clearStoryboardUndo();
+      const undo = state.storyboardUndo;
+      state.storyboard = undo.scenes; element("#script-input").value = undo.script; clearStoryboardUndo();
+      state.selectedStoryboardIndex = Math.min(undo.selected ?? selectedBeforeEdit, state.storyboard.length - 1);
     } else {
       if (!Number.isInteger(index) || !original[index] || original.length <= 1) return;
       if (action === "merge") {
@@ -353,15 +479,16 @@
         clearStoryboardUndo();
       } else if (action === "delete") {
         if (original[index].narration.trim() && !window.confirm(`删除第 ${index + 1} 镜及其旁白？第 1 步文案也会同步移除这段文字。若要保留旁白，请使用“合并到上一镜”。`)) return;
-        state.storyboardUndo = { scenes: original, script: element("#script-input").value, account: state.session?.user?.id };
+        state.storyboardUndo = { scenes: original, script: element("#script-input").value, selected: selectedBeforeEdit, account: state.session?.user?.id };
       } else return;
       state.storyboard.splice(index, 1); syncStoryboardScript();
+      state.selectedStoryboardIndex = selectedBeforeEdit > index ? selectedBeforeEdit - 1 : selectedBeforeEdit === index ? Math.max(0, index - 1) : selectedBeforeEdit;
     }
     state.storyboard = state.storyboard.map((scene, index) => ({ ...scene, index, imageStatus: "pending" }));
     invalidateStudioResults(); renderStoryboard(); scheduleQuote(); scheduleStudioDraft();
     element("#agent-progress").innerHTML = `<b>已更新</b><span>${state.storyboard.length} 个镜头</span>`;
     message(element("#storyboard-message"), action === "add" ? "已添加空白镜头，请填写旁白和生图提示词后再生成素材。" : action === "merge" ? "已合并，旁白和提示词均已保留，请检查合并后的画面描述。" : action === "undo" ? "已恢复删除的镜头及文案。" : "已删除，可点击“撤销删除”恢复。", "success");
-    if (action === "add") element("#storyboard-grid").querySelector(`[data-scene-title="${state.storyboard.length - 1}"]`)?.focus();
+    if (action === "add") element("#storyboard-grid").querySelector(`[data-scene-title="${state.selectedStoryboardIndex}"]`)?.focus();
   }
 
   let quoteTimer;
@@ -495,7 +622,7 @@
   }
   function renderVideoJob() {
     const node = element("#video-job"); const job = state.videoJob;
-    if (!job) { node.className = "video-job empty"; node.innerHTML = "<strong>尚未开始</strong><p>输入文案并选择音色后即可一次生成完整视频。</p>"; updateVideoJobButton(); renderVideoExport(); return; }
+    if (!job) { node.className = "video-job empty"; node.innerHTML = "<strong>尚未开始</strong><p>输入文案并选择音色后即可一次生成完整视频。</p>"; updateVideoJobButton(); updateWizardControls(); renderVideoExport(); return; }
     const progress = Math.max(0, Math.min(100, Number(job.progress || 0))); const steps = job.steps || {};
     const stepMarkup = ["storyboard", "tts", "images", "compose", "publish"].map((key) => { const value = steps[key]; const status = videoStepState(value); const detail = value && typeof value === "object" ? (value.message || (value.progress !== undefined ? `${value.progress}%` : videoStepStatusLabel(status))) : videoStepStatusLabel(status); return `<li class="${escapeAttribute(status)}"><i></i><span><strong>${videoStepLabel(key)}</strong><small>${escapeHtml(detail)}</small></span></li>`; }).join("");
     const error = job.error && (job.error.message || job.error.detail || job.error); const credits = job.credits && (job.credits.used || job.credits.charged || job.credits.reserved);
@@ -504,7 +631,8 @@
     const cancel = node.querySelector("[data-video-cancel]"); if (cancel) cancel.addEventListener("click", cancelVideoJob);
     const preview = node.querySelector("[data-video-preview]"); if (preview) preview.addEventListener("click", previewVideoResult);
     const download = node.querySelector("[data-video-download]"); if (download) download.addEventListener("click", downloadVideoResult);
-    updateVideoJobButton(); renderVideoExport();
+    updateVideoJobButton(); updateWizardControls(); renderVideoExport();
+    if (job.status === "completed" && currentWizardStep === 4) setWizardStep(5, { updateHash: true, focus: true });
   }
 
   async function createVideoJob() {
@@ -598,7 +726,7 @@
   function updateSubmit() {
     const button = element("#submit-job"); const ready = Boolean(state.session && state.selectedVoice && state.storyboard.length && state.quote && state.cloudReady && !state.composing);
     button.disabled = state.session ? !ready : !element("#script-input").value.trim(); updateVideoJobButton();
-    if (!state.session) button.textContent = "登录后开始创作"; else if (!state.storyboard.length) button.textContent = "请先生成 AI 分镜"; else if (!state.cloudReady) button.textContent = "配音服务暂不可用"; else if (!state.selectedVoice) button.textContent = "请选择音色"; else if (!state.quote) button.textContent = "正在计算配音报价…"; else button.textContent = `并行生成全部素材 · 配音 ${state.quote.estimated_credits} 积分`;
+    if (!state.session) button.textContent = "登录后手动生成素材"; else if (!state.storyboard.length) button.textContent = "请先生成 AI 分镜"; else if (!state.cloudReady) button.textContent = "配音服务暂不可用"; else if (!state.selectedVoice) button.textContent = "请选择音色"; else if (!state.quote) button.textContent = "正在计算配音报价…"; else button.textContent = `手动生成全部素材 · 配音 ${state.quote.estimated_credits} 积分`;
   }
 
   async function submitJob() {
@@ -714,7 +842,7 @@
     element("#audio-progress-label").textContent = state.currentJob ? `${audio} / ${total} · ${statusLabel(state.currentJob.status)}` : "未开始"; element("#audio-progress-bar").style.width = `${audio / total * 100}%`;
     element("#image-progress-label").textContent = state.imageJobs.length ? `${images} / ${total}` : "未开始"; element("#image-progress-bar").style.width = `${images / total * 100}%`;
   }
-  function maybeEnableCompose() { const ready = state.storyboard.length > 0 && state.audioBlobs.size === state.storyboard.length && state.imageBlobs.size === state.storyboard.length && !state.composing; const button = element("#compose-video"); button.disabled = !ready; button.textContent = ready ? "预览并导出 WebM" : "等待素材完成"; if (ready) { element("#video-placeholder").classList.add("hidden"); drawPosterFrame(); } }
+  function maybeEnableCompose() { const ready = state.storyboard.length > 0 && state.audioBlobs.size === state.storyboard.length && state.imageBlobs.size === state.storyboard.length && !state.composing; const button = element("#compose-video"); button.disabled = !ready; button.textContent = ready ? "预览并导出 WebM" : "等待素材完成"; if (ready) { element("#video-placeholder").classList.add("hidden"); drawPosterFrame(); } updateWizardControls(); }
 
   function canvasSize() { const ratio = element("#aspect-ratio").value; return ({ "9:16": [720, 1280], "1:1": [960, 960], "2:1": [1280, 640] })[ratio] || [1280, 720]; }
   async function loadImageBlob(blob) { return new Promise((resolve, reject) => { const image = new Image(); const url = rememberUrl(blob); image.onload = () => resolve(image); image.onerror = reject; image.src = url; }); }
@@ -820,7 +948,7 @@
     element("#continue-existing").hidden = true; element("#script-input").focus();
     element("#studio-creation-title").textContent = "开始一部新作品";
     element("#studio-draft-state").textContent = "输入文案后自动保留草稿";
-    element("#script-panel").scrollIntoView({ behavior: "smooth" });
+    setWizardStep(1, { updateHash: true, focus: true });
   }
   function saveToProjectWorkspace(options = {}) {
     const navigate = options.navigate !== false;
@@ -968,7 +1096,15 @@
     }, behavior === "smooth" ? 700 : 180);
   }
   function revealStudioTarget(target, behavior = "smooth") {
-    if (target === "storyboard-panel") element("#storyboard-panel").open = true;
+    const wizardStep = wizardStepForTarget(target);
+    if (wizardStep) {
+      if (target === "storyboard-panel" && state.storyboard.length) element("#storyboard-panel").open = true;
+      if (target === "advanced-creation" || advancedCreationTargets.has(target)) element("#advanced-creation").open = true;
+      if (target === "task-panel") element("#advanced-results").open = true;
+      setWizardStep(wizardStep, { focus: behavior !== "instant" });
+      return;
+    }
+    if (target === "storyboard-panel" && state.storyboard.length) element("#storyboard-panel").open = true;
     if (target === "advanced-creation" || advancedCreationTargets.has(target)) element("#advanced-creation").open = true;
     if (target === "task-panel") { element("#advanced-creation").open = true; element("#advanced-results").open = true; }
     holdNavigationFocus(target, behavior);
@@ -982,7 +1118,11 @@
   }
   function guardProtectedTarget() {
     const target = protectedTargetFromHash();
-    if (!target) return;
+    if (!target) {
+      const historyStep = Number(window.history.state?.studioWizardStep);
+      if (document.body.classList.contains("studio-wizard-mode")) setWizardStep(historyStep >= 1 && historyStep <= wizardTargets.length ? historyStep : wizardStateStep());
+      return;
+    }
     pendingProtectedTarget = null;
     revealStudioTarget(target, "instant");
   }
@@ -1031,7 +1171,14 @@
     revealStudioTarget(target, "instant");
   }));
 
+  element("#wizard-prev")?.addEventListener("click", retreatWizard);
+  element("#wizard-next")?.addEventListener("click", advanceWizard);
+
   function updateActiveStudioTargetFromScroll() {
+    if (document.body.classList.contains("studio-wizard-mode")) {
+      setActiveStudioTarget(wizardTargets[currentWizardStep - 1]);
+      return;
+    }
     if (navigationFocusTarget) {
       setActiveStudioTarget(navigationFocusTarget);
       return;
@@ -1055,7 +1202,7 @@
       updateActiveStudioTargetFromScroll();
     });
   }, { passive: true });
-  window.addEventListener("beforeunload", () => state.objectUrls.forEach((url) => URL.revokeObjectURL(url))); window.requestAnimationFrame(() => { document.body.classList.add("studio-ready"); updateActiveStudioTargetFromScroll(); });
+  window.addEventListener("beforeunload", () => state.objectUrls.forEach((url) => URL.revokeObjectURL(url))); window.requestAnimationFrame(() => { document.body.classList.add("studio-ready", "studio-wizard-mode"); const targetStep = wizardStepForTarget(protectedTargetFromHash()); setWizardStep(targetStep || wizardStateStep()); updateActiveStudioTargetFromScroll(); });
   window.addEventListener("hashchange", guardProtectedTarget); window.addEventListener("popstate", guardProtectedTarget);
   document.addEventListener("input", (event) => { if (["speed", "pitch", "emotion", "emotion-weight"].includes(event.target.id)) invalidateStudioResults("audio"); if (["image-method", "aspect-ratio", "image-resolution", "visual-style"].includes(event.target.id)) invalidateStudioResults("image"); if (event.target.closest("#workspace-form") && !event.target.closest("#auth-form")) scheduleStudioDraft(); });
   document.addEventListener("change", (event) => { if (event.target.closest("#workspace-form") && !event.target.closest("#auth-form")) scheduleStudioDraft(); });

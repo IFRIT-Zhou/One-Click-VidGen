@@ -24,6 +24,7 @@ from .storyboard_free import StoryboardStageRequest, stage_payload
 from .deps import CurrentAdmin, CurrentUser, Db
 from .documents import MAX_DOCUMENT_BYTES, DocumentParseError, parse_document
 from .exceptions import ServiceError, UpstreamAuthError, UpstreamBusyError, UpstreamPermanentError
+from .service_control import ServiceControlError, decorate_services, enqueue as enqueue_service_control
 from .models import (AdminAuditLog, CloudJob, CreativeProject, DailyUsage, ImagePoolJob, ImagePoolMedia,
                      JobStatus, ModelPoolJob, OrderStatus, PaymentEvent,
                      QuotaPolicy, RechargeOrder, User, UserRole,
@@ -1661,7 +1662,9 @@ def _ray_node_connected(ray_node_ip: str | None) -> tuple[bool | None, str | Non
             payload = response.json()
         if not isinstance(payload, dict) or payload.get("available") is not True:
             return None, "Ray 状态探针不可用"
-        connected = bool(payload.get("current_node_connected"))
+        connected = payload.get("current_node_connected")
+        if not isinstance(connected, bool):
+            return None, "Ray 状态探针返回无效状态"
         return connected, "Ray 节点已连接" if connected else "Ray 节点未出现在存活列表"
     except (httpx.HTTPError, ValueError, TypeError):
         return None, "Ray 状态探针不可用"
@@ -1670,15 +1673,14 @@ def _ray_node_connected(ray_node_ip: str | None) -> tuple[bool | None, str | Non
 def _decorate_enrollment_device(row: dict[str, Any]) -> dict[str, Any]:
     status_value, reason, age = _connectivity(row.get("last_seen_at"))
     ray_connected, ray_reason = _ray_node_connected(row.get("ray_node_ip"))
-    # Heartbeat is the authoritative node-agent signal.  When it has not been
-    # implemented on a node yet, a live Ray membership is still a reliable
-    # transport/service signal and should not be shown as "unknown".
-    if ray_connected is True:
-        status_value = "online"
-        reason = f"{ray_reason}；{reason}"
-    elif status_value == "not_reported" and ray_connected is False:
+    # Agent heartbeat and Ray membership are independent observations.
+    # A live Ray process must not hide a stale or missing agent heartbeat.
+    if ray_reason:
         reason = f"{reason}；{ray_reason}"
     row["connectivity_status"] = status_value
+    row["heartbeat_status"] = status_value
+    from datetime import datetime, timezone
+    row["connectivity_checked_at"] = datetime.now(timezone.utc).isoformat()
     row["connectivity_reason"] = reason
     row["heartbeat_age_seconds"] = age
     row["ray_connected"] = ray_connected
@@ -1687,6 +1689,14 @@ def _decorate_enrollment_device(row: dict[str, Any]) -> dict[str, Any]:
     row["inventory_reason"] = "节点尚未上报镜像/模型库存"
     row["images"] = []
     row["models"] = []
+    from .device_runtime import device_services
+    row["services"] = device_services(row.get("ray_node_ip"))
+    return row
+
+
+def _device_control_view(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep service telemetry and control capability in separate layers."""
+    row["services"] = decorate_services(row.get("services") or {}, row.get("ray_node_ip"))
     return row
 
 
@@ -1830,13 +1840,69 @@ def admin_enrollment_token(payload: EnrollmentTokenRequest, admin: CurrentAdmin)
 
 @router.get("/admin/cluster/devices")
 def admin_cluster_devices(admin: CurrentAdmin, limit: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
-    items = _enrollment_devices(limit)
+    items = [_device_control_view(row) for row in _enrollment_devices(limit)]
     return {"items": items, "total": len(items), "inventory_note": "节点尚未上报镜像/模型库存"}
 
 
 @router.get("/admin/cluster/devices/{device_id}")
 def admin_cluster_device(device_id: str, admin: CurrentAdmin) -> dict[str, Any]:
-    return _enrollment_device(device_id)
+    return _device_control_view(_enrollment_device(device_id))
+
+
+@router.post("/admin/cluster/devices/{device_id}/services/{service}/{action}",
+             status_code=status.HTTP_202_ACCEPTED)
+def admin_cluster_device_service_control(
+    device_id: str,
+    service: Literal["tts", "h3"],
+    action: Literal["start", "stop"],
+    payload: EnrollmentAdminActionRequest,
+    admin: CurrentAdmin,
+    db: Db,
+) -> dict[str, Any]:
+    """Queue a guarded service transition for the single GPU scheduler.
+
+    This endpoint never invokes Docker, SSH, WSL, or the node agent.  It only
+    writes a durable request after checking the most recent read-only cache;
+    the scheduler owns all drain, placement, and node-side safety checks.
+    """
+    row = _enrollment_device(device_id)
+    node_ip = row.get("ray_node_ip")
+    observed = (row.get("services") or {}).get(service)
+    try:
+        result, created = enqueue_service_control(
+            admin_id=admin.id,
+            device_id=device_id,
+            node_ip=node_ip,
+            service=service,
+            action=action,
+            reason=payload.reason,
+            idempotency_key=payload.idempotency_key,
+            observed=observed,
+        )
+    except ServiceControlError as exc:
+        raise HTTPException(exc.status_code, {
+            "code": exc.code,
+            "message": exc.message,
+            "details": {"device_id": device_id, "service": service, "action": action},
+        }) from exc
+    if created:
+        audit(
+            db,
+            admin,
+            f"cluster.device.service.{action}",
+            "enrollment_device_service",
+            f"{device_id}:{service}",
+            {
+                "reason": payload.reason,
+                "idempotency_key": payload.idempotency_key,
+                "operation_id": result["operation_id"],
+                "action": action,
+                "service": service,
+                "response": result,
+            },
+        )
+        db.commit()
+    return result
 
 
 @router.post("/admin/cluster/devices/{device_id}/disable", status_code=status.HTTP_202_ACCEPTED)
