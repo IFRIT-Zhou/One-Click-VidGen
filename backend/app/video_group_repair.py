@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .gemini_client import GeminiError
 from .video_director_contracts import SEMANTIC_CONTRACT
 from .video_medical_director import is_medical, medical_contract
+from .video_duration_limits import generation_duration, max_video_duration
 
 
 MAX_VIDEO_DURATION = 15.0
@@ -194,9 +195,10 @@ def _decorate_children(children, parent, by_id, method, reason, max_duration=MAX
     return result
 
 
-def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_draft=None, narration_groups=()):
+def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_draft=None, narration_groups=(),
+                  enforce_opening=True, repair_missing=True, coordinate_neighbors=True):
     """Repair invalid groups, optionally coordinating their unlocked neighbors."""
-    max_duration = 30 if context.get('dynamic_max_shot_duration') == 30 else 15
+    max_duration = max_video_duration(context)
     validate_group_structure(rows, scenes)
     result = copy.deepcopy(rows)
     for row in result:
@@ -210,10 +212,10 @@ def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_dra
         parent = result[index]
         local = [by_id[value] for value in parent['slide_ids']]
         duration = _duration(local)
-        dynamic = parent['kind'] == 'video' or (index < 2 and not is_medical(context))
+        dynamic = parent['kind'] == 'video' or (enforce_opening and index < 2 and not is_medical(context))
         own_static = len(local) == 1 and duration > max_duration
-        missing = _missing_fields(parent)
-        overlong = dynamic and duration > max_duration
+        missing = _missing_fields(parent) if repair_missing else []
+        overlong = dynamic and generation_duration(duration) > max_duration
         # A saved, explained single-caption exception needs no repeated repair on resume.
         repair = parent.get('duration_repair')
         if own_static and parent['kind'] == 'static' and not missing and isinstance(repair, dict) and repair.get('method') == 'single_subtitle_static':
@@ -238,7 +240,7 @@ def repair_groups(context, scenes, rows, ask: Callable, *, progress=None, on_dra
             # Give the director a bounded neighboring window when duration
             # pressure may strand a dependent sentence at either edge.
             window_first, window_last = index, index + 1
-            if overlong:
+            if overlong and coordinate_neighbors:
                 if (index and result[index-1]['kind'] == 'video'
                         and not result[index-1].get('boundary_locked')
                         and not result[index-1].get('manual_locked')

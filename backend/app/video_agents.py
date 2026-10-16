@@ -106,8 +106,10 @@ narration_groups 是配音生产/编辑单元，作为强语义线索，但不�
         system = system.replace('纯信息展示或运动没有表达增益时使用 static，不因一句短就为它单独建镜。开头两个镜头承担观众留存，必须规划为 video，\n并控制在15秒以内；可在字幕边界合理缩短分组。单条字幕自身超过15秒才允许受限为 static，不能私自拆句。',
                                 '纯信息展示或运动没有表达增益时使用 static，不因一句短就为它单独建镜。动态镜头控制在15秒以内，不能私自拆字幕句。')
         system += medical_contract(context, 'groups')
-    max_duration = 30 if arrangement.get('dynamic_max_shot_duration') == 30 else 15
-    context = {**context, 'dynamic_max_shot_duration': max_duration}
+    from .video_duration_limits import max_video_duration
+    max_duration = max_video_duration({**context, **arrangement})
+    context = {**context, 'dynamic_max_shot_duration': max_duration,
+               'video_generation_backend': arrangement.get('video_generation_backend', context.get('video_generation_backend', 'api'))}
     system = system.replace('15秒', f'{max_duration}秒')
     system += '\n时长上限不是目标时长；优先完整语义和合理节奏，不为用满上限延长镜头。'
     video_arrangement = {k:v for k,v in arrangement.items() if k not in {
@@ -544,7 +546,7 @@ def _finalize_prompts(system, payload, shots, field, medium, expected, ask, asse
     raise ValueError('提示词定稿失败')
 
 
-def audit_storyboard(shots: list[dict[str, Any]], reference_ids: set[str]) -> list[dict[str, Any]]:
+def audit_storyboard(shots: list[dict[str, Any]], reference_ids: set[str], *, parameters=None) -> list[dict[str, Any]]:
     """Deterministic final gate; it never asks an Agent to reinterpret a shot."""
     result = []
     for shot in shots:
@@ -574,6 +576,13 @@ def audit_storyboard(shots: list[dict[str, Any]], reference_ids: set[str]) -> li
                 problems.append("视频提示词没有说明图1核心分镜参考")
             if int(shot.get("generation_duration") or 0) < max(4, float(shot.get("duration") or 0)):
                 problems.append("视频请求时长小于字幕跨度或最低4秒")
+            if parameters is not None:
+                from .video_duration_limits import validate_video_duration
+                try:
+                    validate_video_duration(shot.get('duration'), parameters,
+                                            requested_duration=shot.get('generation_duration'))
+                except ValueError as exc:
+                    problems.append(str(exc))
         elif shot.get("action") or shot.get("video_prompt"):
             problems.append("静态镜头残留动态指令")
         audited = dict(shot)

@@ -29,6 +29,7 @@ from .ark_video_provider import ArkVideoProvider
 from .comfyui_bridge import ComfyUIStopped, run_video_profile, video_profile, video_task_state, _video_dimensions, VIDEO_RESOLUTION_PRESETS
 from .h3_prompt_agent import H3_SKILL_SOURCE, convert_for_h3
 from .video_director_contracts import enforce_no_auto_subtitles
+from .video_duration_limits import validate_video_duration
 from module6_dynamic_video import (
     DynamicVideoStopped, DynamicVideoTaskFailed, DynamicVideoTaskUnknown,
     FAILURE, RunningHubVideoProvider, VideoGenerationRequest, validate_request,
@@ -1059,6 +1060,14 @@ def _generate_for_user(identity, data, user_id):
         try:
             resolved = {shot['id']: _resolve_generation_options(
                 record, shot, user_id, data.options or data.shot_options.get(shot['id'])) for shot in selected}
+            # Validate before queueing, invalidating an old clip, or uploading assets.
+            # Existing in-flight identities remain queryable with their frozen inputs.
+            for shot in selected:
+                if not shot.get('video_request') or shot.get('video_terminal') or data.regenerate_completed:
+                    validate_video_duration(shot['duration'],
+                        {**record.get('creation_parameters', {}),
+                         'video_generation_backend': resolved[shot['id']]['backend']},
+                        requested_duration=shot.get('generation_duration'))
             backends = {options['backend'] for options in resolved.values()}
             backend = next(iter(backends)) if len(backends) == 1 else 'mixed'
             config = load_config() if 'api' in backends else {}

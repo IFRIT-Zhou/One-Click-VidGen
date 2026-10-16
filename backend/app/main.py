@@ -200,7 +200,7 @@ class GenerateRequest(BaseModel):
     method: Literal["running", "ican"] = "running"
     size: ImageSize = "2560x1440"
     image_profile_id: str | None = Field(default=None, max_length=80)
-    image_resolution: Literal["1k", "2k", "4k"] | None = None
+    image_resolution: Literal["1k", "2k", "4k"] | None = '2k'
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
     video_orientation: Literal['landscape', 'portrait'] = 'landscape'
     subtitle_layouts: dict[str, Any] = Field(default_factory=dict)
@@ -222,7 +222,7 @@ class GenerateRequest(BaseModel):
     presenter_reference_id: str = Field(default='', max_length=200)
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
-    dynamic_max_shot_duration: Literal[15, 30] = 15
+    dynamic_max_shot_duration: Literal[10, 15, 30] = 15
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
     visual_target_duration: float | None = Field(default=None, ge=5, le=30)
     visual_max_duration: float | None = Field(default=None, ge=6, le=40)
@@ -2537,6 +2537,8 @@ def advance_step_workflow(
         "confirm_audio": set(),
         "start_visual": {
             "video_orientation",
+            "dynamic_text_mode", "video_generation_backend", "comfyui_profile_id",
+            "comfyui_h3_prompt_agent", "comfyui_reference_audio",
             "content_mode", "director_strategy", "scene_references_enabled", "auto_split_long_text", "split_text_threshold",
             "visual_backend", "use_cloud_image_pool", "method", "size", "image_profile_id", "image_resolution", "visual_prompt_mode",
             "visual_pacing_preset", "visual_min_duration", "visual_target_duration",

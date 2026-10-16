@@ -2431,7 +2431,7 @@ def render_semantic_visual_video(
                 "USE_CLOUD_IMAGE_POOL": "1",
                 "CLOUD_IMAGE_POOL_METHOD": request.get("method", "running"),
                 "CLOUD_IMAGE_POOL_SIZE": request.get("size", "2560x1440"),
-                "CLOUD_IMAGE_POOL_RESOLUTION": request.get("image_resolution") or "1k",
+                "CLOUD_IMAGE_POOL_RESOLUTION": request.get("image_resolution") or "2k",
                 "CLOUD_IMAGE_POOL_RATIO": "9:16" if request.get("video_orientation") == "portrait" else "16:9",
                 "CLOUD_IMAGE_POOL_BASE_URL": cloud_runtime["base_url"],
                 "CLOUD_IMAGE_POOL_ACCESS_TOKEN": cloud_runtime["access_token"],

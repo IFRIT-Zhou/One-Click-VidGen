@@ -23,6 +23,10 @@ assert.deepEqual(state.qualities.value, ['2K','2.5K'])
 assert.equal(form.size, '1440x2560')
 state.quality.value = '2K'
 assert.equal(form.size, '1152x2048')
+const defaultForm = reactive({method:'running', video_orientation:'landscape'})
+const defaultState = component.setup({form:defaultForm,standalone:false},{expose(){}})
+assert.equal(defaultForm.image_resolution, '2k')
+assert.equal(defaultState.quality.value, '2K')
 form.method = 'running'
 await nextTick()
 assert.equal(state.quality.value, '4K')

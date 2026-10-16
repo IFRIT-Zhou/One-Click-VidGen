@@ -34,6 +34,33 @@ test('explicit cloud dimension selection sends exact pixels without lowering',()
  assert.equal(events[0].resolution,'custom');assert.equal(events[0].width,1280);assert.equal(events[0].height,720)
 })
 
+test('cloud default uses declared 2K orientation without overwriting explicit saved dimensions',async()=>{
+ const resolutions=[{width:640,height:384},{width:384,height:640},{width:2048,height:1152},{width:1152,height:2048}]
+ const defaults={landscape:resolutions[2],portrait:resolutions[3]}
+ for(const [ratio,expected] of [['16:9',defaults.landscape],['9:16',defaults.portrait]]){
+  const events=[],modelValue={backend:'cloud_h3',resolution:'custom',width:640,height:384}
+  const state=setup('CloudH3Options.vue',{modelValue,ratio},async()=>({resolutions,default_resolutions:defaults}),(name,data)=>events.push(data))
+  await state.refresh()
+  assert.deepEqual(state.defaultDimensions.value,expected)
+  assert.equal(state.selected.value,'640x384')
+  assert.equal(state.invalidDefault.value,false)
+  assert.equal(events.length,0)
+ }
+})
+
+test('older cloud capabilities choose largest supported orientation, invalid advertised defaults never fall back',async()=>{
+ const resolutions=[{width:640,height:384},{width:384,height:640},{width:1280,height:720},{width:720,height:1280}]
+ for(const [ratio,expected] of [['16:9',resolutions[2]],['9:16',resolutions[3]]]){
+  const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio},async()=>({resolutions}))
+  await state.refresh()
+  assert.deepEqual(state.defaultDimensions.value,expected)
+ }
+ const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio:'16:9'},async()=>({resolutions,default_resolutions:{landscape:{width:2048,height:1152}}}))
+ await state.refresh()
+ assert.equal(state.defaultDimensions.value,undefined)
+ assert.equal(state.invalidDefault.value,true)
+})
+
 // Exercise the actual batch handlers with in-memory API responses; never submit GPU work.
 function batchEditor({fail=false,locked=false,confirmed=true}={}){
  const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')

@@ -122,6 +122,14 @@ function generationSummary(shot){return generationOptionsSummary(optionsFor(shot
 function generationOptionsSummary(options){const profile=comfyProfiles.value.find(item=>item.id===options.profile_id);return (options.backend==='cloud_h3'?'集群 H3（测试免费）':options.backend==='comfyui'?(profile?.engine==='managed'?'OCV 内置 ComfyUI · ':'外部 ComfyUI · ')+(profile?.name||'未选择工作流'):'视频 API')+' · '+(options.resolution==='custom'?options.width+' × '+options.height:options.resolution||(options.backend==='cloud_h3'?'跟随集群尺寸':profile?.resolution_preset||videoModel.value?.resolution||'跟随设置'))}
 const shotConfigured=shot=>{const options=optionsFor(shot);return options.backend==='cloud_h3'?true:options.backend==='comfyui'?comfyProfiles.value.some(item=>item.id===options.profile_id):Boolean(apiVideoReady.value)}
 function confirmLongApiShots(shots){
+ const invalid=shots.filter(shot=>{
+  if(shot.video_request&&!shot.video_terminal&&shot.video_status!=='completed')return false
+  const configured=project.value.creation_parameters?.dynamic_max_shot_duration
+  const maximum=optionsFor(shot).backend==='cloud_h3'?10:[10,15,30].includes(configured)?configured:15
+  const seconds=Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))
+  return !Number.isFinite(seconds)||seconds>maximum||seconds<Number(shot.duration)
+ })
+ if(invalid.length){error.value='第 '+invalid.map(shot=>project.value.shots.findIndex(item=>item.id===shot.id)+1).join('、')+' 镜时长超出当前生成通道或未覆盖配音。请先拆分或重新规划，再生成视频；配音与字幕会保留。';return false}
  const longShots=shots.filter(shot=>optionsFor(shot).backend==='api'&&Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))>15)
  if(!longShots.length)return true
  const lines=longShots.map(shot=>'第 '+String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0')+' 镜：请求 '+Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))+' 秒')
@@ -240,7 +248,7 @@ async function regenerateVideo(shot){
   ?'本镜将继续注入对应 TTS 参考音频'+(shot.reference_audio_lipsync!==false?'并要求人物对口型。':'，但不要求人物对口型。')
   :'本镜不会注入参考音频。'
  const options=optionsFor(shot),profile=comfyProfiles.value.find(item=>item.id===options.profile_id)
- const detail=options.backend==='comfyui'?`ComfyUI · ${profile?.name||'所选工作流'} · ${options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||'工作流默认'}`:`视频 API · ${options.resolution||videoModel.value?.resolution}（可能再次计费）`
+ const detail=options.backend==='cloud_h3'?`集群 H3 · ${options.resolution==='custom'?options.width+' × '+options.height:'集群默认 2K'}（测试免费）`:options.backend==='comfyui'?`ComfyUI · ${profile?.name||'所选工作流'} · ${options.resolution==='custom'?options.width+' × '+options.height:options.resolution||profile?.resolution_preset||'工作流默认'}`:`视频 API · ${options.resolution||videoModel.value?.resolution}（可能再次计费）`
  if(!confirm('将按本镜生成设置重新生成：'+detail+'。\n\n'+audioNote+'\n系统自动分配新的生成编号，保留旧任务记录和视频。若原云端任务仍在运行或提交结果未知，新请求可能造成重复扣费，且不会取消原任务。\n新片段生成后将替代旧片段参与合成。确认新建生成？'))return
  await run(async()=>{acceptImageUpdate(await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:[shot.id],regenerate_completed:true,options}));productionPanel.value='video';videoLogsOpen.value=true})
 }

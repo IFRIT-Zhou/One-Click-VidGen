@@ -20,9 +20,41 @@ from .video_plan import parse_srt, normalize_shots, edit_structure, plan_storybo
 from .video_sources import list_sources, source_project, copy_assets, narration_groups
 from . import video_scene_references as scene_references
 from .video_text_policy import normalize_text_mode
+from .video_duration_limits import max_video_duration
 from .language_routing import project_language_scope, uses_cloud_language
 
 router = APIRouter(prefix='/api/video-studio')
+
+
+def _validate_project_video_durations(record, shots):
+    from .video_duration_limits import validate_video_duration
+    for shot in shots:
+        if shot.get('kind') != 'video':
+            continue
+        parameters = {**record.get('creation_parameters', {})}
+        backend = (shot.get('video_generation_options') or {}).get('backend')
+        if backend:
+            parameters['video_generation_backend'] = backend
+        validate_video_duration(shot['duration'], parameters,
+                                requested_duration=shot.get('generation_duration'))
+
+
+def _preserve_generation_options(record, shots, split_source=None):
+    """Planning normalization must not reset an explicitly saved execution route."""
+    previous = {shot['id']: shot for shot in record['shots']}
+    for shot in shots:
+        old = previous.get(shot['id'], split_source or {})
+        if 'video_generation_options' in old:
+            shot['video_generation_options'] = copy.deepcopy(old['video_generation_options'])
+        parameters = {**record.get('creation_parameters', {})}
+        backend = (shot.get('video_generation_options') or {}).get('backend')
+        if backend:
+            parameters['video_generation_backend'] = backend
+        maximum = max_video_duration(parameters)
+        if shot.get('kind') == 'video':
+            shot['warning'] = (f'本镜超过当前通道的 {maximum} 秒上限，请沿字幕边界拆分后再生成；配音与字幕会保留。'
+                               if float(shot.get('generation_duration') or 0) > maximum else '')
+    return shots
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'video_studio'
 LOCK = threading.RLock()
 ACTIVE = set()
@@ -178,7 +210,7 @@ def _image_configs(record, user_id=None):
             'query_url': base + '/image-pool/query',
             'upload_url': base + '/image-pool/media/upload',
             'account_url': base + '/image-pool/account-status',
-            'resolution': str(parameters.get('image_resolution') or '1k'),
+            'resolution': str(parameters.get('image_resolution') or '2k'),
             'api_key': token, 'refresh_token': runtime.get('refresh_token', ''),
             'cloud_user_id': runtime.get('cloud_user_id', ''),
             'cloud_session_store_path': runtime.get('cloud_session_store_path', ''),
@@ -1267,7 +1299,9 @@ def update(identity: str, data: Edit, request: Request):
                 old = previous.get(row.get('id'), {})
                 row['design_needs_review'] = bool(old.get('design_needs_review'))
                 row['previous_designs'] = old.get('previous_designs', [])
-            normalized = normalize_shots(incoming, record['scenes'], [r['id'] for r in _material_references(record)])
+            normalized = normalize_shots(incoming, record['scenes'], [r['id'] for r in _material_references(record)],
+                                         max_duration=max_video_duration(record.get('creation_parameters')))
+            _preserve_generation_options(record, normalized)
             for shot in normalized:
                 old = previous.get(shot['id'], {})
                 if old.get('design_needs_review'):
@@ -1298,6 +1332,8 @@ def structure(identity: str, data: Structure, request: Request):
         try:
             changed = edit_structure(record['shots'], record['scenes'], data.action, data.index,
                                              data.boundary, [r['id'] for r in _material_references(record)])
+            _preserve_generation_options(record, changed,
+                record['shots'][data.index] if data.action in {'split', 'insert'} else None)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if asset_stage:
@@ -1398,7 +1434,10 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
                 row['design_needs_review'] = False
                 row['design_review_confirmed'] = True
         try:
-            normalized = normalize_shots(candidate, record['scenes'], [r['id'] for r in record['references']])
+            normalized = normalize_shots(candidate, record['scenes'], [r['id'] for r in record['references']],
+                                         max_duration=max_video_duration(record.get('creation_parameters')))
+            _preserve_generation_options(record, normalized)
+            _validate_project_video_durations(record, [row for row in normalized if row['id'] == data.shot_id])
             audit_storyboard([row for row in normalized if row['id'] == data.shot_id], {r['id'] for r in record['references']})
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -1424,7 +1463,10 @@ def review(identity: str, data: Review, request: Request):
             raise HTTPException(409, '分镜方案已经确认，请使用核心图检查阶段的操作')
         try:
             normalized = normalize_shots(record['shots'], record['scenes'],
-                                         [row['id'] for row in record['references']])
+                                         [row['id'] for row in record['references']],
+                                         max_duration=max_video_duration(record.get('creation_parameters')))
+            _preserve_generation_options(record, normalized)
+            _validate_project_video_durations(record, normalized)
             record['shots'] = audit_storyboard(normalized, {row['id'] for row in record['references']})
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
@@ -1796,6 +1838,16 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if shot.get('asset_kind') == 'scene_reference':
             raise HTTPException(400, '场景参考不占用视频时间轴')
         changed_kind = shot['kind'] != data.kind
+        if changed_kind and data.kind == 'video':
+            from .video_duration_limits import validate_video_duration
+            parameters = {**record.get('creation_parameters', {})}
+            backend = (shot.get('video_generation_options') or {}).get('backend')
+            if backend:
+                parameters['video_generation_backend'] = backend
+            try:
+                validate_video_duration(shot['duration'], parameters)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
         if data.intent is not None and data.intent.strip() != shot.get('intent', ''):
             shot['intent'] = data.intent.strip()
             shot['user_intent'] = data.intent.strip()
@@ -1824,8 +1876,7 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if shot.get('video_prompt', '') != data.video_prompt.strip():
             shot['video_prompt_warnings'] = []
         shot.update(kind=data.kind, action=data.action.strip(), video_prompt=data.video_prompt.strip(),
-                    warning=('本镜超过建议的 15 秒；可能增加显存占用与生成时间，建议拆分，也可按所选工作流继续尝试。'
-                             if data.kind == 'video' and float(shot['duration']) > 15 else ''),
+                    warning='',
                     reference_audio_enabled=data.reference_audio_enabled,
                     reference_audio_lipsync=data.reference_audio_lipsync,
                     generation_duration=max(4, math.ceil(shot['duration'])) if data.kind == 'video' else None)

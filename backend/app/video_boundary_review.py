@@ -5,6 +5,7 @@ import uuid
 from .gemini_client import GeminiError
 from .video_medical_director import medical_contract
 from .video_group_repair import validate_group_structure, legal_ranges, _missing_fields, _semantic_child
+from .video_duration_limits import max_video_duration
 
 
 SYSTEM = """你是分镜语义边界核对员，只检查相邻镜头的字幕归属，不写图像/视频提示词。
@@ -32,7 +33,7 @@ right:{intent,motion_basis,progression_plan,semantic:{message,source_basis,fact_
 
 
 def review_boundaries(context, scenes, rows, ask, *, narration_groups=(), progress=None, on_draft=None):
-    max_duration = 30 if context.get('dynamic_max_shot_duration') == 30 else 15
+    max_duration = max_video_duration(context)
     validate_group_structure(rows, scenes)
     result = copy.deepcopy(rows)
     by_id = {s['slide_id']: s for s in scenes}

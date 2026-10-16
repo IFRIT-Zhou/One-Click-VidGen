@@ -2,7 +2,6 @@
 import copy
 import hashlib
 import json
-import math
 import re
 import uuid
 
@@ -12,6 +11,7 @@ from .video_text_policy import normalize_text_mode
 from .video_prompt_notices import has_prompt_warning
 from .video_speech import normalize_turns
 from .video_medical_director import MEDICAL_DESIGN_FIELDS, is_medical, medical_contract
+from .video_duration_limits import generation_duration, max_video_duration
 
 
 _DRAFT_FIELDS = ('id', 'slide_ids', 'kind', 'intent', 'action', 'image_prompt', 'video_prompt', 'visual_description')
@@ -62,7 +62,7 @@ def _normalize_speech_turns(value, source_text):
     return normalize_turns(value, source_text)
 
 
-def normalize_shots(raw, scenes, reference_ids=()):
+def normalize_shots(raw, scenes, reference_ids=(), *, max_duration=15):
     if not isinstance(raw, list) or not raw:
         raise ValueError('镜头列表不能为空')
     ordered = [s['slide_id'] for s in scenes]
@@ -86,13 +86,13 @@ def normalize_shots(raw, scenes, reference_ids=()):
         start, end = by_id[ids[0]]['start'], by_id[ids[-1]]['end']
         duration = round(end - start, 3)
         warning = ''
-        if duration > 15 and kind == 'video':
-            warning = '本镜超过建议的 15 秒；可能增加显存占用与生成时间，建议拆分，也可按所选工作流继续尝试。'
+        if kind == 'video' and generation_duration(duration) > max_duration:
+            warning = f'本镜超过当前通道的 {max_duration} 秒上限，请重新规划或沿字幕边界拆分后再生成；配音与字幕会保留。'
         refs = row.get('reference_ids', [])
         if not isinstance(refs, list) or len(refs) > 8 or any(not isinstance(r, str) for r in refs) or len(set(refs)) != len(refs) or any(r not in reference_ids for r in refs):
             raise ValueError('参考素材选择无效，最多 8 张，另预留 1 张核心分镜图')
         clean = dict(id=identity, slide_ids=ids, kind=kind, start=start, end=end,
-                     duration=duration, generation_duration=max(4, math.ceil(duration)) if kind == 'video' else None,
+                     duration=duration, generation_duration=generation_duration(duration) if kind == 'video' else None,
                      reference_ids=refs, warning=warning)
         clean['design_needs_review'] = bool(row.get('design_needs_review', False))
         clean['design_review_confirmed'] = bool(row.get('design_review_confirmed', False)) and not clean['design_needs_review']
@@ -241,15 +241,15 @@ def edit_structure(shots, scenes, action, index, boundary=None, reference_ids=()
     return normalize_shots(rows, scenes, reference_ids)
 
 
-def enforce_opening_motion(shots, count=2):
+def enforce_opening_motion(shots, count=2, *, max_duration=15):
     """Keep the opening visually active when its subtitle timing can be generated."""
     result = copy.deepcopy(shots)
     for shot in result[:max(0, int(count))]:
-        if float(shot.get('duration') or 0) <= 15:
+        if generation_duration(shot.get('duration')) <= max_duration:
             if shot['kind'] != 'video':
                 shot['kind_adjustment'] = '开头留存规则：设为动态'
             shot['kind'] = 'video'
-            shot['generation_duration'] = max(4, math.ceil(float(shot['duration'])))
+            shot['generation_duration'] = generation_duration(shot['duration'])
             shot['warning'] = ''
     return result
 
@@ -264,6 +264,7 @@ def planning_fingerprint(scenes, style, characters, world, references, parameter
 def plan_storyboard(scenes, style, characters, world, references, progress, parameters=None, checkpoint=None,
                     *, resume_state=None, save_state=None, fixed_shots=None, repair_only=False):
     parameters = parameters or {}
+    max_duration = max_video_duration(parameters)
     from .presenter_mode import presenter_config
     if parameters.get('presenter_mode') and not presenter_config(parameters, references):
         raise ValueError('讲解员模式已开启，请先选择有效的人物参考图')
@@ -275,7 +276,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         resume_state.get('fingerprint') == fingerprint) else {'fingerprint': fingerprint}
     recover_final_gate = str(state.get('stage') or '').startswith('最终校验待修订')
     if fixed_shots and not state.get('shots'):
-        state['shots'] = normalize_shots(fixed_shots, scenes, [r['id'] for r in references])
+        state['shots'] = normalize_shots(fixed_shots, scenes, [r['id'] for r in references], max_duration=max_duration)
         retained = [row['id'] for row in state['shots'] if not row.get('design_needs_review')]
         state['completed'] = {phase: retained[:] if repair_only else []
                               for phase in ('core', 'motion', 'image', 'video')}
@@ -297,7 +298,8 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
                                        global_character_prompt=characters, world_prompt=world, require_ai_success=True,
                                        director_strategy=parameters.get('director_strategy', 'stable'), speech_attribution=True,
                                        **agent0_options)
-    context['dynamic_max_shot_duration'] = 30 if parameters.get('dynamic_max_shot_duration') == 30 else 15
+    context['dynamic_max_shot_duration'] = max_duration
+    context['video_generation_backend'] = parameters.get('video_generation_backend') or 'api'
     context['video_direction'] = {
         'director_revision': VIDEO_DIRECTOR_REVISION,
         'director_strategy': parameters.get('director_strategy', 'stable'),
@@ -314,13 +316,29 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
     if is_medical(context):
         context['video_direction']['core_image_role'] = '选择最能交代医学主体与尺度关系的单张参考图，可为后段宽景；不是强制首帧，视频依次展开。'
     progress(f'动态视频表达模式：{mode_label}')
+    if state.get('shots'):
+        saved = normalize_shots(state['shots'], scenes, [r['id'] for r in references], max_duration=max_duration)
+        if any(shot['kind'] == 'video' and shot['generation_duration'] > max_duration for shot in saved):
+            # Older/manual plans can carry 15/30-second groups into the 10-second
+            # cloud route. Resume must repair before reusing completed designs.
+            from .video_agents import ask_json
+            from .video_group_repair import repair_groups
+            progress(f'保存的分镜超出当前通道 {max_duration} 秒上限，先沿字幕边界修订；配音与字幕不变。')
+            repaired = repair_groups(context, scenes, saved, ask_json, progress=progress,
+                narration_groups=parameters.get('_narration_groups', []), enforce_opening=False,
+                repair_missing=False, coordinate_neighbors=False)
+            state['shots'] = normalize_shots(repaired, scenes, [r['id'] for r in references], max_duration=max_duration)
+            retained = {shot['id'] for shot in state['shots']}
+            for phase, identities in state.get('completed', {}).items():
+                state['completed'][phase] = [identity for identity in identities if identity in retained]
+            persist_state('已按当前通道时长上限修订保存分镜')
     # Older final gates invalidated all completed phases for cosmetic headings.
     # Re-audit the saved results before paying to rebuild them. The fingerprint
     # above already ensures these results still match the current inputs.
     if recover_final_gate and state.get('shots'):
         try:
-            recovered = normalize_shots(state['shots'], scenes, [r['id'] for r in references])
-            recovered = audit_storyboard(recovered, {r['id'] for r in references})
+            recovered = normalize_shots(state['shots'], scenes, [r['id'] for r in references], max_duration=max_duration)
+            recovered = audit_storyboard(recovered, {r['id'] for r in references}, parameters=parameters)
         except ValueError:
             pass
         else:
@@ -332,12 +350,12 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
             progress('已复核并恢复保存的完整提示词；标题排版差异不再阻断，无需重新调用 Agent。')
             return context, recovered
     arrangement = {key: parameters[key] for key in (
-        'director_strategy', 'video_orientation', 'dynamic_max_shot_duration') if key in parameters}
+        'director_strategy', 'video_orientation', 'dynamic_max_shot_duration', 'video_generation_backend') if key in parameters}
     arrangement['narration_groups'] = parameters.get('_narration_groups', [])
     if arrangement['narration_groups']:
         progress(f'已读取 {len(arrangement["narration_groups"])} 段配音作为语义参考，不强制按配音段切镜；画面按全文语义划分，时长以字幕时间轴为准。')
     if state.get('shots'):
-        shots = normalize_shots(state['shots'], scenes, [r['id'] for r in references])
+        shots = normalize_shots(state['shots'], scenes, [r['id'] for r in references], max_duration=max_duration)
         progress('复用已保存的镜头划分与设计，继续未完成步骤。')
     else:
         progress('Agent 1：按字幕边界规划动静镜头')
@@ -348,9 +366,9 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
                               on_draft=preserve_groups, resume_rows=state.get('groups'), boundary_review=True)
         for shot in planned:
             shot['planning_kind'] = shot['kind']
-        shots = normalize_shots(planned, scenes)
+        shots = normalize_shots(planned, scenes, max_duration=max_duration)
         if not is_medical(context):
-            shots = enforce_opening_motion(shots)
+            shots = enforce_opening_motion(shots, max_duration=max_duration)
     completed = state.setdefault('completed', {})
     def pending(batch, phase):
         done = completed.get(phase, [])
@@ -405,7 +423,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
             # Validate material selection before either prompt Agent sees it.
             batch[:] = normalize_shots(batch, [scene for scene in scenes
                 if scene['slide_id'] in {identity for shot in batch for identity in shot['slide_ids']}],
-                [row['id'] for row in references])
+                [row['id'] for row in references], max_duration=max_duration)
             mark_complete(needed, 'core')
             preserve(f'核心画面设计 {offset+1}～{offset+len(batch)}', batch, offset)
         needed = pending([shot for shot in batch if shot['kind'] == 'video'], 'motion')
@@ -452,17 +470,17 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
             shot['design_needs_review'] = False
         preserve(f'提示词定稿 {offset+1}～{offset+len(batch)}', batch, offset)
     progress('程序校验：核对字幕覆盖、时长、图号与提示词合同')
-    normalized = normalize_shots(shots, scenes, [r['id'] for r in references])
+    normalized = normalize_shots(shots, scenes, [r['id'] for r in references], max_duration=max_duration)
     reference_ids = {r['id'] for r in references}
     try:
-        audited = audit_storyboard(normalized, reference_ids)
+        audited = audit_storyboard(normalized, reference_ids, parameters=parameters)
     except ValueError:
         # A completed API response can still fail the final contract. Retrying
         # must re-design those shots rather than repeatedly auditing the same data.
         failed = set()
         for shot in normalized:
             try:
-                audit_storyboard([shot], reference_ids)
+                audit_storyboard([shot], reference_ids, parameters=parameters)
             except ValueError:
                 failed.add(shot['id'])
         for phase, identities in completed.items():

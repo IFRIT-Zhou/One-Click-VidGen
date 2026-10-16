@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import threading
 import time
 import uuid
@@ -67,10 +68,37 @@ def dimensions_for(capabilities, options, ratio):
         candidates = [pair for pair in allowed if (pair[1] > pair[0]) == portrait and pair[0] != pair[1]]
         if not candidates:
             raise ValueError('集群没有可用的对应画幅尺寸')
-        dimensions = min(candidates, key=lambda pair: pair[0]*pair[1])
+        defaults = selected.get('default_resolutions')
+        if defaults is not None:
+            default = defaults.get('portrait' if portrait else 'landscape', {})
+            dimensions = (default.get('width'), default.get('height'))
+            if dimensions not in candidates:
+                raise ValueError('集群默认尺寸与能力列表不一致，请刷新配置；不会自动降低分辨率')
+        else:
+            # Older servers did not name a default. Preserve their supported
+            # sizes, but do not silently choose the lowest-quality thumbnail.
+            dimensions = max(candidates, key=lambda pair: pair[0]*pair[1])
     if dimensions not in allowed:
         raise ValueError('集群当前不支持所选尺寸，不会自动降低分辨率')
     return selected, dimensions
+
+
+def validate_duration(shot, selected):
+    """A new clip must cover its timeline and fit the H3 request limits."""
+    if type(shot.get('generation_duration')) is not int:
+        raise ValueError('视频请求时长必须是整数秒，请重新规划分镜')
+    try:
+        seconds = float(shot.get('generation_duration') or 0)
+        timeline = float(shot.get('duration') or 0)
+        limits = selected.get('duration_seconds') or selected.get('duration', {})
+        minimum = max(2, float(selected.get('min_duration_seconds', limits.get('min', 2))))
+        maximum = min(10, float(selected.get('max_duration_seconds', limits.get('max', 10))))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError('镜头时长无效，请重新规划分镜') from None
+    if not all(math.isfinite(value) for value in (seconds, timeline, minimum, maximum)):
+        raise ValueError('镜头时长无效，请重新规划分镜')
+    if not 0 < timeline <= seconds or not minimum <= seconds <= maximum:
+        raise ValueError('镜头时长超出集群允许范围或请求时长不足以覆盖分镜，请拆分分镜；不会自动裁短')
 
 
 def handles(identity, data, user_id):
@@ -127,10 +155,7 @@ def generate_cloud(identity, data, user_id):
                     resolved[shot['id']] = (options, {'workflow_revision':previous.get('workflow_revision'),'model':previous.get('model')}, frozen_dimensions)
                     continue
                 selected, dimensions = dimensions_for(capabilities, options, record['settings'].get('ratio','16:9'))
-                seconds = float(shot.get('generation_duration') or 0)
-                limits = selected.get('duration_seconds') or selected.get('duration', {})
-                if not float(selected.get('min_duration_seconds',limits.get('min',2))) <= seconds <= float(selected.get('max_duration_seconds',limits.get('max',10))):
-                    raise ValueError('镜头时长超出集群允许范围，请拆分分镜；不会自动裁短')
+                validate_duration(shot, selected)
                 from .presenter_mode import audio_policy
                 if audio_policy(record.get('creation_parameters',{}), shot, options['h3_prompt_agent'], record.get('references',[]))[0]:
                     raise ValueError('集群 H3 测试阶段暂不支持参考音频或对口型，请关闭此功能')

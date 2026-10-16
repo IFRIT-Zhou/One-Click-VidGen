@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import re
 import time
 import requests
 from typing import Literal
@@ -95,19 +96,71 @@ class RunningHubWorkflowVideoProvider(RunningHubVideoProvider):
         except (requests.RequestException, ValueError, OSError) as exc:
             raise DynamicVideoTaskFailed('RH 素材上传未完成，尚未提交视频任务；请检查网络与上传接口后重试') from exc
 
+    def _upload_error_detail(self, body):
+        """Keep provider diagnostics without logging bodies, credentials or signed URLs."""
+        values = [body.get('errorCode', body.get('code')),
+                  body.get('errorMessage') or body.get('message') or body.get('msg')]
+        detail = '；'.join(str(value) for value in values
+                          if isinstance(value, (str, int)) and not isinstance(value, bool))
+        detail = detail.replace(self.api_key, '[redacted]')
+        detail = re.sub(r'https?://[^\s<>"\']+', '[url]', detail, flags=re.I)
+        detail = re.sub(r'(?i)Bearer\s+[^\s,;]+', 'Bearer [redacted]', detail)
+        detail = re.sub(r'(?i)(api[_-]?key|token|signature)\s*[:=]\s*[^\s,;]+',
+                        r'\1=[redacted]', detail)
+        return ' '.join(detail.split())[:500]
+
+    @staticmethod
+    def _workflow_filename(data):
+        # Official v2 .ai examples use data.filename; .cn/legacy examples use
+        # data.fileName. download_url is for model APIs, not a LoadImage value.
+        # https://www.runninghub.ai/runninghub-api-doc-en/api-425761098
+        # https://www.runninghub.cn/runninghub-api-doc-cn/api-425749007
+        if not isinstance(data, dict):
+            return None
+        filenames = []
+        for field in ('fileName', 'filename'):
+            value = data.get(field)
+            if value is None or value == '':
+                continue
+            if not isinstance(value, str):
+                return None
+            value = value.strip()
+            if (not value or value.startswith('/') or any(c in value for c in '\\:?#')
+                    or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                    or any(part in ('', '.', '..') for part in value.split('/'))):
+                return None
+            filenames.append(value)
+        return filenames[0] if filenames and len(set(filenames)) == 1 else None
+
     def _upload_file(self, path):
+        # The old endpoint is still accepted when explicitly configured. Its
+        # documented multipart auth differs from v2; never retry on another URL.
+        form = {'apiKey': self.api_key, 'fileType': 'input'} if self.upload_path.rstrip('/') == '/task/openapi/upload' else {}
         with path.open('rb') as stream:
             response = self.session.post(self.url(self.upload_path),
                 headers={'Authorization': f'Bearer {self.api_key}'},
+                data=form,
                 files={'file': (path.name, stream, mimetypes.guess_type(path.name)[0] or 'application/octet-stream')},
                 timeout=120)
             try:
-                body = response.json()
-                data = body.get('data') if isinstance(body, dict) else None
-                filename = data.get('fileName') if isinstance(data, dict) else None
-                if response.ok and body.get('code', 0) in (0, '0', 200, '200') and filename:
-                    return str(filename)
-                raise DynamicVideoTaskFailed(f'RH 工作流素材上传失败（HTTP {response.status_code}），未返回 fileName；尚未提交视频任务')
+                prefix = f'RH 工作流素材上传失败（HTTP {response.status_code}）'
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise DynamicVideoTaskFailed(prefix + '，响应不是 JSON；尚未提交视频任务') from exc
+                if not isinstance(body, dict):
+                    raise DynamicVideoTaskFailed(prefix + '，响应格式无效；尚未提交视频任务')
+                codes = [body.get(field) for field in ('code', 'errorCode') if field in body]
+                rejected = (not 200 <= response.status_code < 300
+                            or any(code not in (None, '', 0, '0', 200, '200') for code in codes)
+                            or str(body.get('status') or '').upper() in FAILURE)
+                if rejected:
+                    detail = self._upload_error_detail(body) or '上传被服务端拒绝'
+                    raise DynamicVideoTaskFailed(prefix + '：' + detail + '；尚未提交视频任务')
+                filename = self._workflow_filename(body.get('data'))
+                if filename:
+                    return filename
+                raise DynamicVideoTaskFailed(prefix + '，未返回有效的工作流文件名（fileName/filename）；尚未提交视频任务')
             finally:
                 response.close()
 

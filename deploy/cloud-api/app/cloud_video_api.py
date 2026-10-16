@@ -34,7 +34,9 @@ from .models import User
 router = APIRouter(prefix="/api/v1/cloud/video", tags=["cloud-video-test"])
 MODEL = "minimax-h3"
 REVISION = "h3-fast-linux-v1"
-RESOLUTIONS = ((640, 384), (384, 640), (512, 512), (1280, 720), (720, 1280))
+RESOLUTIONS = ((640, 384), (384, 640), (512, 512), (1280, 720), (720, 1280), (2048, 1152), (1152, 2048))
+DEFAULT_RESOLUTIONS = {"landscape": {"width": 2048, "height": 1152},
+                       "portrait": {"width": 1152, "height": 2048}}
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 16_000_000
@@ -196,6 +198,7 @@ def snapshot(job):
 def capabilities(user: CurrentUser):
     return {"enabled": feature_enabled(user), "test_mode": True, "credits": "0", "model": MODEL,
             "workflow_revision": REVISION, "fps": 24, "resolutions": [{"width": w, "height": h} for w, h in RESOLUTIONS],
+            "default_resolutions": DEFAULT_RESOLUTIONS,
             "duration_seconds": {"min": 2, "max": 10}, "audio_supported": False,
             "max_upload_bytes": MAX_UPLOAD, "frame_divisor": 17, "frame_remainder": 5,
             "frame_rule": {"divisor": 17, "remainder": 5}}

@@ -11,6 +11,7 @@ const labels={indextts25:'本地 GPU · IndexTTS-2.5',indextts2:'本地 IndexTTS
 function value(key, empty='未单独指定（沿用任务默认处理）'){
  if(key==='video_generation_backend'&&props.request[key]==='cloud_h3')return '集群 H3（测试免费）'
  if(key==='video_generation_backend'&&props.request[key]==='comfyui')return props.request.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'
+ if(key==='dynamic_max_shot_duration'&&props.request.video_generation_backend==='cloud_h3')return '10（集群 H3 上限）'
  if(key==='dynamic_text_mode')return dynamicTextModeLabel(props.request.dynamic_text_mode)
  if(!Object.hasOwn(props.request,key))return '该任务未记录'
  const v=props.request[key]

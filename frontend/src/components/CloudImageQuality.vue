@@ -12,7 +12,7 @@ const ratio = computed({
   },
 })
 const quality = computed({
-  get: () => isIcan.value ? imageChoice(props.form.size).quality : (props.form.image_resolution || '1k').toUpperCase(),
+  get: () => isIcan.value ? imageChoice(props.form.size).quality : (props.form.image_resolution || '2k').toUpperCase(),
   set: value => {
     if (isIcan.value) props.form.size = imageSize(ratio.value, value)
     else props.form.image_resolution = value.toLowerCase()
@@ -21,7 +21,7 @@ const quality = computed({
 const qualities = computed(() => isIcan.value ? Object.keys(ICAN_SIZES[ratio.value]) : ['1K', '2K', '4K'])
 watch([() => props.form.video_orientation, isIcan], () => {
   if (isIcan.value && !props.standalone) props.form.size = imageSize(ratio.value, quality.value)
-  if (!isIcan.value && !['1k', '2k', '4k'].includes(props.form.image_resolution)) props.form.image_resolution = '1k'
+  if (!isIcan.value && !['1k', '2k', '4k'].includes(props.form.image_resolution)) props.form.image_resolution = '2k'
   if (!isIcan.value && props.standalone && !['16:9', '9:16', '1:1', '3:2', '2:1', '3:4', '21:9'].includes(props.form.ratio)) props.form.ratio = '16:9'
 }, { immediate: true })
 </script>

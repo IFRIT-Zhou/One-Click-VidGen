@@ -1,16 +1,15 @@
 {
-  "release_id": "2026.10.16.1",
-  "release_order": 2026101601,
-  "display_version": "2026.10.16 参考素材与视频生成修复",
+  "release_id": "2026.10.16.2",
+  "release_order": 2026101602,
+  "display_version": "2026.10.16 H3 2K 与生成链路修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.16.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复视频仅使用核心图时被已丢失的旧出图参考素材阻塞；保留明确引用额外图片的校验。重绘参考图可选8张，上传不再受选满限制，停止静默截断和淘汰旧记录；支持会话内收起与恢复素材，保护仍被引用的素材免遭删除。H3新增未批准文字时进行有限纠正重试，不放宽文字校验。保留已有项目和成图，不自动生成。",
-  "content_fingerprint": "4bf647f1df4d56b34962e0ee4a02c7c0399a78e0d0be82d45d93789bc30eb047"
+  "notes": "H3默认原生2K，按10秒上限拆分并校验；修复RunningHub上传filename字段兼容、分镜确认丢失单镜通道和尺寸、分步设置漏存；2K H3成片导出保持2K。保留旧任务与素材，不自动重新生成。",
+  "content_fingerprint": "0bcb7cb769d6d89feb34e8d6b38c22a4d9cca9934d96448cbc59d6043c1517ab"
 }

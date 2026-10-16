@@ -39,9 +39,14 @@ class LayoutPreviewRequest(BaseModel):
 
 def presentation(record, layouts=None):
     params = record.get('creation_parameters') or {}
-    return normalize_layout(dict(
+    layout = normalize_layout(dict(
         video_orientation='portrait' if record.get('settings', {}).get('ratio') == '9:16' else 'landscape',
         subtitle_layouts=layouts if layouts is not None else params.get('subtitle_layouts', {})))
+    width, height = _size(record)
+    scale = height / layout['height']
+    layout.update(width=width, height=height,
+                  size=layout['size'] * scale, outline=layout['outline'] * scale)
+    return layout
 
 
 def frame_filter(layout):
@@ -121,7 +126,14 @@ def _run(command, label, timeout=None):
 
 
 def _size(record):
-    return (1080, 1920) if record.get('settings', {}).get('ratio') == '9:16' else (1920, 1080)
+    portrait = record.get('settings', {}).get('ratio') == '9:16'
+    for shot in record.get('shots', []):
+        frozen = shot.get('video_request') or {}
+        if (shot.get('kind') == 'video' and shot.get('video_status') == 'completed'
+                and shot.get('video') and frozen.get('backend') == 'cloud_h3'
+                and (frozen.get('width'), frozen.get('height')) in {(2048, 1152), (1152, 2048)}):
+            return (1152, 2048) if portrait else (2048, 1152)
+    return (1080, 1920) if portrait else (1920, 1080)
 
 
 def _safe_name(value):
@@ -182,7 +194,6 @@ def _subtitle_style(record, height):
 
 def _render(path, record):
     path = path.resolve()
-    width, height = _size(record)
     output_root = PROJECT_ROOT / 'output' / (_safe_name(record['settings'].get('name')) + '_动态视频')
     work = path / 'export_work'
     if work.exists():

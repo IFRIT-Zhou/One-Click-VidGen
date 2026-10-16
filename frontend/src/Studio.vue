@@ -1611,11 +1611,12 @@
                 </label>
                 <label v-if="form.dynamic_video" class="visual-pacing-select">
                   <span>动态镜头规划上限</span>
-                  <select v-model.number="form.dynamic_max_shot_duration">
+                  <span v-if="form.video_generation_backend==='cloud_h3'">集群 H3 · 最长 10 秒</span>
+                  <select v-else v-model.number="form.dynamic_max_shot_duration">
                     <option :value="15">常规 · 15 秒</option>
                     <option :value="30">长镜头 · 30 秒</option>
                   </select>
-                  <small class="muted">上限不是目标时长。30 秒需视频模型支持，成本与本地显存占用可能增加；手动编辑不受强制拆分。</small>
+                  <small class="muted">上限不是目标时长。集群 H3 按 10 秒拆分；其他通道的 30 秒需模型支持。超限镜头需拆分后再生成，配音和字幕保留。</small>
                 </label>
                 <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
                   <label>
@@ -1641,7 +1642,7 @@
                 <div>
                   <div class="sidebar-label">画布</div>
                   <h3>渲染比例</h3>
-                  <small class="muted">竖屏生成 9:16 图片与 1080 × 1920 视频；横屏保持原有布局。</small>
+                  <small class="muted">竖屏使用 9:16，横屏使用 16:9。动态项目含已完成的 2K 集群 H3 片段时，导出保持 2K；其他项目沿用 1080P 画布。</small>
                 </div>
                 <label class="visual-pacing-select render-variant-select">
                   <span>视频比例</span>

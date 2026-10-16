@@ -146,7 +146,7 @@ class ShotVideoOptionsTests(unittest.TestCase):
                                  'video_prompt': '图1长镜头'}], scenes)[0]
         self.assertEqual(shot['kind'], 'video')
         self.assertEqual(shot['generation_duration'], 16)
-        self.assertIn('建议', shot['warning'])
+        self.assertIn('15 秒上限', shot['warning'])
         self.record['shots'] = [shot]
         Image.new('RGB', (32, 32), 'white').save(self.path / 'core.jpg')
         video._freeze_local_request(self.path, self.record, shot, 'new',
@@ -182,6 +182,30 @@ class ShotVideoOptionsTests(unittest.TestCase):
         self.assertEqual(self.record['shots'][0]['video_generation_options']['resolution'], '480p')
         self.assertEqual(start.call_args.args[4], 'new')
         self.assertFalse(start.call_args.kwargs['use_h3_agent'])
+
+    def test_over_limit_regeneration_preserves_completed_clip_before_work_starts(self):
+        shot = self.record['shots'][0]
+        shot.update(duration=15.1, generation_duration=16, video='old.mp4',
+                    video_status='completed', video_terminal=True)
+        before = copy.deepcopy(self.record)
+        with patch.object(video, '_start_local_worker') as start:
+            with self.assertRaises(HTTPException) as failure:
+                video.generate('test', video.GenerateClips(revision=1, shot_ids=['a'],
+                    regenerate_completed=True), None)
+        self.assertIn('15 秒上限', str(failure.exception.detail))
+        self.assertEqual(self.record, before)
+        start.assert_not_called()
+
+    def test_changing_long_static_shot_to_cloud_video_does_not_mutate_project(self):
+        self.record.update(status='image_review')
+        self.record['creation_parameters']['video_generation_backend'] = 'cloud_h3'
+        self.record['shots'][0].update(kind='static', duration=10.01)
+        before = copy.deepcopy(self.record)
+        with self.assertRaises(HTTPException) as failure:
+            video.studio.edit_shot_motion('test', 'a', video.studio.ShotMotionEdit(
+                revision=1, kind='video', action='move', video_prompt='move'), None)
+        self.assertIn('10 秒上限', str(failure.exception.detail))
+        self.assertEqual(self.record, before)
 
     def test_apply_all_updates_dynamic_only_and_preserves_media(self):
         self.record['shots'] += [{'id':'b', 'kind':'video', 'video_status':'completed', 'video':'old.mp4'},
