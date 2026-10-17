@@ -1,7 +1,7 @@
 <script setup>
 import {ref,useId} from 'vue'
 import {useWorkspaceLayout} from '../workspaceLayout'
-const props=defineProps({scope:{type:String,required:true},logCount:{type:Number,default:0}})
+const props=defineProps({scope:{type:String,required:true},logCount:{type:Number,default:0},showLayoutControls:{type:Boolean,default:false}})
 const {state,reset}=useWorkspaceLayout(props.scope)
 const editing=ref(false),dragged=ref(''),over=ref('')
 const uid=useId(),labels={preview:'画面预览',prompts:'提示词与画面设置',subtitles:'字幕与画面时序',logs:'任务日志'}
@@ -11,7 +11,7 @@ function start(event,id){dragged.value=id;event.dataTransfer.effectAllowed='move
 </script>
 <template>
  <div class="workspace-panels">
-  <div class="layout-toolbar"><span>{{editing?'拖动标题前的手柄，或用箭头调整顺序':'布局自动保存到当前浏览器'}}</span><button type="button" :aria-pressed="editing" @click="editing=!editing">{{editing?'完成布局':'调整布局'}}</button><button type="button" @click="reset">恢复默认布局</button></div>
+  <div v-if="showLayoutControls" class="layout-toolbar"><span>{{editing?'拖动标题前的手柄，或用箭头调整顺序':'布局自动保存到当前浏览器'}}</span><button type="button" :aria-pressed="editing" @click="editing=!editing">{{editing?'完成布局':'调整布局'}}</button><button type="button" @click="reset">恢复默认布局</button></div>
   <section v-for="(id,index) in state.order" :key="id" class="layout-panel" :class="{'drop-target':over===id,collapsed:state.collapsed[id]}" :data-panel="id" @dragover.prevent="editing&&(over=id)" @drop.prevent="editing&&drop(id)">
    <div class="panel-heading">
     <button v-if="editing" type="button" class="drag-handle" draggable="true" :aria-label="'拖动'+labels[id]" title="拖动调整顺序" @dragstart="start($event,id)" @dragend="dragged='';over=''">⠿</button>

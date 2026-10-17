@@ -115,7 +115,7 @@ class ApiTests(unittest.TestCase):
     def test_capabilities_declare_supported_2k_defaults_and_preserve_quote_pixels(self):
         caps=client.get(PREFIX + "/capabilities", headers=self.headers).json()
         self.assertEqual(caps['default_resolutions'],{
-            'landscape':{'width':1536,'height':864},'portrait':{'width':864,'height':1536}})
+            'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}})
         self.assertEqual(caps['duration_seconds'],{'min':2,'max':15})
         for dimensions in list(caps['default_resolutions'].values())+[{'width':640,'height':384}]:
             with self.subTest(dimensions=dimensions):

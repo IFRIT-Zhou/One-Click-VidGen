@@ -27,6 +27,15 @@ test('cloud size control preserves unsupported saved preset and shows capability
  assert.deepEqual(state.defaultDimensions.value,{width:384,height:640})
  assert.equal(state.generatedSeconds.value,'2.33')
 })
+test('cluster defaults to 1664x936 and lists largest sizes first',async()=>{
+ const state=setup('CloudH3Options.vue',{modelValue:{resolution:''}},async()=>({resolutions:[{width:640,height:384},{width:936,height:1664},{width:1920,height:1080},{width:1664,height:936},{width:1536,height:864}]}))
+ await state.refresh()
+ assert.equal(state.selected.value,'1664x936')
+ assert.deepEqual(state.sizes.value.map(x=>`${x.width}x${x.height}`),['1664x936','936x1664','1536x864','640x384'])
+ const source=readFileSync(new URL('../frontend/src/components/CloudH3Options.vue',import.meta.url),'utf8')
+ assert.ok(!source.includes('<option value="">'))
+})
+
 test('explicit cloud dimension selection sends exact pixels without lowering',()=>{
  const events=[]
  const state=setup('CloudH3Options.vue',{modelValue:{backend:'cloud_h3',resolution:''}},undefined,(name,data)=>events.push(data))
@@ -64,7 +73,7 @@ test('older cloud capabilities choose largest supported orientation, invalid adv
 // Exercise the actual batch handlers with in-memory API responses; never submit GPU work.
 function batchEditor({fail=false,locked=false,confirmed=true}={}){
  const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
- const code=source.slice(source.indexOf('const batchOptionDraft='),source.indexOf('const shotConfigured='))
+ const code=source.slice(source.indexOf('const batchOptionsLocked='),source.indexOf('const shotConfigured='))
  const project=ref({id:'project-a',revision:7,shots:[
   {id:'a',kind:'video',video_generation_options:{backend:'api',resolution:'720p'},video:'keep.mp4'},
   {id:'b',kind:'video',video_generation_options:{backend:'cloud_h3',resolution:''}},
@@ -72,33 +81,28 @@ function batchEditor({fail=false,locked=false,confirmed=true}={}){
  const shots=computed(()=>project.value.shots.filter(shot=>shot.kind==='video'))
  const drafts=ref({'project-a:a':{backend:'api'},'other-project:a':{backend:'api'}}),calls=[],error=ref('')
  const deps={ref,watch,computed,project,dynamicShots:shots,normalizedOptions:value=>({...value}),optionsFor:shot=>shot.video_generation_options,busy:ref(false),videoRunning:ref(locked),shotRenderLocked:()=>false,confirm:()=>confirmed,error,run:async fn=>{try{await fn()}catch(e){error.value=e.message}},call:async(url,method,body)=>{calls.push({url,method,body});if(fail)throw new Error('保存失败');return {...project.value,revision:8,shots:project.value.shots.map(shot=>shot.kind==='video'?{...shot,video_generation_options:body.options}:shot)}},shotOptionDrafts:drafts,selectedShot:computed(()=>shots.value[0]),comfyProfiles:ref([]),videoModel:ref(null)}
- const state=new Function(...Object.keys(deps),code+'\nreturn {batchOptionDraft,batchOptions,mixedBatchOptions,applyGenerationOptionsToAll,batchOptionsLocked}')( ...Object.values(deps))
+ const state=new Function(...Object.keys(deps),code+'\nreturn {applyAllShotOptions,applyGenerationOptionsToAll,batchOptionsLocked}')( ...Object.values(deps))
  return {...state,project,drafts,calls,error}
 }
-test('batch selection stays a draft until applied and preserves video/static shots',async()=>{
+test('per-shot settings can still apply to all without replacing media',async()=>{
  const state=batchEditor()
- assert.equal(state.mixedBatchOptions.value,true)
- state.batchOptions.value={backend:'cloud_h3',profile_id:'h3-fast',resolution:''}
  assert.equal(state.calls.length,0)
  assert.equal(state.project.value.shots[0].video_generation_options.backend,'api')
- await state.applyGenerationOptionsToAll(state.batchOptions.value)
+ await state.applyAllShotOptions()
  assert.equal(state.calls.length,1)
  assert.equal(state.calls[0].method,'PUT')
  assert.equal(state.calls[0].url,'/project-a/generation-options')
  assert.equal(state.calls[0].body.revision,7)
  assert.equal(state.project.value.shots[0].video,'keep.mp4')
  assert.equal(state.project.value.shots[2].video_generation_options,undefined)
- assert.equal(state.mixedBatchOptions.value,false)
- assert.equal(state.batchOptionDraft.value,null)
+ assert.equal(state.calls[0].body.options.backend,'api')
  assert.equal(state.drafts.value['project-a:a'],undefined)
  assert.ok(state.drafts.value['other-project:a'])
 })
 test('failed batch save retains draft and per-shot overrides',async()=>{
  const state=batchEditor({fail:true})
- state.batchOptions.value={backend:'cloud_h3',resolution:''}
- await state.applyGenerationOptionsToAll(state.batchOptions.value)
+ await state.applyGenerationOptionsToAll({backend:'cloud_h3',resolution:''})
  assert.equal(state.error.value,'保存失败')
- assert.equal(state.batchOptionDraft.value.backend,'cloud_h3')
  assert.ok(state.drafts.value['project-a:a'])
  assert.equal(state.project.value.revision,7)
 })
@@ -108,4 +112,11 @@ test('locked or cancelled batch configuration does not write settings',async()=>
   await state.applyGenerationOptionsToAll({backend:'cloud_h3'})
   assert.equal(state.calls.length,0)
  }
+})
+
+test('only per-shot generation settings remain, with no hidden batch draft blocker',()=>{
+ const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
+ assert.equal((source.match(/<ShotVideoOptions\b/g)||[]).length,1)
+ assert.ok(source.includes('@apply-all="applyAllShotOptions"'))
+ assert.ok(!source.includes('batchOptionDraft'))
 })

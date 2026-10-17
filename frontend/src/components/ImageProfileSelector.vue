@@ -1,5 +1,6 @@
 <script setup>
 import CloudImageQuality from './CloudImageQuality.vue'
+import { imageChoice } from '../icanImageSizes'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 
@@ -10,6 +11,9 @@ const saving = ref(false)
 const editing = ref(false)
 const draft = reactive({ id:'', name:'', protocol:'async_task', base_url:'', model_id:'', text_endpoint:'/openapi/v2/{model}/text-to-image', reference_endpoint:'/openapi/v2/{model}/image-to-image', query_endpoint:'/openapi/v2/query', resolutions:['1k','2k','4k'], reference_images:true, api_key:'' })
 const selected = computed(() => profiles.value.find(item => item.id === props.form.image_profile_id) || null)
+const cloudSummary = computed(() => props.form.method === 'ican'
+ ? `ICAN · GPT Image 2.5 · ${imageChoice(props.form.size).quality}`
+ : `稳定版 · ${(props.form.image_resolution || '2k').toUpperCase()}`)
 const resolutions = computed(() => selected.value?.resolutions || ['1k','2k','4k'])
 const extraParameters = ref('{}')
 function chooseProtocol(){Object.assign(draft,draft.protocol==='openai_sync'?{text_endpoint:'/v1/images/generations',reference_endpoint:'/v1/images/edits',size:'auto',quality:'',response_format:'',timeout_seconds:600}:{text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query'})}
@@ -28,7 +32,7 @@ onMounted(load)
 <template>
  <section class="image-profile-selector" :class="{manager:manage}">
   <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{form.use_cloud_image_pool?'选择本任务的云端图片渠道':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'仅影响本任务；不会改动接口与服务中的配置。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button></div>
-  <div v-if="form.use_cloud_image_pool" class="profile-select-row"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
+  <div v-if="form.use_cloud_image_pool" class="cloud-profile-settings"><strong class="cloud-profile-summary">{{cloudSummary}}</strong><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" compact /></div>
   <template v-if="!form.use_cloud_image_pool">
    <div v-if="!manage||!editing" class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>
@@ -61,6 +65,7 @@ onMounted(load)
 </template>
 
 <style scoped>
+.cloud-profile-settings{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}.cloud-profile-settings>.stack{display:grid;gap:7px;min-width:0}.cloud-profile-settings select{width:100%;min-width:0;box-sizing:border-box}.cloud-profile-summary{font-size:14px;color:var(--ocv-accent,#7ddac5);overflow-wrap:anywhere}
 .image-profile-selector{display:grid;gap:14px;padding:18px;border:1px solid var(--ocv-border,#35433e);border-radius:14px;background:color-mix(in srgb,var(--ocv-panel,#202825) 88%,transparent)}.profile-head,.profile-select-row,.profile-list article,.profile-actions{display:flex;gap:12px;align-items:center}.profile-head{justify-content:space-between}.profile-head>div,.profile-list article>div{display:grid;gap:4px}.profile-head small,.profile-list small{display:block;color:var(--ocv-muted,#9aa6a1)}.profile-select-row label{flex:1;display:grid;gap:7px}.profile-list{display:grid;gap:8px}.profile-list article{padding:10px 12px;border:1px solid var(--ocv-border,#35433e);border-radius:10px}.profile-list article>div{flex:1}.profile-editor{display:grid;grid-template-columns:1fr 1fr;gap:12px}.profile-editor label{display:grid;gap:6px}.wide{grid-column:1/-1}.endpoint-grid{display:grid;gap:10px;margin-top:12px}.profile-capabilities{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.profile-capabilities label{display:flex;grid-auto-flow:column;align-items:center}.profile-actions{justify-content:flex-end}.profile-message{margin:0;color:var(--ocv-accent,#7ddac5)}.disabled{opacity:.72}@media(max-width:760px){.profile-select-row,.profile-editor{display:grid;grid-template-columns:1fr}.wide{grid-column:auto}}
 .profile-empty{display:grid;gap:14px;padding:16px;border:1px dashed color-mix(in srgb,var(--ocv-accent,#7ddac5) 55%,var(--ocv-border,#35433e));border-radius:12px;background:color-mix(in srgb,var(--ocv-accent,#7ddac5) 5%,transparent)}.profile-empty-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.profile-empty-title>div{display:grid;gap:4px}.profile-empty-title span{font-size:.8rem;color:var(--ocv-accent,#7ddac5)}.profile-empty-title em{padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--ocv-accent,#7ddac5) 12%,transparent);color:var(--ocv-muted,#9aa6a1);font-size:.75rem;font-style:normal}.profile-empty dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.profile-empty dl>div{display:grid;gap:3px;padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--ocv-panel,#202825) 80%,transparent)}.profile-empty dt{font-size:.76rem;color:var(--ocv-muted,#9aa6a1)}.profile-empty dd{margin:0;overflow-wrap:anywhere}.profile-empty p{margin:0;color:var(--ocv-muted,#9aa6a1);font-size:.82rem}.profile-empty button{justify-self:start}
 </style>

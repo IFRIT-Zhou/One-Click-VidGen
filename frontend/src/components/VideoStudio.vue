@@ -101,10 +101,6 @@ function optionsFor(shot,includeDraft=true){
 const normalizedOptions=value=>({backend:value.backend,profile_id:['comfyui','cloud_h3'].includes(value.backend)?value.profile_id:'',resolution:value.resolution||'',h3_prompt_agent:['comfyui','cloud_h3'].includes(value.backend)&&Boolean(value.h3_prompt_agent),...(value.resolution==='custom'?{width:value.width,height:value.height}:{})})
 const selectedOptionsDirty=computed(()=>Boolean(selectedShot.value)&&JSON.stringify(normalizedOptions(optionsFor(selectedShot.value)))!==JSON.stringify(normalizedOptions(optionsFor(selectedShot.value,false))))
 async function saveShotOptions(){const shot=selectedShot.value;if(!shot)return;await run(async()=>{project.value=await call('/'+project.value.id+'/shots/'+encodeURIComponent(shot.id)+'/generation-options','PUT',{revision:project.value.revision,options:normalizedOptions(optionsFor(shot))});delete shotOptionDrafts.value[project.value.id+':'+shot.id]})}
-const batchOptionDraft=ref(null)
-watch(()=>project.value?.id,()=>{batchOptionDraft.value=null},{flush:'sync'})
-const batchOptions=computed({get:()=>batchOptionDraft.value||(dynamicShots.value[0]?normalizedOptions(optionsFor(dynamicShots.value[0])):{backend:'api',profile_id:'',resolution:'',h3_prompt_agent:false}),set:value=>{batchOptionDraft.value={...value}}})
-const mixedBatchOptions=computed(()=>new Set(dynamicShots.value.map(shot=>JSON.stringify(normalizedOptions(optionsFor(shot))))).size>1)
 const batchOptionsLocked=computed(()=>busy.value||videoRunning.value||dynamicShots.value.some(shot=>shotRenderLocked(shot)||Boolean(shot.video_request&&!shot.video_terminal&&shot.video_status!=='completed')))
 async function applyGenerationOptionsToAll(value){
  if(batchOptionsLocked.value){error.value='当前有任务正在处理或尚未确认结束，暂不能批量修改生成设置。';return}
@@ -114,7 +110,6 @@ async function applyGenerationOptionsToAll(value){
  await run(async()=>{
   project.value=await call('/'+project.value.id+'/generation-options','PUT',{revision:project.value.revision,options})
   for(const item of shots)delete shotOptionDrafts.value[project.value.id+':'+item.id]
-  batchOptionDraft.value=null
  })
 }
 async function applyAllShotOptions(){if(selectedShot.value)await applyGenerationOptionsToAll(optionsFor(selectedShot.value))}
@@ -137,7 +132,6 @@ function confirmLongApiShots(shots){
 }
 async function submitVideoBatch(shots,{automated=false,regenerate=false}={}){
  if(!shots.length)return
- if(batchOptionDraft.value){error.value='顶部批量生成设置尚未应用，请先应用到全部动态镜头或取消修改，再开始批量生成。';return}
  const unchecked=shots.filter(shot=>shot.design_needs_review)
  if(unchecked.length){
   const numbers=unchecked.map(shot=>String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0'))
@@ -631,26 +625,6 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <button :disabled="!videoStageReady" @click="view='motions'">试看本镜</button>
   <button :disabled="busy" @click="confirmAudioReview(selectedShot)">确认沿用</button>
  </section>
- <section v-if="project&&view==='storyboard'" class="language-presets project-language-route">
-  <label>本项目规划渠道 <select :value="project.creation_parameters?.language_route||'project'" :disabled="busy||!canEditStructure||videoRunning" @change="changeLanguageRoute">
-   <option value="project">沿用项目号池设置</option><option value="cloud">云端语言模型号池</option><option value="personal">个人 API 配置</option>
-  </select></label>
-  <p>当前使用：{{projectLanguageCloud?'云端语言模型号池':'个人 API 配置'}}。选择后保存到本项目，影响分镜规划和 H3 提示词转换，暂停自动继续，请手动重试；已有配音、图片和视频保留。首页号池开关不修改已有项目，H3 视频渠道与规划渠道分别设置。</p>
-  <p v-if="projectLanguageCloud">请保持云端登录，语言模型调用按号池规则结算。</p>
- </section>
- <LanguageModelPresets v-if="project&&view==='storyboard'" :disabled="busy||!canEditStructure" :cloud-pool="projectLanguageCloud">
-  <template #actions="{unavailable,pendingSwitch}">
-   <div class="replan-description"><strong>重新规划画面</strong><small class="muted">保留配音与字幕时间轴。确认新方案后再生成素材，不自动重做。</small><small v-if="pendingSwitch" class="muted">请先点击“使用此模型”，再重新规划。</small>
-    <details class="replan-options"><summary>规划选项 · {{ dynamicTextModeLabel(replanMode) }} · {{ replanRegroup?'重新划分镜头':'保留镜头边界' }}</summary>
-     <fieldset :disabled="busy||!canEditStructure||unavailable"><DynamicTextModeSelector v-model="replanMode" />
-      <label class="replan-regroup"><input type="checkbox" v-model="replanRegroup">同时重新划分镜头</label>
-      <small class="muted">仅重规划时生效。勾选后不保留手动分组，按完整语义重新选择边界和动静类型；配音、字幕不变。未勾选时，如需把动态循环改为静态，可单独修改镜头类型。</small>
-     </fieldset>
-    </details>
-   </div>
-   <button type="button" :disabled="busy||!canEditStructure||unavailable" @click="replanWithCurrentModel">重新规划</button>
-  </template>
- </LanguageModelPresets>
  <OperationStatus v-if="project&&(busy||(productionPanel!=='video'&&videoRunning)||['planning','stopping','image_generating','image_stopping','exporting'].includes(project.status))" title="项目运行状态" :pending="busy" :task="{status:'running',message:project.status==='exporting'?'正在合成成片':storyboardStageLabel}" :summary="videoRunning?videoBatchSummary:''"/>
  <template v-if="!project&&!busy">
  <div class="video-start">
@@ -720,7 +694,6 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <button v-if="sceneReferencesEnabled&&project.status==='image_review'&&sceneReferencesNeedGeneration" :disabled="busy||imageEditRunning" @click="generateSceneReferences">补充 / 重试场景参考（调用 API）</button>
   <template v-if="videoStageReady">   <audio v-if="project.audio" ref="motionAudio" :key="narrationUrl" preload="auto" :src="narrationUrl" class="motion-narration-audio"/>
    <div v-if="dynamicShots.length" class="motion-api-summary"><strong>项目默认：{{project.creation_parameters?.video_generation_backend==='cloud_h3'?'集群 H3':localVideo?(project.creation_parameters.comfyui_profile_id?.startsWith('ocv-h3-')?'OCV 内置 ComfyUI':'外部 ComfyUI'):'视频 API'}}</strong><span>各镜头可单独设置，批量生成尊重各镜头配置。</span><button type="button" :disabled="busy||videoRunning" @click="openClassicEditor">修改项目默认配置</button></div>
-   <ShotVideoOptions v-if="dynamicShots.length" v-model="batchOptions" batch :mixed="mixedBatchOptions" :dirty="Boolean(batchOptionDraft)" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="batchOptionsLocked" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="0" @refresh="loadComfyProfiles" @reset="batchOptionDraft=null" @apply-all="applyGenerationOptionsToAll(batchOptions)"/>
    <p v-if="videoModelError&&dynamicShots.some(shot=>optionsFor(shot).backend==='api')" class="studio-notice error">{{videoModelError}}</p>
    <div v-if="dynamicShots.length" class="motion-generation-bar">
     <div><strong>{{videoRunning?(project.status==='video_stopping'?'正在安全停止…':'正在生成动态镜头…'):completedVideos===dynamicShots.length?'动态片段已准备完成':'先试一镜，再决定是否批量生成'}}</strong><p class="muted">{{videoRunning?'按照“接口与服务”中的并发设置处理，实时进度见日志。停止不会撤销云端已提交或已计费的任务。':'只有点击生成并确认后才调用视频 API；已完成片段不会重复提交，失败镜头不会自动重新扣费。'}}</p></div>
@@ -742,7 +715,6 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <div class="shot-local-navigation"><strong>镜头 {{String(selected+1).padStart(2,'0')}} <span>/ {{project.shots.length}}</span></strong><div><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
      <details open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in selectedShot.slide_ids" :key="id">{{scenesById[id]?.text}}</p></details>
      <div class="motion-shot-heading"><div><h3>第 {{String(selected+1).padStart(2,'0')}} 镜 · {{videoStatusLabel(selectedShot)}}</h3><p class="muted">{{selectedShot.intent}}</p></div><div class="motion-heading-actions"><span v-if="selectedShot.kind==='video'" class="readonly-badge">使用 {{selectedShot.duration}} 秒 · 请求 {{requestedSeconds(selectedShot)}} 秒 · {{requestedResolution(selectedShot)}}</span><label v-if="selectedShot.kind==='video'" class="motion-upload-button" :class="{disabled:busy||videoRunning}">上传本地视频替换<input type="file" accept="video/mp4,.mp4" :disabled="busy||videoRunning" @change="uploadReplacementVideo(selectedShot,$event)"></label><button type="button" @click="productionPanel='design'">编辑本镜画面与提示词</button></div></div>
-     <div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure||videoRunning||Boolean(project.video_waiting_queue?.length)" @click="undoStructure">撤回结构调整</button><button v-if="shotEditingStage&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div>
      <ShotVideoOptions v-if="selectedShot.kind==='video'" v-model="selectedOptions" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="shotOptionsLocked" :dirty="selectedOptionsDirty" :saved="Boolean(selectedShot.video_generation_options)" :save-disabled="shotOptionsLocked" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="requestedSeconds(selectedShot)" :image-src="imageUrl(selectedShot)" @refresh="loadComfyProfiles" @save="saveShotOptions" @apply-all="applyAllShotOptions"/>
      <p v-if="selectedShot.video_request" class="muted">当前片段实际使用：{{selectedShot.video_request.backend==='cloud_h3'?'集群 H3':selectedShot.video_request.backend==='comfyui'?'ComfyUI · '+(comfyProfiles.find(item=>item.id===selectedShot.video_request.profile_id)?.name||selectedShot.video_request.profile_id):'视频 API'}} · {{requestedResolution(selectedShot)}}。上方修改在下次生成时生效。</p>
      <p v-if="selectedLocalVideo&&comfyError" class="studio-notice error">工作流读取失败：{{comfyError}}</p>
@@ -855,6 +827,26 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
    </div>
   </ResizableShotWorkspace>
  </section>
+ <section v-if="project&&view==='storyboard'" class="language-presets project-language-route">
+  <label>本项目规划渠道 <select :value="project.creation_parameters?.language_route||'project'" :disabled="busy||!canEditStructure||videoRunning" @change="changeLanguageRoute">
+   <option value="project">沿用项目号池设置</option><option value="cloud">云端语言模型号池</option><option value="personal">个人 API 配置</option>
+  </select></label>
+  <p>当前使用：{{projectLanguageCloud?'云端语言模型号池':'个人 API 配置'}}。选择后保存到本项目，影响分镜规划和 H3 提示词转换，暂停自动继续，请手动重试；已有配音、图片和视频保留。首页号池开关不修改已有项目，H3 视频渠道与规划渠道分别设置。</p>
+  <p v-if="projectLanguageCloud">请保持云端登录，语言模型调用按号池规则结算。</p>
+ </section>
+ <LanguageModelPresets v-if="project&&view==='storyboard'" :disabled="busy||!canEditStructure" :cloud-pool="projectLanguageCloud">
+  <template #actions="{unavailable,pendingSwitch}">
+   <div class="replan-description"><strong>重新规划画面</strong><small class="muted">保留配音与字幕时间轴。确认新方案后再生成素材，不自动重做。</small><small v-if="pendingSwitch" class="muted">请先点击“使用此模型”，再重新规划。</small>
+    <details class="replan-options"><summary>规划选项 · {{ dynamicTextModeLabel(replanMode) }} · {{ replanRegroup?'重新划分镜头':'保留镜头边界' }}</summary>
+     <fieldset :disabled="busy||!canEditStructure||unavailable"><DynamicTextModeSelector v-model="replanMode" />
+      <label class="replan-regroup"><input type="checkbox" v-model="replanRegroup">同时重新划分镜头</label>
+      <small class="muted">仅重规划时生效。勾选后不保留手动分组，按完整语义重新选择边界和动静类型；配音、字幕不变。未勾选时，如需把动态循环改为静态，可单独修改镜头类型。</small>
+     </fieldset>
+    </details>
+   </div>
+   <button type="button" :disabled="busy||!canEditStructure||unavailable" @click="replanWithCurrentModel">重新规划</button>
+  </template>
+ </LanguageModelPresets>
 </section>
  <Teleport to="body">
   <div v-if="boundaryEditor.open&&project&&selectedShot" class="structure-overlay" @click.self="!busy&&closeBoundaryEditor()">

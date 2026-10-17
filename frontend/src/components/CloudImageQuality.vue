@@ -1,7 +1,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { ICAN_SIZES, imageChoice, imageSize } from '../icanImageSizes'
-const props = defineProps({ form: { type: Object, required: true }, standalone: Boolean })
+const props = defineProps({ form: { type: Object, required: true }, standalone: Boolean, compact: Boolean })
 const isIcan = computed(() => props.form.method === 'ican')
 const ratio = computed({
   get: () => props.standalone ? (isIcan.value ? imageChoice(props.form.size).ratio : props.form.ratio || '16:9') : props.form.video_orientation === 'portrait' ? '9:16' : '16:9',
@@ -26,7 +26,7 @@ watch([() => props.form.video_orientation, isIcan], () => {
 }, { immediate: true })
 </script>
 <template>
- <div class="ican-quality-grid">
+ <div class="ican-quality-grid" :class="{'is-compact':compact}">
   <label><span><strong>{{standalone?'图片画幅':'视频画幅'}}</strong><small>{{standalone?'选择图片比例':'画面和导出视频一致'}}</small></span>
    <select v-model="ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option><template v-if="standalone"><option value="1:1">方形 1:1</option><option value="3:2">横图 3:2</option><option v-if="isIcan" value="2:3">竖图 2:3</option><template v-else><option value="2:1">横图 2:1</option><option value="3:4">竖图 3:4</option><option value="21:9">宽屏 21:9</option></template></template></select>
   </label>
@@ -36,5 +36,6 @@ watch([() => props.form.video_orientation, isIcan], () => {
  </div>
 </template>
 <style scoped>
+.ican-quality-grid.is-compact{grid-template-columns:minmax(0,1fr)}.ican-quality-grid.is-compact label{min-width:0;padding:12px;gap:8px;box-sizing:border-box}.ican-quality-grid.is-compact span{flex-wrap:wrap;gap:4px 12px}.ican-quality-grid.is-compact select{min-width:0;box-sizing:border-box}
 .ican-quality-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;width:100%}.ican-quality-grid label{display:grid;gap:14px;padding:20px;border:1px solid var(--ocv-border,#d9e5e7);border-radius:16px;background:var(--ocv-panel,#fbfdfd)}.ican-quality-grid span{display:flex;justify-content:space-between;gap:12px;align-items:center}.ican-quality-grid small{color:var(--ocv-muted,#607780);font-size:12px}.ican-quality-grid select{width:100%;min-height:48px;border-radius:10px}@media(max-width:640px){.ican-quality-grid{grid-template-columns:1fr}}
 </style>

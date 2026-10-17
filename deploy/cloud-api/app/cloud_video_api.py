@@ -34,10 +34,10 @@ from .models import User
 router = APIRouter(prefix="/api/v1/cloud/video", tags=["cloud-video-test"])
 MODEL = "minimax-h3"
 REVISION = "h3-fast-linux-v1"
-MAX_VIDEO_PIXELS = 1536 * 864
-RESOLUTIONS = ((640, 384), (384, 640), (512, 512), (1280, 720), (720, 1280), (1536, 864), (864, 1536))
-DEFAULT_RESOLUTIONS = {"landscape": {"width": 1536, "height": 864},
-                       "portrait": {"width": 864, "height": 1536}}
+MAX_VIDEO_PIXELS = 1664 * 936
+RESOLUTIONS = ((1664, 936), (936, 1664), (1536, 864), (864, 1536), (1280, 720), (720, 1280), (512, 512), (640, 384), (384, 640))
+DEFAULT_RESOLUTIONS = {"landscape": {"width": 1664, "height": 936},
+                       "portrait": {"width": 936, "height": 1664}}
 TERMINAL = {"succeeded", "failed", "cancelled"}
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 16_000_000
@@ -167,7 +167,7 @@ class JobRequest(BaseModel):
 
 def normalize_spec(spec):
     if spec.width <= 0 or spec.height <= 0 or spec.width * spec.height > MAX_VIDEO_PIXELS:
-        raise HTTPException(422, "H3 output exceeds the 1536 x 864 total-pixel limit")
+        raise HTTPException(422, "H3 output exceeds the 1664 x 936 total-pixel limit")
     if (spec.width, spec.height) not in RESOLUTIONS:
         raise HTTPException(422, "Unsupported H3 resolution")
     prompt = spec.prompt.strip()
@@ -291,7 +291,7 @@ def create_job(body: JobRequest, db: Db, user: CurrentUser):
     if aware(record.expires_at) <= utcnow():
         raise HTTPException(409, "Quote expired; request a new quote")
     if record.spec['width'] * record.spec['height'] > MAX_VIDEO_PIXELS:
-        raise HTTPException(422, "H3 output exceeds the 1536 x 864 total-pixel limit; request a new quote")
+        raise HTTPException(422, "H3 output exceeds the 1664 x 936 total-pixel limit; request a new quote")
     asset = db.get(CloudVideoAsset, record.spec["reference_image_asset_id"])
     if asset is None or asset.user_id != user.id or not storage_path(asset.storage_key).is_file():
         raise HTTPException(404, "Reference image unavailable")

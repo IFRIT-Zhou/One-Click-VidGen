@@ -359,7 +359,7 @@ def dispatch(req):
         spec=req['spec']
         if (type(spec.get('width')) is not int or type(spec.get('height')) is not int
                 or spec['width'] <= 0 or spec['height'] <= 0
-                or spec['width'] * spec['height'] > 1536 * 864):
+                or spec['width'] * spec['height'] > 1664 * 936):
             raise ValueError('H3_OUTPUT_PIXEL_LIMIT_EXCEEDED')
         if running(TTS):raise RuntimeError('TTS_STILL_RUNNING')
         idle_h3()

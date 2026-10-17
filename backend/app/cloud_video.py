@@ -56,12 +56,12 @@ def dimensions_for(capabilities, options, ratio):
     selected = workflow(capabilities)
     raw = selected.get('dimensions') or selected.get('supported_dimensions') or selected.get('resolutions') or []
     allowed = [(int(row['width']), int(row['height'])) if isinstance(row, dict) else tuple(map(int, row)) for row in raw]
-    allowed = [pair for pair in allowed if 0 < pair[0] and 0 < pair[1] and pair[0] * pair[1] <= 1536 * 864]
+    allowed = [pair for pair in allowed if 0 < pair[0] and 0 < pair[1] and pair[0] * pair[1] <= 1664 * 936]
     portrait = ratio == '9:16'
     if options.get('resolution') == 'custom':
         dimensions = (options.get('width'), options.get('height'))
-        if dimensions[0] * dimensions[1] > 1536 * 864:
-            raise ValueError('集群 H3 总像素上限为 1536 × 864（1,327,104 像素），请重新选择尺寸')
+        if dimensions[0] * dimensions[1] > 1664 * 936:
+            raise ValueError('集群 H3 总像素上限为 1664 × 936（1,557,504 像素），请重新选择尺寸')
     elif options.get('resolution'):
         candidates = [pair for pair in allowed if (pair[1] > pair[0]) == portrait and min(pair) == {'480p':480,'720p':720,'1080p':1080}.get(options['resolution'])]
         if not candidates:

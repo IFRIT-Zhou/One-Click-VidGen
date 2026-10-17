@@ -10,8 +10,8 @@ from backend.app.cloud_client import CloudApiError
 CAPS={'enabled':True,'workflow_revision':'h3-fast-linux-v1','model':'minimax-h3','resolutions':[{'width':640,'height':384},{'width':384,'height':640}], 'duration_seconds':{'min':2,'max':10}}
 CAPS_SAFE={**CAPS,'resolutions':CAPS['resolutions']+[
     {'width':1280,'height':720},{'width':720,'height':1280},
-    {'width':1536,'height':864},{'width':864,'height':1536}],
-    'default_resolutions':{'landscape':{'width':1536,'height':864},'portrait':{'width':864,'height':1536}}}
+    {'width':1664,'height':936},{'width':936,'height':1664}],
+    'default_resolutions':{'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}}}
 
 class CloudVideoTests(unittest.TestCase):
     def test_expired_quote_renews_only_after_verified_miss_same_identity(self):
@@ -44,9 +44,9 @@ class CloudVideoTests(unittest.TestCase):
         client.video_job.assert_not_called();client.video_quote.assert_not_called()
 
     def test_capabilities_respect_orientation_and_no_downgrade(self):
-        unsafe = {**CAPS, 'resolutions': [{'width': 1664, 'height': 932}]}
+        unsafe = {**CAPS, 'resolutions': [{'width': 1664, 'height': 937}]}
         with self.assertRaisesRegex(ValueError, '总像素上限'):
-            c.dimensions_for(unsafe, {'resolution': 'custom', 'width': 1664, 'height': 932}, '16:9')
+            c.dimensions_for(unsafe, {'resolution': 'custom', 'width': 1664, 'height': 937}, '16:9')
         with self.assertRaises(ValueError):
             c.dimensions_for(unsafe, {}, '16:9')
         self.assertEqual(c.dimensions_for(CAPS,{},'9:16')[1],(384,640))
@@ -54,7 +54,7 @@ class CloudVideoTests(unittest.TestCase):
         with self.assertRaises(ValueError):c.dimensions_for({**CAPS,'enabled':False},{},'16:9')
 
     def test_explicit_defaults_and_legacy_capabilities_select_largest_size(self):
-        for ratio,expected in [('16:9',(1536,864)),('9:16',(864,1536))]:
+        for ratio,expected in [('16:9',(1664,936)),('9:16',(936,1664))]:
             with self.subTest(ratio=ratio):
                 self.assertEqual(c.dimensions_for(CAPS_SAFE,{},ratio)[1],expected)
                 legacy={key:value for key,value in CAPS_SAFE.items() if key!='default_resolutions'}
@@ -68,7 +68,7 @@ class CloudVideoTests(unittest.TestCase):
     def test_explicit_saved_size_survives_new_default_and_unsupported_size_rejected(self):
         self.assertEqual(c.dimensions_for(CAPS_SAFE,{'resolution':'custom','width':640,'height':384},'16:9')[1],(640,384))
         self.assertEqual(c.dimensions_for(CAPS_SAFE,{'resolution':'720p'},'9:16')[1],(720,1280))
-        for caps,options in [(CAPS,{'resolution':'custom','width':1536,'height':864}),
+        for caps,options in [(CAPS,{'resolution':'custom','width':1664,'height':936}),
                              (CAPS_SAFE,{'resolution':'1080p'}),
                              ({**CAPS,'default_resolutions':CAPS_SAFE['default_resolutions']},{})]:
             with self.subTest(options=options),self.assertRaises(ValueError):
@@ -224,7 +224,7 @@ class CloudVideoTests(unittest.TestCase):
         self.assertEqual(record['shots'][0]['video_status'],'completed')
         converter.assert_called_once()
         self.assertEqual(client.video_quote.call_args.args[0]['duration_seconds'],4)
-        self.assertEqual((client.video_quote.call_args.args[0]['width'],client.video_quote.call_args.args[0]['height']),(1536,864))
+        self.assertEqual((client.video_quote.call_args.args[0]['width'],client.video_quote.call_args.args[0]['height']),(1664,936))
         self.assertEqual(record['shots'][0]['duration'],1.2)
         self.assertEqual(client.create_video_job.call_count,1)
 
