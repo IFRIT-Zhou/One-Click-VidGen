@@ -117,6 +117,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(caps['default_resolutions'],{
             'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}})
         self.assertEqual(caps['duration_seconds'],{'min':2,'max':15})
+        self.assertEqual(caps['duration_policy'],'client')
+        self.assertIs(caps['duration_limit_enforced'],False)
         for dimensions in list(caps['default_resolutions'].values())+[{'width':640,'height':384}]:
             with self.subTest(dimensions=dimensions):
                 self.assertIn(dimensions,caps['resolutions'])
@@ -126,8 +128,30 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual({key:spec[key] for key in ('width','height')},dimensions)
                 self.assertEqual(spec['duration_seconds'],15)
                 self.assertGreaterEqual(spec['actual_duration_seconds'],15)
-        for seconds in (1.9,15.01):
-            self.assertEqual(self.quote(duration_seconds=seconds).status_code,422)
+
+    def test_client_duration_is_preserved_without_a_server_ceiling(self):
+        for seconds in (0.25,1.9,10.48,10.68,11,15,15.01,16,30):
+            with self.subTest(seconds=seconds):
+                response=self.quote(duration_seconds=seconds)
+                self.assertEqual(response.status_code,201,response.text)
+                quote=response.json()
+                spec=quote['spec']
+                self.assertEqual(spec['duration_seconds'],seconds)
+                self.assertGreaterEqual(spec['actual_duration_seconds'],seconds)
+                self.assertLess(spec['actual_duration_seconds']-seconds,18/24)
+                self.assertEqual(spec['num_frames']%17,5)
+                job=client.post(PREFIX+'/jobs',headers=self.headers,json={'quote_id':quote['quote_id']})
+                self.assertEqual(job.status_code,201,job.text)
+                self.assertEqual(job.json()['spec'],spec)
+                # Keep each case independent of the per-user queue quota.
+                self.assertEqual(client.post(PREFIX+'/jobs/'+job.json()['job_id']+'/cancel',headers=self.headers).status_code,200)
+
+    def test_invalid_duration_is_rejected_before_creating_a_quote(self):
+        for seconds in (0,-1,'NaN','Infinity','-Infinity'):
+            with self.subTest(seconds=seconds):
+                self.assertEqual(self.quote(duration_seconds=seconds).status_code,422)
+        with Session(engine) as db:
+            self.assertEqual(db.scalar(select(func.count()).select_from(api.CloudVideoQuote)),0)
 
     def test_idempotency_and_payload_conflict(self):
         job, quote = self.job()

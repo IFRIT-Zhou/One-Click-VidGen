@@ -64,6 +64,17 @@ class WorkerTests(fixture.ApiTests):
             self.assertEqual(record.attempt_token, submit["attempt_token"])
             self.assertTrue(fixture.api.storage_path(record.result_path).is_file())
 
+    def test_worker_passes_client_duration_and_frames_to_node_unchanged(self):
+        quote=self.quote(duration_seconds=30).json()
+        job=fixture.client.post(fixture.PREFIX+'/jobs',headers=self.headers,json={'quote_id':quote['quote_id']})
+        self.assertEqual(job.status_code,201,job.text)
+        node=Node()
+        self.assertTrue(self.queue(node).run_one())
+        submitted=[kwargs['spec'] for action,kwargs in node.calls if action=='submit']
+        self.assertEqual(submitted,[quote['spec']])
+        self.assertEqual(submitted[0]['duration_seconds'],30)
+        self.assertGreaterEqual(submitted[0]['num_frames'],30*24)
+
     def test_ambiguous_submit_recovers_without_resubmit(self):
         job, _ = self.job()
         node = Node()

@@ -150,7 +150,9 @@ class VideoSpec(BaseModel):
     reference_image_asset_id: str = Field(pattern=r"^h3asset_[0-9a-f]{32}$")
     width: int
     height: int
-    duration_seconds: float = Field(ge=2, le=15, allow_inf_nan=False)
+    # Storyboard duration policy belongs to the client. Do not clamp or reject
+    # a valid duration here because an older cluster limit can block a new plan.
+    duration_seconds: float = Field(gt=0, allow_inf_nan=False)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
@@ -203,7 +205,10 @@ def capabilities(user: CurrentUser):
             "workflow_revision": REVISION, "fps": 24, "resolutions": [{"width": w, "height": h} for w, h in RESOLUTIONS],
             "default_resolutions": DEFAULT_RESOLUTIONS,
             "max_output_pixels": MAX_VIDEO_PIXELS,
-            "duration_seconds": {"min": 2, "max": 15}, "audio_supported": False,
+            # Retain planning hints for existing clients that expect min/max.
+            # They are not server validation limits; new clients can use policy.
+            "duration_seconds": {"min": 2, "max": 15}, "duration_policy": "client",
+            "duration_limit_enforced": False, "audio_supported": False,
             "max_upload_bytes": MAX_UPLOAD, "frame_divisor": 17, "frame_remainder": 5,
             "frame_rule": {"divisor": 17, "remainder": 5}}
 
