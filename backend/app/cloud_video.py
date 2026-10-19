@@ -11,6 +11,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from .cloud_client import cloud_client_for, CloudApiError
 from . import video_studio as studio
+from .h3_limits import fits_dimensions, validate_dimensions
 
 
 def accept_quote(saved, quote, spec):
@@ -52,16 +53,16 @@ def workflow(capabilities):
     return result
 
 
-def dimensions_for(capabilities, options, ratio):
+def dimensions_for(capabilities, options, ratio, seconds=14):
     selected = workflow(capabilities)
     raw = selected.get('dimensions') or selected.get('supported_dimensions') or selected.get('resolutions') or []
     allowed = [(int(row['width']), int(row['height'])) if isinstance(row, dict) else tuple(map(int, row)) for row in raw]
-    allowed = [pair for pair in allowed if 0 < pair[0] and 0 < pair[1] and pair[0] * pair[1] <= 1664 * 936]
+    advertised = list(allowed)
+    allowed = [pair for pair in allowed if fits_dimensions(*pair, seconds)]
     portrait = ratio == '9:16'
     if options.get('resolution') == 'custom':
         dimensions = (options.get('width'), options.get('height'))
-        if dimensions[0] * dimensions[1] > 1664 * 936:
-            raise ValueError('集群 H3 总像素上限为 1664 × 936（1,557,504 像素），请重新选择尺寸')
+        validate_dimensions(*dimensions, seconds)
     elif options.get('resolution'):
         candidates = [pair for pair in allowed if (pair[1] > pair[0]) == portrait and min(pair) == {'480p':480,'720p':720,'1080p':1080}.get(options['resolution'])]
         if not candidates:
@@ -75,6 +76,9 @@ def dimensions_for(capabilities, options, ratio):
         if defaults is not None:
             default = defaults.get('portrait' if portrait else 'landscape', {})
             dimensions = (default.get('width'), default.get('height'))
+            if dimensions in advertised and not fits_dimensions(*dimensions, seconds):
+                # No saved selection: choose a supported default within this clip's limit.
+                dimensions = max(candidates, key=lambda pair: pair[0]*pair[1])
             if dimensions not in candidates:
                 raise ValueError('集群默认尺寸与能力列表不一致，请刷新配置；不会自动降低分辨率')
         else:
@@ -157,8 +161,8 @@ def generate_cloud(identity, data, user_id):
                         raise ValueError('原任务尚未结束，不能更换尺寸，请先查询原任务')
                     resolved[shot['id']] = (options, {'workflow_revision':previous.get('workflow_revision'),'model':previous.get('model')}, frozen_dimensions)
                     continue
-                selected, dimensions = dimensions_for(capabilities, options, record['settings'].get('ratio','16:9'))
-                validate_duration(shot, selected)
+                validate_duration(shot, workflow(capabilities))
+                selected, dimensions = dimensions_for(capabilities, options, record['settings'].get('ratio','16:9'), shot['generation_duration'])
                 from .presenter_mode import audio_policy
                 if audio_policy(record.get('creation_parameters',{}), shot, options['h3_prompt_agent'], record.get('references',[]))[0]:
                     raise ValueError('集群 H3 测试阶段暂不支持参考音频或对口型，请关闭此功能')
@@ -222,6 +226,14 @@ def _worker(path,user_id,identities,resolved,event):
                 if shot.get('video_task_id'): raise ValueError('已保存的云端任务不存在，请联系管理员核实；不会重新提交') from exc
             if remote is None:
                 if event.is_set(): break
+                # Recovery can query old tasks; an absent task must obey today's limits
+                # before any new upload, quote or creation, even with a saved quote ID.
+                try:
+                    validate_dimensions(saved.get('width'), saved.get('height'), saved.get('duration'))
+                except ValueError as exc:
+                    update(identity, video_status='failed', video_terminal=True, video_resume_available=False,
+                           video_error=str(exc), video_progress_message='原任务不存在，保存的参数超出当前限制，请修改后重新生成')
+                    continue
                 if not saved.get('quote_id'):
                     asset=client.video_asset(vg._asset(path,saved['reference_files'][0]))
                     spec=dict(prompt=saved['prompt'],reference_image_asset_id=asset['asset_id'],width=saved['width'],height=saved['height'],duration_seconds=saved['duration'],seed=saved['seed'])

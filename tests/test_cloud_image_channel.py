@@ -50,6 +50,7 @@ class ImageChannelTests(unittest.TestCase):
     def test_all_regular_sizes_and_default(self):
         base = dict(cloud_pool='1', cloud_base_url='https://pool.example/api/v1')
         for size in REGULAR_SIZES:
+            self.assertEqual(ImageRequest(prompt='tree', method='ican', size=size).size, size)
             config = configure_channel(base, 'ican', size)
             payload = generation_payload(dict(prompt='tree', aspectRatio='2:1', resolution='4k',
                 imageUrls=['reference'], clientJobId='stable-task-123'), config)
@@ -70,7 +71,7 @@ class ImageChannelTests(unittest.TestCase):
         self.assertEqual(actual, {**payload, 'method':'running', 'provider':'runninghub'})
 
     def test_invalid_sizes_rejected_at_local_boundary(self):
-        for size in ['3072x1728', '3072x2560', '3840x2160', '2048x2048', 'bogus']:
+        for size in ['3072x2560', '2560x2560', '4096x4096', 'bogus']:
             with self.assertRaises(ValidationError):
                 ImageRequest(prompt='tree', method='ican', size=size)
         self.assertEqual(ImageRequest(prompt='tree').size, '2560x1440')

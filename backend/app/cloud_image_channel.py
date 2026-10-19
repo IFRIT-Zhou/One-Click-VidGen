@@ -1,10 +1,15 @@
 """Per-task image channel selection; credentials stay in the Cloud API."""
-from typing import Literal
+from typing import Literal, get_args
 
 ImageMethod = Literal['running', 'ican']
-ImageSize = Literal['1024x1024', '1536x1024', '1024x1536', '2048x1152', '1152x2048', '2560x1440', '1440x2560']
+ImageSize = Literal[
+    '1024x1024', '1536x1024', '1024x1536',
+    '2048x1152', '1152x2048', '2560x1440', '1440x2560',
+    '3072x1728', '3840x2160', '2048x2048', '2880x2880',
+    '1536x2048', '1920x2560', '2304x3072',
+]
 DEFAULT_IMAGE_SIZE = '2560x1440'
-REGULAR_SIZES = ('1024x1024', '1536x1024', '1024x1536', '2048x1152', '1152x2048', '2560x1440', '1440x2560')
+REGULAR_SIZES = get_args(ImageSize)
 
 
 def image_provider(method: str = 'running') -> str:
