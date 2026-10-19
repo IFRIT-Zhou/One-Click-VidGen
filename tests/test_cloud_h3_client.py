@@ -83,14 +83,15 @@ class CloudVideoTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.validate_duration({'duration':8,'generation_duration':8},{'duration_seconds':{'min':2,'max':6}})
         with self.assertRaises(ValueError):
-            c.validate_duration({'duration':16,'generation_duration':16},{'duration_seconds':{'min':2,'max':30}})
+            c.validate_duration({'duration':14.1,'generation_duration':15},{'duration_seconds':{'min':2,'max':30}})
+        c.validate_duration({'duration':14,'generation_duration':14},{'duration_seconds':{'min':2,'max':30}})
 
     def test_duration_dependent_size_limits_include_each_side_and_portrait(self):
         from backend.app.h3_limits import validate_dimensions
-        for width, height, seconds in [(1664,936,14),(936,1664,14),(1532,832,15),(832,1532,15),(1280,720,15)]:
+        for width, height, seconds in [(1664,936,14),(936,1664,14),(1532,832,14),(832,1532,14),(1280,720,14)]:
             validate_dimensions(width,height,seconds)
         for width, height, seconds in [(1664,936,15),(936,1664,15),(1536,832,15),(1532,833,15),
-                                       (1665,936,14),(2000,500,14),(1000,1000,14),(1280,720,16),
+                                       (1665,936,14),(1664,937,14),(1280,720,14.01),(1280,720,15),(2000,500,14),(1000,1000,14),(1280,720,16),
                                        (0,720,14),(1280,720,float('nan'))]:
             with self.subTest(width=width,height=height,seconds=seconds),self.assertRaises(ValueError):
                 validate_dimensions(width,height,seconds)
@@ -98,10 +99,10 @@ class CloudVideoTests(unittest.TestCase):
     def test_duration_aware_default_and_explicit_oversized_selection(self):
         caps={**CAPS_SAFE,'resolutions':CAPS_SAFE['resolutions']+[
             {'width':1532,'height':832},{'width':832,'height':1532}]}
-        self.assertEqual(c.dimensions_for(caps,{},'16:9',15)[1],(1532,832))
-        self.assertEqual(c.dimensions_for(caps,{},'9:16',15)[1],(832,1532))
         self.assertEqual(c.dimensions_for(caps,{},'16:9',14)[1],(1664,936))
-        with self.assertRaisesRegex(ValueError,'1532 × 832'):
+        self.assertEqual(c.dimensions_for(caps,{},'9:16',14)[1],(936,1664))
+        self.assertEqual(c.dimensions_for(caps,{},'16:9',14)[1],(1664,936))
+        with self.assertRaisesRegex(ValueError,'最长 14 秒'):
             c.dimensions_for(caps,{'resolution':'custom','width':1664,'height':936},'16:9',15)
 
     def test_unknown_task_keeps_frozen_identity_and_dimensions_when_defaults_change(self):
@@ -173,7 +174,7 @@ class CloudVideoTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 c.generate_cloud('project',vg.GenerateClips(revision=1,shot_ids=['s1']),1)
             self.assertEqual(error.exception.status_code,409)
-            self.assertIn('1532 × 832',error.exception.detail)
+            self.assertIn('镜头时长超出集群允许范围',error.exception.detail)
             self.assertEqual(record,before)
             thread.assert_not_called();save.assert_not_called()
             client.video_asset.assert_not_called();client.video_quote.assert_not_called();client.create_video_job.assert_not_called()
@@ -249,7 +250,7 @@ class CloudVideoTests(unittest.TestCase):
         client=self.client();client.video_job.side_effect=CloudApiError('missing',status_code=404)
         record=self.run_worker(client,before=lambda shot:shot['video_request'].update(width=1664,height=936,duration=15))
         client.video_asset.assert_not_called();client.video_quote.assert_not_called();client.create_video_job.assert_not_called()
-        self.assertIn('1532 × 832',record['shots'][0]['video_error'])
+        self.assertIn('最长 14 秒',record['shots'][0]['video_error'])
         self.assertEqual(record['shots'][0]['video_request']['client_job_id'],'stable-client')
         self.assertTrue(record['shots'][0]['video_terminal'])
         self.assertFalse(record['shots'][0]['video_resume_available'])

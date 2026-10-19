@@ -68,40 +68,41 @@ test('cloud default uses declared safe orientation without overwriting explicit 
  }
 })
 
-test('15-second limit filters each side and preserves saved oversized choices for correction',async()=>{
- const resolutions=[{width:1664,height:936},{width:1532,height:832},{width:832,height:1532},{width:1536,height:832},{width:2000,height:500}]
+test('15-second saved clips are blocked without overwriting their dimensions',async()=>{
+ const resolutions=[{width:1664,height:936},{width:1532,height:832},{width:832,height:1532},{width:2000,height:500}]
  const props=reactive({modelValue:{backend:'cloud_h3',resolution:'custom',width:1664,height:936},ratio:'16:9',seconds:14})
  const events=[]
  const state=setup('CloudH3Options.vue',props,async()=>({resolutions}),(name,data)=>events.push(data))
  await state.refresh()
  assert.equal(state.unavailableSelected.value,false)
  props.seconds=15
- assert.deepEqual(state.sizes.value.map(x=>`${x.width}x${x.height}`),['1532x832','832x1532'])
- assert.equal(state.unavailableSelected.value,true)
- assert.equal(state.selected.value,'1664x936')
- state.choose({target:{value:'1664x936'}})
- assert.equal(events.length,0)
- state.choose({target:{value:'1532x832'}})
- assert.equal(events.length,1)
- assert.equal(events[0].width,1532)
- props.seconds=16
  assert.equal(state.durationInvalid.value,true)
  assert.deepEqual(state.sizes.value,[])
+ assert.equal(state.unavailableSelected.value,true)
+ assert.equal(state.selected.value,'1664x936')
+ state.choose({target:{value:'1532x832'}})
+ assert.equal(events.length,0)
+ props.seconds=14
+ assert.equal(state.durationInvalid.value,false)
+ assert.equal(state.unavailableSelected.value,false)
 })
 
-test('new 15-second clips choose a supported safe default for each orientation',async()=>{
- const resolutions=[{width:1664,height:936},{width:936,height:1664},{width:1532,height:832},{width:832,height:1532}]
+test('new clips default to 14-second limits and retain portrait frame alignment',async()=>{
+ const resolutions=[{width:1664,height:936},{width:936,height:1664}]
  const default_resolutions={landscape:resolutions[0],portrait:resolutions[1]}
- for(const [ratio,expected] of [['16:9',resolutions[2]],['9:16',resolutions[3]]]){
-  const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio,seconds:15},async()=>({resolutions,default_resolutions}))
+ for(const [ratio,expected] of [['16:9',resolutions[0]],['9:16',resolutions[1]]]){
+  const state=setup('CloudH3Options.vue',{modelValue:{resolution:''},ratio,seconds:14},async()=>({resolutions,default_resolutions,fps:24,frame_divisor:17,frame_remainder:5}))
   await state.refresh()
   assert.deepEqual(state.defaultDimensions.value,expected)
   assert.equal(state.invalidDefault.value,false)
+  assert.equal(state.generatedSeconds.value,'14.38')
  }
+ assert.equal(fitsH3Dimensions(1664,936),true)
  assert.equal(fitsH3Dimensions(1664,936,14),true)
+ assert.equal(fitsH3Dimensions(936,1664,14),true)
  assert.equal(fitsH3Dimensions(1664,936,14.01),false)
- assert.equal(fitsH3Dimensions(1532,832,15),true)
- assert.equal(fitsH3Dimensions(1536,832,15),false)
+ assert.equal(fitsH3Dimensions(1532,832,15),false)
+ assert.equal(fitsH3Dimensions(640,384,15),false)
  assert.equal(fitsH3Dimensions(1664,937,14),false)
  assert.equal(fitsH3Dimensions(2000,500,14),false)
 })
@@ -168,4 +169,15 @@ test('only per-shot generation settings remain, with no hidden batch draft block
  assert.equal((source.match(/<ShotVideoOptions\b/g)||[]).length,1)
  assert.ok(source.includes('@apply-all="applyAllShotOptions"'))
  assert.ok(!source.includes('batchOptionDraft'))
+})
+
+test('cluster project planning payload and both creation screens use the fourteen-second ceiling',()=>{
+ const read=name=>readFileSync(new URL('../frontend/src/'+name,import.meta.url),'utf8')
+ assert.ok(read('useWorkspace.js').includes("form.video_generation_backend === 'cloud_h3' ? 14 : form.dynamic_max_shot_duration"))
+ for(const name of ['App.vue','Studio.vue']){
+  assert.ok(read(name).includes('集群 H3 · 最长 14 秒'))
+  assert.ok(read(name).includes('集群 H3 按 14 秒拆分'))
+  assert.ok(!read(name).includes('集群 H3 按 15 秒拆分'))
+ }
+ assert.ok(read('components/VideoStudio.vue').includes("optionsFor(shot).backend==='cloud_h3'?14:"))
 })

@@ -120,7 +120,7 @@ function confirmLongApiShots(shots){
  const invalid=shots.filter(shot=>{
   if(shot.video_request&&!shot.video_terminal&&shot.video_status!=='completed')return false
   const configured=project.value.creation_parameters?.dynamic_max_shot_duration
-  const maximum=optionsFor(shot).backend==='cloud_h3'?15:[10,15,30].includes(configured)?configured:15
+  const maximum=optionsFor(shot).backend==='cloud_h3'?14:[10,14,15,30].includes(configured)?configured:15
   const seconds=Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))
   return !Number.isFinite(seconds)||seconds>maximum||seconds<Number(shot.duration)
  })

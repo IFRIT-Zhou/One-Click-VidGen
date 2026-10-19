@@ -99,7 +99,7 @@ def validate_duration(shot, selected):
         timeline = float(shot.get('duration') or 0)
         limits = selected.get('duration_seconds') or selected.get('duration', {})
         minimum = max(2, float(selected.get('min_duration_seconds', limits.get('min', 2))))
-        maximum = min(15, float(selected.get('max_duration_seconds', limits.get('max', 15))))
+        maximum = min(14, float(selected.get('max_duration_seconds', limits.get('max', 14))))
     except (TypeError, ValueError, OverflowError):
         raise ValueError('镜头时长无效，请重新规划分镜') from None
     if not all(math.isfinite(value) for value in (seconds, timeline, minimum, maximum)):

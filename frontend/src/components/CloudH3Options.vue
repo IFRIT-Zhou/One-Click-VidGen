@@ -6,9 +6,9 @@ const props=defineProps({modelValue:Object,disabled:Boolean,ratio:String,seconds
 const emit=defineEmits(['update:modelValue'])
 const capabilities=ref(null),error=ref('')
 const generatedSeconds=computed(()=>{const c=capabilities.value;if(!c?.fps||!c?.frame_divisor||!props.seconds)return null;let frames=Math.ceil(props.seconds*c.fps);frames+=(c.frame_remainder-frames%c.frame_divisor+c.frame_divisor)%c.frame_divisor;return (frames/c.fps).toFixed(2)})
-const requestSeconds=computed(()=>props.seconds??15)
+const requestSeconds=computed(()=>props.seconds??14)
 const maximum=computed(()=>h3MaximumDimensions(requestSeconds.value))
-const durationInvalid=computed(()=>!Number.isFinite(requestSeconds.value)||requestSeconds.value<=0||requestSeconds.value>15)
+const durationInvalid=computed(()=>!Number.isFinite(requestSeconds.value)||requestSeconds.value<=0||requestSeconds.value>14)
 const sizes=computed(()=>(capabilities.value?.resolutions||[]).filter(item=>fitsH3Dimensions(item.width,item.height,requestSeconds.value)).sort((a,b)=>b.width*b.height-a.width*a.height||b.width-a.width))
 const selected=computed(()=>props.modelValue.resolution==='custom'?`${props.modelValue.width}x${props.modelValue.height}`:props.modelValue.resolution||(defaultDimensions.value?`${defaultDimensions.value.width}x${defaultDimensions.value.height}`:''))
 const unavailableSelected=computed(()=>Boolean(selected.value)&&!sizes.value.some(item=>`${item.width}x${item.height}`===selected.value))
@@ -37,14 +37,14 @@ onMounted(refresh)
 <template>
  <div class="cluster-h3-options">
   <strong>集群 H3</strong>
-  <p>最长 15 秒。请求不超过 14 秒：上限 1664 × 936；超过 14 秒至 15 秒：上限 1532 × 832。竖屏交换宽高；列表只显示符合当前时长限制、且集群支持的尺寸。</p>
+  <p>请求最长 14 秒，尺寸上限 1664 × 936。竖屏交换宽高；列表只显示符合当前时长限制、且集群支持的尺寸。</p>
   <p>本镜尺寸上限：{{maximum[0]}} × {{maximum[1]}}（长边 × 短边）。</p>
   <p>由集群排队并按需启动；模型首次加载会增加等待时间。参考配音、对口型暂不支持，原配音在导出时合成。</p>
   <label>视频尺寸 <select :value="selected" :disabled="disabled||durationInvalid||!capabilities" @change="choose"><option v-if="!selected" value="" disabled>{{capabilities?'没有符合限制的尺寸':'正在读取集群尺寸…'}}</option><option v-if="unavailableSelected" :value="selected" disabled>{{selected}}（超过本镜限制或集群未提供）</option><option v-for="item in sizes" :key="item.width+'x'+item.height" :value="item.width+'x'+item.height">{{item.width}} × {{item.height}}</option></select></label>
   <p v-if="unavailableSelected" role="alert">当前保存的尺寸超过本镜时长对应的上限，或集群尚未提供，请重新选择；不会自动缩小已保存尺寸。</p>
   <p v-if="invalidDefault" role="alert">集群默认尺寸与能力列表不一致，请刷新配置或明确选择支持的尺寸；不会自动降低分辨率。</p>
-  <p v-if="durationInvalid" role="alert">本镜请求时长无效或超过 15 秒，请先拆分镜头。</p>
-  <p v-if="capabilities">允许时长：{{capabilities.duration_seconds?.min||2}}–{{Math.min(15,capabilities.duration_seconds?.max||15)}} 秒 · {{capabilities.enabled?'可用':'暂不可用'}}；超限镜头需要先拆分。</p>
+  <p v-if="durationInvalid" role="alert">本镜请求时长无效或超过 14 秒，请先拆分镜头。</p>
+  <p v-if="capabilities">允许时长：{{capabilities.duration_seconds?.min||2}}–{{Math.min(14,capabilities.duration_seconds?.max||14)}} 秒 · {{capabilities.enabled?'可用':'暂不可用'}}；超限镜头需要先拆分。</p>
   <p v-if="seconds">本镜请求生成 {{seconds}} 秒<span v-if="generatedSeconds">，工作流帧数对齐后约 {{generatedSeconds}} 秒</span>；导出仍按配音时间轴裁切，不改变配音速度。</p>
   <p v-if="error" role="alert">{{error}}</p><button type="button" :disabled="disabled" @click="refresh">刷新集群能力</button>
  </div>

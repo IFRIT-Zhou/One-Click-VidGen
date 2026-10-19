@@ -222,7 +222,7 @@ class GenerateRequest(BaseModel):
     presenter_reference_id: str = Field(default='', max_length=200)
     visual_prompt_mode: Literal["simple", "full"] = "simple"
     visual_pacing_preset: Literal["auto", "slow", "standard", "fast", "custom"] = "standard"
-    dynamic_max_shot_duration: Literal[10, 15, 30] = 15
+    dynamic_max_shot_duration: Literal[10, 14, 15, 30] = 15
     visual_min_duration: float | None = Field(default=None, ge=4, le=20)
     visual_target_duration: float | None = Field(default=None, ge=5, le=30)
     visual_max_duration: float | None = Field(default=None, ge=6, le=40)
