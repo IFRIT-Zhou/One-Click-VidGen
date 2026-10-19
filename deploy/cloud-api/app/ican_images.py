@@ -5,7 +5,7 @@ import json
 import os
 import re
 import tempfile
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -47,10 +47,11 @@ def price_quote(model, size):
         raise ServiceError("ICAN_MODEL_SIZE_NOT_CONFIGURED", "该模型或尺寸尚未配置价格", 422)
     base = Decimal(str(spec["sizes"][size]))
     credits = base * (settings.billing_usd_to_cny_rate if spec["currency"] == "USD" else 1)
-    # ICAN retail price rounds the upstream CNY cost up to one fen per image.
-    credits = credits.quantize(Decimal("0.01"), rounding=ROUND_CEILING)
+    # Charge the next whole fen strictly above this size's CNY cost, including
+    # an extra fen when the cost is already an exact whole-fen amount.
+    credits = credits.quantize(Decimal("0.01"), rounding=ROUND_FLOOR) + Decimal("0.01")
     return {"upstream_price": str(base), "currency": spec["currency"], "credits": str(credits),
-            "markup_percent": 0, "rounding": "ceil_cent",
+            "markup_percent": 0, "rounding": "next_cent",
             "usd_to_cny_rate": str(settings.billing_usd_to_cny_rate)}
 
 
