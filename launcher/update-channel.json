@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.19.1",
-  "release_order": 2026101901,
-  "display_version": "2026.10.19 参考素材修复与集群状态更新",
+  "release_id": "2026.10.19.2",
+  "release_order": 2026101902,
+  "display_version": "2026.10.19 自动拆分与集群同步更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.19.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.19.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复图文视频参考素材漏绑，明确出镜人物支持多张参考图；出图前绑定不一致最多进行两次单镜Agent修复，真实缺图不盲目重试。保存失败现场并校验续跑规划来源。包含远端已有集群状态与14秒限制更新。保留配音、字幕和已完成素材，不自动重生成。",
-  "content_fingerprint": "0cf7ae093d21751fc17fb98e1cc87311a09d431db33ec9e8deda22dd4e538dd7"
+  "notes": "同步最新集群状态、节点中断识别、ICAN尺寸与价格规则及图文参考绑定修复。集群请求上限14秒；新增超长镜头自动拆分，可选仅本镜或连同前后动态镜头，重新规划提示词但不自动生成素材，原配音与字幕时间轴不变。修复拆分后沿用父镜设计，以及动态视频项目图号与单镜输入图号混用。保留旧素材与结构撤回能力。",
+  "content_fingerprint": "8e124e25511df8282480fc4eb5a56b8d5035afafd157e8f9777b8cd639480421"
 }
