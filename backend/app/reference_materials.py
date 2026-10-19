@@ -129,7 +129,9 @@ def explicit_reference_labels(prompt: str) -> set[str]:
     for clause in re.split(r'[。；;\n]', str(prompt or '')):
         if re.search(r'(?:不|无需|不要|禁止)\s*(?:使用|采用|参考|参照)', clause):
             continue
-        labels.update('图' + number for number in re.findall(r'(?:参考|参照)(?:图片|图像|图)\s*([1-6])(?!\d)', clause))
+        for match in re.finditer(r'(?:参考|参照)(?:图片|图像|图)\s*([1-6])(?!\d)((?:\s*[、,，和及]\s*(?:图\s*)?[1-6](?!\d))*)', clause):
+            labels.add('图' + match.group(1))
+            labels.update('图' + number for number in re.findall(r'[1-6]', match.group(2)))
     return labels
 
 
@@ -137,36 +139,52 @@ def recover_visible_character_references(prompt: str, explicit_ids: list[str], s
     """Recover only references tied to a visibly selected character, not semantic context."""
     people = {str(row.get('label')) for row in rows if row.get('label') and material_is_character(row)}
     selected = set()
+    # Automatic character recovery requires structured shot selection. A name
+    # in narration, a negative instruction or a style note is not visibility.
+    if re.search(r'无人物|无人出镜|不出现人物|不添加人物|纯图表|仅(?:展示|显示)图表', prompt):
+        return []
     for character in story.get('characters', []):
         if not isinstance(character, dict):
             continue
         name = str(character.get('name') or '').strip()
-        if character.get('character_id') not in explicit_ids and not (name and name in prompt):
+        if character.get('character_id') not in explicit_ids:
+            continue
+        if name and re.search(r'(?:不要|不得|禁止|不展示|不出现|不画)\s*' + re.escape(name)
+                              + '|' + re.escape(name) + r'\s*(?:不出镜|不出现|仅作旁白|仅旁白)', prompt):
             continue
         appearance = str(character.get('appearance') or '')
         # The character card, not the whole story, supplies the identity binding.
         labels = set(re.findall(r'图\s*([1-6])(?!\d)', appearance))
-        candidates = {'图' + number for number in labels} & people
-        if len(candidates) == 1:
+        # A visibly selected character card can explicitly identify multiple
+        # views of the same person, even when legacy metadata says unknown.
+        eligible = people | {str(row.get('label')) for row in rows
+                             if row.get('kind', 'unknown') == 'unknown'}
+        candidates = {'图' + number for number in labels} & eligible
+        if candidates:
             selected.update(candidates)
-    # An explicit reference instruction in the shot itself is authoritative.
-    for number in re.findall(r'(?:形象|外貌|人物|角色)\s*(?:严格)?\s*参考图\s*([1-6])(?!\d)', prompt):
-        if '图' + number in people:
-            selected.add('图' + number)
+    # Explicit material instructions (including style references) are handled
+    # separately by explicit_reference_labels, not inferred as character use.
     return [str(row['label']) for row in rows if row.get('label') in selected]
+
+
+class ReferenceBindingMismatch(ValueError):
+    """Existing materials are referenced by a shot but omitted from its selection."""
 
 
 def bind_material_references(mapping: list[dict], catalog: dict[str, str]) -> list[dict]:
     """Convert project labels to request-local numbers once; preserve source labels for UI."""
     result = [copy.deepcopy(item) for item in mapping]
     metadata = {row.get('label'): row for row in reference_metadata()}
-    for item in result:
+    for index, item in enumerate(result, 1):
         if item.get('reference_binding_version'):
             continue
         selected = list(dict.fromkeys(item.get('reference_image_ids') or []))
+        unknown = explicit_reference_labels(item.get('image_prompt', '')) - set(catalog)
+        if unknown:
+            raise ValueError(f"第{index}镜（{item.get('macro_scene_id', '?')}）引用了不存在的参考素材：" + '、'.join(sorted(unknown)))
         missing = (explicit_reference_labels(item.get('image_prompt', '')) & set(catalog)) - set(selected)
         if missing:
-            raise ValueError('镜头提示词引用了' + '、'.join(sorted(missing)) + '，但没有绑定对应图片，请重新规划或选择参考图')
+            raise ReferenceBindingMismatch(f"第{index}镜（{item.get('macro_scene_id', '?')}）提示词引用了" + '、'.join(sorted(missing)) + '，但没有绑定对应图片，请重新规划或选择参考图')
         if any(label not in catalog for label in selected):
             raise ValueError('镜头选择了不存在的参考图，请重新规划')
         if len(selected) > 3:

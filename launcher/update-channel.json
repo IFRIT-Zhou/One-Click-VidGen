@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.18.1",
-  "release_order": 2026101801,
-  "display_version": "2026.10.18 工作台精简与集群尺寸更新",
+  "release_id": "2026.10.19.1",
+  "release_order": 2026101901,
+  "display_version": "2026.10.19 参考素材修复与集群状态更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.18.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.19.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "精简工作台：项目名称置顶，规划设置移至底部，移除重复批量设置与结果页返修入口，暂时隐藏布局工具。修复号池设置侧栏拥挤并显示渠道、模型和清晰度。集群H3总像素上限提高至1664×936，尺寸由大到小排列，未配置时默认1664×936；云端API及节点须同步部署才能开放新尺寸。保留已有配音、字幕和素材，不自动生成。",
-  "content_fingerprint": "95c8aaca7a1edc46f1a0dbca1ddbf59a197b6ced68eecff287ff8bc36210bf30"
+  "notes": "修复图文视频参考素材漏绑，明确出镜人物支持多张参考图；出图前绑定不一致最多进行两次单镜Agent修复，真实缺图不盲目重试。保存失败现场并校验续跑规划来源。包含远端已有集群状态与14秒限制更新。保留配音、字幕和已完成素材，不自动重生成。",
+  "content_fingerprint": "0cf7ae093d21751fc17fb98e1cc87311a09d431db33ec9e8deda22dd4e538dd7"
 }
