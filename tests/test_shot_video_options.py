@@ -183,29 +183,44 @@ class ShotVideoOptionsTests(unittest.TestCase):
         self.assertEqual(start.call_args.args[4], 'new')
         self.assertFalse(start.call_args.kwargs['use_h3_agent'])
 
-    def test_over_limit_regeneration_preserves_completed_clip_before_work_starts(self):
+    def test_short_request_regeneration_preserves_completed_clip_before_work_starts(self):
         shot = self.record['shots'][0]
-        shot.update(duration=15.1, generation_duration=16, video='old.mp4',
+        shot.update(duration=15.1, generation_duration=15, video='old.mp4',
                     video_status='completed', video_terminal=True)
         before = copy.deepcopy(self.record)
         with patch.object(video, '_start_local_worker') as start:
             with self.assertRaises(HTTPException) as failure:
                 video.generate('test', video.GenerateClips(revision=1, shot_ids=['a'],
                     regenerate_completed=True), None)
-        self.assertIn('15 秒上限', str(failure.exception.detail))
+        self.assertIn('小于字幕跨度', str(failure.exception.detail))
         self.assertEqual(self.record, before)
         start.assert_not_called()
 
-    def test_changing_long_static_shot_to_cloud_video_does_not_mutate_project(self):
+    def test_changing_long_static_shot_to_cloud_video_saves_draft_for_splitting(self):
         self.record.update(status='image_review')
         self.record['creation_parameters']['video_generation_backend'] = 'cloud_h3'
-        self.record['shots'][0].update(kind='static', duration=10.01)
+        self.record['shots'][0].update(kind='static', duration=14.01)
         before = copy.deepcopy(self.record)
-        with self.assertRaises(HTTPException) as failure:
-            video.studio.edit_shot_motion('test', 'a', video.studio.ShotMotionEdit(
-                revision=1, kind='video', action='move', video_prompt='move'), None)
-        self.assertIn('10 秒上限', str(failure.exception.detail))
-        self.assertEqual(self.record, before)
+        video.studio.edit_shot_motion('test', 'a', video.studio.ShotMotionEdit(
+            revision=1, kind='video', action='move', video_prompt='move'), None)
+        shot = self.record['shots'][0]
+        self.assertEqual(shot['kind'], 'video')
+        self.assertIn('14 秒上限', shot['warning'])
+        self.assertEqual(shot['generation_duration'], 15)
+        self.assertEqual(shot.get('image'), before['shots'][0].get('image'))
+        for key in ('audio', 'scenes', 'creation_parameters'):
+            self.assertEqual(self.record.get(key), before.get(key))
+        from backend.app.video_duration_limits import validate_video_duration
+        with self.assertRaisesRegex(ValueError, '14 秒上限'):
+            validate_video_duration(shot['duration'], {'video_generation_backend': 'cloud_h3'})
+
+    def test_personal_workflow_is_not_limited_by_planning_preference(self):
+        self.record['creation_parameters']['dynamic_max_shot_duration'] = 14
+        self.record['shots'][0].update(duration=22.1, generation_duration=23)
+        with patch.object(video, '_start_local_worker') as start:
+            video.generate('test', video.GenerateClips(revision=1, shot_ids=['a']), None)
+        start.assert_called_once()
+        self.assertEqual(self.record['shots'][0]['generation_duration'], 23)
 
     def test_apply_all_updates_dynamic_only_and_preserves_media(self):
         self.record['shots'] += [{'id':'b', 'kind':'video', 'video_status':'completed', 'video':'old.mp4'},
@@ -382,8 +397,8 @@ class ShotVideoOptionsTests(unittest.TestCase):
             {'id': key, 'kind': 'video', 'slide_ids': [key], 'video_status': 'completed',
              'video': key+'.mp4', 'image': key+'.png', 'image_status': 'completed'}
             for key in ['a', 'b', 'c']])
-        changed = [{'id': 'a', 'kind': 'video', 'slide_ids': ['a', 'b']},
-                   {'id': 'c', 'kind': 'video', 'slide_ids': ['c']}]
+        changed = [{'id': 'a', 'kind': 'video', 'slide_ids': ['a', 'b'], 'duration': 8},
+                   {'id': 'c', 'kind': 'video', 'slide_ids': ['c'], 'duration': 4}]
         with patch.object(video.studio, 'edit_structure', return_value=changed):
             video.studio.structure('test', video.studio.Structure(revision=1, action='delete', index=1), None)
         self.assertEqual(self.record['status'], 'video_review')

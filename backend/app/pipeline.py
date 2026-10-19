@@ -1379,7 +1379,10 @@ def write_original_text_from_asr(job: Job) -> None:
 
 
 def canonical_story_text(request: dict[str, Any], scenes: list[dict[str, Any]]) -> str:
-    """Agent 0 reads author text when supplied, otherwise corrected ASR text."""
+    """After narration review, all modes use the sealed recorded copy."""
+    if (request.get('_final_narration_fingerprint') and request.get('_final_narration_script')
+            and re.sub(r'\s+', '', str(request.get('script') or '')) == re.sub(r'\s+', '', str(request['_final_narration_script']))):
+        return str(request['_final_narration_script'])
     authored = parse_structural_blanks(str(request.get("script") or "")).clean_text
     if authored:
         return authored
@@ -2417,7 +2420,7 @@ def render_semantic_visual_video(
         store.log(job, f"HTML 模板写入: {html_path}")
         store.log(job, f"视觉生成来源: {provider}")
     elif visual_backend in {"poster", "online-poster", "runninghub"}:
-        poster_env = {"VOICE_OVER_VIDEO_JOB_ID": job.id, "USER_REFERENCE_IMAGE_PATHS_JSON": "[]", "USER_REFERENCE_IMAGE_METADATA_JSON": "[]", "USER_PROTAGONIST_REFERENCE_IMAGE_PATH": ""}
+        poster_env = {"USE_CLOUD_IMAGE_POOL": "0", "VOICE_OVER_VIDEO_JOB_ID": job.id, "USER_REFERENCE_IMAGE_PATHS_JSON": "[]", "USER_REFERENCE_IMAGE_METADATA_JSON": "[]", "USER_PROTAGONIST_REFERENCE_IMAGE_PATH": ""}
         cloud_pool_client = None
         cloud_session_update_path = None
         if bool(request.get("use_cloud_image_pool")):
@@ -2445,7 +2448,7 @@ def render_semantic_visual_video(
                 "GEMINI_MODEL": "auto",
                 "GEMINI_FALLBACK_MODELS": "",
             })
-            store.log(job, "模块 4：Agent 2 与出图均使用云端号池，费用由云端账户积分结算")
+            store.log(job, "模块 4：出图使用云端图像号池，语言模型沿用本项目规划渠道")
         elif isinstance(request.get("image_profile_snapshot"), dict):
             from .image_profiles import profile_environment
             image_snapshot = dict(request["image_profile_snapshot"])
@@ -2459,6 +2462,18 @@ def render_semantic_visual_video(
                     str(image_snapshot.get("resolution") or "1k").upper(),
                 ),
             )
+        from .language_routing import uses_cloud_language
+        language_keys = ('LANGUAGE_PROVIDER', 'GEMINI_API_KEY', 'GEMINI_API_BASE', 'GEMINI_MODEL', 'GEMINI_FALLBACK_MODELS')
+        if not uses_cloud_language(request):
+            for key in language_keys:
+                poster_env.pop(key, None)
+        elif not request.get('use_cloud_image_pool'):
+            runtime = cloud_client_for(int(job.user_id)).image_pool_runtime()
+            poster_env.update({
+                'LANGUAGE_PROVIDER': 'gemini', 'GEMINI_API_KEY': runtime['access_token'],
+                'GEMINI_API_BASE': runtime['base_url'].rstrip('/') + '/model-pool/v1',
+                'GEMINI_MODEL': 'auto', 'GEMINI_FALLBACK_MODELS': '',
+            })
         # Agent 2 is a paid-image safety gate. Never submit image jobs when its
         # language-model planning failed or silently fell back to raw subtitles.
         poster_env["REQUIRE_AI_AGENT_SUCCESS"] = "1"

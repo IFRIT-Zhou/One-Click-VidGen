@@ -316,8 +316,11 @@ class CloudClient:
         raise_errors: bool = True,
         stream: bool = False,
         headers: dict[str, str] | None = None,
+        timeout: float | tuple[float, float] | None = None,
         **kwargs: Any,
     ) -> requests.Response:
+        from . import image_request_control as image_control
+        image_control.check()
         url = self._url(path)
         request_headers = dict(headers or {})
         if authenticated:
@@ -327,6 +330,7 @@ class CloudClient:
         retryable = method_name in {"GET", "HEAD", "OPTIONS"} or "Idempotency-Key" in request_headers
         response: requests.Response | None = None
         for attempt in range(self.config.retry_count + 1):
+            image_control.check()
             files = kwargs.get("files")
             if attempt and isinstance(files, dict):
                 for value in files.values():
@@ -338,13 +342,13 @@ class CloudClient:
                     method_name,
                     url,
                     headers=request_headers,
-                    timeout=(self.config.connect_timeout, self.config.read_timeout),
+                    timeout=timeout if timeout is not None else (self.config.connect_timeout, self.config.read_timeout),
                     stream=stream,
                     **kwargs,
                 )
             except requests.RequestException as exc:
                 if retryable and attempt < self.config.retry_count:
-                    time.sleep(self.config.retry_delay * (attempt + 1))
+                    image_control.wait(self.config.retry_delay * (attempt + 1))
                     continue
                 raise CloudApiError(
                     f"无法连接集群云端服务：{exc}",
@@ -358,7 +362,7 @@ class CloudClient:
                     delay = max(self.config.retry_delay, min(10.0, float(retry_after)))
                 except (TypeError, ValueError):
                     delay = self.config.retry_delay * (attempt + 1)
-                time.sleep(delay)
+                image_control.wait(delay)
                 continue
             break
         assert response is not None
@@ -379,6 +383,7 @@ class CloudClient:
                 raise_errors=raise_errors,
                 stream=stream,
                 headers=headers,
+                timeout=timeout,
                 **kwargs,
             )
         if response.status_code == 401 and authenticated:

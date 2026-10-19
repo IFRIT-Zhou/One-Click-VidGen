@@ -27,6 +27,7 @@ class AudioSyncReviewTests(unittest.TestCase):
             (source / 'other/最终字幕.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\n甲\n\n2\n00:00:01,000 --> 00:00:03,000\n乙\n', encoding='utf-8')
             scenes = [dict(slide_id='scene_001', start=0, end=2, text='甲'), dict(slide_id='scene_002', start=2, end=4, text='乙')]
             record = dict(id='p', revision=1, status='completed', scenes=scenes, audio='assets/audio.wav',
+                          context={'summary':'old narration'}, planning_state={'stage':'old'},
                           source_project={'id': 'j'}, logs=[], shots=[
                 dict(id=str(i), slide_ids=[s['slide_id']], start=s['start'], end=s['end'], duration=2,
                      kind='video', video_status='completed', image_status='completed', video='keep.mp4')
@@ -50,6 +51,10 @@ class AudioSyncReviewTests(unittest.TestCase):
             self.assertEqual(second['video'], 'keep.mp4')
             self.assertEqual(first['source_subtitles'][0]['end'], 1)
             self.assertNotEqual(result['audio'], 'assets/audio.wav')
+            self.assertEqual(result['creation_parameters']['script'], '甲\n乙')
+            self.assertNotIn('context', result)
+            self.assertNotIn('planning_state', result)
+            self.assertEqual(result['final_narration']['duration'], 3)
             self.assertTrue((project / result['subtitles']).is_file())
             with wave.open(str(project / 'assets/audio.wav')) as f:
                 self.assertEqual(f.readframes(f.getnframes()), old_pcm)

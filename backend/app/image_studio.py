@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from .auth import require_user
 from .editor import upload_path
 from .cloud_image_channel import ImageSize
+from . import image_request_control as image_control
 
 router = APIRouter(prefix='/api/image-studio')
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'image_studio'
@@ -162,9 +163,15 @@ def upload_pool_reference(session: requests.Session, source: Path, config: dict)
 
 
 def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client=None) -> None:
+    with image_control.scope(label='图片工作室任务'):
+        _execute(user, path, record, config, cloud_pool_client)
+
+
+def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client=None) -> None:
     import module4_video_render as visual
     generation_attempted = False
     try:
+        image_control.check()
         payload = dict(prompt=record['prompt'], aspectRatio=record['ratio'], resolution=record['resolution'])
         if config.get('model'):
             payload['model'] = config['model']
@@ -213,6 +220,7 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
             save(path, record)
             deadline = time.monotonic() + 1200
             while time.monotonic() < deadline:
+                image_control.check()
                 response = visual._request_with_cloud_refresh(
                     session, 'POST', config.get('query_url') or visual._runninghub_url('/openapi/v2/query'),
                     json={'taskId': task_id}, headers=headers, config=config, timeout=60
@@ -232,11 +240,12 @@ def execute(user: int, path: Path, record: dict, config: dict, cloud_pool_client
                     import io
                     with Image.open(io.BytesIO(downloaded.content)) as picture:
                         picture.load()
+                        image_control.check()
                         record['width'], record['height'] = picture.size
                         picture.save(path/'result.png', format='PNG')
                     record.update(status='completed', message='生成完成')
                     break
-                time.sleep(3)
+                image_control.wait(3)
             else:
                 raise TimeoutError('等待超时，远端结果尚未确认，请核对服务端记录后再生成')
     except Exception as exc:

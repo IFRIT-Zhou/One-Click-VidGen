@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import partial
 from typing import Any, Callable
 from .presenter_mode import presenter_contract
 
@@ -109,6 +110,7 @@ narration_groups 是配音生产/编辑单元，作为强语义线索，但不�
     from .video_duration_limits import max_video_duration
     max_duration = max_video_duration({**context, **arrangement})
     context = {**context, 'dynamic_max_shot_duration': max_duration,
+               'dynamic_cluster_duration_recommended': arrangement.get('dynamic_cluster_duration_recommended', context.get('dynamic_cluster_duration_recommended', True)),
                'video_generation_backend': arrangement.get('video_generation_backend', context.get('video_generation_backend', 'api'))}
     system = system.replace('15秒', f'{max_duration}秒')
     system += '\n时长上限不是目标时长；优先完整语义和合理节奏，不为用满上限延长镜头。'
@@ -194,6 +196,8 @@ method_example 是一个独立方法示例，当前任务的事实、角色、�
 intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅纠正错归属时填写",attribution_correction:"仅纠正错归属时填写依据"}]}。
 未调整的镜头除有原文依据的归属纠正外，不改写既定 intent。""" + VISUAL_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
     system += medical_contract(context, 'core', include_common=False)
+    from .video_split_agent import split_direction
+    system += split_direction(context, shots)
     system += presenter_contract(context)
     payload = {"story_context": context, "scenes": scenes, "shots": shots, "references": references,
                "method_example": (VISUAL_FIRST_CORE_DESIGN_EXAMPLE
@@ -292,6 +296,8 @@ semantic.speech_turns 用于核对谁说/想，不能把它打印成提示词的
 只返回 {shots:[{id,image_sections:{characters_and_style:"人物与画风正文",scene:"画面内容正文",constraints:"必要限制正文或空字符串"}}]}，
 顺序不变。不要另写 image_prompt，程序负责拼出可直接提交图像模型的最终提示词。""" + text_mode_contract(context) + SPEECH_HANDOFF_CONTRACT
     system += medical_contract(context, 'image', include_common=False)
+    from .video_split_agent import split_direction
+    system += split_direction(context, shots)
     payload = {"story_context": context, "global_style": style, "shots": shots, "references": references}
     by_id = {shot['id']: shot for shot in shots}
     def present(rows):
@@ -366,6 +372,8 @@ reference_texts:[{text:"参考图实际短字",owner:"核心图主体名或画�
 id及顺序保持不变，不输出多格数量、面板或额外镜头。
 若提供 validation_errors，只修复指出的方案交接问题，保持原文、既定表达与顺序，返回完整 shots。""" + MOTION_CONTRACT + text_mode_contract(context) + SPEECH_ATTRIBUTION_CONTRACT
     system += medical_contract(context, 'motion', include_common=False)
+    from .video_split_agent import split_direction
+    system += split_direction(context, shots)
     system += presenter_contract(context)
     payload = {'story_context': context, 'shots': prepared,
                'method_example': (VISUAL_FIRST_MOTION_DESIGN_EXAMPLE
@@ -452,6 +460,8 @@ beat_prompts 必须按 beats 原顺序一一对应，不省略任何阶段，也
 旧 version=1 或无 motion_plan 的镜头仍返回 {id,video_prompt:"..."}。
 顶层统一返回 {shots:[...]}，镜头顺序不变。""" + text_mode_contract(context) + SPEECH_HANDOFF_CONTRACT
     system += medical_contract(context, 'video', include_common=False)
+    from .video_split_agent import split_direction
+    system += split_direction(context, shots)
     system += presenter_contract(context)
     def present(rows):
         result = []
@@ -466,11 +476,12 @@ beat_prompts 必须按 beats 原顺序一一对应，不省略任何阶段，也
         return result
     rows = _finalize_prompts(system, {"story_context": context, "shots": prepared}, prepared,
                              'video_prompt', 'video', expected, ask, assemble=_assemble_video_body,
+                             assemble_retry=partial(_assemble_video_body, allow_plan_fallback=True),
                              on_draft=(lambda rows: on_draft(present(rows))) if on_draft else None)
     return present(rows)
 
 
-def _assemble_video_body(shot, row):
+def _assemble_video_body(shot, row, *, allow_plan_fallback=False):
     """Preserve one finalized paragraph for every planned phase before persistence."""
     plan = shot.get('motion_plan') or {}
     if plan.get('version') != 2:
@@ -481,24 +492,48 @@ def _assemble_video_body(shot, row):
     expected = list(range(1, len(plan['beats']) + 1))
     if any(type(part.get('beat')) is not int for part in parts) or [part['beat'] for part in parts] != expected:
         raise ValueError(f"{shot['id']} 的定稿阶段缺失、重复或顺序改变，必须对应 {expected}")
-    texts = [row.get('continuity_prompt')] + [part.get('prompt') for part in parts] + [row.get('ending_prompt')]
-    if any(not isinstance(text, str) or not text.strip() for text in texts):
-        raise ValueError(f"{shot['id']} 的场景、阶段或结尾定稿为空")
+    fields = [(row, 'continuity_prompt', '环境与主体保持描述 continuity_prompt（非场景参考图）')]
+    fields += [(part, 'prompt', f'第{index}阶段 beat_prompts[{index-1}].prompt') for index, part in enumerate(parts, 1)]
+    fields.append((row, 'ending_prompt', '结尾 ending_prompt'))
+    missing = [label for item, key, label in fields if not isinstance(item.get(key), str) or not item[key].strip()]
+    if missing and allow_plan_fallback:
+        # The director's validated plan is authoritative. A finalizer that still
+        # leaves a paragraph blank must not erase that plan or make up a new one.
+        # Missing/reordered phases above remain hard errors.
+        validated = normalize_motion_plan(plan)
+        def beat_text(beat):
+            visible = '；'.join(f"{t['owner']}的{t['container']}显示“{t['text']}”" for t in beat['texts'])
+            return beat['action'] + '\n当前可见文字：' + (visible or '无') + '。前阶段未列出的文字先消失，不累计堆叠。'
+        defaults = [f"场景：{validated['scene_anchor']}。保持本镜已确定的主体造型与画风。"]
+        defaults += [beat_text(beat) for beat in validated['beats']]
+        defaults.append('按最后阶段完成收束：' + beat_text(validated['beats'][-1]) +
+                        '完成上述动作后自然停留，不重演动作，不回到初始状态，不新增文字或剧情。')
+        for (item, key, _), fallback in zip(fields, defaults):
+            if not isinstance(item.get(key), str) or not item[key].strip():
+                item[key] = fallback
+        row['_plan_fallback_fields'] = missing
+    elif missing:
+        raise ValueError(f"镜头 {shot['id']} 的定稿为空：{'、'.join(missing)}；请按 motion_plan 补齐这些字段")
+    texts = [row['continuity_prompt']] + [part['prompt'] for part in parts] + [row['ending_prompt']]
     row['video_prompt'] = '\n'.join(text.strip() for text in texts)
 
 
-def _finalize_prompts(system, payload, shots, field, medium, expected, ask, assemble=None, on_draft=None):
+def _finalize_prompts(system, payload, shots, field, medium, expected, ask, assemble=None, on_draft=None,
+                      *, assemble_retry=None):
     # One bounded correction on a concrete handoff error, not another director pass.
     system += '\n若提供 validation_errors，仅修复指出的漏项或矛盾，不重新导演；仍返回完整 shots。'
     for attempt in range(2):
         response = ask(system, payload)
+        # Keep the shared two-argument callback contract. Only video opts into
+        # plan-based completion on retry; image sections must still validate.
+        assembler = assemble_retry if attempt and assemble_retry is not None else assemble
         try:
             rows = _complete_rows(response, expected, '提示词定稿 Agent')
             problems, notes, candidates = [], [], []
             for shot, row in zip(shots, rows):
-                if assemble:
+                if assembler:
                     try:
-                        assemble(shot, row)
+                        assembler(shot, row)
                     except ValueError as exc:
                         problems.append(str(exc))
                         continue
@@ -516,6 +551,8 @@ def _finalize_prompts(system, payload, shots, field, medium, expected, ask, asse
                     content = remove_unapproved_visible_text(content, shot.get('motion_plan'))
                     row[field] = content
                 row[field + '_warnings'] = prompt_plan_issues(content, shot.get('motion_plan'), medium)
+                if row.get('_plan_fallback_fields'):
+                    row[field + '_warnings'].append('定稿空字段已按既定阶段方案补齐：' + '、'.join(row['_plan_fallback_fields']))
                 plan_attribution_notes = plan_owner_issues(shot, shot.get('motion_plan'))
                 row[field + '_warnings'].extend(plan_attribution_notes)
                 row[field + '_warnings'].extend(prompt_owner_issues(shot, content))
@@ -591,7 +628,7 @@ def audit_storyboard(shots: list[dict[str, Any]], reference_ids: set[str], *, pa
                 from .video_duration_limits import validate_video_duration
                 try:
                     validate_video_duration(shot.get('duration'), parameters,
-                                            requested_duration=shot.get('generation_duration'))
+                                            requested_duration=shot.get('generation_duration'), planning=True)
                 except ValueError as exc:
                     problems.append(str(exc))
         elif shot.get("action") or shot.get("video_prompt"):

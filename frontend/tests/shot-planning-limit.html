@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>规划时限回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive} from 'vue/dist/vue.esm-bundler.js'
+import ShotPlanningLimit from '../src/components/ShotPlanningLimit.vue'
+import '../src/style.css'
+const form=reactive({dynamic_max_shot_duration:14,dynamic_cluster_duration_recommended:true,video_generation_backend:'cloud_h3'})
+window.fixture={form}
+createApp({components:{ShotPlanningLimit},setup(){return{form}},template:`<main style="max-width:520px;margin:20px auto;padding:24px;background:var(--panel);border:1px solid var(--border);border-radius:16px"><h2>画面节奏</h2><label style="display:grid;gap:8px;margin:20px 0"><span>节奏预设</span><select><option>标准</option></select></label><ShotPlanningLimit v-model:max-duration="form.dynamic_max_shot_duration" v-model:recommended="form.dynamic_cluster_duration_recommended" :backend="form.video_generation_backend"/></main>`}).mount('#app')
+</script></html>

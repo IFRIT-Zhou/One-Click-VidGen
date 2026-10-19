@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import wave
 import zlib
 from pathlib import Path
 from typing import Any
@@ -613,6 +614,39 @@ class VisualEditor:
             return recovered, True
 
     @staticmethod
+    def sync_final_narration(project_dir: Path, old_scenes, new_scenes) -> None:
+        """Retain illustrated pictures, retime whole subtitle groups and HTML."""
+        from .final_narration import remap_visual_groups
+        if not VisualEditor._mapping_path(project_dir).is_file():
+            return
+        with visual_editor._mapping_lock:
+            mapping = VisualEditor._load_mapping(project_dir)
+            if not mapping:
+                return
+            mapping, _ = VisualEditor._mapping_with_recovered_timing(project_dir, mapping, old_scenes)
+            updated, detached = remap_visual_groups(old_scenes, new_scenes, mapping, key='includes_slides')
+            before = {s['slide_id']: s for s in old_scenes}
+            after = {s['slide_id']: s for s in new_scenes}
+            original = {m['macro_scene_id']: m for m in mapping}
+            for row in updated:
+                old = [before[sid] for sid in original[row['macro_scene_id']]['includes_slides']]
+                new = [after[sid] for sid in row['includes_slides']]
+                text = lambda items: ''.join(s.get('text_content', s.get('text', '')) for s in items)
+                old_duration, duration = old[-1]['end']-old[0]['start'], new[-1]['end']-new[0]['start']
+                if text(old) != text(new) or abs(duration-old_duration) > .01:
+                    row['audio_timing_adjustment'] = dict(needs_review=True, text_changed=text(old)!=text(new),
+                                                         previous_duration=old_duration, target_duration=duration)
+            if detached:
+                retained = project_dir / 'other' / '配音调整保留画面.json'
+                history = json.loads(retained.read_text(encoding='utf-8')) if retained.is_file() else []
+                retained.write_text(json.dumps(history+detached, ensure_ascii=False, indent=2), encoding='utf-8')
+            VisualEditor._save_mapping(project_dir, updated)
+            # The renderer consumes text_content, whereas the shared snapshot
+            # exposes text for the video planner. Keep both uses unambiguous.
+            timeline = [dict(s, text_content=s.get('text_content', s.get('text', ''))) for s in new_scenes]
+            VisualEditor._write_timing_html(project_dir, updated, timeline)
+
+    @staticmethod
     def _write_timing_html(project_dir: Path, mapping: list[dict[str, Any]], timeline: list[dict[str, Any]]) -> None:
         """Regenerate only module 4's HTML timeline; pictures are never regenerated here."""
         VisualEditor._validate_timing_partition(mapping, timeline)
@@ -628,6 +662,19 @@ class VisualEditor:
                 "end": max(float(scene["end"]) for scene in included),
                 "url": f"../image/{image.name}",
             })
+        # Do not drop silence inserted between sentences: hold the preceding
+        # picture through the pause, while leaving subtitle cue times untouched.
+        for index, poster in enumerate(poster_timeline):
+            if index == 0:
+                poster['start'] = 0.0
+            if index+1 < len(poster_timeline):
+                poster['end'] = poster_timeline[index+1]['start']
+        if poster_timeline:
+            try:
+                with wave.open(str(project_dir / 'input' / '配音.wav'), 'rb') as audio:
+                    poster_timeline[-1]['end'] = max(poster_timeline[-1]['end'], audio.getnframes()/audio.getframerate())
+            except (OSError, wave.Error, EOFError):
+                pass
         import module4_video_render as visual
         visual.write_html(
             timeline,
@@ -869,6 +916,7 @@ class VisualEditor:
                 "id": macro_id,
                 "prompt": str(entry.get("image_prompt") or ""),
                 "placeholder": bool(entry.get("placeholder")),
+                "audio_timing_adjustment": entry.get("audio_timing_adjustment"),
                 "scene_reference_name": (entry.get("scene_reference") or {}).get("name") or (entry.get("scene_reference") or {}).get("scene_id"),
                 "scene_reference_url": f"/api/jobs/{job_id}/scene-reference/{macro_id}" if entry.get("scene_reference") else None,
                 "use_scene_reference": True,

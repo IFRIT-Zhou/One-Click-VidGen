@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>图文与动态配音控件回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive} from 'vue/dist/vue.esm-bundler.js'
+import TtsSentenceControls from '../src/components/TtsSentenceControls.vue'
+import TtsRebuildButton from '../src/components/TtsRebuildButton.vue'
+import TtsEditorFeedback from '../src/components/TtsEditorFeedback.vue'
+import '../src/style.css'
+import '../src/studio.css'
+const state=reactive({mode:new URL(location.href).searchParams.get('mode'),busy:false,opened:true,reading:'遇到酸性食物，需要注意（字幕注释）。',checked:false,pause:.5,item:{index:1,text:'遇到酸性食物，需要注意。',tts_text:'遇到酸性食物，需要注意。'},editor:{available:true,segments:[{index:1},{index:2}],task:{status:'idle'}},calls:[]})
+window.fixture=state
+window.fetch=async()=>new Response(JSON.stringify({task:{status:'idle'}}),{status:200})
+createApp({components:{TtsSentenceControls,TtsRebuildButton,TtsEditorFeedback},setup(){return {state,call(name,value){state.calls.push([name,value??null])}}},template:`<main :class="state.mode==='legacy'?'legacy-tts-fixture':'live-studio'" style="display:block;max-width:1000px;padding:24px;margin:auto;min-height:100vh">
+<h2>{{state.mode==='legacy'?'旧版图文配音':'图文 / 动态视频 · 共享配音编辑'}}</h2>
+<TtsRebuildButton :editor="state.editor" :busy="state.busy" @rebuild="call('rebuild')"/>
+<TtsEditorFeedback :editor="state.editor" project-id="fixture" @adopted="call('adopted')"/>
+<article class="tts-segment-card" style="margin-top:20px;display:block">
+<TtsSentenceControls :item="state.item" :editor="state.editor" :busy="state.busy" :opened="state.opened" :reading="state.reading" :subtitle-sync="state.checked" :pause="state.pause" @toggle="state.opened=!state.opened" @reading="state.reading=$event" @subtitle-sync="state.checked=$event" @save-subtitle="call('save-subtitle')" @reset="call('reset')" @boundary="call('boundary',$event)" @pause="state.pause=$event" @save-pause="call('save-pause')" @preview="call('preview')"/>
+</article></main>`}).mount('#app')
+</script></html>

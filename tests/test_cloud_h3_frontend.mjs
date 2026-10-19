@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import {test} from 'node:test'
 import {createRequire} from 'node:module'
 import {h3MaximumDimensions,fitsH3Dimensions} from '../frontend/src/cloudH3Limits.js'
+import {planningMaximum,planningPreferences,splitMaximum} from '../frontend/src/shotPlanningLimit.js'
 const require=createRequire(new URL('../frontend/package.json',import.meta.url))
 const {parse,compileScript}=require('@vue/compiler-sfc')
 const {ref,computed,watch,reactive}=require('vue')
@@ -171,13 +172,21 @@ test('only per-shot generation settings remain, with no hidden batch draft block
  assert.ok(!source.includes('batchOptionDraft'))
 })
 
-test('cluster project planning payload and both creation screens use the fourteen-second ceiling',()=>{
+test('planning limit is configurable while actual cluster splitting retains the fourteen-second ceiling',()=>{
  const read=name=>readFileSync(new URL('../frontend/src/'+name,import.meta.url),'utf8')
- assert.ok(read('useWorkspace.js').includes("form.video_generation_backend === 'cloud_h3' ? 14 : form.dynamic_max_shot_duration"))
+ assert.ok(read('useWorkspace.js').includes('planningPreferences(form)'))
+ const custom={video_generation_backend:'cloud_h3',dynamic_max_shot_duration:30,dynamic_cluster_duration_recommended:false}
+ assert.equal(planningMaximum(custom),30)
+ assert.equal(planningMaximum({...custom,dynamic_cluster_duration_recommended:true}),14)
+ assert.equal(planningPreferences(custom).dynamic_max_shot_duration,30)
+ assert.equal(splitMaximum({video_generation_options:{backend:'cloud_h3'}},custom),14)
+ assert.equal(splitMaximum({video_generation_options:{backend:'api'}},custom),30)
  for(const name of ['App.vue','Studio.vue']){
-  assert.ok(read(name).includes('集群 H3 · 请求最长 14 秒'))
-  assert.ok(read(name).includes('集群 H3 按 14 秒拆分'))
-  assert.ok(!read(name).includes('集群 H3 按 15 秒拆分'))
+  assert.ok(read(name).includes('<ShotPlanningLimit'))
+  assert.ok(read(name).includes('v-model:recommended="form.dynamic_cluster_duration_recommended"'))
  }
- assert.ok(read('components/VideoStudio.vue').includes("optionsFor(shot).backend==='cloud_h3'?14:"))
+ assert.ok(read('components/VideoStudio.vue').includes('splitMaximum('))
+ const limits=read('components/ShotPlanningLimit.vue')
+ assert.ok(limits.includes(':disabled="locked"'))
+ assert.ok(limits.includes('采用集群推荐上限：14 秒'))
 })

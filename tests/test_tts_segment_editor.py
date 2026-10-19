@@ -3,6 +3,7 @@ import tempfile
 import time
 import unittest
 import wave
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -29,6 +30,14 @@ def write_silent_wav(path: Path, duration: float, sample_rate: int = 16000) -> N
 
 
 class TtsSegmentEditorTest(unittest.TestCase):
+    def setUp(self):
+        # Commits now also publish the final narration copy for every mode.
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch('backend.app.tts_editor.store.update'))
+        jobs = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(patch('backend.app.tts_editor.JOBS_DIR', Path(jobs)))
+
     def test_hidden_cues_remain_in_full_timeline_only(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -354,7 +363,9 @@ class TtsSegmentEditorTest(unittest.TestCase):
                 ["甲乙丙丁戊", "己庚辛"],
             )
             entries = _srt_entries(other / "最终字幕.srt")
-            self.assertEqual([row["text"] for row in entries], ["甲乙丙丁戊", "己庚辛"])
+            self.assertEqual([row["text"] for row in entries], ["甲乙", "丙丁戊", "己庚辛"])
+            self.assertEqual(entries[1]['end'], .8)
+            self.assertEqual(entries[2]['start'], 1)
 
 
 if __name__ == "__main__":

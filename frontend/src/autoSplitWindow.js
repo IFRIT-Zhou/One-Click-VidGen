@@ -5,4 +5,4 @@ export function autoSplitWindow(shots, selected, neighbors=false){
  if(neighbors&&last<shots.length&&shots[last].kind==='video')last++
  return shots.slice(first,last).map((shot,offset)=>({shot,index:first+offset}))
 }
-export function needsAutoSplit(shot){return shot?.kind==='video'&&Math.ceil(Number(shot.duration)||0)>14}
+export function needsAutoSplit(shot, maximum=14){return shot?.kind==='video'&&Math.ceil(Number(shot.duration)||0)>maximum}

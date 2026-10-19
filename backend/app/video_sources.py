@@ -52,7 +52,9 @@ def source_project(user_id, job_id, *, audio_task=False):
     if job.status != 'completed' and not ready_audio:
         raise HTTPException(409, '当前仅支持导入已完成的项目')
     try:
-        root = editor.output_dir(job_id, int(user_id))
+        # A rendered dynamic output is not the editable narration workspace.
+        from .tts_editor import tts_editor
+        root = tts_editor._project_dir(job_id, int(user_id))
     except FileNotFoundError as exc:
         raise HTTPException(409, '来源项目输出目录不存在') from exc
     if not (root / 'other' / '最终字幕.srt').is_file() or not (root / 'input' / '配音.wav').is_file():

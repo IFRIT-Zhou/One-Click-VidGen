@@ -87,7 +87,7 @@ def normalize_shots(raw, scenes, reference_ids=(), *, max_duration=15):
         duration = round(end - start, 3)
         warning = ''
         if kind == 'video' and generation_duration(duration) > max_duration:
-            warning = f'本镜超过当前通道的 {max_duration} 秒上限，请重新规划或沿字幕边界拆分后再生成；配音与字幕会保留。'
+            warning = f'本镜超过本次规划的 {max_duration} 秒上限；请检查是否需要拆分，或使用支持长镜头的生成通道。'
         refs = row.get('reference_ids', [])
         if not isinstance(refs, list) or len(refs) > 8 or any(not isinstance(r, str) for r in refs) or len(set(refs)) != len(refs) or any(r not in reference_ids for r in refs):
             raise ValueError('参考素材选择无效，最多 8 张，另预留 1 张核心分镜图')
@@ -103,6 +103,16 @@ def normalize_shots(raw, scenes, reference_ids=(), *, max_duration=15):
             raise ValueError('旧设计资料无效')
         clean['previous_designs'] = [design_snapshot(item) for item in history[-6:]]
         repair = row.get('duration_repair')
+        if row.get('split_assignment') is not None:
+            from .video_split_agent import ASSIGNMENT_FIELDS
+            assignment = row['split_assignment']
+            if not isinstance(assignment, dict) or any(not isinstance(assignment.get(key), str) or len(assignment[key]) > 4000 for key in ASSIGNMENT_FIELDS):
+                raise ValueError('子镜分工资料格式无效')
+            clean['split_assignment'] = {key: assignment[key] for key in ASSIGNMENT_FIELDS}
+            parents = assignment.get('source_parent_ids', [])
+            if not isinstance(parents, list) or len(parents) > 3 or any(not isinstance(v, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', v) for v in parents):
+                raise ValueError('子镜来源资料无效')
+            clean['split_assignment']['source_parent_ids'] = parents[:]
         if repair is not None:
             if not isinstance(repair, dict) or repair.get('method') not in {
                     'semantic', 'boundary_fallback', 'single_subtitle_static'}:
@@ -296,13 +306,15 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         medical_context = {'video_direction': {'dynamic_text_mode': normalize_text_mode(parameters.get('dynamic_text_mode'))}}
         agent0_options = ({'agent0_prompt_system': AGENT0_SYSTEM_PROMPT + medical_contract(medical_context, 'context')}
                           if is_medical(medical_context) else {})
-        context = create_story_context('\n'.join(s['text'] for s in scenes),
+        context = create_story_context(parameters.get('_final_narration_script') or '\n'.join(s['text'] for s in scenes),
                                        content_mode=parameters.get('content_mode', 'general'),
                                        global_character_prompt=characters, world_prompt=world, require_ai_success=True,
                                        director_strategy=parameters.get('director_strategy', 'stable'), speech_attribution=True,
                                        **agent0_options)
     context['dynamic_max_shot_duration'] = max_duration
+    context['final_narration_script'] = parameters.get('_final_narration_script') or '\n'.join(s['text'] for s in scenes)
     context['video_generation_backend'] = parameters.get('video_generation_backend') or 'api'
+    context['dynamic_cluster_duration_recommended'] = parameters.get('dynamic_cluster_duration_recommended', True)
     context['video_direction'] = {
         'director_revision': VIDEO_DIRECTOR_REVISION,
         'director_strategy': parameters.get('director_strategy', 'stable'),
@@ -353,7 +365,7 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
             progress('已复核并恢复保存的完整提示词；标题排版差异不再阻断，无需重新调用 Agent。')
             return context, recovered
     arrangement = {key: parameters[key] for key in (
-        'director_strategy', 'video_orientation', 'dynamic_max_shot_duration', 'video_generation_backend') if key in parameters}
+        'director_strategy', 'video_orientation', 'dynamic_max_shot_duration', 'dynamic_cluster_duration_recommended', 'video_generation_backend') if key in parameters}
     arrangement['narration_groups'] = parameters.get('_narration_groups', [])
     if arrangement['narration_groups']:
         progress(f'已读取 {len(arrangement["narration_groups"])} 段配音作为语义参考，不强制按配音段切镜；画面按全文语义划分，时长以字幕时间轴为准。')

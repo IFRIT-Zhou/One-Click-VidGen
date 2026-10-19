@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>项目图像渠道回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive,ref} from 'vue/dist/vue.esm-bundler.js'
+import ProjectImageRoute from '../src/components/ProjectImageRoute.vue'
+import '../src/style.css'
+const state=reactive({project:{id:'p',revision:3,status:'image_review',settings:{ratio:'16:9'},shots:[{id:'done',image:'keep.jpg'}],creation_parameters:{use_cloud_image_pool:true,method:'ican',size:'2560x1440',image_resolution:'2k'}},pending:null,disabled:false,fail:false,calls:[]})
+const editor=ref(null)
+async function saveRoute(selection){state.calls.push({action:'save',...selection});if(state.fail)throw Error('云端登录已过期，未切换渠道');state.project={...state.project,revision:state.project.revision+1,creation_parameters:{...state.project.creation_parameters,...selection,use_cloud_image_pool:selection.channel!=='personal',method:selection.channel}};state.pending=null}
+async function retry(){try{await editor.value.ensureSaved();state.calls.push({action:'generate',method:state.project.creation_parameters.method})}catch{}}
+window.fixture={state,retry}
+createApp({components:{ProjectImageRoute},setup(){return{state,editor,saveRoute,retry}},template:`<main style="max-width:1100px;margin:20px auto;padding:16px"><h2>分镜与动态制作</h2><ProjectImageRoute ref="editor" :project="state.project" :pending="state.pending" :disabled="state.disabled" :save-route="saveRoute"/><button id="retry" @click="retry">重试出图（模拟，不提交任务）</button><section style="padding:20px 0">语言模型</section></main>`}).mount('#app')
+</script></html>

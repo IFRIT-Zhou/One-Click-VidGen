@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>字幕草稿确认回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive} from 'vue/dist/vue.esm-bundler.js'
+import TtsDraftResolutionDialog from '../src/components/TtsDraftResolutionDialog.vue'
+import '../src/style.css'
+const state=reactive({open:false,items:[{index:7,saved:'遇到酸性食物，铝元素会渗透到食物里。',draft:'遇到酸性食物，铝元素会渗透到食物里（请结合实际使用条件理解）。'}],choices:[]})
+window.fixture=state
+createApp({components:{TtsDraftResolutionDialog},setup(){return {state,resolve(value){state.choices.push(value);state.open=false}}},template:`<main style="padding:40px"><button id="open" @click="state.open=true">重新合成完整配音</button><TtsDraftResolutionDialog v-if="state.open" :items="state.items" @close="state.open=false" @resolve="resolve"/></main>`}).mount('#app')
+</script></html>

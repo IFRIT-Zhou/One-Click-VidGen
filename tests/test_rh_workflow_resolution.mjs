@@ -18,4 +18,3 @@ test('invalid input does not silently overwrite advanced settings',()=>{
  assert.throws(()=>updateResolution('[]','megapixels',0))
  assert.throws(()=>updateResolution('[]','megapixels',NaN))
 })
-

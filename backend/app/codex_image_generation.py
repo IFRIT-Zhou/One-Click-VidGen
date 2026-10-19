@@ -113,11 +113,14 @@ def ledger(record):
 
 def target_state(path, record, shot):
     """Relevant source content only: unrelated shot results must not invalidate this request."""
+    previous = bridge.studio.image_continuity.previous_shot(record, shot)
     return bridge.digest({'timeline': bridge.timeline_token(record, path),
         'shot': {k: shot.get(k) for k in ('image_prompt', 'reference_ids', 'redraw_selection',
             'scene_reference_id', 'scene_reference_disabled', 'image', 'image_version')},
         'settings': record.get('settings'), 'generation': record.get('creation_parameters'),
-        'scene': bridge.studio._scene_asset(record, shot)})
+        'scene': bridge.studio._scene_asset(record, shot),
+        'previous_image': {k: previous.get(k) for k in ('id', 'image', 'image_version', 'image_status', 'image_task')}
+                          if previous else None})
 
 
 def context(path, record, data, user, commit):
@@ -189,6 +192,11 @@ def reference_inputs(path, record, shot, *, use_current_image=None, use_scene_re
     try:
         prompt = bridge.studio._bind_material_numbers(record, shot, shot.get('image_prompt', ''))
         prompt, refs, asset = bridge.studio._image_inputs(path, record, shot, prompt, references=refs, use_scene=scene)
+        previous = bridge.studio.image_continuity.previous_shot(record, shot, prompt)
+        if previous:
+            previous_path = bridge.studio.image_continuity.previous_image_path(path, record, shot, prompt)
+            mapping_by_path.setdefault(previous_path, {'kind': 'previous_shot', 'id': previous['id'],
+                'url': f"/api/codex-bridge/projects/{record['id']}/shots/{previous['id']}/image"})
     except ValueError as exc:
         fail('INVALID_REFERENCES', str(exc), 422)
     mapping = []

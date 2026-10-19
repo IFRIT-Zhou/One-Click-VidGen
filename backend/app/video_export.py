@@ -204,9 +204,11 @@ def _render(path, record):
     use_video_audio = bool((record.get('export_settings') or {}).get('use_video_audio', True))
     layout = presentation(record)
     base_vf = frame_filter(layout)
+    from .final_narration import visual_playback_range
+    narration_duration = probe_media_duration(_asset(path, record['audio']))
     for index, shot in enumerate(record['shots'], 1):
         source = _source(path, shot)
-        duration = float(shot['end']) - float(shot['start'])
+        duration = visual_playback_range(record['shots'], index-1, narration_duration)['duration']
         clip = work / f'{index:04d}.mp4'
         command = [ffmpeg_binary(), '-y']
         if shot['kind'] == 'static':
@@ -269,7 +271,7 @@ def _render(path, record):
           '-crf', '18', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', str(subtitled)], '字幕版合成')
     shutil.copy2(audio, output_root / '配音.wav')
     (output_root / '动态分镜方案.json').write_text(json.dumps(record['shots'], ensure_ascii=False, indent=2), encoding='utf-8')
-    expected = float(record['scenes'][-1]['end'])
+    expected = narration_duration
     actual = probe_media_duration(raw)
     if abs(actual - expected) > max(1.0, expected * .01):
         raise RuntimeError(f'成片时长校验失败：预期 {expected:.2f} 秒，实际 {actual:.2f} 秒')

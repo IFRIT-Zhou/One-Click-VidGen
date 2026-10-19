@@ -34,18 +34,23 @@ class DurationLimitTests(unittest.TestCase):
     def test_request_schema_accepts_frontend_fourteen_second_cluster_limit(self):
         from pydantic import TypeAdapter, ValidationError
         from backend.app.main import GenerateRequest
-        adapter = TypeAdapter(GenerateRequest.model_fields['dynamic_max_shot_duration'].annotation)
+        field = GenerateRequest.model_fields['dynamic_max_shot_duration']
+        adapter = TypeAdapter(field.rebuild_annotation())
         self.assertEqual(adapter.validate_python(14), 14)
         for retained in (10, 15, 30):
             self.assertEqual(adapter.validate_python(retained), retained)
-        with self.assertRaises(ValidationError):
-            adapter.validate_python(16)
+        for custom in (16, 28, 60):
+            self.assertEqual(adapter.validate_python(custom), custom)
+        for invalid in (3, 0, 14.5, True):
+            with self.assertRaises(ValidationError):
+                adapter.validate_python(invalid)
+        self.assertEqual(field.default, 14)
 
     def test_cloud_limit_overrides_old_thirty_second_preference(self):
         self.assertEqual(max_video_duration(CLOUD), 14)
         self.assertEqual(max_video_duration({'dynamic_max_shot_duration': 30}), 30)
         self.assertEqual(max_video_duration({'dynamic_max_shot_duration': 10}), 10)
-        self.assertEqual(max_video_duration({}), 15)
+        self.assertEqual(max_video_duration({}), 14)
 
     def test_request_ceiling_is_validated_without_shortening_audio(self):
         self.assertEqual(validate_video_duration(9.999, CLOUD), 10)

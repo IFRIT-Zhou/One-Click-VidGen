@@ -249,8 +249,12 @@ export const api = {
   saveTtsPause: (id, leftIndex, seconds) => requestJSON(`/api/jobs/${id}/tts-editor/pause`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ left_index: leftIndex, seconds }),
   }),
-  rebuildTtsAudio: (id, pauses) => requestJSON(`/api/jobs/${id}/tts-editor/rebuild-audio`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pauses }),
+  rebuildTtsAudio: (id, pauses, subtitleTextOverrides = {}, expectedRevision = null, subtitleOnlyOverrides = {}) => requestJSON(`/api/jobs/${id}/tts-editor/rebuild-audio`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pauses, subtitle_text_overrides: subtitleTextOverrides, expected_revision: expectedRevision, subtitle_only_overrides: subtitleOnlyOverrides }),
+  }),
+  saveTtsSubtitleOnly: (id, updates, expectedRevision = null) => requestJSON(`/api/jobs/${id}/tts-editor/subtitle-only`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates, expected_revision: expectedRevision }),
   }),
   undoTtsEdit: (id) => requestJSON(`/api/jobs/${id}/tts-editor/undo`, { method: 'POST' }),
   countTtsTokens: (id, texts) => requestJSON(`/api/jobs/${id}/tts-editor/token-count`, {
@@ -258,6 +262,9 @@ export const api = {
   }),
   resegmentTts: (id, payload) => requestJSON(`/api/jobs/${id}/tts-editor/resegment`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  suggestTtsBoundaries: (id, texts) => requestJSON(`/api/jobs/${id}/tts-editor/suggest-boundaries`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts }),
   }),
   renderVisualEditor: (id, payload) => requestJSON(`/api/jobs/${id}/visual-editor/render`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typeof payload === 'string' ? { mode: payload } : payload),

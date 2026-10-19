@@ -48,6 +48,31 @@ class ExportResolutionTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
 class ExportDurationTests(unittest.TestCase):
+    def test_final_audio_edit_trims_slows_and_keeps_sentence_pause(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, duration in [('long',2),('short',.8)]:
+                subprocess.run([export.ffmpeg_binary(),'-y','-f','lavfi','-i',
+                                f'color=c=green:s=160x90:r=30:d={duration}',
+                                '-c:v','libx264','-preset','ultrafast',str(root/f'{name}.mp4')],
+                               check=True,capture_output=True)
+            with wave.open(str(root/'audio.wav'),'wb') as audio:
+                audio.setparams((1,2,16000,0,'NONE','not compressed'))
+                audio.writeframes(b'\0\0'*49600)  # Final narration: 3.1 seconds.
+            (root/'subtitles.srt').write_text('1\n00:00:00,000 --> 00:00:01,000\nFirst\n\n2\n00:00:01,500 --> 00:00:03,100\nNext\n',encoding='utf-8')
+            record=dict(settings=dict(name='trim-slow-pause',ratio='16:9'),audio='audio.wav',subtitles='subtitles.srt',
+                        scenes=[dict(end=1),dict(end=3.1)], shots=[
+                            dict(id='first',kind='video',video='long.mp4',video_status='completed',start=0,end=1),
+                            dict(id='next',kind='video',video='short.mp4',video_status='completed',start=1.5,end=3.1)])
+            layout=export.presentation(record)
+            layout.update(width=160,height=90)
+            with patch.object(export,'PROJECT_ROOT',root),patch.object(export,'presentation',return_value=layout):
+                _,raw,subtitled=export._render(root,record)
+            for name,duration in [('0001.mp4',1.5),('0002.mp4',1.6)]:
+                self.assertAlmostEqual(export._video_duration(root/'export_work'/name),duration,delta=.07)
+            for output in (raw,subtitled):
+                self.assertAlmostEqual(export.probe_media_duration(output),3.1,delta=.1)
+
     def test_packet_duration_fallback_ignores_audio(self):
         responses = [dict(streams=[{}]), dict(packets=[dict(pts_time='2', duration_time='.5'),
                                                       dict(pts_time='2.5', duration_time='.5')])]

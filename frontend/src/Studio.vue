@@ -49,7 +49,7 @@
         </div></header>
    <div v-if="studioError" class="studio-notice error" role="alert">{{studioError}}<button @click="studioError=''">×</button></div>
    <div v-if="!health.ok" class="studio-notice">尚未连接本地后端，请通过 Launcher 启动 OCV。<button :disabled="studioBusy" @click="reconnectStudio">重新连接</button></div>
-   <VideoStudio v-if="studioPage==='videos'" @new-project="newProject('dynamic')" @duplicate-config="newProject('dynamic',$event)" @edit-config="newProject('dynamic',$event)" @edit-audio="openDynamicAudio($event)" />
+   <VideoStudio v-if="studioPage==='videos'" :pending-image-route="pendingVideoImageRoute" @project-change="activeVideoProjectId=$event" @image-route-applied="imageRouteApplied" @new-project="newProject('dynamic')" @duplicate-config="newProject('dynamic',$event)" @edit-config="newProject('dynamic',$event)" @edit-audio="openDynamicAudio($event)" />
    <ImageStudio v-else-if="studioPage==='images'" />
    <ComfyUIWorkbench v-else-if="studioPage==='comfyui'" />
    <section v-else-if="studioPage==='home'" class="content home">
@@ -216,7 +216,7 @@
             {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
           </button>
         </div>
-        <div v-show="serviceTab==='images'" id="service-images"><ImageProfileSelector :form="form" manage /></div>
+        <div v-show="serviceTab==='images'" id="service-images"><ImageProfileSelector :form="form" manage @saved="serviceImageProfileSaved" /></div>
         <div v-show="serviceTab==='video'" id="service-video"><VideoModelSettings /></div>
         <div v-show="serviceTab==='concurrency'" id="service-concurrency" class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
             <div class="image-concurrency-summary">
@@ -539,11 +539,11 @@
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
+     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'||!ttsEditor.available||!ttsEditor.segments.length||!studioAudio||['queued','running'].includes(studioJob?.status)" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
      <button v-if="codexBridgeAvailable && studioJob?.request?.dynamic_video && guidedStage==='audio_review' && !editingDynamicAudio" :disabled="studioBusy||guidedSubtitleSaving||ttsEditor.task?.status==='running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
-     <button class="ghost-btn" :disabled="ttsBoundaryBusy||ttsEditor.task?.status==='running'||!ttsEditor.segments.length" @click="rebuildTtsAudio">{{ttsBoundaryBusy?'正在处理配音…':'重新合成完整配音'}}</button>
+     <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
      </div>
-     <p class="muted">调整句末“额外停顿”后，点击重新合成即可试听整段；复用已有配音，不重新调用 TTS。</p>
+
      <div class="studio-audio-player"><audio v-if="studioAudio" :key="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
      <div class="studio-audio-layout"><aside class="studio-sentence-list"><div class="list-heading">全部句子 <span>{{ttsEditor.segments.length}} 句</span></div><div v-for="segment in ttsEditor.segments" :key="segment.index" :class="{selected:studioSentence===segment.index}"><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="segment.index" :aria-label="'选中第'+segment.index+'句'"/><button @click="studioSentence=segment.index"><small>{{segment.index}}</small><span>{{segment.text}}</span><small>{{Number(segment.duration).toFixed(1)}}s</small></button></div></aside><div class="studio-sentence-detail"><section class="tts-segment-editor">
                 <div class="visual-timing-head">
@@ -565,9 +565,7 @@
                 <div v-if="ttsEditorLoading" class="timing-unavailable">正在读取逐句配音…</div>
                 <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
                 <template v-else>
-                  <div v-if="ttsEditor.task?.message" class="visual-task-message" :class="ttsEditor.task?.status">{{ ttsEditor.task.message }}</div>
-                  <div v-if="ttsEditor.task?.poll_error" class="visual-task-message failed" role="status">{{ ttsEditor.task.poll_error }}</div>
-                  <TtsPendingRecovery :project-id="visualEditorProjectId" :task-status="ttsEditor.task?.status" @adopted="loadTtsEditor" />
+                  <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
 <button class="studio-refine-settings" @click="studioDrawer='重配参数'">重配参数 · 情绪、语速与音色 →</button>
                   <div v-if="ttsEditor.structural_edit_available === false" class="timing-unavailable">{{ ttsEditor.structural_edit_message }}</div>
                   <div class="tts-segment-grid">
@@ -586,7 +584,8 @@
                           <strong>第 {{ item.index }} 句</strong>
                           <span>{{ Number(item.duration || 0).toFixed(2) }} 秒</span>
                         </div>
-                        <span v-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
+                        <span v-if="item.subtitle_independent" class="tts-pronunciation-badge" title="字幕已独立保存，原配音不变">独立字幕</span>
+                        <span v-else-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
                         <label class="tts-segment-select">
                           <span>选中</span>
                           <input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" />
@@ -610,67 +609,26 @@
                           @input="seekTtsSegmentAudio(item, $event)"
                         />
                       </div>
-                      <div class="tts-pronunciation-tools">
-                        <button
-                          class="tts-pronunciation-toggle tts-pronunciation-main-toggle"
-                          type="button"
-                          :disabled="ttsEditor.task?.status === 'running'"
-                          @click="toggleTtsPronunciationEditor(item)"
-                        ><span>发音与文案修正</span><i aria-hidden="true">{{ isTtsPronunciationOpen(item.index) ? '⌃' : '⌄' }}</i></button>
-                        <template v-if="isTtsPronunciationOpen(item.index)">
-                          <div class="tts-pronunciation-editor">
-                            <label>
-                              <span>朗读文本 <small>仅修正发音时无需同步字幕</small></span>
-                              <textarea
-                                :value="ttsReadingDrafts[item.index]"
-                                rows="2"
-                                maxlength="1200"
-                                :disabled="ttsEditor.task?.status === 'running'"
-                                placeholder="例如：点击chong2绘按钮"
-                                @input="updateTtsReadingDraft(item, $event)"
-                              ></textarea>
-                            </label>
-                            <button
-                              class="ghost-btn compact-btn"
-                              type="button"
-                              :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)"
-                              @click="resetTtsReadingDraft(item)"
-                            >恢复原文</button>
-                          </div>
-                          <label class="tts-subtitle-sync-toggle" :class="{ disabled: !isTtsReadingModified(item) }">
-                            <input v-model="ttsEditor.subtitle_sync_indices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" />
-                            <span>同时修改字幕</span>
-                            <small>重配成功后自动同步并保存这句显示文字</small>
-                          </label>
-                          <small class="tts-subtitle-preview">{{ (ttsEditor.subtitle_sync_indices || []).includes(item.index) ? '重配成功后字幕将同步为：' + (ttsReadingDrafts[item.index] || item.text) : '成片字幕保持：' + item.text }}</small>
-                        </template>
-                      </div>
-                      <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">
-                        <label><span>额外停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="previewTtsBoundary(item)">试听交界</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="saveTtsPause(item)">保存停顿</button>
-                        <button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="openTtsBoundaryEditor(item, true)">调整断点</button>
-                      </div>
-                      <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running' || String(item.text || '').length < 2" @click="openTtsBoundaryEditor(item, false)">在本句内新增断点</button>
+                      <TtsSentenceControls :item="item" :editor="ttsEditor" :busy="ttsBoundaryBusy"
+                        :reading="ttsReadingDrafts[item.index]" :opened="isTtsPronunciationOpen(item.index)"
+                        :subtitle-sync="(ttsEditor.subtitle_sync_indices || []).includes(item.index)" :pause="ttsPauseDrafts[item.index]"
+                        @toggle="toggleTtsPronunciationEditor(item)" @reading="updateTtsReadingDraft(item, { target: { value: $event } })"
+                        @reset="resetTtsReadingDraft(item)" @subtitle-sync="setTtsSubtitleSync(item, $event)" @save-subtitle="saveTtsSubtitleOnly(item)"
+                        @boundary="openTtsBoundaryEditor(item, $event)" @pause="ttsPauseDrafts[item.index] = $event"
+                        @save-pause="saveTtsPause(item)" @preview="previewTtsBoundary(item)" />
                     </article>
                   </div>
-                  <div v-if="ttsBoundary.open" class="tts-boundary-editor">
-                    <div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '在本句内新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div>
-                    <label><span>在文字中点击需要断开的位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)" @keyup="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label>
-                    <label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>不再断开，合并为一句</strong></label>
-                    <div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label><label><span>后半句</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
-                    <div v-else class="tts-boundary-preview-grid"><label><span>合并后的朗读文本</span><textarea :value="ttsBoundary.leftReading + ttsBoundary.rightReading" rows="3" readonly></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
-                    <div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超过 {{ ttsBoundary.limit }} token 的片段，请重新选择断点。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundary.checking || ttsBoundaryOverLimit()" @click="submitTtsBoundary">{{ ttsBoundaryBusy ? '处理中…' : '确认并重配' }}</button></div>
-                  </div>
+                  <TtsBoundaryEditor v-if="ttsBoundary.open" :state="ttsBoundary" :project-id="visualEditorProjectId" :busy="ttsBoundaryBusy" :over-limit="ttsBoundaryOverLimit()" @close="closeTtsBoundaryEditor" @split="updateTtsBoundaryParts" @count="refreshTtsBoundaryTokenCounts" @submit="submitTtsBoundary" />
                 </template>
               </section></div></div>
     </template>
     <template v-else-if="studioTab==='画面与字幕'">
      <OperationStatus title="画面处理状态" :task="visualEditor.has_active_image_tasks?{status:'running',message:'图片正在后台处理，可切换画面查看各图状态'}:visualEditor.task" :summary="`处理中 ${visualEditor.items.filter(item=>item.task?.status==='running').length} 张`"><button type="button" @click="openLogs()">查看详细日志</button></OperationStatus>
      <div v-if="!visualEditor.items.length" class="empty">{{visualEditor.task?.message||'画面生成后，将在这里显示可编辑内容。'}}</div>
-     <ResizableShotWorkspace v-else class="studio-visual-layout" scope="illustrated-visuals"><template #sidebar><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="scene in studioSceneAssets" :key="scene.id" :class="{selected:studioSelectedImage?.id===scene.id}" @click="visualTimingSelectedId=scene.id"><img :src="scene.image_url" alt=""/><span><b>{{scene.display_name}}</b><small>参考资产 · 不占时长</small></span></button><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small></span></button></aside></template><div class="studio-shot-detail"><div class="visual-image-grid">
+     <ResizableShotWorkspace v-else class="studio-visual-layout" scope="illustrated-visuals"><template #sidebar><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="scene in studioSceneAssets" :key="scene.id" :class="{selected:studioSelectedImage?.id===scene.id}" @click="visualTimingSelectedId=scene.id"><img :src="scene.image_url" alt=""/><span><b>{{scene.display_name}}</b><small>参考资产 · 不占时长</small></span></button><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small><small v-if="item.audio_timing_adjustment?.needs_review">配音已更新 · 待核对</small></span></button></aside></template><div class="studio-shot-detail"><div class="visual-image-grid">
                 <article v-for="item in studioSelectedImage ? [studioSelectedImage] : []" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
                  <OperationStatus title="本图运行状态" :task="item.task"/>
+                 <p v-if="item.audio_timing_adjustment?.needs_review" class="notice">配音已更新：{{Number(item.audio_timing_adjustment.previous_duration).toFixed(2)}} 秒 → {{Number(item.audio_timing_adjustment.target_duration).toFixed(2)}} 秒。画面已按最终配音时间轴同步，请核对{{item.audio_timing_adjustment.text_changed?'内容与画面含义':'停留时长'}}；原图保留。</p>
                  <WorkspacePanels scope="illustrated-visuals" :log-count="studioTaskLogs.length">
                   <template #preview>
                   <div class="visual-image-actions">
@@ -1548,7 +1506,7 @@
      <p class="muted">风格库保存在当前浏览器本机，不会上传到云端。</p>
     </div>
    </template>
-   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" /><ComfyUIVideoSelector v-if="form.dynamic_video" :form="form" @open-workbench="studioDrawer='';studioPage='comfyui'" /><DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" /><div v-else class="director-strategy-row">
+   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" :authenticated="cloudSession.authenticated" /><ComfyUIVideoSelector v-if="form.dynamic_video" :form="form" @open-workbench="studioDrawer='';studioPage='comfyui'" /><DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" /><div v-else class="director-strategy-row">
                 <div class="director-strategy-copy">
                   <span>导演策略</span>
                   <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
@@ -1590,7 +1548,7 @@
                   <strong>{{ visualPacingSummary }}</strong>
                   <small class="muted">根据字幕时间戳分组；Agent 的快节奏建议不会突破最低停留时长。</small>
                 </div>
-                <label class="visual-pacing-select">
+                <label class="visual-pacing-select" style="grid-column:1 / -1">
                   <span>节奏预设</span>
                   <select v-model="form.visual_pacing_preset" @change="rememberVisualPacing">
                     <option value="auto">按作品风格自动</option>
@@ -1600,15 +1558,7 @@
                     <option value="custom">自定义</option>
                   </select>
                 </label>
-                <label v-if="form.dynamic_video" class="visual-pacing-select">
-                  <span>动态镜头规划上限</span>
-                  <span v-if="form.video_generation_backend==='cloud_h3'">集群 H3 · 请求最长 14 秒</span>
-                  <select v-else v-model.number="form.dynamic_max_shot_duration">
-                    <option :value="15">常规 · 15 秒</option>
-                    <option :value="30">长镜头 · 30 秒</option>
-                  </select>
-                  <small class="muted">上限不是目标时长。集群 H3 按 14 秒拆分；其他通道的 30 秒需模型支持。超限镜头需拆分后再生成，配音和字幕保留。</small>
-                </label>
+                <ShotPlanningLimit v-if="form.dynamic_video" v-model:max-duration="form.dynamic_max_shot_duration" v-model:recommended="form.dynamic_cluster_duration_recommended" :backend="form.video_generation_backend" />
                 <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
                   <label>
                     <span>最低停留（秒）</span>
@@ -2015,10 +1965,14 @@
           </div>
         </div>
  </div>
+  <TtsDraftResolutionDialog v-if="ttsDraftResolution.open" :items="ttsDraftResolution.items" @close="closeTtsDraftResolution" @resolve="resolveTtsDrafts" />
 </template>
 <script>
+import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
+import TtsSentenceControls from './components/TtsSentenceControls.vue'
+import TtsRebuildButton from './components/TtsRebuildButton.vue'
+import TtsDraftResolutionDialog from './components/TtsDraftResolutionDialog.vue'
 import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
-import TtsPendingRecovery from './components/TtsPendingRecovery.vue'
 import CloudImageQuality from './components/CloudImageQuality.vue'
 import { useWorkspace } from './useWorkspace'
 import { useStudio } from './useStudio'
@@ -2037,16 +1991,18 @@ import ComfyUIVideoSelector from './components/ComfyUIVideoSelector.vue'
 import VideoStudio from './components/VideoStudio.vue'
 import VideoModelSettings from './components/VideoModelSettings.vue'
 import ImageProfileSelector from './components/ImageProfileSelector.vue'
+import TtsBoundaryEditor from './components/TtsBoundaryEditor.vue'
 import SubtitleStyleEditor from './components/SubtitleStyleEditor.vue'
 import { visualPresentation } from './videoPresentation'
 import ParameterReview from './components/ParameterReview.vue'
+import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
 import SceneAssets from './components/SceneAssets.vue'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { TtsPendingRecovery, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}
@@ -2061,4 +2017,5 @@ export default { components: { TtsPendingRecovery, CloudPasswordRecovery, CloudI
 .live-studio .dynamic-create-footer .one-click-video-option{display:flex;align-items:flex-start;gap:11px;max-width:650px}.live-studio .dynamic-create-footer .one-click-video-option>input{flex:0 0 auto;margin-top:3px}.live-studio .one-click-video-option>span{display:grid;gap:4px}.live-studio .one-click-video-option b{font-size:14px}.live-studio .one-click-video-option small{margin:0;line-height:1.55}
 @media(max-width:1400px){.live-studio .setting-summaries{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:680px){.live-studio .setting-summaries{grid-template-columns:1fr}}
+.live-studio .drawer .visual-pacing-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.live-studio .drawer .visual-pacing-copy{grid-column:1/-1;display:grid;gap:6px}.live-studio .drawer .visual-pacing-copy strong{font-size:15px}.live-studio .drawer .visual-pacing-select{min-width:0;display:grid;gap:8px;align-content:start}.live-studio .drawer .visual-pacing-select select{width:100%}.live-studio .drawer .visual-pacing-custom{grid-column:1/-1}.live-studio .tts-boundary-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.live-studio .tts-boundary-row label{display:flex;align-items:center;gap:6px}.live-studio .tts-boundary-row input{width:76px}.live-studio .boundary-add{margin-left:auto}.live-studio button.primary-btn:disabled{background:#344554;color:#93a3af;opacity:.6;cursor:not-allowed;box-shadow:none}@media(max-width:540px){.live-studio .drawer .visual-pacing-panel{grid-template-columns:1fr}.live-studio .boundary-add{margin-left:0}}
 </style>

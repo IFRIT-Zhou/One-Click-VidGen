@@ -92,6 +92,35 @@ class H3ReviewRoutingTests(unittest.TestCase):
         self.assertEqual(self.record['status'], 'generation_ready')
         self.assertEqual(self.record['creation_parameters']['video_generation_backend'], 'cloud_h3')
 
+    def test_explicit_planning_optout_allows_review_but_not_cluster_submission(self):
+        self.set_scenes([10, 10])
+        self.save_cloud_options()
+        self.record['creation_parameters'].update(video_generation_backend='cloud_h3',
+            dynamic_max_shot_duration=30, dynamic_cluster_duration_recommended=False)
+        studio.review(self.record['id'], studio.Review(revision=self.record['revision']), None)
+        self.assertEqual(self.record['shots'][0]['generation_duration'], 20)
+        self.assertEqual(len(studio._project_video_duration_blockers(self.record, self.record['shots'])), 1)
+        before = copy.deepcopy(self.record)
+        with patch('backend.app.cloud_video.handles', return_value=False):
+            with self.assertRaises(HTTPException) as failure:
+                video._generate_for_user(self.record['id'], video.GenerateClips(revision=self.record['revision'], shot_ids=['shot']), 1)
+        self.assertIn('14 秒', failure.exception.detail)
+        self.assertEqual(self.record, before)
+        from backend.app.cloud_video import validate_duration
+        with self.assertRaises(ValueError):
+            validate_duration(self.record['shots'][0], {'max_duration_seconds': 30})
+
+    def test_planning_preference_change_preserves_existing_paid_assets(self):
+        self.record['shots'][0].update(image='paid.png', video='paid.mp4', video_status='completed')
+        before = copy.deepcopy(self.record['shots'])
+        result = studio.edit_project_settings(self.record['id'], studio.ProjectSettingsEdit(
+            revision=self.record['revision'], name='保留素材', video_generation_backend='cloud_h3',
+            dynamic_text_mode=studio.normalize_text_mode(self.record['creation_parameters'].get('dynamic_text_mode')),
+            parameters={'dynamic_max_shot_duration': 28, 'dynamic_cluster_duration_recommended': False}), None)
+        self.assertEqual(result['shots'], before)
+        self.assertEqual(result['creation_parameters']['dynamic_max_shot_duration'], 28)
+        self.assertFalse(result['creation_parameters']['dynamic_cluster_duration_recommended'])
+
     def test_split_copies_cloud_configuration_to_both_child_shots(self):
         options = self.save_cloud_options()
         original_scenes = copy.deepcopy(self.record['scenes'])
@@ -138,6 +167,41 @@ class H3ReviewRoutingTests(unittest.TestCase):
         check = self.record['duration_check']
         self.assertFalse(check['passed'])
         self.assertEqual([r['index'] for r in check['blockers']], [2])
+        self.assertIn('第 02 镜（16 秒）', check['blockers'][0]['message'])
+
+    def test_review_lists_every_overlimit_shot_with_ordinal_and_duration(self):
+        self.set_scenes([6.3, 3.7, 5.9, 4, 14.53, 5, 14.65])
+        self.record['creation_parameters']['video_generation_backend'] = 'cloud_h3'
+        self.record['shots'] = normalize_shots([dict(id=f'shot-{index}', kind='video',
+            slide_ids=[scene['slide_id']], intent='表达本段过程', image_prompt='核心场景',
+            action='依次变化', video_prompt='参考图1展现过程')
+            for index, scene in enumerate(self.record['scenes'])], self.record['scenes'])
+        before = copy.deepcopy(self.record)
+        with self.assertRaises(HTTPException) as failure:
+            studio.review(self.record['id'], studio.Review(revision=self.record['revision']), None)
+        message = failure.exception.detail
+        self.assertIn('第 05 镜（14.53 秒）', message)
+        self.assertIn('第 07 镜（14.65 秒）', message)
+        self.assertEqual(message.count('请求需要 15 秒'), 2)
+        self.assertEqual(message.count('14 秒上限'), 2)
+        self.assertNotIn('第 01 镜', message)
+        self.assertEqual(self.record, before)
+        self.assertFalse(self.saved)
+        with self.assertRaisesRegex(ValueError, '第 07 镜'):
+            studio._validate_project_video_durations(self.record, [self.record['shots'][6]])
+
+    def test_duration_report_respects_saved_route_and_static_shots(self):
+        self.record['creation_parameters']['video_generation_backend'] = 'cloud_h3'
+        shots = [dict(id='static', kind='static', duration=20),
+                 dict(id='api', kind='video', duration=20, generation_duration=20,
+                      video_generation_options={'backend':'api'}),
+                 dict(id='cloud', kind='video', duration=14.001, generation_duration=15)]
+        self.record['shots'] = shots
+        blockers = studio._project_video_duration_blockers(self.record, shots)
+        self.assertEqual([row['index'] for row in blockers], [3])
+        self.assertIn('14.001 秒', blockers[0]['message'])
+        shots[2].update(duration=14, generation_duration=14)
+        self.assertEqual(studio._project_video_duration_blockers(self.record, shots), [])
 
     def _check_confirmation_preserves_media(self):
         options = self.save_cloud_options()

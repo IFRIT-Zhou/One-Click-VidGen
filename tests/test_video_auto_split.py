@@ -44,6 +44,50 @@ def planners(stack):
 
 
 class AutoSplitTests(unittest.TestCase):
+    def test_long_static_can_become_dynamic_then_split_without_regenerating_audio_or_images(self):
+        record=fixture();record['status']='image_review'
+        target=record['shots'][1]
+        target.update(kind='static',generation_duration=None,action='',video_prompt='')
+        target.pop('video',None)
+        before=copy.deepcopy(record)
+        with ExitStack() as stack:
+            planners(stack)
+            stack.enter_context(patch.object(studio,'require_user',return_value={'id':1}))
+            stack.enter_context(patch.object(studio,'directory',return_value=Path('project')))
+            stack.enter_context(patch.object(studio,'read',side_effect=lambda p:copy.deepcopy(record)))
+            def persist(path,value):
+                record.clear();record.update(copy.deepcopy(value))
+            stack.enter_context(patch.object(studio,'save',side_effect=persist))
+            stack.enter_context(patch.object(studio,'project_language_scope',return_value=nullcontext()))
+            render=stack.enter_context(patch('module4_video_render._render_poster_with_retry'))
+            edited=studio.edit_shot_motion('project','target',studio.ShotMotionEdit(revision=1,kind='video'),None)
+            self.assertEqual(edited['shots'][1]['kind'],'video')
+            self.assertEqual(edited['shots'][1]['image'],before['shots'][1]['image'])
+            self.assertIn('14',edited['shots'][1]['warning'])
+            # Saving a draft is allowed; sending the unsplit draft is still not.
+            with self.assertRaisesRegex(ValueError,'14 秒'):
+                validate_video_duration(edited['shots'][1]['duration'],{'video_generation_backend':'cloud_h3'})
+            result=studio.auto_split_shot('project','target',studio.AutoSplit(revision=edited['revision']),None)
+            render.assert_not_called()
+        children=[s for s in result['shots'] if s['id'] in result['auto_split_result']['shot_ids']]
+        self.assertGreater(len(children),1)
+        self.assertTrue(all(s['kind']=='video' and s['generation_duration']<=14 for s in children))
+        self.assertTrue(all(s['image_status']=='pending' and not s.get('image') for s in children))
+        self.assertEqual(result['scenes'],before['scenes']);self.assertEqual(result['audio'],before['audio'])
+        self.assertEqual(result['shots'][0],before['shots'][0]);self.assertEqual(result['shots'][-1],before['shots'][-1])
+
+    def test_long_motion_edit_warns_only_for_real_cluster_route_and_static_clears_warning(self):
+        for backend in ['cloud_h3','api','comfyui']:
+            record=fixture();record['status']='image_review'
+            shot=record['shots'][1];shot.update(kind='static',duration=17.243,generation_duration=None,action='',video_prompt='')
+            shot['video_generation_options']={'backend':backend}
+            with self.subTest(backend=backend),patch.object(studio,'require_user',return_value={'id':1}),patch.object(studio,'directory',return_value=Path('project')),patch.object(studio,'read',return_value=record),patch.object(studio,'save'):
+                result=studio.edit_shot_motion('project','target',studio.ShotMotionEdit(revision=1,kind='video'),None)
+                self.assertEqual(result['shots'][1]['generation_duration'],18)
+                self.assertEqual(bool(result['shots'][1]['warning']),backend=='cloud_h3')
+                result=studio.edit_shot_motion('project','target',studio.ShotMotionEdit(revision=result['revision'],kind='static'),None)
+                self.assertEqual(result['shots'][1]['warning'],'')
+
     def test_request_limit_14_and_rounding(self):
         self.assertEqual(validate_video_duration(13.999,{'video_generation_backend':'cloud_h3'}),14)
         self.assertEqual(validate_video_duration(14,{'video_generation_backend':'cloud_h3'}),14)

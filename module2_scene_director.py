@@ -85,7 +85,7 @@ def configure_cuda12_runtime() -> list[Path]:
     return library_dirs
 
 
-def transcribe_audio(audio_path: Path, *, word_timestamps: bool = False) -> tuple[list[Any], Any, str]:
+def transcribe_audio(audio_path: Path, *, word_timestamps: bool = False, model_cache=None) -> tuple[list[Any], Any, str]:
     model_size = os.getenv("ASR_MODEL", "base")
     language = os.getenv("ASR_LANGUAGE", "zh") or None
     requested_device = os.getenv("ASR_DEVICE", "auto").lower().strip()
@@ -131,8 +131,13 @@ def transcribe_audio(audio_path: Path, *, word_timestamps: bool = False) -> tupl
                 ) from exc
 
     def run(device: str, compute_type: str) -> tuple[list[Any], Any]:
-        print(f"正在初始化 Whisper [{model_size}] 模型驱动 ({device.upper()} / {compute_type})...")
-        model = WhisperModel(model_source, device=device, compute_type=compute_type)
+        key = (str(model_source), device, compute_type)
+        model = model_cache.get(key) if model_cache is not None else None
+        if model is None:
+            print(f"正在初始化 Whisper [{model_size}] 模型驱动 ({device.upper()} / {compute_type})...")
+            model = WhisperModel(model_source, device=device, compute_type=compute_type)
+            if model_cache is not None:
+                model_cache[key] = model
         segments, info = model.transcribe(
             str(audio_path), beam_size=5, vad_filter=True, language=language,
             word_timestamps=word_timestamps,

@@ -1,12 +1,18 @@
 <script setup>
 import {computed,ref,watch} from 'vue'
 import {resolvePlannedReferences} from '../plannedReferences.js'
-const props=defineProps({shot:{type:Object,required:true},references:{type:Array,default:()=>[]},redrawReferences:{type:Array,default:()=>[]},scene:Object,sceneEnabled:Boolean,referenceUrl:Function,imageUrl:Function})
+const props=defineProps({shot:{type:Object,required:true},references:{type:Array,default:()=>[]},redrawReferences:{type:Array,default:()=>[]},scene:Object,sceneEnabled:Boolean,referenceUrl:Function,imageUrl:Function,continuity:Object,shots:{type:Array,default:()=>[]}})
 const enlarged=ref(null)
 const failedUrls=ref(new Set())
 const materials=computed(()=>{
  const rows=resolvePlannedReferences(props.shot,props.references,props.redrawReferences,props.referenceUrl)
- if(props.sceneEnabled&&props.scene)rows.push({id:'scene:'+props.scene.id,name:props.scene.name||'场景参考',purpose:'场景参考 · 自动追加',url:props.scene.image_status==='completed'?props.imageUrl(props.scene):'',state:props.scene.image_status==='failed'?'场景参考生成失败':'场景参考待生成'})
+ if(props.sceneEnabled&&props.scene)rows.push({id:'scene:'+props.scene.id,asset:{file:props.scene.image},name:props.scene.name||'场景参考',purpose:'场景参考 · 自动追加',url:props.scene.image_status==='completed'?props.imageUrl(props.scene):'',state:props.scene.image_status==='failed'?'场景参考生成失败':'场景参考待生成'})
+ if(props.continuity){
+  const previous=props.shots.find(row=>row.id===props.continuity.shot_id)
+  const duplicate=previous?.image&&rows.find(row=>row.asset?.file===previous.image)
+  if(duplicate)duplicate.purpose+=' · 承接上一镜'
+  else rows.push({id:'previous:'+props.continuity.shot_id,name:previous?`第 ${String(props.continuity.index).padStart(2,'0')} 镜核心图`:'上一镜核心图',purpose:'承接上一镜 · 自动追加',url:previous?.image&&previous.image_status==='completed'&&!['running','queued'].includes(previous.image_task?.status)?props.imageUrl(previous):'',state:props.continuity.error||'等待上一镜核心图完成后生成本镜'})
+ }
  return rows
 })
 watch(()=>props.shot.id,()=>{enlarged.value=null;failedUrls.value=new Set()})
@@ -15,7 +21,7 @@ watch(()=>props.shot.id,()=>{enlarged.value=null;failedUrls.value=new Set()})
 <template>
  <section class="planned-references" aria-label="本镜规划参考图">
   <header><strong>本镜规划参考图</strong><small>{{materials.length?`${materials.length} 张 · 按出图提交顺序`:'纯文生图 · 未使用参考图'}}</small></header>
-  <p class="reference-help">{{materials.length?'点击图片放大核对；参考图用于约束内容，不代表最终画面。重绘时以“重绘参考素材”中的选择为准。':'本镜仅依据提示词生成，不会自动使用其他镜头或素材库中的图片。'}}</p>
+  <p class="reference-help">{{materials.length?'点击图片放大核对；参考图用于约束内容，不代表最终画面。重绘使用所选素材；提示词明确承接上一镜时，会自动追加上一镜核心图。':'本镜仅依据提示词生成，不会自动使用其他镜头或素材库中的图片。'}}</p>
   <div v-if="materials.length" class="planned-reference-grid">
    <button v-for="(row,index) in materials" :key="row.id+':'+index" type="button" :disabled="!row.url||failedUrls.has(row.url)" @click="enlarged=row">
     <img v-if="row.url&&!failedUrls.has(row.url)" :src="row.url" :alt="row.name" @error="failedUrls.add(row.url)"><span v-else class="reference-placeholder">{{failedUrls.has(row.url)?'图片加载失败，请刷新后重试':row.state}}</span>

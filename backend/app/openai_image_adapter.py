@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 import requests
 from PIL import Image
+from . import image_request_control as image_control
 
 
 def render(macro, config, session, output):
@@ -38,11 +39,13 @@ def render(macro, config, session, output):
                          for p in refs]
                 fields = {k: json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list, bool)) else str(v)
                           for k, v in payload.items()}
-                response = session.post(url, headers=headers, data=fields, files=files,
-                                        timeout=(30, config.get('timeout_seconds') or 600), allow_redirects=False)
+                response = image_control.request(lambda: session.post(
+                    url, headers=headers, data=fields, files=files,
+                    timeout=(30, config.get('timeout_seconds') or 600), allow_redirects=False))
             else:
-                response = session.post(url, headers=headers, json=payload,
-                                        timeout=(30, config.get('timeout_seconds') or 600), allow_redirects=False)
+                response = image_control.request(lambda: session.post(
+                    url, headers=headers, json=payload,
+                    timeout=(30, config.get('timeout_seconds') or 600), allow_redirects=False))
     except requests.RequestException as exc:
         raise RuntimeError('同步图像请求连接中断或超时，服务端可能已生成；请核查账单后手动重试，未自动重复提交') from exc
     if not response.ok or 300 <= response.status_code < 400:
@@ -60,7 +63,7 @@ def render(macro, config, session, output):
             if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
                 raise ValueError('无效图片 URL')
             # Never forward the API credential to an image storage host.
-            image_response = session.get(location, timeout=(30, 120))
+            image_response = image_control.request(lambda: session.get(location, timeout=(30, 120)))
             image_response.raise_for_status()
             content = image_response.content
         else:
@@ -71,6 +74,7 @@ def render(macro, config, session, output):
             buffer = io.BytesIO()
             image.convert('RGB').save(buffer, 'JPEG', quality=95)
         temporary = output.with_suffix(output.suffix + '.tmp')
+        image_control.check()
         temporary.write_bytes(buffer.getvalue())
         temporary.replace(output)
     except (KeyError, IndexError, TypeError, ValueError, OSError, requests.RequestException, Image.DecompressionBombError) as exc:

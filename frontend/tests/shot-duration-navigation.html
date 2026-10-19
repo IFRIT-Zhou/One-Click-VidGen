@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>超长镜头定位回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive,computed} from 'vue/dist/vue.esm-bundler.js'
+import VideoShotNavigator from '../src/components/VideoShotNavigator.vue'
+import {projectDurationIssues} from '../src/shotDurationIssues.js'
+import '../src/style.css'
+import '../src/studio.css'
+let start=0
+const state=reactive({selected:0,params:{video_generation_backend:'cloud_h3'},shots:[6.3,3.7,5.9,4,14.53,5,14.65,6,8].map((duration,index)=>{
+ const shot={id:'s'+index,kind:'video',duration,start,end:start+duration,intent:'本镜画面内容，保持配音字幕不变',video_status:'pending'}
+ start+=duration
+ return shot
+})})
+window.fixture=state
+createApp({components:{VideoShotNavigator},setup(){
+ const issues=computed(()=>Object.fromEntries(projectDurationIssues(state.shots,state.params).map(row=>[row.shot.id,row])))
+ return {state,issues}
+},template:`<main class="fixture"><h1>分镜与动态制作</h1><div class="fixture-workspace"><VideoShotNavigator :shots="state.shots" :selected="state.selected" :duration-issues="issues" motion :status-label="()=> '等待生成'" @select="state.selected=$event"/><article><h2>当前镜头 {{String(state.selected+1).padStart(2,'0')}}</h2><p>列表底部可直接定位需要拆分的镜头。</p></article></div></main>`}).mount('#app')
+</script>
+<style>.fixture{max-width:1100px;padding:24px;margin:auto}.fixture-workspace{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px}.fixture-workspace article{background:var(--panel);padding:24px;border-radius:12px}@media(max-width:600px){.fixture{padding:12px}.fixture-workspace{display:block}.fixture-workspace article{margin-top:16px}}</style></html>

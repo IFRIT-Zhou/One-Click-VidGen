@@ -29,7 +29,7 @@ class SpeechAlignmentTests(unittest.TestCase):
             audio = root/'input/配音.wav'
             audio.write_bytes(b'old audio')
             editor = TtsEditor()
-            def fail(*args):
+            def fail(*args, **kwargs):
                 audio.write_bytes(b'bad replacement')
                 raise RuntimeError('alignment failed')
             with patch.object(editor, '_project_dir', return_value=root), \

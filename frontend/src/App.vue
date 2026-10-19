@@ -888,6 +888,7 @@
             <section v-if="form.step_mode && guidedStage === 'audio_review'" class="guided-audio-editor">
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听与选择重配</strong></div>
+                <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
                 <button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button>
                 <button v-if="ttsEditor.structural_edit_available !== false" class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
                   {{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}
@@ -896,6 +897,7 @@
               <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
               <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前配音没有可逐句精修的素材。' }}</div>
               <template v-else>
+              <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
               <details class="guided-tts-settings">
                 <summary>本次重配参数（默认沿用当前项目）</summary>
                 <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
@@ -938,28 +940,16 @@
                   <p>{{ item.text }}</p>
                   <audio controls preload="none" :src="item.audio_url"></audio>
                   <label v-if="ttsEditor.structural_edit_available !== false"><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" /></label>
-                  <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
-                  <div v-if="isTtsPronunciationOpen(item.index)" class="guided-pronunciation-editor">
-                    <small>朗读文本只发送给配音引擎，字幕仍保留原文字。</small>
-                    <textarea :value="ttsReadingDrafts[item.index]" rows="2" maxlength="1200" :disabled="ttsEditor.task?.status === 'running'" placeholder="例如：点击chong2绘按钮" @input="updateTtsReadingDraft(item, $event)"></textarea>
-                    <button class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)" @click="resetTtsReadingDraft(item)">恢复原文</button>
-                  </div>
-                  <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">
-                    <label><span>停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label>
-                    <button class="ghost-btn compact-btn" type="button" @click="previewTtsBoundary(item)">试听</button>
-                    <button class="ghost-btn compact-btn" type="button" @click="saveTtsPause(item)">保存</button>
-                    <button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" @click="openTtsBoundaryEditor(item, true)">调整断点</button>
-                  </div>
-                  <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" @click="openTtsBoundaryEditor(item, false)">新增断点</button>
+                      <TtsSentenceControls :item="item" :editor="ttsEditor" :busy="ttsBoundaryBusy"
+                        :reading="ttsReadingDrafts[item.index]" :opened="isTtsPronunciationOpen(item.index)"
+                        :subtitle-sync="(ttsEditor.subtitle_sync_indices || []).includes(item.index)" :pause="ttsPauseDrafts[item.index]"
+                        @toggle="toggleTtsPronunciationEditor(item)" @reading="updateTtsReadingDraft(item, { target: { value: $event } })"
+                        @reset="resetTtsReadingDraft(item)" @subtitle-sync="setTtsSubtitleSync(item, $event)" @save-subtitle="saveTtsSubtitleOnly(item)"
+                        @boundary="openTtsBoundaryEditor(item, $event)" @pause="ttsPauseDrafts[item.index] = $event"
+                        @save-pause="saveTtsPause(item)" @preview="previewTtsBoundary(item)" />
                 </article>
               </div>
-              <div v-if="ttsBoundary.open" class="tts-boundary-editor">
-                <div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div>
-                <label><span>点击文字中的断开位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)" @keyup="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label>
-                <label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>合并为一句</strong></label>
-                <div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句朗读文本</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label><label><span>后半句朗读文本</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
-                <div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超出 {{ ttsBoundary.limit }} token 的片段。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundaryOverLimit()" @click="submitTtsBoundary">确认并重配</button></div>
-              </div>
+<TtsBoundaryEditor v-if="ttsBoundary.open" :state="ttsBoundary" :project-id="visualEditorProjectId" :busy="ttsBoundaryBusy" :over-limit="ttsBoundaryOverLimit()" @close="closeTtsBoundaryEditor" @split="updateTtsBoundaryParts" @count="refreshTtsBoundaryTokenCounts" @submit="submitTtsBoundary" />
               </template>
               <div class="guided-editor-head guided-subtitle-head">
                 <div><div class="sidebar-label">字幕校对</div><strong>修改文字，不改变当前时间边界</strong></div>
@@ -1104,7 +1094,7 @@
                   <strong>{{ visualPacingSummary }}</strong>
                   <small class="muted">根据字幕时间戳分组；Agent 的快节奏建议不会突破最低停留时长。</small>
                 </div>
-                <label class="visual-pacing-select">
+                <label class="visual-pacing-select" style="grid-column:1 / -1">
                   <span>节奏预设</span>
                   <select v-model="form.visual_pacing_preset" @change="rememberVisualPacing">
                     <option value="auto">按作品风格自动</option>
@@ -1114,15 +1104,7 @@
                     <option value="custom">自定义</option>
                   </select>
                 </label>
-                <label v-if="form.dynamic_video" class="visual-pacing-select">
-                  <span>动态镜头规划上限</span>
-                  <span v-if="form.video_generation_backend==='cloud_h3'">集群 H3 · 请求最长 14 秒</span>
-                  <select v-else v-model.number="form.dynamic_max_shot_duration">
-                    <option :value="15">常规 · 15 秒</option>
-                    <option :value="30">长镜头 · 30 秒</option>
-                  </select>
-                  <small class="muted">上限不是目标时长。集群 H3 按 14 秒拆分；其他通道的 30 秒需模型支持。超限镜头需拆分后再生成，配音和字幕保留。</small>
-                </label>
+                <ShotPlanningLimit v-if="form.dynamic_video" v-model:max-duration="form.dynamic_max_shot_duration" v-model:recommended="form.dynamic_cluster_duration_recommended" :backend="form.video_generation_backend" />
                 <div v-if="form.visual_pacing_preset === 'custom'" class="form-grid visual-pacing-custom">
                   <label>
                     <span>最低停留（秒）</span>
@@ -1463,6 +1445,7 @@
               </div>
               <div class="visual-image-grid">
                 <article v-for="item in visibleVisualEditorItems" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
+                  <p v-if="item.audio_timing_adjustment?.needs_review" class="timing-unavailable">配音已更新，画面时间轴已同步，请核对本图的内容与停留时长。原图保留，不会自动重绘。</p>
                   <div class="visual-image-actions">
                     <strong>{{ item.id }}</strong>
                     <button
@@ -1658,6 +1641,7 @@
                   </div>
                   <div class="visual-timing-head-actions">
                     <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
+                    <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
                     <button
                       class="primary-btn compact-btn"
                       type="button"
@@ -1669,7 +1653,7 @@
                 <div v-if="ttsEditorLoading" class="timing-unavailable">正在读取逐句配音…</div>
                 <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
                 <template v-else>
-                  <div v-if="ttsEditor.task?.message" class="visual-task-message" :class="ttsEditor.task?.status">{{ ttsEditor.task.message }}</div>
+                  <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
                   <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
                     <div class="tts-refine-parameter-head">
                       <div>
@@ -1726,7 +1710,8 @@
                           <strong>第 {{ item.index }} 句</strong>
                           <span>{{ Number(item.duration || 0).toFixed(2) }} 秒</span>
                         </div>
-                        <span v-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
+                        <span v-if="item.subtitle_independent" class="tts-pronunciation-badge">独立字幕</span>
+                        <span v-else-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
                         <label class="tts-segment-select">
                           <span>选中</span>
                           <input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" />
@@ -1750,53 +1735,16 @@
                           @input="seekTtsSegmentAudio(item, $event)"
                         />
                       </div>
-                      <div class="tts-pronunciation-tools">
-                        <button
-                          class="tts-pronunciation-toggle"
-                          type="button"
-                          :disabled="ttsEditor.task?.status === 'running'"
-                          @click="toggleTtsPronunciationEditor(item)"
-                        >{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
-                        <template v-if="isTtsPronunciationOpen(item.index)">
-                          <div class="tts-pronunciation-editor">
-                            <label>
-                              <span>朗读文本 <small>只发送给配音引擎，不会写进字幕</small></span>
-                              <textarea
-                                :value="ttsReadingDrafts[item.index]"
-                                rows="2"
-                                maxlength="1200"
-                                :disabled="ttsEditor.task?.status === 'running'"
-                                placeholder="例如：点击chong2绘按钮"
-                                @input="updateTtsReadingDraft(item, $event)"
-                              ></textarea>
-                            </label>
-                            <button
-                              class="ghost-btn compact-btn"
-                              type="button"
-                              :disabled="ttsEditor.task?.status === 'running' || !isTtsReadingModified(item)"
-                              @click="resetTtsReadingDraft(item)"
-                            >恢复原文</button>
-                          </div>
-                          <small class="tts-subtitle-preview">成片字幕保持：{{ item.text }}</small>
-                        </template>
-                      </div>
-                      <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row">
-                        <label><span>额外停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="previewTtsBoundary(item)">试听交界</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="ttsBoundaryBusy" @click="saveTtsPause(item)">保存停顿</button>
-                        <button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" :disabled="ttsEditor.task?.status === 'running'" @click="openTtsBoundaryEditor(item, true)">调整断点</button>
-                      </div>
-                      <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" :disabled="ttsEditor.task?.status === 'running' || String(item.text || '').length < 2" @click="openTtsBoundaryEditor(item, false)">在本句内新增断点</button>
+                      <TtsSentenceControls :item="item" :editor="ttsEditor" :busy="ttsBoundaryBusy"
+                        :reading="ttsReadingDrafts[item.index]" :opened="isTtsPronunciationOpen(item.index)"
+                        :subtitle-sync="(ttsEditor.subtitle_sync_indices || []).includes(item.index)" :pause="ttsPauseDrafts[item.index]"
+                        @toggle="toggleTtsPronunciationEditor(item)" @reading="updateTtsReadingDraft(item, { target: { value: $event } })"
+                        @reset="resetTtsReadingDraft(item)" @subtitle-sync="setTtsSubtitleSync(item, $event)" @save-subtitle="saveTtsSubtitleOnly(item)"
+                        @boundary="openTtsBoundaryEditor(item, $event)" @pause="ttsPauseDrafts[item.index] = $event"
+                        @save-pause="saveTtsPause(item)" @preview="previewTtsBoundary(item)" />
                     </article>
                   </div>
-                  <div v-if="ttsBoundary.open" class="tts-boundary-editor">
-                    <div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '在本句内新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div>
-                    <label><span>在文字中点击需要断开的位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)" @keyup="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label>
-                    <label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>不再断开，合并为一句</strong></label>
-                    <div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label><label><span>后半句</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
-                    <div v-else class="tts-boundary-preview-grid"><label><span>合并后的朗读文本</span><textarea :value="ttsBoundary.leftReading + ttsBoundary.rightReading" rows="3" readonly></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }}<template v-if="ttsBoundary.limit"> / {{ ttsBoundary.limit }} token</template></small></label></div>
-                    <div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超过 {{ ttsBoundary.limit }} token 的片段，请重新选择断点。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundary.checking || ttsBoundaryOverLimit()" @click="submitTtsBoundary">{{ ttsBoundaryBusy ? '处理中…' : '确认并重配' }}</button></div>
-                  </div>
+<TtsBoundaryEditor v-if="ttsBoundary.open" :state="ttsBoundary" :project-id="visualEditorProjectId" :busy="ttsBoundaryBusy" :over-limit="ttsBoundaryOverLimit()" @close="closeTtsBoundaryEditor" @split="updateTtsBoundaryParts" @count="refreshTtsBoundaryTokenCounts" @submit="submitTtsBoundary" />
                 </template>
               </section>
               <section class="bgm-panel visual-editor-bgm" :class="{ expanded: visualBgm.enabled }">
@@ -2284,12 +2232,14 @@
             </div>
             <section v-if="module1Job?.status === 'completed'" class="guided-audio-editor module1-refine-editor">
               <div class="guided-editor-head">
-                <div><div class="sidebar-label">配音精修</div><strong>逐句试听、重配、断句与停顿</strong></div>
+                <div><div class="sidebar-label">配音精修</div><strong>逐句试听、重配、交界与停顿</strong></div>
+                <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
                 <div class="inline-actions"><button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button><button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">重配选中句</button></div>
               </div>
               <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
               <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前任务没有可精修的逐句音频。' }}</div>
               <template v-else>
+                <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
                 <details class="guided-tts-settings">
                   <summary>本次重配参数（默认沿用项目）</summary>
                   <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
@@ -2315,13 +2265,16 @@
                   <article v-for="item in ttsEditor.segments" :key="`module1-edit-${item.index}-${item.audio_url}`" class="guided-tts-card" :class="{ selected: selectedTtsSegmentIndices.includes(item.index) }">
                     <div><strong>第 {{ item.index }} 句</strong><small>{{ Number(item.duration || 0).toFixed(2) }} 秒</small></div><p>{{ item.text }}</p><audio controls preload="none" :src="item.audio_url"></audio>
                     <label><span>选中</span><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" /></label>
-                    <button class="tts-pronunciation-toggle" type="button" @click="toggleTtsPronunciationEditor(item)">{{ isTtsPronunciationOpen(item.index) ? '收起发音修正' : '发音修正' }}</button>
-                    <div v-if="isTtsPronunciationOpen(item.index)" class="guided-pronunciation-editor"><small>朗读文本只发送给配音引擎，字幕仍保留原文字。</small><textarea :value="ttsReadingDrafts[item.index]" rows="2" @input="updateTtsReadingDraft(item, $event)"></textarea></div>
-                    <div v-if="item.index < ttsEditor.segments.length" class="tts-boundary-row"><label><span>停顿</span><input v-model.number="ttsPauseDrafts[item.index]" type="number" min="0" max="30" step="0.1" /><small>秒</small></label><button class="ghost-btn compact-btn" type="button" @click="previewTtsBoundary(item)">试听</button><button class="ghost-btn compact-btn" type="button" @click="saveTtsPause(item)">保存</button><button v-if="ttsEditor.structural_edit_available !== false" class="ghost-btn compact-btn" type="button" @click="openTtsBoundaryEditor(item, true)">调整断点</button></div>
-                    <button v-if="ttsEditor.structural_edit_available !== false" class="tts-pronunciation-toggle" type="button" @click="openTtsBoundaryEditor(item, false)">新增断点</button>
+                      <TtsSentenceControls :item="item" :editor="ttsEditor" :busy="ttsBoundaryBusy"
+                        :reading="ttsReadingDrafts[item.index]" :opened="isTtsPronunciationOpen(item.index)"
+                        :subtitle-sync="(ttsEditor.subtitle_sync_indices || []).includes(item.index)" :pause="ttsPauseDrafts[item.index]"
+                        @toggle="toggleTtsPronunciationEditor(item)" @reading="updateTtsReadingDraft(item, { target: { value: $event } })"
+                        @reset="resetTtsReadingDraft(item)" @subtitle-sync="setTtsSubtitleSync(item, $event)" @save-subtitle="saveTtsSubtitleOnly(item)"
+                        @boundary="openTtsBoundaryEditor(item, $event)" @pause="ttsPauseDrafts[item.index] = $event"
+                        @save-pause="saveTtsPause(item)" @preview="previewTtsBoundary(item)" />
                   </article>
                 </div>
-                <div v-if="ttsBoundary.open" class="tts-boundary-editor"><div class="tts-refine-parameter-head"><div><span class="sidebar-label">断句与停顿</span><h4>{{ ttsBoundary.replaceCount === 2 ? '调整现有断点' : '新增断点' }}</h4></div><button class="ghost-btn compact-btn" type="button" @click="closeTtsBoundaryEditor">关闭</button></div><label><span>点击文字中的断开位置</span><textarea :value="ttsBoundary.sourceText" rows="3" readonly @click="updateTtsBoundaryParts($event.target.selectionStart)"></textarea></label><label v-if="ttsBoundary.replaceCount === 2" class="switch-row"><input v-model="ttsBoundary.merge" type="checkbox" @change="refreshTtsBoundaryTokenCounts" /><span class="switch-track"><i></i></span><strong>合并为一句</strong></label><div v-if="!ttsBoundary.merge" class="tts-boundary-preview-grid"><label><span>前半句朗读文本</span><textarea v-model="ttsBoundary.leftReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[0] ?? '-' }} / {{ ttsBoundary.limit || '-' }} token</small></label><label><span>后半句朗读文本</span><textarea v-model="ttsBoundary.rightReading" rows="2" @input="refreshTtsBoundaryTokenCounts"></textarea><small>{{ ttsBoundary.counts[1] ?? '-' }} / {{ ttsBoundary.limit || '-' }} token</small></label></div><div class="tts-boundary-actions"><label v-if="!ttsBoundary.merge"><span>额外停顿</span><input v-model.number="ttsBoundary.pause" type="number" min="0" max="30" step="0.1" /> 秒</label><span v-if="ttsBoundaryOverLimit()" class="script-upload-error">存在超限片段。</span><button class="primary-btn compact-btn" type="button" :disabled="ttsBoundaryBusy || ttsBoundaryOverLimit()" @click="submitTtsBoundary">确认并重配</button></div></div>
+<TtsBoundaryEditor v-if="ttsBoundary.open" :state="ttsBoundary" :project-id="visualEditorProjectId" :busy="ttsBoundaryBusy" :over-limit="ttsBoundaryOverLimit()" @close="closeTtsBoundaryEditor" @split="updateTtsBoundaryParts" @count="refreshTtsBoundaryTokenCounts" @submit="submitTtsBoundary" />
               </template>
             </section>
             <div class="log-toolbar compact-log-toolbar">
@@ -2724,14 +2677,21 @@
       </section>
     </div>
   </div>
+  <TtsDraftResolutionDialog v-if="ttsDraftResolution.open" :items="ttsDraftResolution.items" @close="closeTtsDraftResolution" @resolve="resolveTtsDrafts" />
 </template>
 
 <script>
+import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
+import TtsSentenceControls from './components/TtsSentenceControls.vue'
+import TtsRebuildButton from './components/TtsRebuildButton.vue'
+import TtsDraftResolutionDialog from './components/TtsDraftResolutionDialog.vue'
 import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
+import TtsBoundaryEditor from './components/TtsBoundaryEditor.vue'
 import CloudImageQuality from './components/CloudImageQuality.vue'
 import { useWorkspace } from './useWorkspace'
 import ReferenceMaterials from './components/ReferenceMaterials.vue'
 import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
-export default { components: { CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
+export default { components: { ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

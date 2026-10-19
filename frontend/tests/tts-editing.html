@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>配音编辑回归</title><div id="app"></div>
+<script type="module">
+import {createApp, reactive} from 'vue/dist/vue.esm-bundler.js'
+import TtsBoundaryEditor from '../src/components/TtsBoundaryEditor.vue'
+import ImageProfileSelector from '../src/components/ImageProfileSelector.vue'
+import '../src/style.css'
+const state=reactive({open:true,startIndex:3,replaceCount:2,merge:false,leftReading:'锅盖弹飞，',rightReading:'板栗更狠，直接把内胆炸成凹坑。',counts:[5,116],limit:110,pause:.2,checking:false,proposedParts:null})
+const form=reactive({use_cloud_image_pool:true,task_image_pool:null,method:'ican',size:'2560x1440',image_resolution:'2k',image_profile_id:'own',video_orientation:'landscape'})
+window.fixture={state,form,submissions:0,calls:[]}
+window.fetch=async(url,options={})=>{
+ window.fixture.calls.push({url,method:options.method||'GET'})
+ const data=String(url).endsWith('suggest-boundaries')?{parts:[state.leftReading,state.rightReading]}:{profiles:[{id:'own',name:'我的 API',model_id:'my-image',configured:true,resolutions:['1k','2k'],protocol:'async_task'}]}
+ return new Response(JSON.stringify(data),{status:200})
+}
+createApp({components:{TtsBoundaryEditor,ImageProfileSelector},setup(){return{state,form,fixture:window.fixture,split(value){const chars=Array.from(state.leftReading+state.rightReading);state.leftReading=chars.slice(0,value).join('');state.rightReading=chars.slice(value).join('')},count(){state.counts=[state.leftReading.length,state.rightReading.length]}}},template:`<main style="max-width:1000px;margin:auto;padding:16px"><ImageProfileSelector :form="form" authenticated/><TtsBoundaryEditor :state="state" project-id="fixture" :over-limit="state.counts.some(n=>n>110)" @split="split" @count="count" @submit="fixture.submissions++"/></main>`}).mount('#app')
+</script></html>

@@ -1,7 +1,9 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
+import { taskImagePoolEnabled } from './taskImagePool'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 import { normalizeDynamicTextMode } from './dynamicTextMode'
+import { planningPreferences } from './shotPlanningLimit'
 import { readCloudPoolPreference, saveCloudPoolPreference, readCloudChannelPreference, workspaceParameters } from './cloudPoolPreference'
 import { imageChoice, imageSize } from './icanImageSizes'
 
@@ -155,6 +157,7 @@ const ttsBoundary = reactive({
   leftReading: '', rightReading: '', counts: [], limit: null, checking: false,
 })
 const ttsBoundaryBusy = ref(false)
+const ttsDraftResolution = reactive({ open: false, items: [], projectId: '', revision: null, signature: '' })
 const ttsPauseDrafts = reactive({})
 let ttsBoundaryPreviewAudio = null
 let ttsBoundaryPreviewTimer = null
@@ -570,6 +573,8 @@ const form = reactive({
   qwen_tts_voice: 'Elias',
   visual_backend: 'poster',
   use_cloud_image_pool: readCloudPoolPreference(),
+  task_image_pool: null,
+  language_route: null,
   method: readCloudChannelPreference(),
   size: '2560x1440',
   image_profile_id: '',
@@ -593,7 +598,8 @@ const form = reactive({
   presenter_reference_id: '',
   visual_prompt_mode: 'simple',
   visual_pacing_preset: 'standard',
-  dynamic_max_shot_duration: 15,
+  dynamic_max_shot_duration: 14,
+  dynamic_cluster_duration_recommended: true,
   visual_min_duration: 6,
   visual_target_duration: 8,
   visual_max_duration: 12,
@@ -3309,6 +3315,7 @@ function toggleTtsPronunciationEditor(item) {
 }
 
 function updateTtsReadingDraft(item, event) {
+  if (ttsBoundaryBusy.value) return
   ttsReadingDrafts[item.index] = String(event?.target?.value ?? '')
   if (!selectedTtsSegmentIndices.value.includes(item.index)) {
     selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
@@ -3316,7 +3323,8 @@ function updateTtsReadingDraft(item, event) {
 }
 
 function resetTtsReadingDraft(item) {
-  ttsReadingDrafts[item.index] = String(item.text || '')
+  if (ttsBoundaryBusy.value) return
+  ttsReadingDrafts[item.index] = String((item.subtitle_independent ? item.tts_text : item.text) || '')
   if (!selectedTtsSegmentIndices.value.includes(item.index)) {
     selectedTtsSegmentIndices.value = [...selectedTtsSegmentIndices.value, item.index]
   }
@@ -3326,10 +3334,17 @@ function isTtsReadingModified(item) {
   return String(ttsReadingDrafts[item.index] ?? item.tts_text ?? item.text ?? '').trim() !== String(item.text || '').trim()
 }
 
+function setTtsSubtitleSync(item, enabled) {
+  if (ttsBoundaryBusy.value || ttsEditor.value.task?.status === 'running') return
+  const indices = (ttsEditor.value.subtitle_sync_indices || []).filter(index => Number(index) !== Number(item.index))
+  ttsEditor.value.subtitle_sync_indices = enabled ? [...indices, item.index] : indices
+}
+
 function closeTtsBoundaryEditor() {
   ttsBoundary.open = false
   ttsBoundary.counts = []
   ttsBoundary.limit = null
+  ttsBoundary.proposedParts = null
 }
 
 function openTtsBoundaryEditor(item, adjustExisting = false) {
@@ -3340,7 +3355,7 @@ function openTtsBoundaryEditor(item, adjustExisting = false) {
   const sourceReading = adjustExisting
     ? `${item.tts_text || item.text || ''}${next.tts_text || next.text || ''}`
     : String(item.tts_text || item.text || '')
-  const firstLength = String(item.text || '').length
+  const firstLength = Array.from(String(item.tts_text || item.text || '')).length
   Object.assign(ttsBoundary, {
     open: true,
     startIndex: item.index,
@@ -3349,7 +3364,8 @@ function openTtsBoundaryEditor(item, adjustExisting = false) {
     sourceReading,
     caret: adjustExisting ? firstLength : Math.max(1, Math.floor(sourceText.length / 2)),
     merge: false,
-    pause: Number(item.pause_after || 0.6),
+    pause: Number(item.pause_after ?? 0.6),
+    proposedParts: null,
     leftText: '', rightText: '',
     leftReading: '', rightReading: '', counts: [], limit: null,
   })
@@ -3358,21 +3374,18 @@ function openTtsBoundaryEditor(item, adjustExisting = false) {
 
 function updateTtsBoundaryParts(selection) {
   if (Number.isInteger(selection)) ttsBoundary.caret = selection
-  const text = ttsBoundary.sourceText
-  const caret = Math.max(1, Math.min(text.length - 1, Number(ttsBoundary.caret || 1)))
+  const text = ttsBoundary.leftReading + ttsBoundary.rightReading || ttsBoundary.sourceReading
+  const characters = Array.from(text)
+  const caret = Math.max(1, Math.min(characters.length - 1, Number(ttsBoundary.caret || 1)))
   ttsBoundary.caret = caret
-  ttsBoundary.leftText = text.slice(0, caret)
-  ttsBoundary.rightText = text.slice(caret)
-  // Reading text can contain pinyin corrections and therefore need not have
-  // the same length as the subtitle text. Preserve it and choose a nearby
-  // split; both fields remain editable when that approximation needs tuning.
-  const reading = String(ttsBoundary.sourceReading || text)
-  const readingCaret = Math.max(1, Math.min(
-    Math.max(1, reading.length - 1),
-    Math.round((caret / Math.max(1, text.length)) * reading.length),
-  ))
-  ttsBoundary.leftReading = reading.slice(0, readingCaret)
-  ttsBoundary.rightReading = reading.slice(readingCaret)
+  ttsBoundary.leftText = characters.slice(0, caret).join('')
+  ttsBoundary.rightText = characters.slice(caret).join('')
+  // Preserve the currently edited words when the slider moves. Boundary edits
+  // use these same halves for narration and display; pronunciation-only edits
+  // remain in their separate editor.
+  ttsBoundary.leftReading = ttsBoundary.leftText
+  ttsBoundary.rightReading = ttsBoundary.rightText
+  ttsBoundary.proposedParts = null
   refreshTtsBoundaryTokenCounts()
 }
 
@@ -3387,21 +3400,25 @@ function confirmTtsHistoryCapacity() {
   return true
 }
 
+let ttsBoundaryCountRequest = 0
 async function refreshTtsBoundaryTokenCounts() {
   if (!visualEditorProjectId.value || !ttsBoundary.open) return
-  const texts = ttsBoundary.merge
+  const serial = ++ttsBoundaryCountRequest
+  const texts = ttsBoundary.proposedParts || (ttsBoundary.merge
     ? [ttsBoundary.leftReading + ttsBoundary.rightReading]
-    : [ttsBoundary.leftReading, ttsBoundary.rightReading]
+    : [ttsBoundary.leftReading, ttsBoundary.rightReading])
   ttsBoundary.checking = true
   try {
     const payload = await api.countTtsTokens(visualEditorProjectId.value, texts)
+    if (serial !== ttsBoundaryCountRequest) return
     ttsBoundary.counts = payload.counts || []
     ttsBoundary.limit = payload.limit
   } catch {
+    if (serial !== ttsBoundaryCountRequest) return
     ttsBoundary.counts = []
     ttsBoundary.limit = null
   } finally {
-    ttsBoundary.checking = false
+    if (serial === ttsBoundaryCountRequest) ttsBoundary.checking = false
   }
 }
 
@@ -3410,17 +3427,24 @@ function ttsBoundaryOverLimit() {
 }
 
 async function submitTtsBoundary() {
-  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsBoundaryOverLimit()) return
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsBoundary.checking) return
   if (!confirmTtsHistoryCapacity()) return
   // When the user moves unchanged wording between the two reading boxes,
   // that edit is also the intended visible sentence boundary. Previously the
   // audio followed these boxes while the sidebar kept the stale click split.
-  const readingJoin = `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`
-  const readingDefinesDisplayBoundary = !ttsBoundary.merge && readingJoin === ttsBoundary.sourceText
-  const displayLeft = readingDefinesDisplayBoundary ? ttsBoundary.leftReading : ttsBoundary.leftText
-  const displayRight = readingDefinesDisplayBoundary ? ttsBoundary.rightReading : ttsBoundary.rightText
-  const parts = ttsBoundary.merge
-    ? [{ text: ttsBoundary.sourceText, tts_text: `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`, pause_after: 0 }]
+  const readingJoin = ttsBoundary.proposedParts?.join('') ?? `${ttsBoundary.leftReading}${ttsBoundary.rightReading}`
+  const compact = (text) => String(text || '').replace(/\s+/g, '')
+  const syncText = compact(readingJoin) !== compact(ttsBoundary.sourceText)
+  // Boundary edits change the script by intent. Pronunciation-only edits use
+  // regenerateSelectedTtsSegments and keep their separate subtitle opt-in.
+  // The submitted halves define BOTH boundaries, including when an earlier
+  // pronunciation edit left the stored display and reading text out of sync.
+  const displayLeft = ttsBoundary.leftReading
+  const displayRight = ttsBoundary.rightReading
+  const parts = ttsBoundary.proposedParts
+    ? ttsBoundary.proposedParts.map(text => ({ text, tts_text: text, pause_after: Number(ttsBoundary.pause || 0) }))
+    : ttsBoundary.merge
+    ? [{ text: syncText ? readingJoin : ttsBoundary.sourceText, tts_text: readingJoin, pause_after: 0 }]
     : [
         { text: displayLeft, tts_text: ttsBoundary.leftReading, pause_after: Number(ttsBoundary.pause || 0) },
         { text: displayRight, tts_text: ttsBoundary.rightReading, pause_after: 0 },
@@ -3447,6 +3471,7 @@ async function submitTtsBoundary() {
       start_index: ttsBoundary.startIndex,
       replace_count: ttsBoundary.replaceCount,
       parts,
+      sync_text: syncText,
       ...refineSettings,
     })
     closeTtsBoundaryEditor()
@@ -3472,7 +3497,7 @@ async function saveTtsPause(item) {
     )
     ttsEditor.value.task = { status: 'completed', message: result.message }
     await loadTtsEditor()
-    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+    await refreshTtsRelatedSubtitles()
   } catch (error) {
     ttsEditor.value.task = { status: 'failed', message: error.message || '无法保存停顿' }
   } finally {
@@ -3480,8 +3505,92 @@ async function saveTtsPause(item) {
   }
 }
 
-async function rebuildTtsAudio() {
+async function refreshTtsRelatedSubtitles() {
+  const projectId = visualEditorProjectId.value
+  if (form.step_mode && guidedStage.value === 'audio_review' && activeJob.value?.id === projectId) {
+    const drafts = {}
+    for (const item of guidedSubtitles.value) {
+      const draft = guidedSubtitleDrafts[item.slide_id]
+      if (draft != null && String(draft) !== String(item.text || '')) drafts[item.slide_id] = draft
+    }
+    await loadGuidedSubtitles()
+    if (projectId !== visualEditorProjectId.value) return
+    const valid = new Set(guidedSubtitles.value.map(item => item.slide_id))
+    for (const [id, draft] of Object.entries(drafts)) if (valid.has(id)) guidedSubtitleDrafts[id] = draft
+  }
+  if (projectId === visualEditorProjectId.value && visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+}
+
+function pendingTtsReadingEdits() {
+  const compact = text => String(text || '').replace(/\s+/g, '')
+  return (ttsEditor.value.segments || []).flatMap(item => {
+    const saved = String(item.tts_text || item.text || '').trim()
+    const draft = String(ttsReadingDrafts[item.index] ?? saved).trim()
+    return compact(draft) !== compact(saved) ? [{ index: item.index, saved, draft }] : []
+  })
+}
+
+function ttsDraftResolutionSignature() {
+  return JSON.stringify([pendingTtsReadingEdits(), ttsEditor.value.subtitle_sync_indices || [], { ...ttsPauseDrafts }])
+}
+
+function closeTtsDraftResolution() { ttsDraftResolution.open = false }
+
+async function resolveTtsDrafts(choice) {
+  if (!ttsDraftResolution.open || !['subtitles', 'audio'].includes(choice)) return
+  const stale = ttsDraftResolution.projectId !== visualEditorProjectId.value
+    || ttsDraftResolution.revision !== ttsEditor.value.revision
+    || ttsDraftResolution.signature !== ttsDraftResolutionSignature()
+  closeTtsDraftResolution()
+  if (stale) return rebuildTtsAudio()
+  return rebuildTtsAudio(choice)
+}
+
+function canSaveTtsSubtitleOnly(item) {
+  const draft = String(ttsReadingDrafts[item.index] ?? item.tts_text ?? item.text ?? '').trim()
+  return Boolean(draft) && draft !== String(item.text || '').trim()
+}
+
+async function saveTtsSubtitleOnly(item) {
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsEditor.value.task?.status === 'running' || !canSaveTtsSubtitleOnly(item)) return
+  if (!confirmTtsHistoryCapacity()) return
+  const projectId = visualEditorProjectId.value
+  const drafts = { ...ttsReadingDrafts }, pauses = { ...ttsPauseDrafts }
+  const checked = [...(ttsEditor.value.subtitle_sync_indices || [])]
+  ttsBoundaryBusy.value = true
+  try {
+    const result = await api.saveTtsSubtitleOnly(projectId, { [item.index]: String(drafts[item.index] ?? item.tts_text ?? item.text).trim() }, ttsEditor.value.revision ?? null)
+    if (projectId !== visualEditorProjectId.value) return
+    await loadTtsEditor()
+    delete drafts[item.index]
+    Object.assign(ttsReadingDrafts, drafts)
+    Object.assign(ttsPauseDrafts, pauses)
+    ttsEditor.value.subtitle_sync_indices = checked.filter(index => Number(index) !== Number(item.index))
+    selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter(index => Number(index) !== Number(item.index))
+    await refreshTtsRelatedSubtitles()
+    ttsEditor.value.task = { status: 'completed', message: result.message }
+  } catch (error) {
+    if (projectId === visualEditorProjectId.value) ttsEditor.value.task = { status: 'failed', message: error.message || '字幕保存失败，草稿已保留' }
+  } finally { ttsBoundaryBusy.value = false }
+}
+
+async function rebuildTtsAudio(resolution = '') {
   if (!visualEditorProjectId.value || ttsBoundaryBusy.value || ttsEditor.value.task?.status === 'running') return
+  const pending = pendingTtsReadingEdits()
+  if (pending.length && !['subtitles', 'audio'].includes(resolution)) {
+    Object.assign(ttsDraftResolution, { open: true, items: pending, projectId: visualEditorProjectId.value,
+      revision: ttsEditor.value.revision, signature: ttsDraftResolutionSignature() })
+    return
+  }
+  const subtitleSync = [...(ttsEditor.value.subtitle_sync_indices || [])]
+  const checked = new Set(subtitleSync.map(Number))
+  const subtitleTextOverrides = {}
+  const subtitleOnlyOverrides = resolution === 'subtitles' ? Object.fromEntries(pending.map(item => [item.index, item.draft])) : {}
+  for (const item of ttsEditor.value.segments || []) {
+    if (resolution === 'audio' || item.index in subtitleOnlyOverrides || !checked.has(Number(item.index))) continue
+    const savedReading = String(item.tts_text || item.text || '').trim()
+    subtitleTextOverrides[item.index] = savedReading
+  }
   const pauses = {}
   for (const item of (ttsEditor.value.segments || []).slice(0, -1)) {
     const seconds = Number(ttsPauseDrafts[item.index] ?? item.pause_after ?? 0)
@@ -3493,8 +3602,8 @@ async function rebuildTtsAudio() {
   }
   if (!confirmTtsHistoryCapacity()) return
   ttsBoundaryBusy.value = true
+  const projectId = visualEditorProjectId.value
   const readingDrafts = { ...ttsReadingDrafts }
-  const subtitleSync = [...(ttsEditor.value.subtitle_sync_indices || [])]
   try {
     resetTtsSegmentAudio()
     if (ttsBoundaryPreviewTimer) window.clearTimeout(ttsBoundaryPreviewTimer)
@@ -3505,14 +3614,17 @@ async function rebuildTtsAudio() {
       ttsBoundaryPreviewAudio = null
     }
     releaseTtsPreviewPlayers()
-    const result = await api.rebuildTtsAudio(visualEditorProjectId.value, pauses)
+    const result = await api.rebuildTtsAudio(projectId, pauses, subtitleTextOverrides, ttsEditor.value.revision ?? null, subtitleOnlyOverrides)
+    if (projectId !== visualEditorProjectId.value) return
     await loadTtsEditor()
+    for (const index of Object.keys(subtitleOnlyOverrides)) delete readingDrafts[index]
     Object.assign(ttsReadingDrafts, readingDrafts)
-    ttsEditor.value.subtitle_sync_indices = subtitleSync
-    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+    ttsEditor.value.subtitle_sync_indices = subtitleSync.filter(index => !(index in subtitleOnlyOverrides))
+    selectedTtsSegmentIndices.value = selectedTtsSegmentIndices.value.filter(index => !(index in subtitleOnlyOverrides))
+    await refreshTtsRelatedSubtitles()
     ttsEditor.value.task = { status: 'completed', message: result.message }
   } catch (error) {
-    ttsEditor.value.task = { status: 'failed', message: error.message || '完整配音合成失败' }
+    if (projectId === visualEditorProjectId.value) ttsEditor.value.task = { status: 'failed', message: error.message || '完整配音合成失败' }
   } finally {
     ttsBoundaryBusy.value = false
   }
@@ -3526,7 +3638,7 @@ async function undoLastTtsEdit() {
     await api.undoTtsEdit(visualEditorProjectId.value)
     resetTtsSegmentAudio()
     await loadTtsEditor()
-    if (visualEditorOpen.value) await loadVisualEditor({ preservePage: true })
+    await refreshTtsRelatedSubtitles()
   } catch (error) {
     ttsEditor.value.task = { status: 'failed', message: error.message || '无法撤销音频编辑' }
   } finally {
@@ -3535,6 +3647,8 @@ async function undoLastTtsEdit() {
 }
 
 async function previewTtsBoundary(item) {
+  item = (ttsEditor.value.segments || []).find(entry => entry.index === item.index)
+  if (!item || ttsBoundaryBusy.value || ttsEditor.value.task?.status === 'running') return
   const next = (ttsEditor.value.segments || []).find((entry) => entry.index === item.index + 1)
   if (!next) return
   if (ttsBoundaryPreviewTimer) window.clearTimeout(ttsBoundaryPreviewTimer)
@@ -3549,13 +3663,14 @@ async function previewTtsBoundary(item) {
     audio.load()
   })
   try {
-    const first = new Audio(item.audio_url)
-    const second = new Audio(next.audio_url)
+    const freshUrl = url => `${url}${url.includes('?')?'&':'?'}preview=${Date.now()}&revision=${ttsEditor.value.revision || 0}`
+    const first = new Audio(freshUrl(item.audio_url))
+    const second = new Audio(freshUrl(next.audio_url))
     await Promise.all([waitForMetadata(first), waitForMetadata(second)])
     first.currentTime = Math.max(0, first.duration - 3)
     ttsBoundaryPreviewAudio = first
     first.onended = () => {
-      const delay = Math.round(Math.max(0, Number(ttsPauseDrafts[item.index] || 0)) * 1000)
+      const delay = Math.round(Math.max(0, Number(item.pause_after || 0)) * 1000)
       ttsBoundaryPreviewTimer = window.setTimeout(() => {
         ttsBoundaryPreviewAudio = second
         second.currentTime = 0
@@ -3626,7 +3741,7 @@ function startTtsEditorPolling() {
 }
 
 async function regenerateSelectedTtsSegments() {
-  if (!visualEditorProjectId.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
+  if (!visualEditorProjectId.value || ttsBoundaryBusy.value || !selectedTtsSegmentIndices.value.length || ttsEditor.value.task?.status === 'running') return
   if (!confirmTtsHistoryCapacity()) return
   const count = selectedTtsSegmentIndices.value.length
   const textOverrides = {}
@@ -4520,6 +4635,9 @@ function generationRequestPayload() {
   const resolvedCloudVoice = effectiveCloudVoice.value
   const payload = {
     ...form,
+    ...(form.dynamic_video ? planningPreferences(form) : {}),
+    use_cloud_image_pool: taskImagePoolEnabled(form, cloudSession.value.authenticated),
+    language_route: form.language_route || (form.use_cloud_image_pool ? 'cloud' : 'personal'),
     tts_engine: ttsEngine.value,
     tts_emotion: form.tts_emotion || null,
     tts_pronunciation: form.tts_pronunciation || null,
@@ -4529,6 +4647,7 @@ function generationRequestPayload() {
     } : {}),
   }
   delete payload.auto_analyze_reference_images
+  delete payload.task_image_pool
   delete payload._rerun_source_project
   delete payload._rerun_source_revision
   delete payload._rerun_base
@@ -4546,6 +4665,7 @@ function generationRequestPayload() {
 
 function guidedVisualParameters() {
   return {
+    ...(form.dynamic_video ? planningPreferences(form) : {}),
     video_orientation: form.video_orientation,
     content_mode: form.content_mode,
     director_strategy: form.director_strategy,
@@ -4557,14 +4677,14 @@ function guidedVisualParameters() {
     auto_split_long_text: form.auto_split_long_text,
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,
-    use_cloud_image_pool: form.use_cloud_image_pool,
+    use_cloud_image_pool: taskImagePoolEnabled(form, cloudSession.value.authenticated),
+    language_route: form.language_route || (form.use_cloud_image_pool ? 'cloud' : 'personal'),
     method: form.method,
     size: form.size,
     image_profile_id: form.image_profile_id,
     image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
     visual_pacing_preset: form.visual_pacing_preset,
-    dynamic_max_shot_duration: form.video_generation_backend === 'cloud_h3' ? 14 : form.dynamic_max_shot_duration,
     visual_min_duration: form.visual_min_duration,
     visual_target_duration: form.visual_target_duration,
     visual_max_duration: form.visual_max_duration,
@@ -4596,6 +4716,9 @@ function guidedRenderParameters() {
 
 function hydrateGuidedForm(job) {
   if (!job?.request) return
+  form.task_image_pool = Boolean(job.request.use_cloud_image_pool)
+  form.language_route = ['cloud','personal'].includes(job.request.language_route)
+    ? job.request.language_route : job.request.use_cloud_image_pool ? 'cloud' : 'personal'
   for (const [key, value] of Object.entries(workspaceParameters(job.request))) {
     if (!(key in form) || key.startsWith('_')) continue
     form[key] = Array.isArray(value) ? value.map((item) => (typeof item === 'object' ? { ...item } : item)) : value
@@ -5410,5 +5533,5 @@ onUnmounted(() => {
   }
 })
 
-return { cloudLoginNotice, requireCloudLogin, rebuildTtsAudio, cloudRecoveryOpen, openCloudRecovery, closeCloudRecovery, onCloudPasswordReset, computed, onMounted, onUnmounted, reactive, ref, watch, api, VISUAL_PROMPT_FULL_STORAGE_KEY, LOCKED_GENERAL_AGENT2_PROTOCOL, LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL, EDITABLE_GENERAL_AGENT2_PREFIX, AGENT2_DIRECTOR_THEME_STORAGE_KEY, AGENT2_DIRECTOR_THEME_DEFAULTS, VISUAL_PROMPT_STYLE_STORAGE_KEY, GLOBAL_CHARACTER_STORAGE_KEY, STORY_ENVIRONMENT_STORAGE_KEY, AGENT0_PROMPT_STORAGE_KEY, AGENT1_PROMPT_STORAGE_KEY, VISUAL_PROMPT_MODE_STORAGE_KEY, CONTENT_MODE_STORAGE_KEY, DIRECTOR_STRATEGY_STORAGE_KEY, VISUAL_PACING_STORAGE_KEY, VISUAL_PACING_DEFAULTS, FALLBACK_CONTENT_MODES, randomProjectName, sidebarOpen, activePage, plugins, pluginsLoading, pluginToggling, pluginNotice, pluginMessage, scriptUploadName, scriptUploadError, workspaceScriptTextarea, module1ScriptTextarea, structuralBlankSeconds, sourceAudioName, sourceAudioError, sourceAudioUploading, ttsVoiceUploadName, ttsVoiceUploadError, ttsVoiceUploading, ttsVoicePreviewUrl, ttsVoicePreviewPlaying, ttsVoicePreviewAudio, stepAudioPlayer, stepAudioPlaying, stepAudioCurrentTime, stepAudioDuration, savingStepAudio, stepAudioSaveMessage, retryingTts, guidedAdvancing, guidedCreatingNew, guidedCancelling, guidedStageMessage, guidedStageError, guidedSubtitles, guidedSubtitleDrafts, guidedSubtitleLoading, guidedSubtitleSaving, folderOpenMessage, visualEditorOpen, visualEditorLoading, visualEditor, visualEditorProjects, visualEditorProjectId, visualEditorPage, visualTimingSelectedId, selectedVisualTimingHistory, visualTimingAdjusting, selectedVisualSubtitleHistory, visualSubtitleEditingId, visualSubtitleDrafts, visualSubtitleOriginals, visualSubtitleSaving, visualSubtitleProjectKey, visualSubtitleRemoveDialog, visualBoundaryAlign, visualBoundaryApplying, visualBoundaryAudio, visualBoundaryAudioEnd, ttsEditor, ttsEditorLoading, selectedTtsSegmentIndices, ttsReadingDrafts, ttsPronunciationOpenIndices, ttsBoundary, ttsBoundaryBusy, ttsPauseDrafts, ttsBoundaryPreviewAudio, ttsBoundaryPreviewTimer, ttsRefineForm, ttsRefineVoiceName, ttsRefineVoiceUploading, ttsRefineVoiceError, ttsRefineEngineLabel, ttsRefinementActive, ttsSegmentPlayingIndex, ttsSegmentIsPlaying, ttsSegmentCurrentTime, ttsSegmentDuration, ttsSegmentAudio, visualSelfReferenceMacroId, visualReferenceUploads, visualReferenceUploading, visualReferenceOwnerMacroId, VISUAL_EDITOR_PAGE_SIZE, visualPreviewItem, visualRenderMode, visualBgmUploading, visualBgmError, visualBgm, submitting, preflightRunning, preflightOpen, preflightResult, submittingModule1, submittingSubtitle, cancellingGeneration, resumingGeneration, health, settings, session, authError, activeJob, followLiveJob, module1Job, subtitleJob, jobs, jobPage, jobTotal, jobTotalPages, JOB_PAGE_SIZE, editorAssets, editorJobs, editorJob, uploading, editing, startingTts, ttsStartMessage, showFullLogs, diagnosticExporting, diagnosticMessage, generationSubmitMessage, apiKeyStatus, apiKeyMessage, apiKeyEditing, apiKeyRuntimeErrors, savingApiKeys, deletingApiKey, savingQwenTtsKey, qwenTtsKeyMessage, ttsEngine, localTtsInstallerOpen, localTtsInstallBusy, localTtsInstallError, localTtsComponent, localTtsDownloadedGb, localTtsEstimatedGb, localTtsInstallProgress, openLocalTtsInstaller, closeLocalTtsInstaller, refreshLocalTtsComponent, startLocalTtsInstall, switchToClusterTts, handleTtsEngineChanged, cloudSession, cloudAccount, cloudVoices, cloudVoiceLimits, cloudQuote, cloudBusy, cloudQuoteLoading, cloudVoiceUploading, cloudVoiceDisplayName, cloudVoiceApiAvailable, cloudVoicePreviewLoading, cloudVoicePreviewPlayingId, cloudError, cloudMessage, cloudRechargeOpen, cloudRechargeProducts, cloudRechargeSelectedId, cloudRechargeOrder, cloudRechargePaymentUrl, cloudRechargeLoadingProducts, cloudRechargeBusy, cloudRechargeChecking, cloudRechargeError, cloudRechargeMessage, cloudRechargeSuccess, cloudLoginForm, cloudLoginOpen, cloudVoicePreviewAudio, cloudRechargePollTimer, cloudRechargePollDeadline, cloudRechargeCheckoutWindow, cloudRechargePreviousBodyOverflow, CLOUD_RECHARGE_STORAGE_KEY, qwenVoiceGroups, apiKeyStatusLoaded, timer, visualEditorTaskTimer, ttsEditorTaskTimer, completionAudioContext, completionFlashTimer, completionFlashState, completionFaviconLink, completionFaviconCreated, originalFaviconHref, originalDocumentTitle, lastCompletionAlertAt, MAX_SCRIPT_FILE_SIZE, MAX_SCRIPT_CHARACTERS, insertStructuralBlank, loginForm, registerForm, subtitleForm, subtitleAudioName, subtitleAudioError, subtitleAudioUploading, subtitleReferenceName, subtitleReferenceError, subtitleAddEnabled, subtitleFonts, subtitleFontsLoading, subtitleRenderMessage, subtitleBgmUploading, subtitleBgmError, subtitleRenderForm, subtitleStyleOptions, referenceImageNames, protagonistReferenceImageError, protagonistReferenceUploading, apiKeyForm, savingImageConcurrency, imageConcurrencyPreview, languageProviderOptions, visibleLanguageProviderOptions, currentLanguageProvider, currentLanguageProviderLabel, customLanguageProvider, currentLanguageModels, currentLanguageModelLabel, parameterPresets, selectedParameterPreset, loadingParameterPresets, savingParameterPreset, deletingParameterPreset, parameterPresetMessage, agentPromptPresets, selectedAgentPromptPreset, loadingAgentPromptPresets, savingAgentPromptPreset, bgmUploading, bgmError, bgmPreviewTrack, bgmPreviewAudio, form, contentModeOptions, visualMediumWarning, defaultAgentPromptPresets, userAgentPromptPresets, activeAgent2LockedProtocol, editableVisualPromptSystem, agent2DirectorThemeModel, agent2DirectorThemePlaceholder, visualEditorPageCount, visibleVisualEditorItems, selectedVisualTimingItem, visualSubtitleDirtyIds, visualSubtitleDirtyCount, visualReferenceSummary, contentModeDefaults, modeStorageKey, visualPacingDefaults, applyVisualPacing, visualPacingSummary, editorForm, steps, importantLogPattern, streamingFramePattern, compactStreamingFrameLogs, visibleJobLogs, logText, editorLogText, videoAssets, audioAssets, subtitleAssets, selectedVideoAsset, qwenSelectedVoice, qwenSelectedVoiceSupportsInstructions, ttsEngineLabel, ttsEngineProviderLabel, activeRemoteCloudVoices, cloudPresetVoiceOptions, cloudUploadedVoiceOptions, activeCloudVoices, firstDefaultCloudVoice, selectedCloudVoice, effectiveCloudVoice, previewableCloudPresetVoice, cloudVoicePreviewPlaying, cloudReady, cloudDisplayName, cloudAvailableCredits, cloudRechargeSelectedProduct, cloudRechargeStatusLabel, cloudRechargeStatusDescription, cloudVoiceModel, isGuidedWorkflowJob, guidedStage, guidedRunning, guidedCanStop, guidedCanResume, guidedHasExistingWorkflow, guidedStageSteps, guidedStageGroup, guidedStageOrder, guidedStageChipClass, guidedStageEyebrow, guidedStageTitle, guidedStageDescription, guidedWorkspaceClass, guidedSubtitleDirtyCount, guidedVisualEstimate, pendingGenerationJob, hasPendingGeneration, generationBlockReason, canSubmitGeneration, canSubmitModule1, scriptCharacterCount, scriptTooLong, module1JobRunning, module1ArtifactEntries, module1AudioPreviewUrl, module1LogText, subtitleJobRunning, canSubmitSubtitle, canRenderSubtitleVideo, subtitleLogText, submitButtonText, preflightPassedCount, scriptPlaceholder, canCancelGeneration, canResumeGeneration, canContinueStepMode, stepModeContinueLabel, stepModeAudioUrl, canRetryTts, ttsStatusText, COMPLETION_FAVICON_BLUE, COMPLETION_FAVICON_GREEN, prepareCompletionAlerts, playCompletionSound, stopCompletionFlash, startCompletionFlash, notifyVideoCompleted, handleActiveJobCompletion, apiFailureReason, apiJobKinds, syncApiRuntimeErrors, refresh, refreshEditor, login, register, logout, refreshCloudState, openCloudLogin, loginCloud, registerCloud, logoutCloud, formatCloudRechargeAmount, cloudRechargeProductLabel, stopCloudRechargePolling, clearStoredCloudRecharge, storePendingCloudRecharge, restorePendingCloudRecharge, loadCloudRechargeProducts, openCloudRecharge, closeCloudRecharge, continueCloudRecharge, finishCloudRecharge, openCloudPaymentPage, closeCloudRechargeCheckoutWindow, handleCloudRechargeReturnFocus, scheduleCloudRechargePoll, beginCloudRechargePolling, checkCloudRechargeOrder, startCloudRecharge, selectCloudVoice, stopCloudVoicePreview, toggleCloudVoicePreview, uploadCloudVoice, deleteSelectedCloudVoice, refreshCloudQuote, apiKeyFieldOpen, unlockProtectedInput, editApiKey, onLanguageProviderChanged, onLanguageSourceChanged, onLanguageModelChanged, addApiKeyAccount, deleteConfiguredApiKey, loadApiKeySettings, saveApiKeySettings, saveQwenTtsKey, startTts, loadSettings, openPluginsPage, loadPlugins, togglePlugin, openPluginsFolder, refreshParameterPresets, refreshAgentPromptPresets, loadSelectedAgentPromptPreset, saveCurrentAgentPromptPreset, saveCurrentParameterPreset, loadSelectedParameterPreset, deleteSelectedParameterPreset, formatBgmDuration, readAudioDuration, readAudioUrlDuration, hydrateBgmTrackDurations, bgmTrackUrl, isBgmPreviewing, stopBgmPreview, toggleBgmPreview, moveBgmTrack, clearBgmTracks, uploadVisualBgmTrack, removeVisualBgmTrack, uploadBgmTrack, removeBgmTrack, uploadLocalScript, handleSkipTtsChange, resetVisualPrompt, resetSimpleVisualPrompt, setContentMode, setDirectorStrategy, setVisualPromptMode, rememberVisualPrompt, rememberVisualPacing, uploadTtsVoice, restoreSavedTtsVoiceLabel, stopTtsVoicePreview, toggleTtsVoicePreview, restoreSavedProtagonistReferenceImageLabel, exportDiagnosticPackage, openArtifactFolder, openSubtitleOutputFolder, openProjectOutputFolder, openStepModeVisualPreviewFolder, hydrateVisualBgm, loadVisualEditor, visualSubtitleSentences, hydrateVisualSubtitleDrafts, loadTtsEditor, saveImageConcurrencySettings, hydrateTtsRefineSettings, uploadTtsRefineVoice, resetTtsSegmentAudio, prepareTtsSegmentAudio, toggleTtsSegmentAudio, seekTtsSegmentAudio, isTtsPronunciationOpen, toggleTtsPronunciationEditor, updateTtsReadingDraft, resetTtsReadingDraft, isTtsReadingModified, closeTtsBoundaryEditor, openTtsBoundaryEditor, updateTtsBoundaryParts, confirmTtsHistoryCapacity, refreshTtsBoundaryTokenCounts, ttsBoundaryOverLimit, submitTtsBoundary, saveTtsPause, undoLastTtsEdit, previewTtsBoundary, stopTtsEditorPolling, pollTtsEditorStatus, startTtsEditorPolling, regenerateSelectedTtsSegments, formatTimingRange, formatSubtitleTiming, isVisualSubtitleModified, visualSubtitlePaceWarning, toggleVisualSubtitleEdit, finishVisualSubtitleEdit, resetVisualSubtitleDraft, visualSubtitleHiddenModeLabel, canMergeHiddenSubtitle, openVisualSubtitleRemove, closeVisualSubtitleRemove, hideVisualSubtitle, restoreHiddenVisualSubtitle, saveVisualSubtitles, restoreSelectedVisualSubtitleHistory, hasNextVisualSubtitle, closeVisualBoundaryAlign, previewVisualSubtitleBoundary, formatBoundaryOffset, formatBoundaryDelta, playVisualBoundaryRange, applyVisualSubtitleBoundary, adjustEditedTiming, resetEditedTiming, commitEditedTiming, restoreSelectedVisualTimingHistory, removeEditedTimingPicture, stopVisualEditorTaskPolling, pollVisualEditorTaskStatus, startVisualEditorTaskPolling, selectVisualEditorProject, toggleVisualEditor, redrawVisualImage, beginVisualReferenceSelection, toggleVisualSelfReferenceImage, clearVisualReferenceImages, uploadVisualReferenceImages, uploadVisualImage, undoVisualImage, resetVisualImagePrompt, commitVisualBaseline, commitAllVisualBaselines, renderEditedVideo, cancelVisualRender, uploadSourceAudio, uploadReferenceImages, removeReferenceImage, generationRequestPayload, guidedVisualParameters, guidedRenderParameters, hydrateGuidedForm, loadGuidedAudioReview, loadGuidedSubtitles, saveGuidedSubtitles, formatGuidedTimestamp, openGuidedVisualEditor, advanceGuidedWorkflow, continueGuidedJob, clearGuidedEditingState, returnToFreshGuidedSetup, finishGuidedCancellation, cancelGuidedWorkflow, handleStepModeToggle, enterGuidedPostProduction, runManualPreflight, closePreflight, submit, selectJob, cancelGeneration, deleteGenerationJob, submitModule1, cancelModule1, uploadSubtitleAudio, loadSubtitleReference, loadSubtitleFonts, uploadSubtitleBgmTrack, removeSubtitleBgmTrack, renderSubtitleVideo, submitSubtitleJob, cancelSubtitleJob, syncStepAudioMetadata, syncStepAudioProgress, toggleStepAudioPlayback, seekStepAudio, saveStepAudioAs, formatStepAudioTime, retryTts, resumeGeneration, changeJobPage, uploadAsset, renderEdit, selectEditorJob, stepClass, statusLabel, statusClass, voiceLabel, emotionLabel, artifactLabel, kindLabel }
+return { setTtsSubtitleSync, ttsDraftResolution, closeTtsDraftResolution, resolveTtsDrafts, canSaveTtsSubtitleOnly, saveTtsSubtitleOnly, cloudLoginNotice, requireCloudLogin, rebuildTtsAudio, cloudRecoveryOpen, openCloudRecovery, closeCloudRecovery, onCloudPasswordReset, computed, onMounted, onUnmounted, reactive, ref, watch, api, VISUAL_PROMPT_FULL_STORAGE_KEY, LOCKED_GENERAL_AGENT2_PROTOCOL, LEGACY_LOCKED_GENERAL_AGENT2_PROTOCOL, EDITABLE_GENERAL_AGENT2_PREFIX, AGENT2_DIRECTOR_THEME_STORAGE_KEY, AGENT2_DIRECTOR_THEME_DEFAULTS, VISUAL_PROMPT_STYLE_STORAGE_KEY, GLOBAL_CHARACTER_STORAGE_KEY, STORY_ENVIRONMENT_STORAGE_KEY, AGENT0_PROMPT_STORAGE_KEY, AGENT1_PROMPT_STORAGE_KEY, VISUAL_PROMPT_MODE_STORAGE_KEY, CONTENT_MODE_STORAGE_KEY, DIRECTOR_STRATEGY_STORAGE_KEY, VISUAL_PACING_STORAGE_KEY, VISUAL_PACING_DEFAULTS, FALLBACK_CONTENT_MODES, randomProjectName, sidebarOpen, activePage, plugins, pluginsLoading, pluginToggling, pluginNotice, pluginMessage, scriptUploadName, scriptUploadError, workspaceScriptTextarea, module1ScriptTextarea, structuralBlankSeconds, sourceAudioName, sourceAudioError, sourceAudioUploading, ttsVoiceUploadName, ttsVoiceUploadError, ttsVoiceUploading, ttsVoicePreviewUrl, ttsVoicePreviewPlaying, ttsVoicePreviewAudio, stepAudioPlayer, stepAudioPlaying, stepAudioCurrentTime, stepAudioDuration, savingStepAudio, stepAudioSaveMessage, retryingTts, guidedAdvancing, guidedCreatingNew, guidedCancelling, guidedStageMessage, guidedStageError, guidedSubtitles, guidedSubtitleDrafts, guidedSubtitleLoading, guidedSubtitleSaving, folderOpenMessage, visualEditorOpen, visualEditorLoading, visualEditor, visualEditorProjects, visualEditorProjectId, visualEditorPage, visualTimingSelectedId, selectedVisualTimingHistory, visualTimingAdjusting, selectedVisualSubtitleHistory, visualSubtitleEditingId, visualSubtitleDrafts, visualSubtitleOriginals, visualSubtitleSaving, visualSubtitleProjectKey, visualSubtitleRemoveDialog, visualBoundaryAlign, visualBoundaryApplying, visualBoundaryAudio, visualBoundaryAudioEnd, ttsEditor, ttsEditorLoading, selectedTtsSegmentIndices, ttsReadingDrafts, ttsPronunciationOpenIndices, ttsBoundary, ttsBoundaryBusy, ttsPauseDrafts, ttsBoundaryPreviewAudio, ttsBoundaryPreviewTimer, ttsRefineForm, ttsRefineVoiceName, ttsRefineVoiceUploading, ttsRefineVoiceError, ttsRefineEngineLabel, ttsRefinementActive, ttsSegmentPlayingIndex, ttsSegmentIsPlaying, ttsSegmentCurrentTime, ttsSegmentDuration, ttsSegmentAudio, visualSelfReferenceMacroId, visualReferenceUploads, visualReferenceUploading, visualReferenceOwnerMacroId, VISUAL_EDITOR_PAGE_SIZE, visualPreviewItem, visualRenderMode, visualBgmUploading, visualBgmError, visualBgm, submitting, preflightRunning, preflightOpen, preflightResult, submittingModule1, submittingSubtitle, cancellingGeneration, resumingGeneration, health, settings, session, authError, activeJob, followLiveJob, module1Job, subtitleJob, jobs, jobPage, jobTotal, jobTotalPages, JOB_PAGE_SIZE, editorAssets, editorJobs, editorJob, uploading, editing, startingTts, ttsStartMessage, showFullLogs, diagnosticExporting, diagnosticMessage, generationSubmitMessage, apiKeyStatus, apiKeyMessage, apiKeyEditing, apiKeyRuntimeErrors, savingApiKeys, deletingApiKey, savingQwenTtsKey, qwenTtsKeyMessage, ttsEngine, localTtsInstallerOpen, localTtsInstallBusy, localTtsInstallError, localTtsComponent, localTtsDownloadedGb, localTtsEstimatedGb, localTtsInstallProgress, openLocalTtsInstaller, closeLocalTtsInstaller, refreshLocalTtsComponent, startLocalTtsInstall, switchToClusterTts, handleTtsEngineChanged, cloudSession, cloudAccount, cloudVoices, cloudVoiceLimits, cloudQuote, cloudBusy, cloudQuoteLoading, cloudVoiceUploading, cloudVoiceDisplayName, cloudVoiceApiAvailable, cloudVoicePreviewLoading, cloudVoicePreviewPlayingId, cloudError, cloudMessage, cloudRechargeOpen, cloudRechargeProducts, cloudRechargeSelectedId, cloudRechargeOrder, cloudRechargePaymentUrl, cloudRechargeLoadingProducts, cloudRechargeBusy, cloudRechargeChecking, cloudRechargeError, cloudRechargeMessage, cloudRechargeSuccess, cloudLoginForm, cloudLoginOpen, cloudVoicePreviewAudio, cloudRechargePollTimer, cloudRechargePollDeadline, cloudRechargeCheckoutWindow, cloudRechargePreviousBodyOverflow, CLOUD_RECHARGE_STORAGE_KEY, qwenVoiceGroups, apiKeyStatusLoaded, timer, visualEditorTaskTimer, ttsEditorTaskTimer, completionAudioContext, completionFlashTimer, completionFlashState, completionFaviconLink, completionFaviconCreated, originalFaviconHref, originalDocumentTitle, lastCompletionAlertAt, MAX_SCRIPT_FILE_SIZE, MAX_SCRIPT_CHARACTERS, insertStructuralBlank, loginForm, registerForm, subtitleForm, subtitleAudioName, subtitleAudioError, subtitleAudioUploading, subtitleReferenceName, subtitleReferenceError, subtitleAddEnabled, subtitleFonts, subtitleFontsLoading, subtitleRenderMessage, subtitleBgmUploading, subtitleBgmError, subtitleRenderForm, subtitleStyleOptions, referenceImageNames, protagonistReferenceImageError, protagonistReferenceUploading, apiKeyForm, savingImageConcurrency, imageConcurrencyPreview, languageProviderOptions, visibleLanguageProviderOptions, currentLanguageProvider, currentLanguageProviderLabel, customLanguageProvider, currentLanguageModels, currentLanguageModelLabel, parameterPresets, selectedParameterPreset, loadingParameterPresets, savingParameterPreset, deletingParameterPreset, parameterPresetMessage, agentPromptPresets, selectedAgentPromptPreset, loadingAgentPromptPresets, savingAgentPromptPreset, bgmUploading, bgmError, bgmPreviewTrack, bgmPreviewAudio, form, contentModeOptions, visualMediumWarning, defaultAgentPromptPresets, userAgentPromptPresets, activeAgent2LockedProtocol, editableVisualPromptSystem, agent2DirectorThemeModel, agent2DirectorThemePlaceholder, visualEditorPageCount, visibleVisualEditorItems, selectedVisualTimingItem, visualSubtitleDirtyIds, visualSubtitleDirtyCount, visualReferenceSummary, contentModeDefaults, modeStorageKey, visualPacingDefaults, applyVisualPacing, visualPacingSummary, editorForm, steps, importantLogPattern, streamingFramePattern, compactStreamingFrameLogs, visibleJobLogs, logText, editorLogText, videoAssets, audioAssets, subtitleAssets, selectedVideoAsset, qwenSelectedVoice, qwenSelectedVoiceSupportsInstructions, ttsEngineLabel, ttsEngineProviderLabel, activeRemoteCloudVoices, cloudPresetVoiceOptions, cloudUploadedVoiceOptions, activeCloudVoices, firstDefaultCloudVoice, selectedCloudVoice, effectiveCloudVoice, previewableCloudPresetVoice, cloudVoicePreviewPlaying, cloudReady, cloudDisplayName, cloudAvailableCredits, cloudRechargeSelectedProduct, cloudRechargeStatusLabel, cloudRechargeStatusDescription, cloudVoiceModel, isGuidedWorkflowJob, guidedStage, guidedRunning, guidedCanStop, guidedCanResume, guidedHasExistingWorkflow, guidedStageSteps, guidedStageGroup, guidedStageOrder, guidedStageChipClass, guidedStageEyebrow, guidedStageTitle, guidedStageDescription, guidedWorkspaceClass, guidedSubtitleDirtyCount, guidedVisualEstimate, pendingGenerationJob, hasPendingGeneration, generationBlockReason, canSubmitGeneration, canSubmitModule1, scriptCharacterCount, scriptTooLong, module1JobRunning, module1ArtifactEntries, module1AudioPreviewUrl, module1LogText, subtitleJobRunning, canSubmitSubtitle, canRenderSubtitleVideo, subtitleLogText, submitButtonText, preflightPassedCount, scriptPlaceholder, canCancelGeneration, canResumeGeneration, canContinueStepMode, stepModeContinueLabel, stepModeAudioUrl, canRetryTts, ttsStatusText, COMPLETION_FAVICON_BLUE, COMPLETION_FAVICON_GREEN, prepareCompletionAlerts, playCompletionSound, stopCompletionFlash, startCompletionFlash, notifyVideoCompleted, handleActiveJobCompletion, apiFailureReason, apiJobKinds, syncApiRuntimeErrors, refresh, refreshEditor, login, register, logout, refreshCloudState, openCloudLogin, loginCloud, registerCloud, logoutCloud, formatCloudRechargeAmount, cloudRechargeProductLabel, stopCloudRechargePolling, clearStoredCloudRecharge, storePendingCloudRecharge, restorePendingCloudRecharge, loadCloudRechargeProducts, openCloudRecharge, closeCloudRecharge, continueCloudRecharge, finishCloudRecharge, openCloudPaymentPage, closeCloudRechargeCheckoutWindow, handleCloudRechargeReturnFocus, scheduleCloudRechargePoll, beginCloudRechargePolling, checkCloudRechargeOrder, startCloudRecharge, selectCloudVoice, stopCloudVoicePreview, toggleCloudVoicePreview, uploadCloudVoice, deleteSelectedCloudVoice, refreshCloudQuote, apiKeyFieldOpen, unlockProtectedInput, editApiKey, onLanguageProviderChanged, onLanguageSourceChanged, onLanguageModelChanged, addApiKeyAccount, deleteConfiguredApiKey, loadApiKeySettings, saveApiKeySettings, saveQwenTtsKey, startTts, loadSettings, openPluginsPage, loadPlugins, togglePlugin, openPluginsFolder, refreshParameterPresets, refreshAgentPromptPresets, loadSelectedAgentPromptPreset, saveCurrentAgentPromptPreset, saveCurrentParameterPreset, loadSelectedParameterPreset, deleteSelectedParameterPreset, formatBgmDuration, readAudioDuration, readAudioUrlDuration, hydrateBgmTrackDurations, bgmTrackUrl, isBgmPreviewing, stopBgmPreview, toggleBgmPreview, moveBgmTrack, clearBgmTracks, uploadVisualBgmTrack, removeVisualBgmTrack, uploadBgmTrack, removeBgmTrack, uploadLocalScript, handleSkipTtsChange, resetVisualPrompt, resetSimpleVisualPrompt, setContentMode, setDirectorStrategy, setVisualPromptMode, rememberVisualPrompt, rememberVisualPacing, uploadTtsVoice, restoreSavedTtsVoiceLabel, stopTtsVoicePreview, toggleTtsVoicePreview, restoreSavedProtagonistReferenceImageLabel, exportDiagnosticPackage, openArtifactFolder, openSubtitleOutputFolder, openProjectOutputFolder, openStepModeVisualPreviewFolder, hydrateVisualBgm, loadVisualEditor, visualSubtitleSentences, hydrateVisualSubtitleDrafts, loadTtsEditor, saveImageConcurrencySettings, hydrateTtsRefineSettings, uploadTtsRefineVoice, resetTtsSegmentAudio, prepareTtsSegmentAudio, toggleTtsSegmentAudio, seekTtsSegmentAudio, isTtsPronunciationOpen, toggleTtsPronunciationEditor, updateTtsReadingDraft, resetTtsReadingDraft, isTtsReadingModified, closeTtsBoundaryEditor, openTtsBoundaryEditor, updateTtsBoundaryParts, confirmTtsHistoryCapacity, refreshTtsBoundaryTokenCounts, ttsBoundaryOverLimit, submitTtsBoundary, saveTtsPause, undoLastTtsEdit, previewTtsBoundary, stopTtsEditorPolling, pollTtsEditorStatus, startTtsEditorPolling, regenerateSelectedTtsSegments, formatTimingRange, formatSubtitleTiming, isVisualSubtitleModified, visualSubtitlePaceWarning, toggleVisualSubtitleEdit, finishVisualSubtitleEdit, resetVisualSubtitleDraft, visualSubtitleHiddenModeLabel, canMergeHiddenSubtitle, openVisualSubtitleRemove, closeVisualSubtitleRemove, hideVisualSubtitle, restoreHiddenVisualSubtitle, saveVisualSubtitles, restoreSelectedVisualSubtitleHistory, hasNextVisualSubtitle, closeVisualBoundaryAlign, previewVisualSubtitleBoundary, formatBoundaryOffset, formatBoundaryDelta, playVisualBoundaryRange, applyVisualSubtitleBoundary, adjustEditedTiming, resetEditedTiming, commitEditedTiming, restoreSelectedVisualTimingHistory, removeEditedTimingPicture, stopVisualEditorTaskPolling, pollVisualEditorTaskStatus, startVisualEditorTaskPolling, selectVisualEditorProject, toggleVisualEditor, redrawVisualImage, beginVisualReferenceSelection, toggleVisualSelfReferenceImage, clearVisualReferenceImages, uploadVisualReferenceImages, uploadVisualImage, undoVisualImage, resetVisualImagePrompt, commitVisualBaseline, commitAllVisualBaselines, renderEditedVideo, cancelVisualRender, uploadSourceAudio, uploadReferenceImages, removeReferenceImage, generationRequestPayload, guidedVisualParameters, guidedRenderParameters, hydrateGuidedForm, loadGuidedAudioReview, loadGuidedSubtitles, saveGuidedSubtitles, formatGuidedTimestamp, openGuidedVisualEditor, advanceGuidedWorkflow, continueGuidedJob, clearGuidedEditingState, returnToFreshGuidedSetup, finishGuidedCancellation, cancelGuidedWorkflow, handleStepModeToggle, enterGuidedPostProduction, runManualPreflight, closePreflight, submit, selectJob, cancelGeneration, deleteGenerationJob, submitModule1, cancelModule1, uploadSubtitleAudio, loadSubtitleReference, loadSubtitleFonts, uploadSubtitleBgmTrack, removeSubtitleBgmTrack, renderSubtitleVideo, submitSubtitleJob, cancelSubtitleJob, syncStepAudioMetadata, syncStepAudioProgress, toggleStepAudioPlayback, seekStepAudio, saveStepAudioAs, formatStepAudioTime, retryTts, resumeGeneration, changeJobPage, uploadAsset, renderEdit, selectEditorJob, stepClass, statusLabel, statusClass, voiceLabel, emotionLabel, artifactLabel, kindLabel }
 }

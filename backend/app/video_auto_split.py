@@ -1,13 +1,30 @@
 """Bounded, transactional local shot splitting; never generates media."""
 import copy
-from .video_duration_limits import generation_duration
-from .video_group_repair import repair_groups, validate_group_structure
+from .video_duration_limits import generation_duration, max_video_duration
+from .video_group_repair import validate_group_structure
+from .video_split_agent import plan_split_groups
 from .video_plan import normalize_shots
 
 MAX_REQUEST_SECONDS = 14
 
 
+def split_limit(record, shot_id, neighbors=False):
+    rows = record['shots']
+    index = next((i for i, row in enumerate(rows) if row['id'] == shot_id), -1)
+    if index < 0:
+        raise ValueError('镜头不存在')
+    first = index - 1 if neighbors and index and rows[index-1]['kind'] == 'video' else index
+    last = index + 2 if neighbors and index+1 < len(rows) and rows[index+1]['kind'] == 'video' else index+1
+    parameters = record.get('creation_parameters') or {}
+    limits = []
+    for row in rows[first:last]:
+        backend = (row.get('video_generation_options') or {}).get('backend') or parameters.get('video_generation_backend', 'api')
+        limits.append(MAX_REQUEST_SECONDS if backend == 'cloud_h3' else max_video_duration({**parameters, 'video_generation_backend': backend}))
+    return min(limits)
+
+
 def split_window(record, shot_id, neighbors=False):
+    maximum = split_limit(record, shot_id, neighbors)
     rows = record['shots']
     index = next((i for i, row in enumerate(rows) if row['id'] == shot_id), -1)
     if index < 0 or rows[index]['kind'] != 'video':
@@ -28,11 +45,15 @@ def split_window(record, shot_id, neighbors=False):
     target = rows[index]
     by_id = {s['slide_id']: s for s in scenes}
     span = by_id[target['slide_ids'][-1]]['end'] - by_id[target['slide_ids'][0]]['start']
-    if generation_duration(span) <= MAX_REQUEST_SECONDS:
-        raise ValueError('本镜请求时长未超过14秒，无需自动拆分')
+    if generation_duration(span) <= maximum:
+        raise ValueError(f'本镜请求时长未超过{maximum}秒，无需自动拆分')
     for scene in scenes:
-        if generation_duration(scene['end'] - scene['start']) > MAX_REQUEST_SECONDS:
-            raise ValueError(f"字幕 {scene['slide_id']} 单条超过14秒，请先在配音与字幕中调整断句；原配音与分镜未修改")
+        if generation_duration(scene['end'] - scene['start']) > maximum:
+            raise ValueError(
+                f"字幕 {scene['slide_id']} 单条超过{maximum}秒，暂无可用的小字幕交界；"
+                "若此前调整过配音，请先在配音页点击“重新合成完整配音”恢复小字幕（不重新配音），保存并返回后重试；"
+                "恢复后单条仍超限，再调整交界。原配音与分镜未修改"
+            )
     return first, last, scenes
 
 
@@ -40,19 +61,16 @@ def plan_split(record, shot_id, neighbors=False):
     from . import video_agents as agents
     first, last, scenes = split_window(record, shot_id, neighbors)
     window = record['shots'][first:last]
+    maximum = split_limit(record, shot_id, neighbors)
     context = copy.deepcopy(record.get('context') or {})
-    context.update(dynamic_max_shot_duration=MAX_REQUEST_SECONDS,
-                   video_generation_backend='cloud_h3')
-    context['local_replan'] = dict(
-        source_text='\n'.join(s['text'] for s in record['scenes']),
-        instruction='仅重设计本次子镜，各自只表达本镜字幕；前后递进，不重复父镜的整段剧情、构图或动作。旧核心图不是本次设计依据。')
-    # No parent images, prompts, intent, analysis or manual action are supplied.
-    parent = dict(id=shot_id, kind='video', slide_ids=[s['slide_id'] for s in scenes],
-                  boundary_locked=bool(window[-1].get('boundary_locked')))
-    rows = repair_groups(context, scenes, [parent], agents.ask_json,
-                         enforce_opening=False, repair_missing=False, coordinate_neighbors=False)
+    context.update(dynamic_max_shot_duration=maximum, dynamic_cluster_duration_recommended=False)
+    context['final_narration_script'] = (record.get('final_narration') or {}).get('script') or '\n'.join(s['text'] for s in record['scenes'])
+    context.pop('local_replan', None)
+    rows, parents = plan_split_groups(context, scenes, window, agents.ask_json, maximum)
+    context['local_split_plan'] = dict(planner='1C', max_request_seconds=maximum, parents=parents,
+        assignments=[dict(id=row['id'], slide_ids=row['slide_ids'], **row['split_assignment']) for row in rows])
     refs = record.get('references', [])
-    rows = normalize_shots(rows, scenes, [r['id'] for r in refs], max_duration=MAX_REQUEST_SECONDS)
+    rows = normalize_shots(rows, scenes, [r['id'] for r in refs], max_duration=maximum)
     # Design siblings together, not independent copies of the old shot.
     def merge(updates, fields):
         if [r['id'] for r in updates] != [r['id'] for r in rows]:
@@ -70,11 +88,11 @@ def plan_split(record, shot_id, neighbors=False):
     merge(agents.write_image_prompts(context, record['settings'].get('style',''), rows, refs),
           ('image_prompt','image_prompt_warnings'))
     merge(agents.write_video_prompts(context, rows, refs), ('video_prompt','video_prompt_warnings'))
-    rows = normalize_shots(rows, scenes, [r['id'] for r in refs], max_duration=MAX_REQUEST_SECONDS)
+    rows = normalize_shots(rows, scenes, [r['id'] for r in refs], max_duration=maximum)
     agents.audit_storyboard(rows, {r['id'] for r in refs}, parameters=context)
     for row in rows:
-        if row['kind'] != 'video' or row['generation_duration'] > MAX_REQUEST_SECONDS:
-            raise ValueError('拆分结果仍不满足14秒限制，原分镜未修改')
+        if row['kind'] != 'video' or row['generation_duration'] > maximum:
+            raise ValueError(f'拆分结果仍不满足{maximum}秒限制，原分镜未修改')
         source = next(old for old in window if row['slide_ids'][0] in old['slide_ids'])
         # Preserve generation route only; old scene binding may no longer fit.
         if 'video_generation_options' in source:
@@ -90,7 +108,7 @@ def merge_split(current, snapshot, shot_id, neighbors, replacements):
     at = next((i for i, row in enumerate(current['shots']) if row['id'] == old[0]['id']), -1)
     # Unrelated clip completion can proceed; scope/settings/reference changes cannot.
     if at < 0 or current['shots'][at:at+len(old)] != old or any(
-            current.get(key) != snapshot.get(key) for key in ('scenes','settings','references','context','creation_parameters')):
+            current.get(key) != snapshot.get(key) for key in ('scenes','settings','references','context','creation_parameters','final_narration','narration_groups','audio')):
         raise ValueError('规划期间所选镜头或项目设定已改变，本次未覆盖，请重新尝试')
     validate_group_structure(replacements, scenes)
     result = current['shots'][:at] + replacements + current['shots'][at+len(old):]

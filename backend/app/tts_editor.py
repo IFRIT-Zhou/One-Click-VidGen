@@ -92,6 +92,72 @@ def _aligned_offset(points, value):
     return points[-1][1]
 
 
+def _refine_subtitle_timing(project_dir, rows, segments, files):
+    """Locate small cues in existing/new WAVs; ASR uncertainty is not a TTS veto."""
+    from .pipeline import resolve_asr_python
+    requests, groups = [], []
+    rows = [dict(row) for row in rows]
+    for segment in segments:
+        index = int(segment['index'])
+        if index not in files:
+            continue
+        start, end = float(segment['start']), float(segment['end'])
+        selected = [i for i, row in enumerate(rows)
+                    if start - .001 <= float(row['start']) < end - .001
+                    and float(row['end']) <= end + float(segment.get('pause_after') or 0) + .05]
+        if len(selected) < 2:
+            continue
+        requests.append(dict(audio=str(files[index]), duration=end-start,
+                             texts=[rows[i].get('text_content') or rows[i].get('text') for i in selected],
+                             reading_text=segment.get('tts_text') or segment.get('text'),
+                             fallback_starts=[max(0, float(rows[i]['start'])-start) for i in selected]))
+        groups.append((segment, selected))
+    if not requests:
+        return rows, 0
+    directory = project_dir / 'other' / SEGMENT_DIRNAME / '.subtitle-timing'
+    directory.mkdir(parents=True, exist_ok=True)
+    key = uuid.uuid4().hex
+    request_path, result_path = directory / f'{key}.json', directory / f'{key}.result.json'
+    try:
+        request_path.write_text(json.dumps(requests, ensure_ascii=False), encoding='utf-8')
+        env = dict(os.environ, ASR_DEVICE='cpu')
+        completed = subprocess.run(
+            [resolve_asr_python(), '-m', 'backend.app.tts_alignment', str(request_path), str(result_path)],
+            cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=180,
+        )
+        if completed.returncode or not result_path.is_file():
+            return rows, len(groups)
+        results = json.loads(result_path.read_text(encoding='utf-8'))
+        if not isinstance(results, list) or len(results) != len(groups):
+            return rows, len(groups)
+        fallbacks = 0
+        for (segment, indices), result in zip(groups, results):
+            if not isinstance(result, dict):
+                fallbacks += 1
+                continue
+            starts = result.get('starts', [])
+            duration = float(segment['end']) - float(segment['start'])
+            if (not result.get('aligned') or len(starts) != len(indices)
+                    or any(not isinstance(v, (float, int)) or not 0 <= v < duration for v in starts)
+                    or any(b <= a for a, b in zip(starts, starts[1:]))):
+                fallbacks += 1
+                continue
+            # Keep the span endpoints, including a saved trailing pause. Only
+            # internal subtitle boundaries move to recognized speech positions.
+            boundaries = [rows[indices[0]]['start'],
+                          *(float(segment['start']) + v for v in starts[1:]),
+                          rows[indices[-1]]['end']]
+            for i, left, right in zip(indices, boundaries, boundaries[1:]):
+                rows[i].update(start=round(left, 6), end=round(right, 6), subtitle_timing_source='speech_aligned')
+        return rows, fallbacks
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+        return rows, len(groups)
+    finally:
+        request_path.unlink(missing_ok=True)
+        result_path.unlink(missing_ok=True)
+
+
 def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
     """Seal one complete, mutually consistent subtitle timeline for the next stage."""
     subtitle_path = project_dir / "other" / SUBTITLE_FILENAME
@@ -168,6 +234,37 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
 
 def _commit_step_audio_edit(job: Any, project_dir: Path) -> None:
     _commit_canonical_subtitle_timeline(project_dir)
+    # Shared by illustrated videos, dynamic videos and audio-only edits. The
+    # final recorded copy (not phonetic spelling or caption annotations) wins.
+    from .final_narration import SNAPSHOT_FILENAME, final_narration_snapshot
+    snapshot = final_narration_snapshot(project_dir)
+    snapshot_path = project_dir / 'other' / SNAPSHOT_FILENAME
+    previous = None
+    if snapshot_path.is_file():
+        previous = json.loads(snapshot_path.read_text(encoding='utf-8'))
+    elif TtsEditor._history_entries(project_dir):
+        prior_timeline = TtsEditor._history_entries(project_dir)[-1] / TIMELINE_FILENAME
+        if prior_timeline.is_file():
+            previous = {'scenes': json.loads(prior_timeline.read_text(encoding='utf-8'))}
+    if previous and not job.request.get('dynamic_video'):
+        try:
+            VisualEditor.sync_final_narration(project_dir, previous['scenes'], snapshot['scenes'])
+            job.request.pop('_final_narration_visual_warning', None)
+        except (OSError, ValueError) as exc:
+            # Broken legacy picture mappings must not swallow completed audio.
+            # Keep an explicit warning instead of presenting old visuals as synced.
+            warning = f'最终配音已保存，原画面对应关系需核对：{exc}'
+            job.request['_final_narration_visual_warning'] = warning
+            store.log(job, warning)
+    old_script = str(job.request.get('script') or '')
+    if re.sub(r'\s+', '', old_script) != re.sub(r'\s+', '', snapshot['script']):
+        TtsEditor._sync_boundary_script(job, project_dir, [{'text': snapshot['script']}])
+    pending = snapshot_path.with_name(f'.{SNAPSHOT_FILENAME}.{uuid.uuid4().hex}.tmp')
+    pending.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding='utf-8')
+    os.replace(pending, snapshot_path)
+    job.request['_final_narration_script'] = snapshot['script']
+    job.request['_final_narration_fingerprint'] = snapshot['fingerprint']
+    store.update(job, request=job.request)
     if is_step_workflow_v2(job.request):
         sync_refined_step_audio_assets(job, project_dir)
         persist_step_workflow_state(
@@ -304,7 +401,7 @@ def _build_regeneration_plan(
     chunk_positions: dict[int, list[int]] = {}
     token_totals: dict[int, int] = {}
     token_count = None
-    if engine == "indextts25":
+    if engine in {"indextts25", "cluster"}:
         from .tts_segmentation import build_indextts25_token_counter
 
         token_count = build_indextts25_token_counter()
@@ -653,7 +750,52 @@ class TtsEditor:
         segments = payload.get("segments") if isinstance(payload, dict) else None
         if not isinstance(segments, list) or not segments:
             raise ValueError("逐句配音清单损坏或为空")
+        TtsEditor._reconcile_legacy_display_texts(project_dir, segments)
         return payload
+
+    @staticmethod
+    def _reconcile_legacy_display_texts(project_dir: Path, segments: list[dict[str, Any]]) -> None:
+        """Read old, partially synced archives without rewriting user assets.
+
+        Older regeneration saved the opted-in subtitle edit but left manifest
+        ``text`` unchanged. Only adopt canonical words when the entire timed
+        cue span exactly matches the saved reading; never guess from similarity
+        or replace subtitles with pronunciation hints.
+        """
+        compact = lambda text: re.sub(r"\s+", "", str(text or ""))
+        stale = [item for item in segments if isinstance(item, dict) and not item.get("subtitle_independent")
+                 and item.get("tts_text") and compact(item.get("text")) != compact(item["tts_text"])]
+        if not stale:
+            return
+        timeline_path = project_dir / "other" / TIMELINE_FILENAME
+        try:
+            rows = (json.loads(timeline_path.read_text(encoding="utf-8")) if timeline_path.is_file()
+                    else _srt_entries(project_dir / "other" / SUBTITLE_FILENAME))
+            if not isinstance(rows, list):
+                return
+            rows = [row for row in rows if isinstance(row, dict)]
+            for item in stale:
+                start, end = float(item.get("start") or 0), float(item.get("end") or 0)
+                if end <= start:
+                    continue
+                selected = [row for row in rows
+                            if start <= (float(row.get("start") or 0) + float(row.get("end") or 0)) / 2 < end]
+                if not selected:
+                    continue
+                # Exact text plus both time boundaries is deliberately stricter
+                # than the ordinary locator, which can handle partial cues.
+                pause_end = end + max(0.0, float(item.get("pause_after") or 0))
+                if (abs(float(selected[0]["start"]) - start) > .15
+                        or min(abs(float(selected[-1]["end"]) - end),
+                               abs(float(selected[-1]["end"]) - pause_end)) > .15):
+                    continue
+                canonical = "".join(str(row.get("text_content") or row.get("text") or "") for row in selected)
+                if compact(canonical) == compact(item["tts_text"]):
+                    item["text"] = canonical
+        except (OSError, ValueError, TypeError, KeyError):
+            # A damaged or genuinely different timeline must still be rejected
+            # by the edit validation, not silently repaired here.
+            return
 
     @staticmethod
     def _history_root(project_dir: Path) -> Path:
@@ -924,7 +1066,7 @@ class TtsEditor:
                 "index": index,
                 "text": subtitle_text,
                 "tts_text": tts_text,
-                "pronunciation_modified": bool(tts_text and tts_text != subtitle_text),
+                "pronunciation_modified": bool(tts_text and tts_text != subtitle_text and not raw.get("subtitle_independent")),
                 "audio_url": f"/api/jobs/{job_id}/tts-editor/audio/{index}?v={audio.stat().st_mtime_ns}",
             })
         task = self.status(job_id)
@@ -1073,14 +1215,49 @@ class TtsEditor:
     def set_pause(self, *, job: Any, user_id: int, left_index: int, seconds: float) -> dict[str, Any]:
         return self.rebuild_audio(job=job, user_id=user_id, pauses={left_index: seconds})
 
-    def rebuild_audio(self, *, job: Any, user_id: int, pauses: dict[int, float]) -> dict[str, Any]:
+    def rebuild_audio(
+        self, *, job: Any, user_id: int, pauses: dict[int, float],
+        subtitle_text_overrides: dict[int, str] | None = None,
+        expected_revision: int | None = None,
+        subtitle_only_overrides: dict[int, str] | None = None,
+        _rebuild_audio: bool = True,
+    ) -> dict[str, Any]:
         if self.status(job.id).get("status") == "running":
             raise RuntimeError("该项目已有音频编辑任务正在运行")
         project_dir = self._project_dir(job.id, user_id)
         self._ensure_module1_layout(job.id, project_dir)
         self._migrate_legacy_archive(job.id, project_dir)
         manifest = self._load_manifest(project_dir)
+        if expected_revision is not None and int(manifest.get("revision") or 0) != expected_revision:
+            raise RuntimeError("配音已被更新，请刷新配音列表后重新合成；未修改现有音频或字幕")
         segments = [dict(item) for item in manifest["segments"] if isinstance(item, dict)]
+        by_index = {int(item.get("index") or 0): item for item in segments}
+        display_updates = {}
+        independent_updates = {}
+        compact = lambda value: re.sub(r"\s+", "", str(value or ""))
+        for raw_index, raw_text in dict(subtitle_text_overrides or {}).items():
+            index, text = int(raw_index), str(raw_text or "").strip()
+            item = by_index.get(index)
+            if item is None:
+                raise ValueError(f"第 {index} 句不存在，请刷新配音列表")
+            saved_reading = str(item.get("tts_text") or item.get("text") or "").strip()
+            if not text or len(text) > 1200:
+                raise ValueError(f"第 {index} 句同步字幕为空或过长")
+            if compact(text) != compact(saved_reading):
+                raise ValueError(f"第 {index} 句当前文字尚未生成到配音中，请先重配该句；重新合成不会调用 TTS，未修改现有音频和字幕")
+            if compact(item.get("text")) != compact(saved_reading):
+                display_updates[index] = saved_reading
+        for raw_index, raw_text in dict(subtitle_only_overrides or {}).items():
+            index, text = int(raw_index), str(raw_text or "").strip()
+            if index not in by_index:
+                raise ValueError(f"第 {index} 句不存在，请刷新配音列表")
+            if index in (subtitle_text_overrides or {}):
+                raise ValueError(f"第 {index} 句不能同时选择跟随配音和独立字幕")
+            if not text or len(text) > 1200:
+                raise ValueError(f"第 {index} 句字幕为空或过长")
+            independent_updates[index] = text
+        # Resolve every selected sentence before changing pauses or files.
+        subtitle_updates = self._subtitle_updates_for_segments(project_dir, segments, {**display_updates, **independent_updates})
         changes = []
         for left_index, seconds in pauses.items():
             if left_index < 1 or left_index >= len(segments):
@@ -1092,8 +1269,29 @@ class TtsEditor:
             left = segments[left_index - 1]
             old_pause = max(0.0, float(left.get('pause_after') or 0))
             changes.append((float(left.get('end') or 0) + old_pause, seconds - old_pause, left_index, seconds))
-        history_count, pruned = self._snapshot_history(project_dir, manifest, [], "重新合成完整配音")
+        action = "重新合成完整配音" if _rebuild_audio else "仅保存字幕"
+        history_count, pruned = self._snapshot_history(project_dir, manifest, [], action)
+        history = self._history_entries(project_dir)[-1]
+        restored_cues, timing_fallbacks = 0, 0
+        self._set_task(job.id, status="running", progress=10, message="正在保存配音与字幕编辑")
         try:
+            if subtitle_updates:
+                if display_updates:
+                    self._snapshot_boundary_script(job, project_dir, history)
+                VisualEditor().save_subtitle_texts(job_id=job.id, user_id=user_id, updates=subtitle_updates)
+                for index, text in display_updates.items():
+                    by_index[index]["text"] = text
+            for raw_index in (subtitle_text_overrides or {}):
+                item = by_index[int(raw_index)]
+                item.pop("subtitle_independent", None)
+                item.pop("subtitle_source_text", None)
+            for index, text in independent_updates.items():
+                item = by_index[index]
+                # Preserve the spoken/display baseline separately from annotations.
+                item["tts_text"] = str(item.get("tts_text") or item.get("text") or "")
+                if not item.get("subtitle_independent"):
+                    item["subtitle_source_text"] = item.get("text") or ""
+                item.update(text=text, subtitle_independent=True)
             # Apply original boundaries from right to left so earlier edits do
             # not move the coordinates used for later subtitle/timeline edits.
             for boundary, delta, left_index, seconds in sorted(changes, reverse=True):
@@ -1101,25 +1299,151 @@ class TtsEditor:
                     self._apply_boundary_delta(project_dir, boundary, delta)
                 segments[left_index - 1]['pause_after'] = seconds
             manifest["segments"] = segments
-            manifest["total_duration"] = self._refresh_segment_timing(segments, self._segment_dir(project_dir))
+            if _rebuild_audio:
+                manifest["total_duration"] = self._refresh_segment_timing(segments, self._segment_dir(project_dir))
+                # Legacy boundary edits replaced all small subtitles with one
+                # long cue per WAV. Repair from current audio/text, not the stale
+                # pre-edit final_short.srt. Only an explicit rebuild performs this.
+                from .subtitle_granularity import restore_coarse_cues
+                timeline_path = project_dir / "other" / TIMELINE_FILENAME
+                source_rows = (json.loads(timeline_path.read_text(encoding="utf-8"))
+                               if timeline_path.is_file() else _srt_entries(project_dir / "other" / SUBTITLE_FILENAME))
+                rows, affected = restore_coarse_cues(source_rows, segments)
+                if affected:
+                    self._set_task(job.id, status="running", progress=60,
+                                   message="正在用已有配音恢复小字幕时间；不会重新调用 TTS")
+                    rows, timing_fallbacks = _refine_subtitle_timing(
+                        project_dir, rows, segments,
+                        {int(s['index']): self._segment_dir(project_dir) / s['filename']
+                         for s in segments if int(s['index']) in affected},
+                    )
+                    restored_cues = len(rows) - len(source_rows)
+                    timeline_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+                    _write_srt_entries(project_dir / "other" / SUBTITLE_FILENAME,
+                                       [dict(row, text=row.get('text_content') or row.get('text'))
+                                        for row in rows if not row.get('subtitle_hidden')])
             manifest["revision"] = int(manifest.get("revision") or 0) + 1
             manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            temp_audio = project_dir / "input" / ".配音.pause-edit.wav"
-            _concat_segment_wavs(segments, self._segment_dir(project_dir), temp_audio)
-            temp_audio.replace(project_dir / "input" / "配音.wav")
+            if _rebuild_audio:
+                temp_audio = project_dir / "input" / ".配音.pause-edit.wav"
+                _concat_segment_wavs(segments, self._segment_dir(project_dir), temp_audio)
+                temp_audio.replace(project_dir / "input" / "配音.wav")
             (self._segment_dir(project_dir) / SEGMENT_MANIFEST).write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             self._sync_module1_flat_outputs(project_dir, job.id)
+            if display_updates:
+                # Independent subtitle annotations must not become narration copy.
+                self._sync_boundary_script(job, project_dir, [
+                    {"text": item.get("subtitle_source_text", item.get("text", ""))
+                     if item.get("subtitle_independent") else item.get("text", "")}
+                    for item in segments
+                ])
             _commit_step_audio_edit(job, project_dir)
         except Exception:
-            self._restore_history(project_dir, self._history_entries(project_dir)[-1], consume=True)
+            self._restore_boundary_script(job, project_dir, history)
+            self._restore_history(project_dir, history, consume=True)
+            self._set_task(job.id, status="failed", progress=0, message="配音编辑未提交，已恢复原配音与字幕")
             raise
-        store.log(job, f"已按现有配音重新合成完整音频，应用 {len(changes)} 处停顿设置")
+        sync_note = f"，已补同步 {len(display_updates)} 句字幕与文案" if display_updates else ""
+        if independent_updates:
+            sync_note += f"，已独立保存 {len(independent_updates)} 句字幕（原配音不变）"
+        if restored_cues:
+            sync_note += f"，已恢复 {restored_cues} 个小字幕交界"
+        if timing_fallbacks:
+            sync_note += f"；{timing_fallbacks} 段字幕使用估算时间，请试听核对交界"
+        self._set_task(job.id, status="completed", progress=100, message=f"配音与字幕编辑已保存{sync_note}")
+        store.log(job, (f"已按现有配音重新合成完整音频，应用 {len(changes)} 处停顿设置{sync_note}；未调用 TTS"
+                        if _rebuild_audio else f"已独立保存 {len(independent_updates)} 句字幕，配音与时间轴不变；未调用 TTS"))
         return {
             "ok": True, "history_count": history_count, "history_pruned": pruned,
-            "message": "完整配音已重新合成，停顿与时间轴已同步；请在上方播放器试听。未调用 TTS。",
+            "synced_subtitle_indices": sorted(display_updates),
+            "subtitle_only_indices": sorted(independent_updates),
+            "restored_subtitle_boundaries": restored_cues,
+            "estimated_timing_segments": timing_fallbacks,
+            "message": (f"完整配音已重新合成，停顿与时间轴已同步{sync_note}；请在上方播放器试听。未调用 TTS。"
+                        if _rebuild_audio else "字幕已独立保存，原配音、朗读文本和时间轴保持不变；未调用 TTS。"),
         }
+
+    def save_subtitle_only(self, *, job: Any, user_id: int, updates: dict[int, str],
+                           expected_revision: int | None = None) -> dict[str, Any]:
+        if not updates:
+            raise ValueError("请选择需要保存的字幕")
+        return self.rebuild_audio(job=job, user_id=user_id, pauses={},
+                                  subtitle_only_overrides=updates, expected_revision=expected_revision,
+                                  _rebuild_audio=False)
+
+    @staticmethod
+    def _resegment_rows(entries, old_start, old_end, new_parts, requested_texts, original_text):
+        """Locate old words, including a TTS boundary inside a subtitle cue."""
+        entries = [dict(row, text=str(row.get("text_content") or row.get("text") or "")) for row in entries]
+        compact = lambda text: re.sub(r"\s+", "", str(text or ""))
+        texts = [compact(row.get("text_content") or row.get("text")) for row in entries]
+        joined, needle = "".join(texts), compact(original_text)
+        matches = []
+        offset = 0
+        while needle:
+            start = joined.find(needle, offset)
+            if start < 0:
+                break
+            end = start + len(needle)
+            cursor = 0
+            indices = []
+            for index, text in enumerate(texts):
+                if cursor < end and cursor + len(text) > start:
+                    indices.append((index, cursor))
+                cursor += len(text)
+            if indices:
+                first, first_pos = indices[0]
+                last, last_pos = indices[-1]
+                # Time only disambiguates identical wording; it never replaces
+                # the requirement to find the original words.
+                score = abs(float(entries[first]["start"]) - old_start) + abs(float(entries[last]["end"]) - old_end)
+                matches.append((score, first, last, start-first_pos, end-last_pos))
+            offset = start + 1
+        matches.sort()
+        if not matches or (len(matches) > 1 and abs(matches[0][0]-matches[1][0]) < .001):
+            raise ValueError("原字幕无法唯一定位，请核对文字；尚未提交配音修改")
+        _, first, last, left, right = matches[0]
+        before = [dict(row) for row in entries[:first]]
+        after = [dict(row) for row in entries[last+1:]]
+        def fragment(row, text, start, end):
+            if end <= start:
+                raise ValueError("字幕交界时间无效，请核对原配音时间轴")
+            result = dict(row)
+            result.update(text=text, text_content=text, start=start, end=end)
+            return result
+        def raw_offset(row, count):
+            raw = str(row.get("text_content") or row.get("text") or "")
+            indices = [index for index, char in enumerate(raw) if not char.isspace()]
+            return indices[count] if count < len(indices) else len(raw)
+        if left:
+            before.append(fragment(entries[first], entries[first]["text"][:raw_offset(entries[first], left)], float(entries[first]["start"]), old_start))
+        if right < len(texts[last]):
+            after.insert(0, fragment(entries[last], entries[last]["text"][raw_offset(entries[last], right):], old_end, float(entries[last]["end"])))
+        delta = float(new_parts[-1]["end"]) - old_end
+        for row in after:
+            row["start"], row["end"] = float(row["start"])+delta, float(row["end"])+delta
+        # WAV boundaries are not subtitle boundaries: retain the smaller cues
+        # within the changed speech span instead of collapsing each WAV to one.
+        from .subtitle_granularity import resegment_cues
+        source = []
+        for index in range(first, last + 1):
+            row = entries[index]
+            text = row['text']
+            text = text[raw_offset(row, left) if index == first else 0:
+                        raw_offset(row, right) if index == last else len(text)]
+            source.append(fragment(row, text, max(old_start, float(row['start'])),
+                                   min(old_end, float(row['end']))))
+        replacements = resegment_cues(source, new_parts, requested_texts)
+        if before:
+            before[-1]["end"] = min(float(before[-1]["end"]), float(new_parts[0]["start"]))
+        if after:
+            after[0]["start"] = max(float(after[0]["start"]), float(new_parts[-1]["end"]))
+        result = [*before, *replacements, *after]
+        if any(float(row["end"]) <= float(row["start"]) for row in result):
+            raise ValueError("新交界与相邻字幕时间冲突，未提交修改")
+        return result
 
     @staticmethod
     def _reshape_subtitles_for_span(
@@ -1128,52 +1452,16 @@ class TtsEditor:
         old_end: float,
         new_parts: list[dict[str, Any]],
         requested_texts: list[str],
+        original_text: str | None = None,
     ) -> None:
         path = project_dir / "other" / SUBTITLE_FILENAME
         entries = _srt_entries(path)
         if not entries:
             return
-        compact = lambda value: re.sub(r"\s+", "", str(value or ""))
-        expected = compact("".join(requested_texts))
-        # ASR subtitle boundaries can drift a few milliseconds from TTS segment
-        # boundaries. Match the unchanged words first, then use time to select
-        # the closest occurrence, so a neighbouring subtitle is not swallowed.
-        matches = [
-            (abs(float(entries[first]["start"]) - old_start) + abs(float(entries[last]["end"]) - old_end), first, last)
-            for first in range(len(entries))
-            for last in range(first, len(entries))
-            if compact("".join(str(entries[i]["text"]) for i in range(first, last + 1))) == expected
-        ]
-        if not matches:
-            raise ValueError("最终字幕内容与断句文字不一致，已取消更新以避免错位")
-        _, first, last = min(matches)
-        # The old ASR timestamps are being replaced here. Their distance from
-        # the audio manifest is not evidence that a text-matched edit is wrong.
-        # Reject ambiguous repeated text instead of requiring 150 ms agreement.
-        if len(matches) > 1 and abs(sorted(matches)[1][0] - sorted(matches)[0][0]) < 0.001:
-            raise ValueError("字幕中存在无法区分的重复段落，请先核对要调整的配音段落")
-        # The requested texts are the user's chosen boundary. Proportional
-        # splitting silently moved that boundary even though audio was right.
-        split_texts = [str(text) for text in requested_texts]
-        replacements = [
-            {"text": text or requested_texts[index], "start": part["start"], "end": part["end"]}
-            for index, (text, part) in enumerate(zip(split_texts, new_parts))
-        ]
-        delta = float(new_parts[-1]["end"]) - old_end
-        following = [dict(item) for item in entries[last + 1:]]
-        for item in following:
-            item["start"] = float(item["start"]) + delta
-            item["end"] = float(item["end"]) + delta
-        preceding = [dict(item) for item in entries[:first]]
-        if preceding:
-            if float(preceding[-1]["start"]) >= float(new_parts[0]["start"]):
-                raise ValueError("新断点超出上一段字幕范围，请核对配音段落顺序")
-            preceding[-1]["end"] = min(float(preceding[-1]["end"]), float(new_parts[0]["start"]))
-        if following:
-            following[0]["start"] = max(float(following[0]["start"]), float(new_parts[-1]["end"]))
-            if float(following[0]["end"]) <= float(following[0]["start"]):
-                raise ValueError("新断点超出下一段字幕范围，请核对配音段落顺序")
-        _write_srt_entries(path, [*preceding, *replacements, *following])
+        _write_srt_entries(path, TtsEditor._resegment_rows(
+            entries, old_start, old_end, new_parts, requested_texts,
+            original_text if original_text is not None else ''.join(requested_texts),
+        ))
 
     @staticmethod
     def _warp_timeline_span(project_dir: Path, old_start: float, old_end: float, new_end: float) -> None:
@@ -1236,10 +1524,11 @@ class TtsEditor:
         replace_count: int,
         parts: list[dict[str, Any]],
         settings_override: dict[str, Any] | None = None,
+        sync_text: bool = False,
     ) -> None:
         if bool(job.request.get("skip_tts")):
             raise ValueError("上传成品配音只能修改现有交界处停顿，不能断句或合并重配")
-        if replace_count not in {1, 2} or len(parts) not in {1, 2}:
+        if replace_count not in {1, 2} or not 1 <= len(parts) <= 24:
             raise ValueError("断句调整范围无效")
         if self.status(job.id).get("status") == "running":
             raise RuntimeError("该项目已有音频编辑任务正在运行")
@@ -1249,6 +1538,7 @@ class TtsEditor:
             project_dir: Path | None = None
             history: Path | None = None
             work_dir: Path | None = None
+            completed = False
             try:
                 project_dir = self._project_dir(job.id, user_id)
                 self._ensure_module1_layout(job.id, project_dir)
@@ -1271,26 +1561,47 @@ class TtsEditor:
                 if any(not text for text in display_texts + reading_texts):
                     raise ValueError("断句前后文字不能为空")
                 compact = lambda value: re.sub(r"\s+", "", value)
-                if compact(old_display) != compact("".join(display_texts)):
-                    raise ValueError("调整断点不能增加、删除或改写字幕文字")
+                if compact(old_display) != compact("".join(display_texts)) and not sync_text:
+                    raise ValueError("文字已改变，请先确认同步修改字幕和文案")
+                old_start = float(replaced[0].get("start") or 0)
+                old_end = float(replaced[-1].get("end") or 0)
+                timeline_path = project_dir / "other" / TIMELINE_FILENAME
+                timeline = json.loads(timeline_path.read_text(encoding="utf-8")) if timeline_path.is_file() else []
+                source_rows = timeline or _srt_entries(project_dir / "other" / SUBTITLE_FILENAME)
+                # Validate before spending time/credits on synthesis.
+                try:
+                    self._resegment_rows(source_rows, old_start, old_end,
+                                         [{"start": old_start, "end": old_end}], [old_display], old_display)
+                except ValueError as exc:
+                    label = str(start_index) if replace_count == 1 else f"{start_index}～{start_index + replace_count - 1}"
+                    raise ValueError(f"第 {label} 句：{exc}") from exc
                 engine = str(manifest.get("engine") or "indextts25")
                 if engine in {"indextts2", "indextts25", "cluster"}:
                     from .tts_segmentation import INDEXTTS25_SEGMENT_MAX_TOKENS, build_indextts25_token_counter
                     count = build_indextts25_token_counter()
                     totals = [count(text) for text in reading_texts]
                     if any(total > INDEXTTS25_SEGMENT_MAX_TOKENS for total in totals):
-                        raise ValueError(f"断句后仍有片段超过 110 token：{totals}")
+                        store.log(job, f"当前朗读超过建议的 110 token：{totals}；将按引擎安全长度合成并合回所选交界，建议试听衔接")
                 work_dir = self._segment_dir(project_dir) / f".boundary-{uuid.uuid4().hex}"
+                work_dir.mkdir(parents=True, exist_ok=True)
+                (work_dir / "recovery.json").write_text(json.dumps({
+                    "start_index": start_index, "replace_count": replace_count,
+                    "original_text": old_display, "parts": parts, "sync_text": sync_text,
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
                 generated = self._synthesize_parts(
                     job=job, user_id=user_id, project_dir=project_dir,
                     manifest=manifest, texts=reading_texts, work_dir=work_dir,
                 )
+                if len(generated) != len(parts):
+                    raise ValueError("重配返回的音频数量不完整")
                 history_count, pruned = self._snapshot_history(
                     project_dir, manifest,
                     [int(item.get("index") or 0) for item in replaced],
                     "新增断点" if replace_count == 1 and len(parts) == 2 else "调整断点",
                 )
                 history = self._history_entries(project_dir)[-1]
+                if sync_text:
+                    self._snapshot_boundary_script(job, project_dir, history)
                 old_start = float(replaced[0].get("start") or 0)
                 old_end = float(replaced[-1].get("end") or 0)
                 trailing_pause = float(replaced[-1].get("pause_after") or 0)
@@ -1312,9 +1623,16 @@ class TtsEditor:
                 manifest["total_duration"] = self._refresh_segment_timing(updated, self._segment_dir(project_dir))
                 manifest["revision"] = int(manifest.get("revision") or 0) + 1
                 manifest["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                self._reshape_subtitles_for_span(project_dir, old_start, old_end, new_items, display_texts)
-                self._warp_timeline_span(project_dir, old_start, old_end, float(new_items[-1]["end"]))
-                self._adopt_resegmented_subtitles(project_dir)
+                rows = self._resegment_rows(source_rows, old_start, old_end, new_items, display_texts, old_display)
+                self._set_task(job.id, status="running", progress=85, message="配音已生成，正在同步小字幕时间；不会重新配音")
+                rows, timing_fallbacks = _refine_subtitle_timing(
+                    project_dir, rows, new_items,
+                    {int(item['index']): self._segment_dir(project_dir) / item['filename'] for item in new_items},
+                )
+                if timeline:
+                    timeline_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+                _write_srt_entries(project_dir / "other" / SUBTITLE_FILENAME,
+                                   [row for row in rows if not row.get("subtitle_hidden")])
                 temp_audio = project_dir / "input" / ".配音.boundary-edit.wav"
                 _concat_segment_wavs(updated, self._segment_dir(project_dir), temp_audio)
                 temp_audio.replace(project_dir / "input" / "配音.wav")
@@ -1327,25 +1645,75 @@ class TtsEditor:
                     if old_file.name not in used:
                         old_file.unlink(missing_ok=True)
                 self._sync_module1_flat_outputs(project_dir, job.id)
+                if sync_text:
+                    self._sync_boundary_script(job, project_dir, rows)
                 _commit_step_audio_edit(job, project_dir)
+                completed = True
                 self._set_task(
                     job.id, status="completed", progress=100,
-                    message=f"断句已调整；历史 {history_count}/20" + ("，最早一版已自动清理" if pruned else ""),
+                    message=f"断句已调整，小字幕交界已保留；历史 {history_count}/20" + ("，最早一版已自动清理" if pruned else "")
+                            + (f"；{timing_fallbacks} 段字幕使用估算时间，请试听核对交界" if timing_fallbacks else ""),
                 )
                 store.log(job, f"断句调整完成：从第 {start_index} 句开始，以 {len(parts)} 句替换原 {replace_count} 句")
             except Exception as exc:
                 if project_dir is not None and history is not None and history.is_dir():
                     try:
+                        self._restore_boundary_script(job, project_dir, history)
                         self._restore_history(project_dir, history, consume=True)
                     except Exception as rollback_exc:
                         store.log(job, f"断句调整回滚失败：{rollback_exc}")
-                self._set_task(job.id, status="failed", progress=0, message=f"断句调整失败：{exc}")
+                retained = "；新生成音频已保留，原配音和字幕未替换" if work_dir is not None and work_dir.is_dir() else ""
+                self._set_task(job.id, status="failed", progress=0, message=f"断句调整失败：{exc}{retained}")
                 store.log(job, f"断句调整失败：{type(exc).__name__}: {exc}")
             finally:
-                if work_dir is not None:
+                if work_dir is not None and completed:
                     shutil.rmtree(work_dir, ignore_errors=True)
 
         threading.Thread(target=work, daemon=True, name=f"tts-boundary-{job.id}").start()
+
+    @staticmethod
+    def _snapshot_boundary_script(job, project_dir, history):
+        script_path = project_dir / "input" / "文案.txt"
+        job_script = JOBS_DIR / job.id / "script.txt"
+        backup = {
+            "project_script": script_path.read_text(encoding="utf-8") if script_path.is_file() else None,
+            "request_had_script": "script" in job.request,
+            "request_script": job.request.get("script"),
+            "job_script": job_script.read_text(encoding="utf-8") if job_script.is_file() else None,
+        }
+        (history / "script_sync.json").write_text(json.dumps(backup, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _sync_boundary_script(job, project_dir, rows=None):
+        if rows is None:
+            rows = json.loads((project_dir / "other" / TIMELINE_FILENAME).read_text(encoding="utf-8"))
+        script = "\n".join(str(row.get("text_content") or row.get("text") or "") for row in rows)
+        (project_dir / "input" / "文案.txt").write_text(script, encoding="utf-8")
+        job_script = JOBS_DIR / job.id / "script.txt"
+        if job_script.is_file():
+            job_script.write_text(script, encoding="utf-8")
+        job.request["script"] = script
+        store.update(job, request=job.request)
+
+    @staticmethod
+    def _restore_boundary_script(job, project_dir, history):
+        path = history / "script_sync.json"
+        if not path.is_file():
+            return
+        backup = json.loads(path.read_text(encoding="utf-8"))
+        target = project_dir / "input" / "文案.txt"
+        if backup["project_script"] is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_text(backup["project_script"], encoding="utf-8")
+        job_script = JOBS_DIR / job.id / "script.txt"
+        if backup["job_script"] is not None:
+            job_script.write_text(backup["job_script"], encoding="utf-8")
+        if backup["request_had_script"]:
+            job.request["script"] = backup["request_script"]
+        else:
+            job.request.pop("script", None)
+        store.update(job, request=job.request)
 
     @staticmethod
     def _restore_history(project_dir: Path, history: Path, *, consume: bool) -> None:
@@ -1371,9 +1739,12 @@ class TtsEditor:
                 shutil.copy2(backup, target)
             else:
                 target.unlink(missing_ok=True)
-        temp_audio = project_dir / "input" / ".配音.undo.wav"
-        _concat_segment_wavs(restored["segments"], segment_dir, temp_audio)
-        temp_audio.replace(project_dir / "input" / "配音.wav")
+        meta_path = history / "history.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        if meta.get("action") != "仅保存字幕":
+            temp_audio = project_dir / "input" / ".配音.undo.wav"
+            _concat_segment_wavs(restored["segments"], segment_dir, temp_audio)
+            temp_audio.replace(project_dir / "input" / "配音.wav")
         TtsEditor._sync_module1_flat_outputs(project_dir)
         if consume:
             shutil.rmtree(history, ignore_errors=True)
@@ -1388,6 +1759,7 @@ class TtsEditor:
         history = entries[-1]
         meta_path = history / "history.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        self._restore_boundary_script(job, project_dir, history)
         self._restore_history(project_dir, history, consume=True)
         self._sync_module1_flat_outputs(project_dir, job.id)
         _commit_step_audio_edit(job, project_dir)
@@ -1528,6 +1900,7 @@ class TtsEditor:
                     dict(settings_override or {}),
                     normalized_text_overrides,
                     subtitle_updates,
+                    subtitle_text_overrides=normalized_subtitle_overrides,
                 )
                 sync_note = f"，并同步 {synced_subtitle_count} 条字幕" if synced_subtitle_count else ""
                 self._set_task(
@@ -1543,6 +1916,7 @@ class TtsEditor:
 
     def _regenerate_sync(
         self, job, user_id, indices, settings_override, text_overrides, subtitle_updates, recovery=None,
+        *, subtitle_text_overrides=None,
     ):
         project_dir = self._project_dir(job.id, user_id)
         manifest = self._load_manifest(project_dir)
@@ -1563,8 +1937,10 @@ class TtsEditor:
                     restored = data['manifest']
                     restored['subtitle_timing_estimated'] = True
                     return self._commit_regenerated(job, user_id, indices, settings_override,
-                        {int(k): v for k, v in data['reading_texts'].items()}, subtitle_updates, restored, files, {})
-                return self._regenerate_sync_impl(job, user_id, indices, settings_override, text_overrides, subtitle_updates)
+                        {int(k): v for k, v in data['reading_texts'].items()}, subtitle_updates, restored, files, {},
+                        subtitle_text_overrides={int(k): v for k, v in data.get('subtitle_text_overrides', {}).items()})
+                return self._regenerate_sync_impl(job, user_id, indices, settings_override, text_overrides, subtitle_updates,
+                                                 subtitle_text_overrides=subtitle_text_overrides)
             except Exception:
                 for n, path in enumerate(paths):
                     if originals[path]:
@@ -1581,6 +1957,7 @@ class TtsEditor:
         settings_override: dict[str, Any],
         text_overrides: dict[int, str],
         subtitle_updates: dict[str, str],
+        *, subtitle_text_overrides: dict[int, str] | None = None,
     ) -> int:
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
@@ -1740,12 +2117,15 @@ class TtsEditor:
         self._set_task(job.id, status='running', progress=85, message='新配音已生成，正在按实际声音重新定位字幕边界')
         pending_data = dict(token=uuid.uuid4().hex, indices=indices, settings=settings_override,
                             subtitles=subtitle_updates, reading_texts=reading_texts, manifest=manifest,
+                            subtitle_text_overrides=subtitle_text_overrides or {},
                             fingerprint=self._alignment_fingerprint(project_dir))
         (segment_dir/'.regenerate'/'pending_alignment.json').write_text(json.dumps(pending_data, ensure_ascii=False), encoding='utf-8')
         alignment = _speech_alignment(project_dir, segments, pending_files, subtitle_updates, reading_texts)
-        return self._commit_regenerated(job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment)
+        return self._commit_regenerated(job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment,
+                                        subtitle_text_overrides=subtitle_text_overrides)
 
-    def _commit_regenerated(self, job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment):
+    def _commit_regenerated(self, job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment,
+                            *, subtitle_text_overrides=None):
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
         manifest_path = segment_dir / SEGMENT_MANIFEST
@@ -1756,12 +2136,19 @@ class TtsEditor:
         # Generation is complete and validated, but live audio has not been
         # replaced yet.  Capture the last good state at this exact boundary.
         self._snapshot_history(project_dir, manifest, indices, "重配选中句")
+        if subtitle_updates:
+            self._snapshot_boundary_script(job, project_dir, self._history_entries(project_dir)[-1])
         for original_index in indices:
             destination = segment_dir / str(by_index[original_index]["filename"])
             shutil.copy2(pending_files[original_index], destination)
-            # Keep the display subtitle in ``text``.  Only the synthesis layer
-            # remembers pinyin or other pronunciation hints entered by users.
+            # Explicit subtitle sync must update both the canonical timeline
+            # AND this archive; the next boundary edit locates these words.
+            # Pronunciation-only edits still change tts_text alone.
             by_index[original_index]["tts_text"] = reading_texts[original_index]
+            if original_index in (subtitle_text_overrides or {}):
+                by_index[original_index]["text"] = subtitle_text_overrides[original_index]
+                by_index[original_index].pop("subtitle_independent", None)
+                by_index[original_index].pop("subtitle_source_text", None)
 
         voice_override = str(settings_override.get("tts_voice_id") or "").strip()
         if engine == "indextts25" and voice_override:
@@ -1827,6 +2214,10 @@ class TtsEditor:
                 user_id=user_id,
                 updates=subtitle_updates,
             )
+            # Also covers adoption of pending audio made by older versions,
+            # whose recovery file did not retain per-segment display edits.
+            self._reconcile_legacy_display_texts(project_dir, segments)
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         self._sync_module1_flat_outputs(project_dir, job.id)
         _commit_step_audio_edit(job, project_dir)
         request_updates = {

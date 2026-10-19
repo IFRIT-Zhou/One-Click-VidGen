@@ -18,4 +18,3 @@ export function resolutionSize({ megapixels, multiple, aspect }) {
   const scale = Math.sqrt(megapixels * 1024 * 1024 / (w * h))
   return `${Math.round(w * scale / multiple) * multiple} × ${Math.round(h * scale / multiple) * multiple}`
 }
-

@@ -1,7 +1,10 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { api, requestJSON } from './api'
 import { DEFAULT_DYNAMIC_TEXT_MODE, normalizeDynamicTextMode } from './dynamicTextMode'
+import { planningPreferences } from './shotPlanningLimit'
 import { readCloudChannelPreference, saveCloudChannelPreference } from './cloudPoolPreference'
+import { taskImagePoolPreference } from './taskImagePool'
+import { imageRouteSelection, serviceImageRouteUpdate } from './projectImageRoute'
 
 // Navigation never cancels a task. A single useWorkspace instance keeps polling.
 export function useStudio(w) {
@@ -124,6 +127,31 @@ export function useStudio(w) {
   const studioPage = ref('home'), studioTab = ref('文案'), studioDrawer = ref('')
   watch(studioPage, page=>{if(page==='services')w.form.method=readCloudChannelPreference()},{flush:'sync'})
   watch(()=>w.form.method, method=>{if(studioPage.value==='services')saveCloudChannelPreference(method)},{flush:'sync'})
+  const activeVideoProjectId = ref(''), pendingVideoImageRoute = ref(null)
+  const imageRoutePendingKey = 'ocv.video.pending-image-route'
+  try { pendingVideoImageRoute.value = JSON.parse(sessionStorage.getItem(imageRoutePendingKey) || 'null') } catch {}
+  watch(pendingVideoImageRoute, value=>{
+    if(value)sessionStorage.setItem(imageRoutePendingKey,JSON.stringify(value))
+    else sessionStorage.removeItem(imageRoutePendingKey)
+  },{flush:'sync'})
+  let servicesImageBefore = null, servicesImageProject = '', servicesImageProfilesChanged = new Set()
+  watch(studioPage,(page,previous)=>{
+    if(page==='services'){
+      servicesImageBefore=imageRouteSelection(w.form)
+      servicesImageProject=previous==='videos'?activeVideoProjectId.value:''
+      servicesImageProfilesChanged=new Set()
+    }else if(previous==='services'&&servicesImageProject){
+      const selection=imageRouteSelection(w.form)
+      const update=selection.channel==='personal'&&servicesImageProfilesChanged.has(selection.image_profile_id)
+        ? {projectId:servicesImageProject,selection}
+        : serviceImageRouteUpdate(servicesImageBefore,w.form,servicesImageProject)
+      if(update)pendingVideoImageRoute.value=update
+      if(page==='videos')sessionStorage.setItem('ocv-video-open',servicesImageProject)
+      servicesImageBefore=null;servicesImageProject=''
+    }
+  },{flush:'sync'})
+  function imageRouteApplied(id){if(pendingVideoImageRoute.value?.projectId===id)pendingVideoImageRoute.value=null}
+  function serviceImageProfileSaved(id){if(studioPage.value==='services')servicesImageProfilesChanged.add(id)}
   let servicesReturnPage = 'home'
   function closeServices(){studioPage.value=servicesReturnPage}
   watch(studioDrawer, value=>{if(value==='接口与服务'){servicesReturnPage=studioPage.value==='services'?servicesReturnPage:studioPage.value;saveDraft();studioDrawer.value='';studioPage.value='services'}},{flush:'sync'})
@@ -276,14 +304,14 @@ export function useStudio(w) {
       for(const field of ['reference_image_notes','reference_image_labels','reference_image_kinds'])w.form[field]={...(draft.form?.[field]||{})}
       w.referenceImageNames.value=w.form.reference_image_ids.map(id=>w.editorAssets.value.find(asset=>asset.id===id)?.name||id)
     }
-    if(!draft)w.form.method=readCloudChannelPreference()
+    if(!draft){w.form.method=readCloudChannelPreference();w.form.task_image_pool=null;w.form.language_route=null}
     w.form.dynamic_video=dynamic
     if(dynamic)w.form.step_mode=true
     if(draft?.rerun&&!w.form._rerun_tts_baseline)w.form._rerun_tts_baseline=rerunTtsSnapshot()
     draftLoading=false;saveDraft()
   }
   async function enterDynamicStoryboard(){
-    if(studioBusy.value)return
+    if(studioBusy.value || !w.ttsEditor.value?.available || !w.ttsEditor.value.segments?.length || !studioAudio.value || ['queued','running'].includes(studioJob.value?.status) || w.ttsEditor.value.task?.status==='running')return
     studioBusy.value=true;studioError.value=''
     try{
       const existing=await requestJSON('/api/video-studio/by-audio-task/'+encodeURIComponent(studioJob.value.id))
@@ -363,13 +391,17 @@ export function useStudio(w) {
     if(studioBusy.value||studioHasRunning.value)return
     saveDraft();rememberCreationPreferences();studioBusy.value=true;studioError.value=''
     try{
+      if(w.form.dynamic_video)planningPreferences(w.form)
       if(studioKind.value==='video'&&w.form.dynamic_video&&w.form._rerun_source_project){
         const sourceId=String(w.form._rerun_source_project),base=w.form._rerun_base||{}
         const changed=key=>JSON.stringify(w.form[key]??null)!==JSON.stringify(base[key]??null)
         const ttsChanged=JSON.stringify(rerunTtsSnapshot())!==JSON.stringify(w.form._rerun_tts_baseline||rerunTtsSnapshot())
         if(!ttsChanged){
-          const visualKeys=['dynamic_max_shot_duration','method','size','use_cloud_image_pool','visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
+          const visualKeys=['dynamic_max_shot_duration','dynamic_cluster_duration_recommended','method','size','visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
           const parameters={};for(const key of visualKeys)if(Object.hasOwn(w.form,key)&&changed(key))parameters[key]=w.form[key]
+          const imagePoolChoice=taskImagePoolPreference(w.form)
+          if(imagePoolChoice!==Boolean(base.use_cloud_image_pool))parameters.use_cloud_image_pool=imagePoolChoice
+          Object.assign(parameters,planningPreferences(w.form))
           const payload={revision:Number(w.form._rerun_source_revision||0),name:w.form.project_name||'',style:w.form.visual_style_prompt||'',characters:w.form.global_character_prompt||'',world:w.form.story_environment_prompt||'',dynamic_text_mode:w.form.dynamic_text_mode||'visual_first',scene_references_enabled:w.form.scene_references_enabled!==false,video_generation_backend:w.form.video_generation_backend||'api',comfyui_profile_id:w.form.comfyui_profile_id||'',comfyui_h3_prompt_agent:Boolean(w.form.comfyui_h3_prompt_agent),comfyui_reference_audio:Boolean(w.form.comfyui_reference_audio),presenter_mode:Boolean(w.form.presenter_mode),presenter_reference_id:w.form.presenter_reference_id||'',dynamic_auto_advance:Boolean(w.form.dynamic_auto_advance),parameters}
           const updated=await requestJSON('/api/video-studio/'+encodeURIComponent(sourceId)+'/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
           if(updated.status==='draft'&&!updated.shots?.length)sessionStorage.setItem('ocv-video-autoplan',sourceId)
@@ -473,5 +505,5 @@ export function useStudio(w) {
     try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
     catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
   }
-return {studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
+return {activeVideoProjectId,pendingVideoImageRoute,imageRouteApplied,serviceImageProfileSaved,studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

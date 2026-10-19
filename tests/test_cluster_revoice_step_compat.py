@@ -60,6 +60,10 @@ class ClusterRevoiceStepCompatibilityTests(unittest.TestCase):
             (project / 'other' / '最终字幕.srt').write_text('\n\n'.join(
                 f'{i}\n00:00:{i-1:02d},000 --> 00:00:{i:02d},000\n第{i}句'
                 for i in range(1, 12)), encoding='utf-8')
+            (project / 'other' / '画面时间线.json').write_text(json.dumps([
+                dict(slide_id=f'scene_{i:03d}', text_content=f'第{i}句', start=i-1, end=i)
+                for i in range(1, 12)
+            ]), encoding='utf-8')
             wav(project / 'input' / '配音.wav')
             job = SimpleNamespace(id='test', request=dict(tts_engine='cluster',
                 tts_voice_id='existing-local.wav', cluster_voice_type='preset',

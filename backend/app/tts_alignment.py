@@ -175,12 +175,17 @@ def main():
     from module2_scene_director import transcribe_audio
     request = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
     result = []
+    model_cache = {}
     for item in request:
-        segments, _, _ = transcribe_audio(Path(item['audio']), word_timestamps=True)
-        words = [dict(word=w.word, start=w.start, end=w.end) for s in segments for w in (s.words or [])]
         try:
-            result.append(align_starts(item['texts'], words, item['duration'], item.get('reading_text')))
-        except ValueError as exc:
+            segments, _, _ = transcribe_audio(Path(item['audio']), word_timestamps=True, model_cache=model_cache)
+            words = [dict(word=w.word, start=w.start, end=w.end) for s in segments for w in (s.words or [])]
+            starts = align_starts(item['texts'], words, item['duration'], item.get('reading_text'))
+            result.append(dict(starts=starts, aligned=True) if 'fallback_starts' in item else starts)
+        except (ValueError, RuntimeError, OSError) as exc:
+            if 'fallback_starts' in item:
+                result.append(dict(starts=item['fallback_starts'], aligned=False, warning=str(exc)))
+                continue
             print(f"{Path(item['audio']).name}：{exc}", file=sys.stderr)
             sys.exit(1)
     Path(sys.argv[2]).write_text(json.dumps(result), encoding='utf-8')
