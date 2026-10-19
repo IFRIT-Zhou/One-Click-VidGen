@@ -191,7 +191,20 @@ def owned_job(db, user, job_id, lock=False):
 
 
 def snapshot(job):
+    stage, message = {
+        'queued': ('queued', '云端排队中，尚未派发到 GPU 节点'),
+        'running': ('dispatching', '正在派发到 GPU 节点，尚未确认视频引擎接收'),
+        'cancelling': ('cancelling', '正在停止原任务，请勿重复提交'),
+        'succeeded': ('completed', '视频已生成，等待客户端下载'),
+        'failed': ('failed', job.error_message or '视频生成失败，请查看错误详情'),
+        'cancelled': ('cancelled', '视频任务已取消'),
+    }.get(job.status, (job.status, '正在核对云端任务状态'))
+    if job.status == 'running' and job.remote_prompt_id:
+        stage, message = 'node_processing', 'GPU 节点已接收，正在加载模型或生成视频'
+    if job.status == 'running' and job.heartbeat_at and (utcnow() - aware(job.heartbeat_at)).total_seconds() > 90:
+        stage, message = 'reconnecting', '执行状态暂未更新，正在核对节点连接；请勿重复提交'
     return {"job_id": job.id, "client_job_id": job.client_job_id, "status": job.status,
+            "stage": stage, "message": message,
             "spec": job.spec, "progress": job.progress, "credits": "0", "test_mode": True,
             "error": {"code": job.error_code, "message": job.error_message} if job.error_code else None,
             "result_url": f"/api/v1/cloud/video/jobs/{job.id}/result" if job.status == "succeeded" else None,

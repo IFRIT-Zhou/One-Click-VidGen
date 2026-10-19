@@ -207,9 +207,10 @@ class NodeSafetyTests(unittest.TestCase):
             self.assertEqual(data['prompt']['131']['inputs'],{'expression':'round(a)','values.a':56})
             self.assertEqual(json.loads(self.path.read_text())['status'],'submitting')
             return {'prompt_id':'server-returned'}
-        with patch.object(agent,'guard_windows_h3'),patch.object(agent,'running',side_effect=lambda name:name==agent.H3),patch.object(agent,'api',side_effect=api):
+        with patch.object(agent,'boot_id',return_value='fixture-boot'),patch.object(agent,'guard_windows_h3'),patch.object(agent,'running',side_effect=lambda name:name==agent.H3),patch.object(agent,'api',side_effect=api):
             agent.dispatch(request)
         self.assertEqual(json.loads(self.path.read_text())['prompt_id'],'server-returned')
+        self.assertEqual(json.loads(self.path.read_text())['boot_id'],'fixture-boot')
 
     def test_missing_ledger_cancel_writes_tombstone_after_stop(self):
         self.path.unlink();states={agent.H3:True}
@@ -217,5 +218,20 @@ class NodeSafetyTests(unittest.TestCase):
         with patch.object(agent,'running',side_effect=lambda name:states[name]),patch.object(agent,'api',return_value={'queue_running':[],'queue_pending':[]}),patch.object(agent,'docker',side_effect=docker):
             agent.dispatch({**self.req,'action':'cancel'})
         self.assertEqual(json.loads(self.path.read_text())['status'],'cancelled')
+
+    def test_reboot_marks_interrupted_without_resetting_container(self):
+        agent.atomic(self.path,{**self.job,'boot_id':'previous-boot'})
+        with patch.object(agent,'boot_id',return_value='current-boot'),patch.object(agent,'running',return_value=True),patch.object(agent,'api',side_effect=[{}, {'queue_running':[],'queue_pending':[]}]),patch.object(agent,'docker') as docker:
+            result=agent.poll(self.req)
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(result['error_code'],'WORKER_RESTARTED')
+        docker.assert_not_called()
+
+    def test_same_boot_or_unreadable_boot_keeps_uncertain_submission_fenced(self):
+        for current in ('previous-boot',None):
+            agent.atomic(self.path,{**self.job,'boot_id':'previous-boot'})
+            with patch.object(agent,'boot_id',return_value=current),patch.object(agent,'running',return_value=True),patch.object(agent,'api',side_effect=[{}, {'queue_running':[],'queue_pending':[]}]),patch.object(agent,'docker') as docker:
+                self.assertEqual(agent.poll(self.req)['status'],'unknown')
+            docker.assert_not_called()
 
 if __name__=='__main__':unittest.main()

@@ -23,6 +23,15 @@ class WorkerUnsafeState(RuntimeError):
     """Node ownership or execution outcome could not be made safe."""
 
 
+NODE_ERRORS = {
+    'WORKER_RESTARTED': 'GPU 节点或 WSL 已重启，原视频任务中断；请手动重试。',
+    'WORKER_LOST': 'GPU 视频引擎已停止，原任务中断；请手动重试。',
+    'INVALID_WORKFLOW': 'GPU 节点工作流校验失败，请联系管理员检查节点配置。',
+    'ENGINE_ERROR': 'H3 推理失败，请联系管理员查看 GPU 节点日志。',
+    'RESULT_VALIDATION_FAILED': '视频输出校验失败，请联系管理员检查生成结果。',
+}
+
+
 class H3Queue:
     def __init__(self, node_client, session_factory=SessionLocal, *, poll_seconds=2, timeout_seconds=7200,
                  lease_seconds=180, sleep=time.sleep, monotonic=time.monotonic):
@@ -195,7 +204,14 @@ class H3Queue:
                 else:
                     self._finish(handle, "cancelled")
             elif status == "failed" or (status == "succeeded" and timed_out):
-                self._finish(handle, "failed", error_code="GENERATION_FAILED", error_message="H3 视频生成失败，请检查任务诊断后手动重试", timings=report.get("timings"))
+                code = report.get('error_code') if not timed_out else 'GENERATION_TIMEOUT'
+                if code == 'GENERATION_TIMEOUT':
+                    message = '视频生成超时，执行已停止'
+                elif code in NODE_ERRORS:
+                    message = NODE_ERRORS[code]
+                else:
+                    code, message = 'GENERATION_FAILED', 'H3 视频生成失败，请检查任务诊断后手动重试'
+                self._finish(handle, "failed", error_code=code, error_message=message, timings=report.get("timings"))
             elif status == "unknown":
                 # Explicit stop/ownership check, never resubmit a lost attempt.
                 self._rpc("cancel", handle)

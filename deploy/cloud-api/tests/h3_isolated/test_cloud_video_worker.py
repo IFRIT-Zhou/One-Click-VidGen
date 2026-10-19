@@ -144,6 +144,24 @@ class WorkerTests(fixture.ApiTests):
         with self.assertRaises(worker.WorkerUnsafeState):
             queue._heartbeat(handle)
 
+    def test_node_failure_reason_is_allowlisted_without_raw_error_leak(self):
+        for code in ('WORKER_RESTARTED','untrusted-token-error'):
+            with self.subTest(code=code):
+                job,_=self.job()
+                node=Node();original=node.call
+                def rpc(action,**kwargs):
+                    if action=='poll':return {'status':'failed','error_code':code,'error_message':'private-secret'}
+                    return original(action,**kwargs)
+                node.call=rpc
+                self.queue(node).run_one()
+                with Session(fixture.engine) as db:
+                    record=db.get(fixture.api.CloudVideoJob,job['job_id'])
+                    self.assertEqual(record.error_code,code if code in worker.NODE_ERRORS else 'GENERATION_FAILED')
+                    self.assertNotIn('private-secret',record.error_message)
+                    db.delete(record);db.commit()
+                self.assertFalse(any(action=='cancel' for action,_ in node.calls))
+                self.assertEqual(sum(action=='submit' for action,_ in node.calls),1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

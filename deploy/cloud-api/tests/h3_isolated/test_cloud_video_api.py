@@ -190,6 +190,21 @@ class ApiTests(unittest.TestCase):
             db.commit()
         self.assertEqual(client.post(PREFIX + "/jobs", headers=self.headers, json={"quote_id": quote["quote_id"]}).status_code, 409)
 
+    def test_progress_distinguishes_queue_dispatch_and_node_processing(self):
+        job,_=self.job()
+        self.assertEqual(job['stage'],'queued')
+        self.assertIn('尚未派发',job['message'])
+        with Session(engine) as db:
+            record=db.get(api.CloudVideoJob,job['job_id'])
+            record.status='running';record.heartbeat_at=api.utcnow()
+            self.assertEqual(api.snapshot(record)['stage'],'dispatching')
+            record.remote_prompt_id='accepted-by-engine'
+            self.assertEqual(api.snapshot(record)['stage'],'node_processing')
+            record.heartbeat_at=api.utcnow()-timedelta(seconds=91)
+            self.assertEqual(api.snapshot(record)['stage'],'reconnecting')
+            record.status='failed';record.error_code='WORKER_RESTARTED';record.error_message='节点重启'
+            self.assertEqual(api.snapshot(record)['message'],'节点重启')
+
     def test_reject_unsupported_spec_and_fake_image(self):
         self.assertEqual(self.quote(width=999).status_code, 422)
         self.assertEqual(self.quote(prompt="  ").status_code, 422)

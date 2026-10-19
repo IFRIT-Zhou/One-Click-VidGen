@@ -235,6 +235,13 @@ def read_job(req):
         raise RuntimeError('STALE_ATTEMPT')
     return p, j
 
+def boot_id():
+    try:
+        return pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError:
+        return None
+
+
 def poll(req):
     p, j = read_job(req)
     if j is None:
@@ -277,6 +284,13 @@ def poll(req):
     q=api('/queue')
     ids={row[1] for name in ('queue_running','queue_pending') for row in q[name]}
     if j['prompt_id'] not in ids:
+        current_boot = boot_id()
+        if j.get('boot_id') and current_boot and j['boot_id'] != current_boot:
+            # The old kernel cannot enqueue again. Preserve other current work.
+            j.update(status='failed', error_code='WORKER_RESTARTED',
+                     error_message='GPU 节点或 WSL 已重启，原视频任务中断；请手动重试。')
+            atomic(p,j)
+            return poll(req)
         return {'status':'unknown','prompt_id':j['prompt_id'],'stage':'reconciling','idle':False}
     return {'status':'running','prompt_id':j['prompt_id'],'stage':'generating'}
 
@@ -371,7 +385,7 @@ def dispatch(req):
         g['131']['inputs']['expression']='round(a)';g['131']['inputs']['values.a']=spec['num_frames']
         g['181']['inputs']['width']=spec['width'];g['181']['inputs']['height']=spec['height']
         g['129']['inputs']['noise_seed']=spec['seed'];g['149']['inputs']['filename_prefix']='jobs/'+req['job_id']
-        j={'job_id':req['job_id'],'attempt_token':req['attempt_token'],'prompt_id':str(uuid.uuid4()),'status':'submitting','submitted_at':time.time(),'spec':spec}
+        j={'job_id':req['job_id'],'attempt_token':req['attempt_token'],'prompt_id':str(uuid.uuid4()),'status':'submitting','submitted_at':time.time(),'spec':spec,'boot_id':boot_id()}
         p.parent.mkdir(exist_ok=True);atomic(p,j)
         try:
             accepted=api('/prompt',{'prompt':g,'prompt_id':j['prompt_id'],'client_id':req['job_id']})
