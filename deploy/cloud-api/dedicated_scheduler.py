@@ -5,6 +5,7 @@ placement changes never run while an admitted TTS request exists.
 """
 from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -12,6 +13,12 @@ import time
 
 PRIMARY = '10.250.0.20'
 FALLBACK = '10.250.0.3'
+LOG = logging.getLogger('ocv.h3.scheduler')
+H3_SAFE_ERRORS = frozenset({'NODE_PHASE_BUSY', 'WINDOWS_H3_BUSY',
+    'WINDOWS_H3_RESOURCE_BLOCKED', 'WINDOWS_H3_PROBE_FAILED',
+    'H3_BUSY', 'H3_EXECUTION_UNRESOLVED', 'H3_START_TIMEOUT',
+    'TTS_NOT_DRAINED', 'TTS_STILL_RUNNING', 'MODEL_CACHE_COPY_IN_PROGRESS',
+    'SCHEDULER_ROLE_INVALID', 'SCHEDULER_ROLE_REQUIRED', 'HEALTH_PROBE_FAILED'})
 
 
 class DedicatedScheduler:
@@ -156,11 +163,13 @@ class DedicatedScheduler:
             self.h3_resident, self.h3_state = True, 'ready'
             self.h3_checked_at = now
             self.blocked_reason = None
-        except Exception:
+        except Exception as exc:
             # An uncertain H3 outcome must be reconciled by the durable queue.
             self.h3_resident, self.h3_state = False, 'blocked'
             self.blocked_reason = 'H3_NOT_IDLE_OR_UNAVAILABLE'
             self.retry_h3_at = now + 15
+            code = str(exc) if str(exc) in H3_SAFE_ERRORS else 'H3_OPERATION_FAILED'
+            LOG.warning('h3_blocked code=%s retry_seconds=15', code)
 
     def _h3(self, now):
         if self.control_state(FALLBACK, 'h3') is False:
@@ -176,10 +185,24 @@ class DedicatedScheduler:
         def run():
             # Revalidate idle residency after a node/container restart without
             # blocking the independent primary TTS loop or reloading a warm H3.
-            if not self.h3_resident or not self.phases.h3_ready():
-                self.phases.ensure_h3()
-            if pending:
-                self.h3.run_one()
+            step = 'health'
+            started = time.monotonic()
+            LOG.info('h3_begin pending=%s resident=%s step=%s', pending, self.h3_resident, step)
+            try:
+                if not self.h3_resident or not self.phases.h3_ready():
+                    step = 'prepare'
+                    LOG.info('h3_step pending=%s step=%s', pending, step)
+                    self.phases.ensure_h3()
+                if pending:
+                    step = 'claim_execute'
+                    LOG.info('h3_step pending=True step=%s', step)
+                    self.h3.run_one()
+            except Exception as exc:
+                code = str(exc) if str(exc) in H3_SAFE_ERRORS else 'H3_OPERATION_FAILED'
+                LOG.warning('h3_failed pending=%s step=%s elapsed=%.3f code=%s',
+                            pending, step, time.monotonic()-started, code)
+                raise
+            LOG.info('h3_done pending=%s elapsed=%.3f', pending, time.monotonic()-started)
         self.h3_future = self.executor.submit(run)
 
     def _idle(self):

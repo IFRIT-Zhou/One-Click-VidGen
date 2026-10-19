@@ -13,6 +13,25 @@ with patch.dict(sys.modules,{'fcntl':types.SimpleNamespace()}):
     agent=importlib.util.module_from_spec(spec);spec.loader.exec_module(agent)
 
 class NodeSafetyTests(unittest.TestCase):
+    def test_phase_lock_timeout_never_enters_operation_or_unlocks_other_owner(self):
+        flock=Mock(side_effect=BlockingIOError())
+        api=types.SimpleNamespace(flock=flock,LOCK_EX=2,LOCK_NB=4,LOCK_UN=8)
+        with tempfile.TemporaryDirectory() as root,patch.object(agent,'fcntl',api),patch.object(agent.time,'monotonic',side_effect=[0,0,31]),patch.object(agent.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'NODE_PHASE_BUSY'):
+                with agent.phase_lock(str(Path(root)/'phase.lock')):
+                    self.fail('busy operation must not run')
+        self.assertEqual(flock.call_count,2)
+        self.assertTrue(all(c.args[1] == 6 for c in flock.call_args_list))
+
+    def test_phase_lock_releases_own_lock_even_when_dispatch_fails(self):
+        flock=Mock()
+        api=types.SimpleNamespace(flock=flock,LOCK_EX=2,LOCK_NB=4,LOCK_UN=8)
+        with tempfile.TemporaryDirectory() as root,patch.object(agent,'fcntl',api):
+            with self.assertRaisesRegex(ValueError,'dispatch failed'):
+                with agent.phase_lock(str(Path(root)/'phase.lock')):
+                    raise ValueError('dispatch failed')
+        self.assertEqual([c.args[1] for c in flock.call_args_list],[6,8])
+
     def test_stopped_local_tts_does_not_require_global_drain(self):
         with patch.object(agent,'running',return_value=False),patch.object(agent,'drain_status') as drain,patch.object(agent,'docker') as docker:
             agent.stopped_tts()
