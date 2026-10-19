@@ -125,7 +125,7 @@ class CloudVideoTests(unittest.TestCase):
             thread.assert_not_called();save.assert_not_called()
             client.video_asset.assert_not_called();client.video_quote.assert_not_called();client.create_video_job.assert_not_called()
 
-    def run_worker(self, client, event=None, before=None):
+    def run_worker(self, client, event=None, before=None, probe=None):
         from backend.app import video_generation as vg
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         path=Path(temp.name)
@@ -134,7 +134,7 @@ class CloudVideoTests(unittest.TestCase):
         record={'revision':1,'shots':[shot],'logs':[]}
         def read(_):return copy.deepcopy(record)
         def save(_,value):record.clear();record.update(copy.deepcopy(value))
-        with patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'read',side_effect=read),patch.object(c.studio,'save',side_effect=save),patch.object(c.time,'sleep'),patch('backend.app.pipeline.probe_media_duration',return_value=2):
+        with patch.object(c,'cloud_client_for',return_value=client),patch.object(c.studio,'read',side_effect=read),patch.object(c.studio,'save',side_effect=save),patch.object(c.time,'sleep'),patch('backend.app.pipeline.probe_media_duration',side_effect=probe or (lambda _:2)):
             c._worker(path,1,['s1'],{'s1':({},CAPS,(640,384))},event or threading.Event())
         return record
 
@@ -155,6 +155,48 @@ class CloudVideoTests(unittest.TestCase):
         self.assertEqual(record['shots'][0]['video_request']['client_job_id'],'stable-client')
         self.assertFalse(record['shots'][0]['video_terminal'])
         self.assertTrue(record['shots'][0]['video_resume_available'])
+        self.assertIn('请继续查询原任务',record['shots'][0]['video_progress_message'])
+
+    def test_restart_clears_stale_running_progress_without_submitting(self):
+        from backend.app import video_generation as vg
+        shot={'id':'s1','kind':'video','video_backend':'cloud_h3','video_status':'running',
+              'video_task_id':'old-job','video_progress_message':'running'}
+        record={'revision':1,'shots':[shot],'logs':[]}
+        vg.recover_interrupted(Path('.'),record)
+        self.assertEqual(shot['video_status'],'unknown')
+        self.assertIn('尚未重新核对云端状态',shot['video_progress_message'])
+        self.assertEqual(shot['video_task_id'],'old-job')
+        self.assertTrue(shot['video_resume_available'])
+
+    def test_resume_old_failed_job_exposes_failure_without_generation_or_download(self):
+        client=self.client()
+        client.video_job.return_value={'job_id':'old-job','status':'failed',
+            'error':{'code':'EXECUTION_OUTCOME_UNKNOWN','message':'节点重启，执行结果无法确认'}}
+        record=self.run_worker(client,before=lambda shot:shot.update(video_task_id='old-job',video_progress_message='running'))
+        shot=record['shots'][0]
+        self.assertEqual(shot['video_status'],'failed')
+        self.assertEqual(shot['video_error'],'EXECUTION_OUTCOME_UNKNOWN：节点重启，执行结果无法确认')
+        self.assertTrue(shot['video_terminal']);self.assertFalse(shot['video_resume_available'])
+        client.video_job.assert_called_once_with('old-job')
+        client.create_video_job.assert_not_called();client.download_to.assert_not_called()
+
+    def test_invalid_download_is_removed_and_original_task_can_be_queried_again(self):
+        for result in [0,float('nan'),RuntimeError('FFprobe 无法读取媒体时长')]:
+            with self.subTest(result=result):
+                client=self.client();client.video_job.return_value={'job_id':'old-job','status':'succeeded'}
+                downloaded=[]
+                def download(url,target,**kwargs):
+                    target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'invalid-video');downloaded.append(target)
+                def probe(target):
+                    if isinstance(result,Exception):raise result
+                    return result
+                client.download_to.side_effect=download
+                record=self.run_worker(client,probe=probe)
+                self.assertFalse(downloaded[0].exists())
+                self.assertEqual(record['shots'][0]['video_status'],'unknown')
+                self.assertEqual(record['shots'][0]['video_task_id'],'old-job')
+                self.assertTrue(record['shots'][0]['video_resume_available'])
+                client.create_video_job.assert_not_called()
 
     def test_missing_lookup_resubmits_same_quote_and_same_key(self):
         client=self.client();client.video_job.side_effect=CloudApiError('missing',status_code=404)

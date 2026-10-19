@@ -13,6 +13,17 @@ function setup(name,props,requestJSON=async()=>({}),emit=()=>{}){
  const component=create(ref,computed,watch,()=>{},()=>{},requestJSON,{}, {})
  return component.setup(props,{expose(){},emit})
 }
+
+test('unknown or failed task never displays stale running progress from an interrupted session',()=>{
+ const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
+ const code=source.slice(source.indexOf('const videoStatusLabel='),source.indexOf('const videoBatchSummary='))
+ const {videoTask}=new Function('videoRunning',code+'\nreturn {videoTask}')({value:false})
+ for(const [status,expected] of [['unknown','状态待核实，请继续查询原任务'],['failed','生成失败'],['stopped','已停止']]){
+  const task=videoTask({kind:'video',video_status:status,video_progress_message:'running',video_error:'集群任务身份已保留'})
+  assert.equal(task.status,status);assert.equal(task.message,expected)
+ }
+ assert.equal(videoTask({kind:'video',video_status:'running',video_progress_message:'GPU 正在生成'}).message,'GPU 正在生成')
+})
 test('switching API720 to cluster clears preset but retains unrelated settings',()=>{
  const events=[]
  const state=setup('ShotVideoOptions.vue',{modelValue:{backend:'api',resolution:'720p',profile_id:'old'},profiles:[],ratio:'16:9'},undefined,(name,data)=>events.push(data))

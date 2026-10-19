@@ -249,7 +249,9 @@ def recover_interrupted(path, record):
         if shot.get('kind') != 'video' or shot.get('video_status') != 'running':
             continue
         if shot.get('video_backend') == 'cloud_h3':
-            shot.update(video_status='unknown', video_error='集群任务身份已保留，请继续查询。', video_resume_available=True, video_terminal=False)
+            shot.update(video_status='unknown', video_error='集群任务身份已保留，请继续查询。',
+                        video_progress_message='本地处理已中断，尚未重新核对云端状态；请继续查询原任务',
+                        video_resume_available=True, video_terminal=False)
             continue
         if shot.get('video_backend') == 'comfyui':
             shot.update(video_status='failed', video_error='上次本地 ComfyUI 生成被 OCV 关闭中断，可重新生成本镜。',

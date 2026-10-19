@@ -243,15 +243,23 @@ def _worker(path,user_id,identities,resolved,event):
                     output=vg._asset(path,shot['video'])
                     client.download_to('/cloud/video/jobs/'+remote_id+'/result',output,max_bytes=1024*1024*1024)
                     from .pipeline import probe_media_duration
-                    if probe_media_duration(output) <= 0:
-                        output.unlink(missing_ok=True);raise ValueError('集群返回的视频无法解码，请继续查询或联系管理员')
-                    expected=(remote.get('result') or {}).get('sha256')
-                    if expected and hashlib.sha256(output.read_bytes()).hexdigest()!=expected:
-                        output.unlink(missing_ok=True);raise ValueError('视频下载校验失败，请继续查询并重新下载原结果')
+                    try:
+                        duration=probe_media_duration(output)
+                        if not math.isfinite(duration) or duration <= 0:
+                            raise ValueError('集群返回的视频无法解码，请继续查询或联系管理员')
+                        expected=(remote.get('result') or {}).get('sha256')
+                        if expected and hashlib.sha256(output.read_bytes()).hexdigest()!=expected:
+                            raise ValueError('视频下载校验失败，请继续查询并重新下载原结果')
+                    except Exception:
+                        output.unlink(missing_ok=True)
+                        raise
                     update(identity,video_status='completed',video_terminal=False,video_resume_available=False,video_version=vg._video_version(output),video_design_changed=False,video_finished_at=time.time(),video_progress_message='集群视频已完成并下载')
                     break
                 if state in {'failed','cancelled','expired'}:
-                    update(identity,video_status='stopped' if state=='cancelled' else 'failed',video_terminal=True,video_resume_available=False,video_error=str(remote.get('error') or remote.get('message') or state),video_finished_at=time.time())
+                    error=remote.get('error')
+                    if isinstance(error,dict):
+                        error='：'.join(str(value) for value in (error.get('code'),error.get('message')) if value)
+                    update(identity,video_status='stopped' if state=='cancelled' else 'failed',video_terminal=True,video_resume_available=False,video_error=str(error or remote.get('message') or state),video_finished_at=time.time())
                     break
                 if event.is_set() and not cancel_sent:
                     remote=client.cancel_video_job(remote_id);cancel_sent=True;continue
@@ -261,7 +269,8 @@ def _worker(path,user_id,identities,resolved,event):
             if event.is_set() or state in {'failed','cancelled','expired'}: break
     except Exception as exc:
         if current_id:
-            update(current_id,video_status='unknown',video_terminal=False,video_resume_available=True,video_error=str(exc)[:1800])
+            update(current_id,video_status='unknown',video_terminal=False,video_resume_available=True,
+                   video_progress_message='本地查询或下载已中断，尚未确认结果；请继续查询原任务',video_error=str(exc)[:1800])
         with studio.LOCK:
             record=studio.read(path);record['error']=str(exc)[:1800]
             if isinstance(exc,CloudApiError) and exc.status_code==401: record['cloud_login_required']=True
