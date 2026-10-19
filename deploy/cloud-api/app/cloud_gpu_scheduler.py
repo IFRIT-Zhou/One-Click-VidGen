@@ -85,6 +85,14 @@ def node_health_loop(node, stop):
             payload = {'time': started, 'reachable': True, **node.call('health')}
         except Exception:
             payload = {'time': started, 'reachable': False}
+        # Preserve diagnostic history in journald, not only an overwritten cache.
+        # No prompts, credentials, command lines, or remote exception text.
+        memory = payload.get('memory') or {}
+        available = memory.get('MemAvailable')
+        available = available if type(available) is int and available >= 0 else None
+        LOG.info('node3_health reachable=%s h3_ready=%s h3_busy=%s mem_available_bytes=%s probe_seconds=%.3f',
+                 payload.get('reachable') is True, payload.get('h3_ready') is True,
+                 payload.get('h3_busy') is True, available, time.time()-started)
         try:
             root.mkdir(parents=True, exist_ok=True)
             temporary = root/'node-health.tmp'

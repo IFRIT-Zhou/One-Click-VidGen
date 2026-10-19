@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed H3 execution adapter, invoked over the existing administrative SSH path."""
 import base64
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
@@ -235,6 +236,13 @@ def read_job(req):
         raise RuntimeError('STALE_ATTEMPT')
     return p, j
 
+def boot_id():
+    try:
+        return pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError:
+        return None
+
+
 def poll(req):
     p, j = read_job(req)
     if j is None:
@@ -277,8 +285,27 @@ def poll(req):
     q=api('/queue')
     ids={row[1] for name in ('queue_running','queue_pending') for row in q[name]}
     if j['prompt_id'] not in ids:
+        current_boot = boot_id()
+        if j.get('boot_id') and current_boot and j['boot_id'] != current_boot:
+            # The old kernel cannot enqueue again. Preserve other current work.
+            j.update(status='failed', error_code='WORKER_RESTARTED',
+                     error_message='GPU 节点或 WSL 已重启，原视频任务中断；请手动重试。')
+            atomic(p,j)
+            return poll(req)
         return {'status':'unknown','prompt_id':j['prompt_id'],'stage':'reconciling','idle':False}
     return {'status':'running','prompt_id':j['prompt_id'],'stage':'generating'}
+
+def memory_health():
+    """Small read-only sample to correlate node pressure with transport stalls."""
+    result = {'boot_id': boot_id()}
+    try:
+        info = dict(line.split(':', 1) for line in pathlib.Path('/proc/meminfo').read_text().splitlines())
+        for name in ('MemTotal', 'MemAvailable', 'SwapTotal', 'SwapFree'):
+            result[name] = int(info[name].split()[0]) * 1024
+    except (OSError, ValueError, KeyError):
+        pass
+    return result
+
 
 def service_health():
     tts_live, h3_live = running(TTS), running(H3)
@@ -300,7 +327,7 @@ def service_health():
     return {'tts_running':tts_live, 'h3_running':h3_live, 'h3_ready':ready,
             'h3_busy':busy, 'exclusive':not(tts_live and h3_live),
             'local_h3':windows_h3_status(), 'control_ready':control_ready,
-            'checked_at':time.time()}
+            'checked_at':time.time(), 'memory':memory_health()}
 
 
 def dispatch(req):
@@ -376,7 +403,7 @@ def dispatch(req):
         g['131']['inputs']['expression']='round(a)';g['131']['inputs']['values.a']=spec['num_frames']
         g['181']['inputs']['width']=spec['width'];g['181']['inputs']['height']=spec['height']
         g['129']['inputs']['noise_seed']=spec['seed'];g['149']['inputs']['filename_prefix']='jobs/'+req['job_id']
-        j={'job_id':req['job_id'],'attempt_token':req['attempt_token'],'prompt_id':str(uuid.uuid4()),'status':'submitting','submitted_at':time.time(),'spec':spec}
+        j={'job_id':req['job_id'],'attempt_token':req['attempt_token'],'prompt_id':str(uuid.uuid4()),'status':'submitting','submitted_at':time.time(),'spec':spec,'boot_id':boot_id()}
         p.parent.mkdir(exist_ok=True);atomic(p,j)
         try:
             accepted=api('/prompt',{'prompt':g,'prompt_id':j['prompt_id'],'client_id':req['job_id']})
@@ -415,13 +442,34 @@ def dispatch(req):
         return {'data_b64':base64.b64encode(raw).decode(),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'metadata':j.get('metadata',{})}
     raise ValueError('UNKNOWN_ACTION')
 
+@contextmanager
+def phase_lock(path='/run/lock/ocv-gpu-phase.lock', timeout=30):
+    """Bound waiting before any side effect; never steal another operation's lock."""
+    with open(path, 'a') as lock:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('NODE_PHASE_BUSY') from None
+                time.sleep(0.1)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 if __name__=='__main__':
     request=json.load(sys.stdin)
     if request.get('action')=='health':
         try:print(json.dumps({'ok':True,'result':service_health()}))
         except Exception:print(json.dumps({'ok':False,'error':'HEALTH_PROBE_FAILED'}));sys.exit(1)
         sys.exit(0)
-    with open('/run/lock/ocv-gpu-phase.lock','w') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX)
-        try:print(json.dumps({'ok':True,'result':dispatch(request)}))
-        except Exception as exc:print(json.dumps({'ok':False,'error':str(exc)[:300]}));sys.exit(1)
+    try:
+        with phase_lock():
+            result=dispatch(request)
+        print(json.dumps({'ok':True,'result':result}))
+    except Exception as exc:
+        print(json.dumps({'ok':False,'error':str(exc)[:300]}));sys.exit(1)

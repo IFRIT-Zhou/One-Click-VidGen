@@ -150,7 +150,9 @@ class VideoSpec(BaseModel):
     reference_image_asset_id: str = Field(pattern=r"^h3asset_[0-9a-f]{32}$")
     width: int
     height: int
-    duration_seconds: float = Field(ge=2, le=15, allow_inf_nan=False)
+    # Storyboard duration policy belongs to the client. Do not clamp or reject
+    # a valid duration here because an older cluster limit can block a new plan.
+    duration_seconds: float = Field(gt=0, allow_inf_nan=False)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
@@ -189,7 +191,20 @@ def owned_job(db, user, job_id, lock=False):
 
 
 def snapshot(job):
+    stage, message = {
+        'queued': ('queued', '云端排队中，尚未派发到 GPU 节点'),
+        'running': ('dispatching', '正在派发到 GPU 节点，尚未确认视频引擎接收'),
+        'cancelling': ('cancelling', '正在停止原任务，请勿重复提交'),
+        'succeeded': ('completed', '视频已生成，等待客户端下载'),
+        'failed': ('failed', job.error_message or '视频生成失败，请查看错误详情'),
+        'cancelled': ('cancelled', '视频任务已取消'),
+    }.get(job.status, (job.status, '正在核对云端任务状态'))
+    if job.status == 'running' and job.remote_prompt_id:
+        stage, message = 'node_processing', 'GPU 节点已接收，正在加载模型或生成视频'
+    if job.status == 'running' and job.heartbeat_at and (utcnow() - aware(job.heartbeat_at)).total_seconds() > 90:
+        stage, message = 'reconnecting', '执行状态暂未更新，正在核对节点连接；请勿重复提交'
     return {"job_id": job.id, "client_job_id": job.client_job_id, "status": job.status,
+            "stage": stage, "message": message,
             "spec": job.spec, "progress": job.progress, "credits": "0", "test_mode": True,
             "error": {"code": job.error_code, "message": job.error_message} if job.error_code else None,
             "result_url": f"/api/v1/cloud/video/jobs/{job.id}/result" if job.status == "succeeded" else None,
@@ -203,7 +218,10 @@ def capabilities(user: CurrentUser):
             "workflow_revision": REVISION, "fps": 24, "resolutions": [{"width": w, "height": h} for w, h in RESOLUTIONS],
             "default_resolutions": DEFAULT_RESOLUTIONS,
             "max_output_pixels": MAX_VIDEO_PIXELS,
-            "duration_seconds": {"min": 2, "max": 15}, "audio_supported": False,
+            # Retain planning hints for existing clients that expect min/max.
+            # They are not server validation limits; new clients can use policy.
+            "duration_seconds": {"min": 2, "max": 15}, "duration_policy": "client",
+            "duration_limit_enforced": False, "audio_supported": False,
             "max_upload_bytes": MAX_UPLOAD, "frame_divisor": 17, "frame_remainder": 5,
             "frame_rule": {"divisor": 17, "remainder": 5}}
 

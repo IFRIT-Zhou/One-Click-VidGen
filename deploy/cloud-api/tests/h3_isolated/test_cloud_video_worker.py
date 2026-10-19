@@ -64,6 +64,17 @@ class WorkerTests(fixture.ApiTests):
             self.assertEqual(record.attempt_token, submit["attempt_token"])
             self.assertTrue(fixture.api.storage_path(record.result_path).is_file())
 
+    def test_worker_passes_client_duration_and_frames_to_node_unchanged(self):
+        quote=self.quote(duration_seconds=30).json()
+        job=fixture.client.post(fixture.PREFIX+'/jobs',headers=self.headers,json={'quote_id':quote['quote_id']})
+        self.assertEqual(job.status_code,201,job.text)
+        node=Node()
+        self.assertTrue(self.queue(node).run_one())
+        submitted=[kwargs['spec'] for action,kwargs in node.calls if action=='submit']
+        self.assertEqual(submitted,[quote['spec']])
+        self.assertEqual(submitted[0]['duration_seconds'],30)
+        self.assertGreaterEqual(submitted[0]['num_frames'],30*24)
+
     def test_ambiguous_submit_recovers_without_resubmit(self):
         job, _ = self.job()
         node = Node()
@@ -132,6 +143,24 @@ class WorkerTests(fixture.ApiTests):
             db.commit()
         with self.assertRaises(worker.WorkerUnsafeState):
             queue._heartbeat(handle)
+
+    def test_node_failure_reason_is_allowlisted_without_raw_error_leak(self):
+        for code in ('WORKER_RESTARTED','untrusted-token-error'):
+            with self.subTest(code=code):
+                job,_=self.job()
+                node=Node();original=node.call
+                def rpc(action,**kwargs):
+                    if action=='poll':return {'status':'failed','error_code':code,'error_message':'private-secret'}
+                    return original(action,**kwargs)
+                node.call=rpc
+                self.queue(node).run_one()
+                with Session(fixture.engine) as db:
+                    record=db.get(fixture.api.CloudVideoJob,job['job_id'])
+                    self.assertEqual(record.error_code,code if code in worker.NODE_ERRORS else 'GENERATION_FAILED')
+                    self.assertNotIn('private-secret',record.error_message)
+                    db.delete(record);db.commit()
+                self.assertFalse(any(action=='cancel' for action,_ in node.calls))
+                self.assertEqual(sum(action=='submit' for action,_ in node.calls),1)
 
 
 if __name__ == "__main__":

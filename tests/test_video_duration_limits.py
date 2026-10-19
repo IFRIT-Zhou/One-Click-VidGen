@@ -31,6 +31,16 @@ def group(identity, ids, kind='video'):
 
 
 class DurationLimitTests(unittest.TestCase):
+    def test_request_schema_accepts_frontend_fourteen_second_cluster_limit(self):
+        from pydantic import TypeAdapter, ValidationError
+        from backend.app.main import GenerateRequest
+        adapter = TypeAdapter(GenerateRequest.model_fields['dynamic_max_shot_duration'].annotation)
+        self.assertEqual(adapter.validate_python(14), 14)
+        for retained in (10, 15, 30):
+            self.assertEqual(adapter.validate_python(retained), retained)
+        with self.assertRaises(ValidationError):
+            adapter.validate_python(16)
+
     def test_cloud_limit_overrides_old_thirty_second_preference(self):
         self.assertEqual(max_video_duration(CLOUD), 14)
         self.assertEqual(max_video_duration({'dynamic_max_shot_duration': 30}), 30)
@@ -50,7 +60,7 @@ class DurationLimitTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 generation_duration(invalid)
 
-    def test_provider_ignoring_fifteen_second_prompt_is_safely_partitioned(self):
+    def test_provider_ignoring_fourteen_second_prompt_is_safely_partitioned(self):
         scenes = scenes_for([5, 5.001, 4, 4])
         original = copy.deepcopy(scenes)
         row = group('old', [s['slide_id'] for s in scenes])

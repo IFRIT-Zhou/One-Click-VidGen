@@ -2049,6 +2049,14 @@ def _synchronized_reference_image_ids(
     if reference_metadata():
         # Multi-purpose materials are selected by the shot director, not by
         # character names inherited from a broader semantic group.
+        from backend.app.reference_materials import explicit_reference_labels
+        explicit = explicit_reference_labels(original_prompt)
+        unknown = explicit - set(catalog)
+        if unknown:
+            raise ValueError(f"镜头 {item.get('macro_scene_id', '?')} 明确引用了不存在的素材：{'、'.join(sorted(unknown))}")
+        # Only the original shot's explicit instruction is authoritative; do
+        # not bind references merely mentioned in expanded continuity cards.
+        selected.update(explicit)
         if len(selected) > 3:
             raise ValueError('当前镜头参考素材超过3张，请精简选图')
         from backend.app.reference_materials import required_every_shot_labels
@@ -3813,6 +3821,76 @@ window.__timelines=window.__timelines||{{}}; window.__timelines.main={{duration:
     return html_path
 
 
+def _bind_material_references_with_diagnostics(mapping):
+    import copy
+    from backend.app.reference_materials import ReferenceBindingMismatch, explicit_reference_labels, reference_metadata
+    result = []
+    catalog = _reference_image_catalog()
+    for index, original in enumerate(mapping, 1):
+        candidate = copy.deepcopy(original)
+        try:
+            result.extend(_bind_material_references_once([candidate]))
+            continue
+        except ReferenceBindingMismatch as exc:
+            problem = str(exc)
+        # Only repair a selection mismatch involving known materials. Do not
+        # turn missing assets, provider failures or arbitrary validation into retries.
+        selected = list(candidate.get('reference_image_ids') or [])
+        required = set(selected) | explicit_reference_labels(candidate.get('image_prompt', ''))
+        if any(label not in catalog for label in required) or len(required) > 3:
+            raise ValueError(f'第{index}镜（{candidate.get("macro_scene_id", "?")}）：{problem}')
+        for attempt in range(1, 3):
+            print(f'第{index}镜（{candidate.get("macro_scene_id", "?")}）参考绑定不一致，Agent 2 定点修复 {attempt}/2；尚未提交出图。', flush=True)
+            # The immutable prompt and timeline remain authoritative. This
+            # repair only fills the attachment list, never rewrites the scene.
+            response = generate_gemini_text(
+                system_prompt='你是 Agent 2 的参考素材绑定修复员。只修复当前镜头的附件选择，不重新规划画面。'
+                    '保留已经选择的素材，补齐提示词明确引用的素材，不添加无关素材。'
+                    '返回 JSON 对象 {"reference_image_ids":["图1"]}，只能使用提供的图号，最多3张。',
+                user_prompt=json.dumps({'error': problem, 'shot': {
+                    'macro_scene_id': candidate.get('macro_scene_id'), 'image_prompt': candidate.get('image_prompt'),
+                    'reference_image_ids': selected}, 'available_references': [
+                    {'label': label, 'description': next((r.get('description', '') for r in reference_metadata() if r.get('label') == label), '')}
+                    for label in catalog]}, ensure_ascii=False),
+                temperature=0.1, response_mime_type='application/json', max_output_tokens=1000, json_root='object')
+            try:
+                payload = parse_json_response(response)
+                ids = payload.get('reference_image_ids') if isinstance(payload, dict) else None
+                if (not isinstance(ids, list) or any(not isinstance(v, str) for v in ids)
+                        or len(ids) > 3 or len(set(ids)) != len(ids) or set(ids) != required):
+                    raise ValueError('修复结果必须只包含原已选素材及提示词明确引用的现有素材')
+                candidate['reference_image_ids'] = ids
+                result.extend(_bind_material_references_once([candidate]))
+                print(f'第{index}镜参考绑定修复通过，继续后续流程。', flush=True)
+                break
+            except ValueError as exc:
+                problem = str(exc)
+                if attempt == 2:
+                    raise ValueError(f'第{index}镜（{candidate.get("macro_scene_id", "?")}）参考绑定自动修复2次仍失败：{problem}；原规划和失败现场已保留') from exc
+    return result
+
+
+def _bind_material_references_once(mapping):
+    from backend.app.reference_materials import bind_material_references
+    catalog = _reference_image_catalog()
+    try:
+        return bind_material_references(mapping, catalog)
+    except ValueError as exc:
+        # Preserve the exact failed candidates before later runs overwrite the
+        # shared successful mapping. Never archive API credentials or media.
+        folder = (_visual_checkpoint_dir() or VISUAL_DIR) / 'failures'
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / f'reference_binding_{time.time_ns()}.json'
+        destination.write_text(json.dumps({'error': str(exc), 'available_labels': list(catalog),
+            'mapping': [{'macro_scene_id': row.get('macro_scene_id'),
+                         'includes_slides': row.get('includes_slides'),
+                         'image_prompt': row.get('image_prompt'),
+                         'reference_image_ids': row.get('reference_image_ids', [])}
+                        for row in mapping]}, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(f'参考素材绑定失败现场已保留：{destination}', flush=True)
+        raise
+
+
 def run_online_poster_engine() -> None:
     print("[模块 4] 在线海报与页面生成启动", flush=True)
     if not TIMELINE_PATH.is_file():
@@ -3863,12 +3941,16 @@ def run_online_poster_engine() -> None:
             ):
                 raise ValueError("断点续跑发现字幕场景已变化，旧海报规划与当前文案不匹配，已停止以防错图")
             prompt_agent_is_current = (
+                # The same scene timing is not sufficient: the story/context
+                # that produced the cached images must match as well.
                 isinstance(previous_plan, dict)
                 and int(previous_plan.get("agent_version") or 0) >= VISUAL_PROMPT_AGENT_VERSION
                 and int(previous_plan.get("story_agent_version") or 0) >= int(story_plan.get("agent_version") or 0)
                 and int(previous_plan.get("character_continuity_version") or 0)
                 >= int(story_plan.get("character_continuity_version") or 0)
             )
+            if previous_plan.get('story_source_fingerprint') != story_plan.get('source_fingerprint'):
+                raise ValueError('断点续跑发现故事规划来源与旧海报不一致，已停止以防混用其他文案；原素材保留，请核对后重新规划画面')
             if not prompt_agent_is_current:
                 reuse_existing_mapping = False
                 print("断点续跑：检测到旧版人物连续性规划，将重新生成提示词并只重画受影响图片。", flush=True)
@@ -3894,7 +3976,7 @@ def run_online_poster_engine() -> None:
                 draft_temp.write_text(json.dumps({"key": draft_key, "mapping": mapping}, ensure_ascii=False), encoding="utf-8")
                 draft_temp.replace(draft_path)
             from backend.app.reference_materials import bind_material_references
-            mapping = bind_material_references(mapping, _reference_image_catalog())
+            mapping = _bind_material_references_with_diagnostics(mapping)
             from scene_reference_coordinator import plan_scene_references, bind_scene_references
             scene_cache = VISUAL_DIR / "scene_reference_plan.json"
             from backend.app.reference_materials import reference_metadata
@@ -3925,7 +4007,7 @@ def run_online_poster_engine() -> None:
                 mapping = bind_scene_references(mapping, scene_plan, reference_paths, _reference_image_catalog())
         else:
             from backend.app.reference_materials import bind_material_references
-            mapping = bind_material_references(mapping, _reference_image_catalog())
+            mapping = _bind_material_references_with_diagnostics(mapping)
         backup_poster_mapping()
         POSTER_MAPPING_PATH.write_text(
             json.dumps(mapping, ensure_ascii=False, indent=2),

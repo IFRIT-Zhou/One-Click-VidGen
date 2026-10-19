@@ -75,7 +75,7 @@ class H3ReviewRoutingTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as failure:
             studio.review(self.record['id'], studio.Review(revision=self.record['revision']), None)
         self.assertEqual(failure.exception.status_code, 400)
-        self.assertIn('15 秒上限', failure.exception.detail)
+        self.assertIn('14 秒上限', failure.exception.detail)
         self.assertEqual(self.record, before)
         self.assertEqual(len(self.saved), save_count)
 
@@ -159,7 +159,7 @@ class H3ReviewRoutingTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as failure:
             studio.confirm_adjusted_design(self.record['id'], studio.DesignConfirmation(
                 revision=self.record['revision'], shot_id='shot'), None)
-        self.assertIn('15 秒上限', failure.exception.detail)
+        self.assertIn('14 秒上限', failure.exception.detail)
         self.assertEqual(self.record, before)
 
 
@@ -190,7 +190,7 @@ class H3StepWorkflowRoutingTests(unittest.TestCase):
         for key, expected in parameters.items():
             self.assertEqual(job.request[key], expected)
             self.assertEqual(snapshots[-1]['request'][key], expected)
-        self.assertEqual(max_video_duration(snapshots[-1]['request']), 15)
+        self.assertEqual(max_video_duration(snapshots[-1]['request']), 14)
         cloud.assert_not_called()
         regenerate.assert_not_called()
 

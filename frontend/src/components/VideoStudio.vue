@@ -2,7 +2,7 @@
 import {computed,ref,watch,nextTick,onMounted,onUnmounted} from 'vue'
 import {requestJSON} from '../api'
 import {sceneReferenceReadiness} from '../sceneReferenceReadiness'
-import { imageSize } from '../icanImageSizes'
+import { ICAN_SIZES, imageSize, imageQualityLabel, imageQualityHint } from '../icanImageSizes'
 import ParameterReview from './ParameterReview.vue'
 import VideoShotNavigator from './VideoShotNavigator.vue'
 import ShotVideoOptions from './ShotVideoOptions.vue'
@@ -182,7 +182,7 @@ const videoConfigured=computed(()=>project.value?.creation_parameters?.video_gen
 const canProcessVideo=shot=>shot.kind==='video'&&!shotRenderLocked(shot)&&shot.video_status!=='completed'&&!shot.video_terminal&&shot.video_status!=='failed'&&!(shot.video_status==='unknown'&&!shot.video_resume_available)
 const pendingVideos=computed(()=>dynamicShots.value.filter(canProcessVideo))
 const videoStatusLabel=shot=>shot.kind!=='video'?'静态画面':shot.video_waiting?'等待提交':shot.video_queued&&videoRunning.value?'已加入队列':shot.video_design_changed&&shot.video_status==='pending'?'设计已更新 · 待重生成':({pending:'等待生成',running:'处理中',completed:'已完成',failed:'生成失败',unknown:'状态待核实',stopped:'已停止'}[shot.video_status]||'等待生成')
-const videoTask=shot=>({status:shot.video_queued&&videoRunning.value?'queued':shot.video_status,message:shot.video_queued&&videoRunning.value?'已加入 OCV 队列，等待处理':shot.video_progress_message||videoStatusLabel(shot),started_at:shot.video_started_at,finished_at:shot.video_finished_at,error:shot.video_error})
+const videoTask=shot=>({status:shot.video_queued&&videoRunning.value?'queued':shot.video_status,message:shot.video_queued&&videoRunning.value?'已加入 OCV 队列，等待处理':shot.video_status==='unknown'?'状态待核实，请继续查询原任务':['failed','stopped'].includes(shot.video_status)?videoStatusLabel(shot):shot.video_progress_message||videoStatusLabel(shot),started_at:shot.video_started_at,finished_at:shot.video_finished_at,error:shot.video_error})
 const videoBatchSummary=computed(()=>`已完成 ${completedVideos.value}/${dynamicShots.value.length} 镜 · 处理中 ${dynamicShots.value.filter(s=>s.video_status==='running').length} 镜 · OCV 排队 ${dynamicShots.value.filter(s=>s.video_queued||s.video_waiting).length} 镜`)
 const requestedSeconds=shot=>Number(shot.video_request?.duration||shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))
 const requestedResolution=shot=>shot.video_request?.width&&shot.video_request?.height?`${shot.video_request.width} × ${shot.video_request.height}`:shot.video_request?.resolution||(shot.video_backend==='comfyui'&&shot.video_request?'旧记录未保存分辨率':shot.video_resolution||'尚未提交')
@@ -276,6 +276,9 @@ const motionAudio=ref(null),previewNarration=ref(true)
 let boundaryStopTimer=null
 const redrawReferenceIds=ref([]),useCurrentReference=ref(false),useSceneReference=ref(true),redrawResolution=ref('')
 const redrawIcan=computed(()=>Boolean(project.value?.creation_parameters?.use_cloud_image_pool)&&project.value?.creation_parameters?.method==='ican')
+const redrawRatio=computed(()=>project.value?.settings?.ratio||'16:9')
+const redrawQualities=computed(()=>redrawIcan.value?Object.keys(ICAN_SIZES[redrawRatio.value]||{}):['1k','2k','4k'])
+const redrawHint=computed(()=>project.value?.creation_parameters?.use_cloud_image_pool&&redrawResolution.value?imageQualityHint(redrawIcan.value?'ican':'running',redrawRatio.value,redrawResolution.value.toUpperCase()):'')
 watch(redrawIcan,()=>{redrawResolution.value=''})
 const imagePromptDrafts=ref({}),submittedImagePrompts=ref({})
 const sceneAssets=computed(()=>project.value?.scene_assets||[])
@@ -816,7 +819,8 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <p v-if="shot.image_origin==='reference_redraw'||shot.image_origin==='upload'" class="muted">当前图片来自{{shot.image_origin==='upload'?'本地替换':'参考模式重绘'}}；第二个按钮会先识别最终图片，再更新视频提示词。</p>
     </section>
     <section v-if="shotEditingStage" class="storyboard-edit-tools">
-     <div class="storyboard-edit-heading"><div><strong>{{i<0?'修正这张场景图':'修正这张核心分镜图'}}</strong><p class="muted">提示词修改只在点击重绘时提交；核心图重绘最多选择 8 张参考图，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务清晰度</option><template v-if="redrawIcan"><option value="2K">2K</option><option value="2.5K">2.5K</option></template><template v-else><option value="1k">1K</option><option value="2k">2K</option><option value="4k">4K</option></template></select></div>
+     <div class="storyboard-edit-heading"><div><strong>{{i<0?'修正这张场景图':'修正这张核心分镜图'}}</strong><p class="muted">提示词修改只在点击重绘时提交；核心图重绘最多选择 8 张参考图，编号按下方选中顺序传给图像模型。</p><p v-if="!useCurrentReference&&!redrawReferenceIds.length" class="muted">当前没有选择参考图，本次只按提示词重绘。</p><p v-if="sceneAssetFor(shot)&&useSceneReference" class="muted">场景图自动附在这些参考素材之后，只约束空间布局。</p></div><select v-model="redrawResolution" aria-label="重绘分辨率"><option value="">跟随任务清晰度</option><option v-for="quality in redrawQualities" :key="quality" :value="quality">{{imageQualityLabel(redrawIcan?'ican':'running',redrawRatio,quality.toUpperCase())}}</option></select></div>
+     <p v-if="redrawHint" class="muted">{{redrawHint}}</p>
      <div class="storyboard-reference-library">
       <div class="reference-library-heading"><div><strong>本次重绘参考图</strong><p class="muted">点击图片选择或取消；绿色卡片会按图号顺序传给图像模型。</p></div><div><label class="file-action">＋ 上传新参考图<input type="file" accept="image/jpeg,image/png,image/webp" multiple :disabled="busy||imageEditRunning" @change="uploadRedrawReferences"></label><button v-if="uploadedRedrawReferences.length" type="button" :disabled="busy||imageEditRunning" @click="clearUploadedRedrawReferences">清空新增图</button></div></div>
       <p class="muted">素材上传不受当前选择数量限制；单次最多选择 8 张（含当前核心图），实际支持数量以接口为准。收起仅整理本次列表，不删除文件或解除其他镜头绑定。</p>

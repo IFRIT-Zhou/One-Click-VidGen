@@ -124,6 +124,25 @@ class DedicatedTests(unittest.TestCase):
         self.phases.ensure_h3.side_effect=RuntimeError('WINDOWS_H3_BUSY')
         self.stabilize(2);self.executor.finish();self.tick()
         self.assertEqual(self.scheduler.mode,'dedicated');self.assertEqual(self.scheduler.h3_state,'blocked');self.assertTrue(self.tts.resume.called)
+    def test_h3_blocker_records_stage_without_claiming_job(self):
+        self.h3.has_pending.return_value=True
+        self.phases.ensure_h3.side_effect=RuntimeError('WINDOWS_H3_PROBE_FAILED')
+        with self.assertLogs(module.LOG, 'INFO') as logs:
+            self.stabilize(2);self.executor.finish();self.tick()
+        self.h3.run_one.assert_not_called()
+        report='\n'.join(logs.output)
+        self.assertIn('step=prepare',report)
+        self.assertIn('code=WINDOWS_H3_PROBE_FAILED',report)
+        self.assertEqual(self.scheduler.mode,'dedicated')
+        self.assertEqual(self.scheduler.h3_state,'blocked')
+
+    def test_h3_raw_exception_is_not_logged(self):
+        self.phases.ensure_h3.side_effect=RuntimeError('secret-token-and-prompt')
+        with self.assertLogs(module.LOG, 'INFO') as logs:
+            self.stabilize(2);self.executor.finish();self.tick()
+        self.assertNotIn('secret-token-and-prompt','\n'.join(logs.output))
+        self.assertIn('H3_OPERATION_FAILED','\n'.join(logs.output))
+
     def test_queue_outage_never_reconfigures(self):
         self.status['redis_ready']=False
         with self.assertRaisesRegex(RuntimeError,'QUEUE_UNAVAILABLE'):self.tick()

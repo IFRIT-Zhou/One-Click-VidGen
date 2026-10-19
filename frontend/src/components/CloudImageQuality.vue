@@ -1,6 +1,6 @@
 <script setup>
 import { computed, watch } from 'vue'
-import { ICAN_SIZES, imageChoice, imageSize } from '../icanImageSizes'
+import { ICAN_SIZES, imageChoice, imageSize, imageQualityLabel, imageQualityHint } from '../icanImageSizes'
 const props = defineProps({ form: { type: Object, required: true }, standalone: Boolean, compact: Boolean })
 const isIcan = computed(() => props.form.method === 'ican')
 const ratio = computed({
@@ -19,8 +19,12 @@ const quality = computed({
   },
 })
 const qualities = computed(() => isIcan.value ? Object.keys(ICAN_SIZES[ratio.value]) : ['1K', '2K', '4K'])
+const hint = computed(() => imageQualityHint(props.form.method, ratio.value, quality.value))
 watch([() => props.form.video_orientation, isIcan], () => {
-  if (isIcan.value && !props.standalone) props.form.size = imageSize(ratio.value, quality.value)
+  if (isIcan.value) {
+    if (props.standalone) props.form.size = imageSize(imageChoice(props.form.size).ratio, quality.value)
+    else props.form.size = imageSize(ratio.value, quality.value)
+  }
   if (!isIcan.value && !['1k', '2k', '4k'].includes(props.form.image_resolution)) props.form.image_resolution = '2k'
   if (!isIcan.value && props.standalone && !['16:9', '9:16', '1:1', '3:2', '2:1', '3:4', '21:9'].includes(props.form.ratio)) props.form.ratio = '16:9'
 }, { immediate: true })
@@ -28,10 +32,11 @@ watch([() => props.form.video_orientation, isIcan], () => {
 <template>
  <div class="ican-quality-grid" :class="{'is-compact':compact}">
   <label><span><strong>{{standalone?'图片画幅':'视频画幅'}}</strong><small>{{standalone?'选择图片比例':'画面和导出视频一致'}}</small></span>
-   <select v-model="ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option><template v-if="standalone"><option value="1:1">方形 1:1</option><option value="3:2">横图 3:2</option><option v-if="isIcan" value="2:3">竖图 2:3</option><template v-else><option value="2:1">横图 2:1</option><option value="3:4">竖图 3:4</option><option value="21:9">宽屏 21:9</option></template></template></select>
+   <select v-model="ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option><template v-if="standalone"><option value="1:1">方形 1:1</option><option value="3:4">竖图 3:4</option><option value="3:2">横图 3:2</option><option v-if="isIcan" value="2:3">竖图 2:3</option><template v-else><option value="2:1">横图 2:1</option><option value="21:9">宽屏 21:9</option></template></template></select>
   </label>
   <label><span><strong>图片清晰度</strong><small>由云端图片号池生成</small></span>
-   <select v-model="quality"><option v-for="name in qualities" :key="name" :value="name">{{name}}</option></select>
+   <select v-model="quality"><option v-for="name in qualities" :key="name" :value="name">{{imageQualityLabel(form.method, ratio, name)}}</option></select>
+   <small class="quality-hint">{{hint}}</small>
   </label>
  </div>
 </template>
