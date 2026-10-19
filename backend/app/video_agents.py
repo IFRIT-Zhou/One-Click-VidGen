@@ -161,6 +161,13 @@ def design_core_images(context: dict[str, Any], scenes: list[dict[str, Any]], sh
                   references: list[dict[str, Any]], ask: Ask = ask_json) -> list[dict[str, Any]]:
     shots = [inherit_attribution(context, shot, scenes) for shot in shots]
     for shot in shots:
+        if shot.get('design_needs_review'):
+            # Changed subtitle ownership invalidates the parent's creative brief.
+            for field in ('previous_designs', 'visual_description', 'visual_design',
+                          'intent', 'progression_plan', 'motion_basis'):
+                shot.pop(field, None)
+            if shot.get('user_intent'):
+                shot['intent'] = shot['user_intent']
         # These are downstream products, not evidence for speaker identity.
         for field in ('image_prompt', 'video_prompt', 'action', 'motion_plan'):
             shot.pop(field, None)
@@ -315,7 +322,7 @@ def _numbered_dynamic_shots(shots, references):
     by_reference = {row["id"]: row for row in references}
     for shot in dynamic:
         numbered = [{"number": "图1", "purpose": "本镜头核心分镜图；内容/人物/画风/场景参考，不强制作为首帧"}]
-        numbered.extend({"number": f"图{index + 2}", **by_reference[identity]}
+        numbered.extend({**by_reference[identity], "number": f"图{index + 2}", "label": f"图{index + 2}"}
                         for index, identity in enumerate(shot.get("reference_ids", [])))
         prepared.append({**shot, "numbered_references": numbered})
     return prepared
@@ -420,7 +427,9 @@ def write_video_prompts(context: dict[str, Any], shots: list[dict[str, Any]],
         'owner 名称与 container。前一阶段短字未在下一阶段列出，就明确它消失；保留的则延续，不能累计所有气泡。\n')
     system = """你是视频提示词定稿 Agent 5，不是导演。将既定 motion_plan 和 action 整理成视频模型最终提示词，
 不得改变表达目的或重新设计剧情，只整理计划里的主体、动作和后续景物。开头说明本镜应保持的人物、
-画风和场景，全部从当前任务取值。仅可引用 numbered_references 中实际存在的图号。
+画风和场景，全部从当前任务取值。仅可引用 numbered_references 中实际存在的单镜图号。
+图1固定为核心分镜图，其余按本镜 reference_ids 顺序从图2编号，不使用项目素材列表的图号。
+引用额外素材时写成“图2（素材真实id）”，以 numbered_references 的 id 与 number 对应关系为准。
 程序会在保存前加上固定的单图参考指导语，不要自行改写它，也不要重复解释参考图与首帧的关系。
 按时间顺序写可见动作和必要镜头运动，
 明确关键动作在 duration 秒内完成，generation_duration 多出的时间自然停留。默认静音，不要求逐字对口型。
@@ -447,7 +456,9 @@ beat_prompts 必须按 beats 原顺序一一对应，不省略任何阶段，也
     def present(rows):
         result = []
         for row in rows:
-            body = row['video_prompt'].strip()
+            from .video_reference_numbers import normalize_video_references
+            source = next(shot for shot in prepared if shot['id'] == row['id'])
+            body = normalize_video_references(row['video_prompt'].strip(), source, references)
             while body.startswith(SINGLE_REFERENCE_GUIDE):
                 body = body[len(SINGLE_REFERENCE_GUIDE):].lstrip()
             result.append({'id': row['id'], 'video_prompt': enforce_no_auto_subtitles(SINGLE_REFERENCE_GUIDE + '\n' + body),

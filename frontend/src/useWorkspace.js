@@ -4564,7 +4564,7 @@ function guidedVisualParameters() {
     image_resolution: form.image_resolution,
     visual_prompt_mode: form.visual_prompt_mode,
     visual_pacing_preset: form.visual_pacing_preset,
-    dynamic_max_shot_duration: form.video_generation_backend === 'cloud_h3' ? 15 : form.dynamic_max_shot_duration,
+    dynamic_max_shot_duration: form.video_generation_backend === 'cloud_h3' ? 14 : form.dynamic_max_shot_duration,
     visual_min_duration: form.visual_min_duration,
     visual_target_duration: form.visual_target_duration,
     visual_max_duration: form.visual_max_duration,

@@ -14,6 +14,11 @@ CAPS_SAFE={**CAPS,'resolutions':CAPS['resolutions']+[
     'default_resolutions':{'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}}}
 
 class CloudVideoTests(unittest.TestCase):
+    def test_client_hardware_limit_is_14_even_when_server_advertises_15(self):
+        caps = {**CAPS, 'duration_seconds': {'min': 2, 'max': 15}}
+        c.validate_duration({'id':'shot-a','duration':14,'generation_duration':14},caps)
+        with self.assertRaisesRegex(ValueError,'shot-a.*14'):
+            c.validate_duration({'id':'shot-a','duration':14.001,'generation_duration':15},caps)
     def test_expired_quote_renews_only_after_verified_miss_same_identity(self):
         client=Mock()
         client.create_video_job.side_effect=[CloudApiError('Quote expired; request a new quote',status_code=409),{'job_id':'new'}]

@@ -313,7 +313,9 @@ def _inputs(path, record, shot):
     core = studio._storyboard_image_path(path, shot)
     if not core.is_file() or path.resolve() not in core.resolve().parents:
         raise ValueError('本镜核心分镜图不存在，请恢复或重新生成核心图')
-    prompt = str(shot.get('video_prompt') or '')
+    from .video_reference_numbers import normalize_video_references
+    prompt = normalize_video_references(shot.get('video_prompt'), shot, record.get('references', []))
+    shot['video_prompt'] = prompt
     numbers = [int(value) for value in re.findall(r'(?:图\s*|<Picture\s*)(\d+)', prompt, re.I)]
     highest = max(numbers, default=1)
     if highest > 9 or highest < 1:
@@ -329,7 +331,7 @@ def _inputs(path, record, shot):
         selected = [Path(value) for value in studio._shot_reference_paths(
             path, record, {**shot, 'reference_ids': ids[:highest - 1]})]
     except ValueError as exc:
-        raise ValueError(f'视频提示词引用了额外图片（最高图{highest}），对应素材缺失；请恢复素材或将视频提示词改为仅使用图1核心图') from exc
+        raise ValueError(f"镜头 {shot['id']}：视频提示词引用了额外图片（最高图{highest}），对应素材缺失；请恢复对应素材") from exc
     return (core, *selected)
 
 

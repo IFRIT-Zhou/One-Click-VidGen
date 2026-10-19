@@ -136,6 +136,16 @@ class NodeSafetyTests(unittest.TestCase):
                                 'spec': {'width': 1664, 'height': 937}})
         idle.assert_not_called()
 
+    def test_fresh_submit_duration_guard_precedes_gpu_start(self):
+        self.path.unlink()
+        with patch.object(agent,'guard_windows_h3'),patch.object(agent,'running',return_value=False),patch.object(agent,'idle_h3',side_effect=RuntimeError('GPU_START_REACHED')) as idle:
+            for seconds,frames in [(15,362),(14.001,345),(14,362),(float('nan'),345),(-1,5)]:
+                with self.subTest(seconds=seconds,frames=frames),self.assertRaisesRegex(ValueError,'H3_REQUEST_DURATION_LIMIT'):
+                    agent.dispatch({**self.req,'action':'submit','spec':{'width':1536,'height':832,'duration_seconds':seconds,'num_frames':frames}})
+            idle.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError,'GPU_START_REACHED'):
+                agent.dispatch({**self.req,'action':'submit','spec':{'width':1536,'height':832,'duration_seconds':14,'num_frames':345}})
+
     def setUp(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
         self.root=Path(temp.name)

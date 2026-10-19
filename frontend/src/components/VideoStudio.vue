@@ -16,10 +16,29 @@ import ShotReferencePreview from './ShotReferencePreview.vue'
 import { normalizeDynamicTextMode, dynamicTextModeLabel } from '../dynamicTextMode'
 import { shotPromptNotes, shotHasPromptWarning, promptWarningRows } from '../videoPromptWarnings'
 import { createSerialTaskQueue } from '../serialTaskQueue'
+import { autoSplitWindow, needsAutoSplit } from '../autoSplitWindow'
 const emit=defineEmits(['new-project','duplicate-config','edit-audio','edit-config'])
 const items=ref([]), project=ref(null), selected=ref(0), error=ref(''), busy=ref(false), dirty=ref(false)
 function requestCloudLogin() { window.dispatchEvent(new Event('ocv-cloud-login-required')) }
 const view=ref('storyboard'), productionPanel=ref('design')
+const autoSplitOpen=ref(false),autoSplitNeighbors=ref(false)
+const autoSplitTargets=computed(()=>autoSplitWindow(project.value?.shots||[],selected.value,autoSplitNeighbors.value))
+const autoSplitLocked=computed(()=>autoSplitTargets.value.some(({shot})=>shotRenderLocked(shot)||shot.manual_locked||shot.image_task?.status==='running'))
+const overlongCloudShots=computed(()=>(project.value?.shots||[]).map((shot,index)=>({shot,index})).filter(({shot})=>optionsFor(shot).backend==='cloud_h3'&&needsAutoSplit(shot)))
+function openAutoSplit(index=selected.value){selected.value=index;autoSplitNeighbors.value=false;autoSplitOpen.value=true}
+async function applyAutoSplit(){
+ if(!selectedShot.value||autoSplitLocked.value)return
+ const identity=selectedShot.value.id
+ busy.value=true;error.value=''
+ try{
+  if(dirty.value)await save()
+  const result=await call('/'+project.value.id+'/shots/'+identity+'/auto-split','POST',{revision:project.value.revision,include_neighbors:autoSplitNeighbors.value})
+  project.value=result;dirty.value=false;sessionStorage.removeItem(draftKey(result.id))
+  selected.value=Math.max(0,result.shots.findIndex(s=>s.id===result.auto_split_result?.shot_ids[0]))
+  productionPanel.value='design';autoSplitOpen.value=false
+  structureFeedback.value='自动拆分与提示词规划已完成；请检查后生成新核心图。旧素材可通过撤回结构调整恢复。'
+ }catch(e){error.value=e.message}finally{busy.value=false}
+}
 watch(view,value=>{if(value==='motions'){productionPanel.value='video';view.value='storyboard'}},{flush:'sync'})
 watch(selected,value=>{if(value<0)productionPanel.value='design'})
 let cloudLoginAlertKey = ''
@@ -120,7 +139,7 @@ function confirmLongApiShots(shots){
  const invalid=shots.filter(shot=>{
   if(shot.video_request&&!shot.video_terminal&&shot.video_status!=='completed')return false
   const configured=project.value.creation_parameters?.dynamic_max_shot_duration
-  const maximum=optionsFor(shot).backend==='cloud_h3'?15:[10,15,30].includes(configured)?configured:15
+  const maximum=optionsFor(shot).backend==='cloud_h3'?14:[10,14,15,30].includes(configured)?configured:15
   const seconds=Number(shot.generation_duration||Math.max(4,Math.ceil(Number(shot.duration)||0)))
   return !Number.isFinite(seconds)||seconds>maximum||seconds<Number(shot.duration)
  })
@@ -626,6 +645,10 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <button :disabled="busy" @click="confirmAudioReview(selectedShot)">确认沿用</button>
  </section>
  <OperationStatus v-if="project&&(busy||(productionPanel!=='video'&&videoRunning)||['planning','stopping','image_generating','image_stopping','exporting'].includes(project.status))" title="项目运行状态" :pending="busy" :task="{status:'running',message:project.status==='exporting'?'正在合成成片':storyboardStageLabel}" :summary="videoRunning?videoBatchSummary:''"/>
+ <section v-if="project&&view==='storyboard'&&overlongCloudShots.length" class="auto-split-notice">
+  <div><strong>{{overlongCloudShots.length}} 镜超过集群 14 秒请求上限</strong><p>不用重做配音；选择一个超长镜头，自动拆分并重新规划提示词。</p></div>
+  <div class="auto-split-targets"><button v-for="item in overlongCloudShots" :key="item.shot.id" type="button" :disabled="busy||shotRenderLocked(item.shot)" @click="openAutoSplit(item.index)">第 {{String(item.index+1).padStart(2,'0')}} 镜 · {{Number(item.shot.duration).toFixed(2)}} 秒</button></div>
+ </section>
  <template v-if="!project&&!busy">
  <div class="video-start">
   <section class="video-card"><h2>新建视频任务</h2><p class="muted">可借用已有作品的配音、字幕和时间戳。画面从头设计，不导入旧图、参考图、画风、人物或旧分镜。</p><label>配音与字幕来源<select v-model="sourceId" @change="chooseSource"><option value="">请选择已完成的项目</option><option v-for="source in sources" :key="source.id" :value="source.id">{{source.name}}</option></select></label><p v-if="!sources.length" class="muted">暂无可导入项目，需要项目已完成，且配音与最终字幕文件完整。</p><label>新项目名称<input v-model="importName" maxlength="100" placeholder="自动填写，可修改"></label><label>新视频比例<select v-model="newVisual.ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option></select></label>
@@ -747,6 +770,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      </WorkspacePanels>
     </article>
 
+   <div v-if="selected>=0&&selectedShot&&needsAutoSplit(selectedShot)" class="auto-split-notice"><div><strong>本镜超过 14 秒</strong><p>可单独拆分，也可连同前后动态镜头一起重规划。</p></div><button type="button" :disabled="!canEditStructure" @click="openAutoSplit()">自动拆分并重规划</button></div>
    <template v-if="selected>=0&&selectedShot&&productionPanel==='design'"><div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure||videoRunning||Boolean(project.video_waiting_queue?.length)" @click="undoStructure">撤回结构调整</button><button v-if="shotEditingStage&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div></template>
    <div v-for="{shot,i} in storyboardRows" :key="shot.id" v-show="i===selected&&productionPanel==='design'" class="video-detail">
     <div class="shot-local-navigation"><strong>{{i<0?'场景 '+(-i):'镜头 '+String(i+1).padStart(2,'0')}} <span v-if="i>=0">/ {{project.shots.length}}</span></strong><div v-if="i>=0"><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
@@ -849,6 +873,21 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </LanguageModelPresets>
 </section>
  <Teleport to="body">
+  <div v-if="autoSplitOpen&&project&&selectedShot" class="structure-overlay" @click.self="!busy&&(autoSplitOpen=false)">
+   <section class="structure-dialog auto-split-dialog" role="dialog" aria-modal="true" aria-labelledby="auto-split-title" :aria-busy="busy">
+    <header><div><strong id="auto-split-title">自动拆分超长镜头</strong><p class="muted">沿现有字幕边界重组，每镜请求最多 14 秒，并重新规划图片与动态提示词。</p></div><button type="button" :disabled="busy" @click="autoSplitOpen=false">关闭</button></header>
+    <div class="auto-split-choices" role="group" aria-label="重规划范围">
+     <button type="button" :disabled="busy" :aria-pressed="!autoSplitNeighbors" :class="{active:!autoSplitNeighbors}" @click="autoSplitNeighbors=false"><strong>仅处理本镜</strong><small>其他镜头保持不变</small></button>
+     <button type="button" :disabled="busy" :aria-pressed="autoSplitNeighbors" :class="{active:autoSplitNeighbors}" @click="autoSplitNeighbors=true"><strong>连同前后镜头</strong><small>最多三个相邻动态镜头一起重组</small></button>
+    </div>
+    <div class="auto-split-targets"><span v-for="item in autoSplitTargets" :key="item.shot.id">第 {{String(item.index+1).padStart(2,'0')}} 镜 · {{Number(item.shot.duration).toFixed(2)}} 秒</span></div>
+    <p class="muted">不会跨过静态镜头。配音、字幕和总时长不变；范围外镜头保留。此次会调用语言模型，按当前规划渠道计费，不生成图片或视频，并暂停自动继续。旧素材可撤回恢复。</p>
+    <p v-if="autoSplitLocked" class="studio-notice error">所选范围包含正在生成、排队或锁定的镜头，请先取消排队或缩小范围。</p>
+    <p v-if="busy" role="status" class="studio-notice">正在拆分并重新规划提示词，请稍候；全部校验通过后才会替换原分镜。</p>
+    <p v-if="error" role="alert" class="studio-notice error">{{error}}</p>
+    <footer><button type="button" :disabled="busy" @click="autoSplitOpen=false">取消</button><button type="button" class="primary-btn" :disabled="busy||autoSplitLocked||!canEditStructure" @click="applyAutoSplit">{{busy?'规划中…':'确认范围并自动拆分'}}</button></footer>
+   </section>
+  </div>
   <div v-if="boundaryEditor.open&&project&&selectedShot" class="structure-overlay" @click.self="!busy&&closeBoundaryEditor()">
    <audio v-if="project.audio" ref="boundaryAudio" :key="narrationUrl" :src="narrationUrl" preload="metadata" />
     <section v-if="selected>=0&&boundaryEditor.open&&boundaryPreview" class="video-boundary-editor structure-dialog" role="dialog" aria-modal="true" aria-label="调整字幕与分镜">
@@ -874,6 +913,8 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </Teleport>
 </template>
 <style scoped>
+.auto-split-dialog header>button{flex-shrink:0;white-space:nowrap}
+.auto-split-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;margin:12px 0;border:1px solid color-mix(in srgb,var(--accent,#81d9bd) 45%,var(--border,#35423f));border-radius:12px;background:color-mix(in srgb,var(--accent,#81d9bd) 7%,var(--panel,#1e2625))}.auto-split-notice p{margin:5px 0 0;font-size:13px;color:var(--muted)}.auto-split-dialog{max-width:680px}.auto-split-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.auto-split-dialog p{line-height:1.65}.auto-split-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.auto-split-choices button{display:grid;text-align:left;gap:7px;padding:16px;border:1px solid var(--border,#35423f);border-radius:12px;color:inherit;background:transparent}.auto-split-choices button.active{border-color:var(--accent,#81d9bd);background:color-mix(in srgb,var(--accent,#81d9bd) 10%,transparent)}.auto-split-choices small{color:var(--muted)}.auto-split-targets{display:flex;gap:8px;flex-wrap:wrap}.auto-split-targets span{padding:6px 10px;border-radius:8px;background:var(--bg,#141918);font-size:13px}@media(max-width:600px){.auto-split-choices{grid-template-columns:1fr}.auto-split-notice{align-items:stretch;flex-direction:column}}
 .production-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:16px;margin-bottom:16px;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border:1px solid var(--border);border-radius:14px}
 .production-tabs{display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--bg,#111a25);border:1px solid var(--border)}
 .production-tabs button{border:1px solid transparent!important;background:transparent!important;color:var(--muted);padding:10px 18px!important;border-radius:8px;font-weight:650}

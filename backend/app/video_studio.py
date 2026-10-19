@@ -107,6 +107,10 @@ class Structure(BaseModel):
 class Review(BaseModel):
     revision: int
 
+
+class AutoSplit(Review):
+    include_neighbors: bool = False
+
 class ProjectSettingsEdit(Review):
     name: str = Field(max_length=100)
     style: str = Field(default='', max_length=10000)
@@ -1397,6 +1401,73 @@ def structure(identity: str, data: Structure, request: Request):
         return record
 
 
+@router.post('/{identity}/shots/{shot_id}/auto-split')
+def auto_split_shot(identity: str, shot_id: str, data: AutoSplit, request: Request):
+    from .video_auto_split import split_window, plan_split, merge_split
+    user_id = require_user(request)['id']
+    with LOCK:
+        path = directory(user_id, identity)
+        record = read(path)
+        shot_editable(record, data.revision, shot_id)
+        try:
+            first, last, _ = split_window(record, shot_id, data.include_neighbors)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        for shot in record['shots'][first:last]:
+            shot_editable(record, data.revision, shot['id'])
+        snapshot = copy.deepcopy(record)
+        keys = [image_edit_key(identity, shot['id']) for shot in record['shots'][first:last]]
+        IMAGE_EDITS.update(keys)
+    try:
+        planning_record = copy.deepcopy(snapshot)
+        parameters = planning_parameters(snapshot)
+        direction = planning_record.setdefault('context', {}).setdefault('video_direction', {})
+        direction['dynamic_text_mode'] = normalize_text_mode(parameters.get('dynamic_text_mode'))
+        from .presenter_mode import presenter_config
+        direction['presenter'] = presenter_config(parameters, snapshot.get('references', []))
+        with project_language_scope(user_id, parameters):
+            replacements = plan_split(planning_record, shot_id, data.include_neighbors)
+        with LOCK:
+            current = read(path)
+            changed = merge_split(current, snapshot, shot_id, data.include_neighbors, replacements)
+            remember_structure(current, 'auto_split')
+            current['shots'] = changed
+            current.setdefault('creation_parameters', {})['dynamic_auto_advance'] = False
+            current.pop('export', None)
+            discard_planning_resume(current)
+            lock_manual_groups(current)
+            # Do not change another worker's running stage. Missing new core
+            # images are explicitly pending and cannot be submitted as video.
+            if current['status'] not in {'video_generating', 'video_stopping'}:
+                current['status'] = 'image_review' if any(s.get('image') for s in changed) else 'storyboard_review'
+            current['logs'].append(f'自动拆分完成：第{first+1}～{last}镜重组为{len(replacements)}镜，'
+                                  '请求均不超过14秒；新提示词已规划，旧素材可撤回，未生成图片或视频。')
+            current['auto_split_result'] = dict(shot_ids=[s['id'] for s in replacements],
+                original_shot_ids=[s['id'] for s in snapshot['shots'][first:last]], max_request_seconds=14)
+            from .video_duration_limits import validate_video_duration
+            blockers = []
+            for index, row in enumerate(changed):
+                if row['kind'] != 'video':
+                    continue
+                params = dict(current.get('creation_parameters', {}))
+                params['video_generation_backend'] = (row.get('video_generation_options') or {}).get('backend') or params.get('video_generation_backend')
+                try:
+                    validate_video_duration(row['duration'], params, requested_duration=row.get('generation_duration'))
+                except ValueError as exc:
+                    blockers.append(dict(shot_id=row['id'], index=index+1, message=str(exc)))
+            current['duration_check'] = dict(passed=not blockers, blockers=blockers)
+            current.update(revision=current['revision']+1, error='')
+            save(path, current)
+            return current
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(502, f'自动拆分规划失败，原分镜未修改：{exc}') from exc
+    finally:
+        with LOCK:
+            IMAGE_EDITS.difference_update(keys)
+
+
 @router.post('/{identity}/structure/undo')
 def undo_structure(identity: str, data: Review, request: Request):
     with LOCK:
@@ -1892,7 +1963,12 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
             shot.pop('motion_plan', None)
         if shot.get('video_prompt', '') != data.video_prompt.strip():
             shot['video_prompt_warnings'] = []
-        shot.update(kind=data.kind, action=data.action.strip(), video_prompt=data.video_prompt.strip(),
+        from .video_reference_numbers import normalize_video_references
+        try:
+            normalized_prompt = normalize_video_references(data.video_prompt.strip(), shot, record.get('references', [])) if data.kind == 'video' else data.video_prompt.strip()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        shot.update(kind=data.kind, action=data.action.strip(), video_prompt=normalized_prompt,
                     warning='',
                     reference_audio_enabled=data.reference_audio_enabled,
                     reference_audio_lipsync=data.reference_audio_lipsync,

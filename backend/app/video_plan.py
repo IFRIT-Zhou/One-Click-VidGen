@@ -172,6 +172,9 @@ def normalize_shots(raw, scenes, reference_ids=(), *, max_duration=15):
 def edit_structure(shots, scenes, action, index, boundary=None, reference_ids=()):
     rows = copy.deepcopy(shots)
     def invalidate_phase_design(row):
+        # A manual intent scoped to the old subtitle range is not an instruction
+        # for both children. The complete structure history preserves it for undo.
+        row.pop('user_intent', None)
         row.pop('motion_plan', None)
         row['design_needs_review'] = True
         row['design_review_confirmed'] = False

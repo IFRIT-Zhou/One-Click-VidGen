@@ -1602,7 +1602,7 @@
                 </label>
                 <label v-if="form.dynamic_video" class="visual-pacing-select">
                   <span>动态镜头规划上限</span>
-                  <span v-if="form.video_generation_backend==='cloud_h3'">集群 H3 · 最长 15 秒</span>
+                  <span v-if="form.video_generation_backend==='cloud_h3'">集群 H3 · 请求最长 14 秒</span>
                   <select v-else v-model.number="form.dynamic_max_shot_duration">
                     <option :value="15">常规 · 15 秒</option>
                     <option :value="30">长镜头 · 30 秒</option>

@@ -31,7 +31,7 @@ onMounted(()=>{if(!props.modelValue.resolution)choose({target:{value:'1664x936'}
   <label>视频尺寸 <select :value="selected" :disabled="disabled" @change="choose"><option v-if="unavailableSelected" :value="selected" disabled>{{selected}}（集群暂未提供，请刷新能力或更新服务端）</option><option v-for="item in sizes" :key="item.width+'x'+item.height" :value="item.width+'x'+item.height">{{item.width}} × {{item.height}}</option></select></label>
   <p v-if="unavailableSelected" role="alert">当前保存的尺寸未出现在集群能力列表，请选择实际支持的尺寸；不会自动降低分辨率。</p>
   <p v-if="invalidDefault" role="alert">集群默认尺寸与能力列表不一致，请刷新配置或明确选择支持的尺寸；不会自动降低分辨率。</p>
-  <p v-if="capabilities">允许时长：{{capabilities.duration_seconds?.min}}–{{capabilities.duration_seconds?.max}} 秒 · {{capabilities.enabled?'可用':'暂不可用'}}；超限镜头需要先拆分。</p>
+  <p v-if="capabilities">请求时长：{{capabilities.duration_seconds?.min||2}}–{{Math.min(14,capabilities.duration_seconds?.max||14)}} 秒 · {{capabilities.enabled?'可用':'暂不可用'}}；超限镜头可使用“自动拆分”，补帧后可能略长于请求时长。</p>
   <p v-if="seconds">本镜请求生成 {{seconds}} 秒<span v-if="generatedSeconds">，工作流帧数对齐后约 {{generatedSeconds}} 秒</span>；导出仍按配音时间轴裁切，不改变配音速度。</p>
   <p v-if="error" role="alert">{{error}}</p><button type="button" :disabled="disabled" @click="refresh">刷新集群能力</button>
  </div>

@@ -361,6 +361,11 @@ def dispatch(req):
                 or spec['width'] <= 0 or spec['height'] <= 0
                 or spec['width'] * spec['height'] > 1664 * 936):
             raise ValueError('H3_OUTPUT_PIXEL_LIMIT_EXCEEDED')
+        # 14 requested seconds may align upward to 345 frames (17n+5).
+        seconds = spec.get('duration_seconds')
+        if (type(seconds) not in (int, float) or not 0 < seconds <= 14
+                or type(spec.get('num_frames')) is not int or not 0 < spec['num_frames'] <= 345):
+            raise ValueError('H3_REQUEST_DURATION_LIMIT_14_SECONDS')
         if running(TTS):raise RuntimeError('TTS_STILL_RUNNING')
         idle_h3()
         spec=req['spec'];raw=base64.b64decode(req['image_b64'],validate=True)
