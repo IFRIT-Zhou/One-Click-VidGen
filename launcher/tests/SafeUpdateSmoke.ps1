@@ -40,6 +40,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'launcher'), (Join-Path $sourceRoot 'runtime'), (Join-Path $sourceRoot 'output'), (Join-Path $sourceRoot 'plugins\community_demo') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $sourceRoot 'start_windows.bat') -Value '@echo off' -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $sourceRoot 'app.txt') -Value 'new-source' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $sourceRoot '.env.example') -Value 'EXAMPLE=template' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot '.env') -Value 'SECRET=overwrite-attempt' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'runtime\model.bin') -Value 'model-overwrite-attempt' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $sourceRoot 'output\video.mp4') -Value 'output-overwrite-attempt' -Encoding UTF8
@@ -77,6 +78,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Update helper exited with code $LASTEXITCODE" }
 
     $assertions = @(
+        @{ Name = 'dotfile template extracted'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot '.env.example') -Raw).Trim() -eq 'EXAMPLE=template') },
         @{ Name = 'bridge installed'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\codex_bridge\plugin.json') -Raw).Trim() -eq 'public-bridge-installed') },
         @{ Name = 'bridge disable choice preserved'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'plugins\codex_bridge\disabled') -Raw).Trim() -eq 'disabled-keep') },
         @{ Name = 'user ComfyUI node preserved'; Passed = ((Get-Content -LiteralPath (Join-Path $fakeRoot 'comfyui_plugins\user_node\__init__.py') -Raw).Trim() -eq 'user-node-keep') },
@@ -217,3 +219,4 @@ catch {
 finally {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }
+

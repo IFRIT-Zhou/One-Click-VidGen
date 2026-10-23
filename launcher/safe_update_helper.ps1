@@ -170,7 +170,16 @@ try {
 
         $stage = Assert-UnderRoot (Join-Path $tempRoot ("stage_" + $timestamp)) $tempRoot
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        Expand-Archive -LiteralPath $package -DestinationPath $stage -Force
+        # Avoid Expand-Archive provider/hidden-file behaviour on older Windows.
+        # Stage is unique; validate every entry before extracting any files.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($package)
+        try {
+            foreach ($entry in $archive.Entries) {
+                Assert-UnderRoot (Join-Path $stage $entry.FullName) $stage | Out-Null
+            }
+        } finally { $archive.Dispose() }
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($package, $stage)
         $source = Get-ChildItem -LiteralPath $stage -Directory | Where-Object {
             Test-Path -LiteralPath (Join-Path $_.FullName 'start_windows.bat')
         } | Select-Object -First 1
@@ -194,7 +203,12 @@ try {
             throw 'This release requires a complete portable package and cannot be overlaid safely.'
         }
 
-        $files = Get-ChildItem -LiteralPath $source.FullName -Recurse -File
+        $files = Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Force
+        foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file.FullName -PathType Leaf)) {
+                throw "Extracted update file disappeared before installation: $($file.FullName)"
+            }
+        }
         foreach ($file in $files) {
             $relative = $file.FullName.Substring($source.FullName.Length).TrimStart('\')
             if (Test-ProtectedRelativePath $relative) { continue }
@@ -240,6 +254,8 @@ try {
 }
 catch {
     Write-UpdateLog ("Safe update failed: " + $_.Exception.Message)
+    Write-UpdateLog ("Failure location: " + $_.InvocationInfo.PositionMessage)
+    Write-UpdateLog ("Failure stack: " + $_.ScriptStackTrace)
     if ($Mode -eq 'portable' -and $portableMutationStarted) {
         try { Restore-PortableBackup }
         catch { Write-UpdateLog ("Automatic rollback failed: " + $_.Exception.Message) }
@@ -248,3 +264,4 @@ catch {
     Restart-Launcher
     exit 1
 }
+

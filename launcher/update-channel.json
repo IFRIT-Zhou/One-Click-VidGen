@@ -1,7 +1,7 @@
 {
-  "release_id": "2026.10.20.1",
-  "release_order": 2026102001,
-  "display_version": "2026.10.20 配音编辑、智能拆分与图像渠道修复",
+  "release_id": "2026.10.23.1",
+  "release_order": 2026102301,
+  "display_version": "2026.10.23 启动检测与更新诊断修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
@@ -10,6 +10,6 @@
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "图文与动态视频统一优化配音交界、字幕单独保存及重合成同步，后续流程以最终配音文案与时间轴为准。新增拆分专用 Agent 1C 与可配置规划上限，修复超长镜头切动态后无法自动拆分。图像任务支持超时退出、项目内切换 ICAN/稳定版/个人 API，日志显示实际渠道；明确承接上一镜时自动加入上一镜核心图。保留已有配音和素材，不部署云端或重启节点；请待当前任务完成后重启 OCV。",
-  "content_fingerprint": "97c04989713973190480de50a2d405fa8f2e5a4c1b32afe57cffa0e2c967ae44"
+  "notes": "修复启动检测失败却误报后端已运行；本地服务检测改用内置 Python，减少对 PowerShell 的依赖。改进更新解压和错误定位，保留失败回滚与用户数据保护。后端未就绪时改善空白 500 提示。请待任务结束后更新并重启；不修改安全软件规则。",
+  "content_fingerprint": "42e3014ba27f8cfd499bdf2001d377f46c5e1438ac345005daf376f8ed3f0993"
 }

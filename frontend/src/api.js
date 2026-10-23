@@ -4,6 +4,21 @@
 
 const API_BASE = ''
 
+async function explainTransportError(status, message) {
+  if (status < 500 || message.trim()) return message
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2000)
+  try {
+    const health = await fetch('/api/health', { signal: controller.signal, credentials: 'include' })
+    if (health.ok) return message
+  } catch {
+    // A failed local health check is not a cloud authentication error.
+  } finally {
+    clearTimeout(timeout)
+  }
+  return '本地后端未就绪，暂时无法完成操作。请检查 Launcher 启动日志；这不代表账号或密码错误。'
+}
+
 function readableError(value, fallback = '') {
   if (typeof value === 'string') return value.trim() || fallback
   if (Array.isArray(value)) {
@@ -46,6 +61,7 @@ export async function requestJSON(url, options = {}) {
     } catch {
       message = raw
     }
+    message = await explainTransportError(response.status, message)
     const error = new Error(readableError(message, `Request failed with ${response.status}`))
     error.status = response.status
     if (typeof window !== 'undefined' && (

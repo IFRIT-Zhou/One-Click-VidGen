@@ -1,0 +1,27 @@
+OCV Launcher 临时修复包 20261022
+
+适用：Windows 便携版，目录包含 runtime/python/python.exe、start_windows.bat、backend/app。
+针对：启动检测失败却误报后端已运行；更新解压与失败日志不足；后端没启动时无法收集诊断。
+不保证解决所有后端故障，不绕过安全软件，不包含模型、业务代码或账户配置。
+
+使用：
+1. 正常关闭 OCV，并等待任务结束。不要强制结束正在生成的任务。
+2. 解压 ZIP，把整个 OCV_Launcher_Repair 文件夹放在 OCV_Launcher.exe 同级目录。
+3. 双击文件夹内 install.bat。显示“安装完成”后，正常打开 OCV_Launcher.exe。
+4. 若失败，双击 diagnose.bat。它不依赖网页、后端或 PowerShell，会在此文件夹生成诊断 ZIP。
+5. 需要撤回时，关闭 OCV，再双击 restore.bat。若之后已升级或手改文件，会拒绝覆盖新版本。
+
+安装只替换三个文件：
+start_windows.bat
+tools/launcher_service_probe.py
+launcher/safe_update_helper.ps1
+原文件自动备份到 Archives/launcher_patch/，复制失败会尝试回退。
+不替换 Launcher.exe、不修改版本号、不下载更新、不重启服务、不删除用户数据。
+补丁不会补齐曾经失败的业务源码更新。恢复启动后，应正常检查并完成正式更新。
+如版本完整性校验发现补丁改变了程序文件，这是预期现象；正式更新可能覆盖补丁。
+
+诊断收集：端口监听状态、指定程序文件哈希、启动/更新错误日志末尾。
+不读取 .env、项目、媒体、任务正文或模型。日志进行常见凭证脱敏，仍可能有路径或业务文字，发送前请检查。
+如果 Python 自身被安全软件阻止，安装与诊断也无法执行；请核实拦截记录，不要全局关闭防护。
+本补丁对解压机制做了兼容性改进，但不意味着此前 .env.example 消失一定由解压器导致。
+

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
@@ -101,8 +102,16 @@ if not exist "frontend\node_modules" (
 
 if not exist "%ROOT_DIR%runtime_logs" mkdir "%ROOT_DIR%runtime_logs"
 
+if not exist "%ROOT_DIR%tools\launcher_service_probe.py" (
+    echo [ERROR] Launcher probe is missing. Reinstall the complete launcher patch.
+    goto :startup_failed
+)
 call :check_backend_state
 set "BACKEND_STATE=%errorlevel%"
+if not "%BACKEND_STATE%"=="0" if not "%BACKEND_STATE%"=="1" if not "%BACKEND_STATE%"=="2" if not "%BACKEND_STATE%"=="3" (
+    echo [ERROR] Backend probe failed with code %BACKEND_STATE%. Backend state is unknown; startup cancelled.
+    goto :startup_failed
+)
 if "%BACKEND_STATE%"=="2" (
     echo [RESTART] Backend source files changed; stopping stale service on port 8010...
     call :stop_port 8010
@@ -177,13 +186,11 @@ pause
 exit /b 1
 
 :check_url
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri '%~1'; if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) { exit 0 } } catch {}; exit 1" >nul 2>nul
+"%BACKEND_PYTHON%" "%ROOT_DIR%tools\launcher_service_probe.py" url "%~1"
 exit /b %errorlevel%
 
 :check_backend_state
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri 'http://127.0.0.1:8010/api/health'; $data = $response.Content | ConvertFrom-Json; if (-not $data.server_started_at) { exit 2 }; $started = [DateTimeOffset]::FromUnixTimeMilliseconds([int64]([double]$data.server_started_at * 1000)).UtcDateTime; $files = @(); $files += Get-ChildItem -LiteralPath '%ROOT_DIR%backend\app' -Recurse -File -Filter '*.py'; $files += Get-ChildItem -LiteralPath '%ROOT_DIR%' -File -Filter '*.py'; $latest = $files | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if ($latest -and $latest.LastWriteTimeUtc -gt $started.AddSeconds(2)) { if ($null -eq $data.active_task_count -or [int]$data.active_task_count -gt 0) { exit 3 }; exit 2 }; exit 0 } catch { exit 1 }" >nul 2>nul
+"%BACKEND_PYTHON%" "%ROOT_DIR%tools\launcher_service_probe.py" backend "%ROOT_PATH%"
 exit /b %errorlevel%
 
 :stop_port
@@ -199,11 +206,10 @@ if "!STOP_FAILED!"=="1" (
 exit /b 0
 
 :wait_port_closed
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$deadline = [DateTime]::UtcNow.AddSeconds(10); while ([DateTime]::UtcNow -lt $deadline) { $listening = netstat -ano | Select-String -Pattern ('^\s*TCP\s+\S+:' + %~1 + '\s+\S+\s+LISTENING\s+\d+\s*$'); if (-not $listening) { exit 0 }; Start-Sleep -Milliseconds 250 }; exit 1" >nul 2>nul
+"%BACKEND_PYTHON%" "%ROOT_DIR%tools\launcher_service_probe.py" closed "%~1"
 exit /b %errorlevel%
 
 :wait_url
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$deadline = [DateTime]::UtcNow.AddSeconds(45); while ([DateTime]::UtcNow -lt $deadline) { try { $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri '%~1'; if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) { Write-Host '[OK] %~2 ready: %~1'; exit 0 } } catch {}; Start-Sleep -Milliseconds 500 }; Write-Host '[ERROR] %~2 did not become ready: %~1'; exit 1"
+"%BACKEND_PYTHON%" "%ROOT_DIR%tools\launcher_service_probe.py" wait "%~1"
 exit /b %errorlevel%
+
