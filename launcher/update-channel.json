@@ -7,9 +7,10 @@
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.26.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "配音支持整段删除与插入，图文和动态同步最终文案、字幕与时间轴；分镜界面突出文案、画面和原始提示词，参考图及生成设置后置。修复无场景参考规划、导出完成状态和启动器兼容问题，新增可选 MCP 制作接口并保留旧桥接。保留项目与素材，不部署云端或重启节点；待任务完成后更新并自行重启。此版先发布 GitHub，魔搭稍后同步。",
+  "notes": "配音支持整段删除与插入，图文和动态同步最终文案、字幕与时间轴；分镜界面突出文案、画面和原始提示词，参考图及生成设置后置。修复无场景参考规划、导出完成状态和启动器兼容问题，新增可选 MCP 制作接口并保留旧桥接。保留项目与素材，不部署云端或重启节点；待任务完成后更新并自行重启。GitHub 与魔搭同步发布。",
   "content_fingerprint": "888bf0cfc1e2af76198599241abc6eb020fdd39fe3493ed43d7b48b202591b64"
 }
