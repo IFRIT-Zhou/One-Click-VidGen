@@ -143,7 +143,7 @@ INTEGRITY_FILES = (
     "tools/migrate_optional_components.ps1",
 )
 
-TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue", ".md", ".yaml"}
+TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue", ".md", ".yaml", ".txt"}
 
 
 def validate_launcher_integrity_files(root: Path) -> None:

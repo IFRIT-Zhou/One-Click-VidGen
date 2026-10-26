@@ -1033,7 +1033,7 @@ namespace OcvLauncher
             string extension = Path.GetExtension(path).ToLowerInvariant();
             bool isText = extension == ".bat" || extension == ".css" || extension == ".js"
                 || extension == ".cjs" || extension == ".json" || extension == ".ps1" || extension == ".py"
-                || extension == ".vue" || extension == ".md" || extension == ".yaml";
+                || extension == ".vue" || extension == ".md" || extension == ".yaml" || extension == ".txt";
             if (!isText) return ComputeFileSha256(path);
 
             string text = File.ReadAllText(path, Encoding.UTF8)
