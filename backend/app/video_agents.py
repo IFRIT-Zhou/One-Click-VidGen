@@ -221,7 +221,7 @@ intent:"仅调整字幕范围或纠正错归属时填写",progression_plan:"仅�
                 if presenter:
                     if any(type(design.get(flag)) is not bool for flag in ('presenter_visible', 'presenter_speaking')):
                         raise ValueError(f"镜头 {row['id']}：请填写 presenter_visible 和 presenter_speaking 布尔值")
-                    if design['presenter_speaking'] and (not design['presenter_visible'] or presenter['reference_id'] not in row.get('reference_ids', [])):
+                    if design['presenter_speaking'] and (not design['presenter_visible'] or (presenter.get('source') != 'shot' and presenter.get('reference_id') not in row.get('reference_ids', []))):
                         raise ValueError(f"镜头 {row['id']}：开口讲解必须可见且绑定指定讲解员参考图")
                 selected = row.get('reference_ids', [])
                 if not isinstance(selected, list) or any(not isinstance(value, str) for value in selected):

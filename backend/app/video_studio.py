@@ -71,6 +71,9 @@ def _preserve_generation_options(record, shots, split_source=None):
         old = previous.get(shot['id'], split_source or {})
         if 'video_generation_options' in old:
             shot['video_generation_options'] = copy.deepcopy(old['video_generation_options'])
+        for key in ('presenter_override', 'presenter_plan_status'):
+            if key in old:
+                shot[key] = copy.deepcopy(old[key])
         parameters = {**record.get('creation_parameters', {})}
         backend = (shot.get('video_generation_options') or {}).get('backend')
         if backend:
@@ -132,6 +135,11 @@ class Structure(BaseModel):
 
 class Review(BaseModel):
     revision: int
+
+
+class PresenterEdit(Review):
+    enabled: bool = True
+    speaker: str = Field(default='', max_length=500)
 
 
 class AutoSplit(Review):
@@ -2063,7 +2071,7 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
             design['presenter_speaking'] = data.presenter_speaking
             if data.presenter_speaking:
                 design['presenter_visible'] = True
-                if presenter['reference_id'] not in shot['reference_ids']:
+                if presenter.get('reference_id') and presenter['reference_id'] not in shot['reference_ids']:
                     if len(shot['reference_ids']) >= 8:
                         raise HTTPException(400, '本镜参考素材已满，请先移除一个素材')
                     shot['reference_ids'].append(presenter['reference_id'])
@@ -2091,6 +2099,77 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         record['revision'] += 1
         save(path, record)
         return record
+
+
+@router.post('/{identity}/shots/{shot_id}/presenter')
+def configure_shot_presenter(identity: str, shot_id: str, data: PresenterEdit, request: Request):
+    user = require_user(request)
+    with LOCK:
+        path = directory(user['id'], identity)
+        record = read(path)
+        shot = shot_editable(record, data.revision, shot_id)
+        if shot.get('asset_kind') == 'scene_reference' or shot.get('kind') != 'video':
+            raise HTTPException(400, '请先将本镜设为动态镜头')
+        snapshot = copy.deepcopy(shot)
+        parameters = copy.deepcopy(planning_parameters(record))
+        if data.enabled:
+            options = shot.get('video_generation_options') or {}
+            if options.get('backend', parameters.get('video_generation_backend', 'api')) != 'comfyui':
+                raise HTTPException(400, '请先在本镜生成设置中选择支持参考音频的 ComfyUI 工作流；不会自动切换通道')
+            from .comfyui_bridge import video_profile
+            profile = video_profile(user['id'], options.get('profile_id') or parameters.get('comfyui_profile_id', ''))
+            binding = (profile.get('mappings') or {}).get('audio') or {}
+            if not binding.get('node_id') or not binding.get('input_name'):
+                raise HTTPException(400, '本镜工作流不支持参考音频，请先切换工作流')
+            from .video_generation import _asset
+            if not _asset(path, record.get('audio') or 'assets/audio.wav').is_file():
+                raise HTTPException(400, '请先完成配音并同步到本项目')
+            if shot.get('image_status') != 'completed' or not shot.get('image'):
+                raise HTTPException(400, '请先生成本镜核心图，再根据实际人物定稿对口型方案；配音和规划保留')
+            image_path = _storyboard_image_path(path, shot)
+            image_digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        edit_key = image_edit_key(record['id'], shot_id)
+        IMAGE_EDITS.add(edit_key)
+    try:
+        if data.enabled:
+            from .presenter_refresh import inspect_speaker, prepare_presenter
+            with project_language_scope(user['id'], parameters):
+                inspection = inspect_speaker(image_path, data.speaker.strip())
+            updated = prepare_presenter(snapshot, inspection)
+        else:
+            updated = copy.deepcopy(snapshot)
+            updated['presenter_override'] = {'enabled': False}
+            updated['presenter_plan_status'] = 'disabled'
+            updated['reference_audio_enabled'] = False
+            updated['reference_audio_lipsync'] = False
+            updated['visual_design'] = {**updated.get('visual_design', {}), 'presenter_speaking': False}
+            updated['action'] = '保留核心图人物和构图，自然停留和轻微眨眼；人物不讲话，以画外配音讲述。'
+            updated['video_prompt'] = '图1是本镜核心分镜参考图。' + updated['action'] + '不新增字幕、光效、音乐或人声。'
+            updated.pop('motion_plan', None)
+        with LOCK:
+            current = read(path)
+            target = _find_shot(current, shot_id)
+            if target != snapshot or planning_parameters(current) != parameters or current['status'] == 'exporting':
+                raise HTTPException(409, '项目配置或本镜已变化，请刷新后重试；未提交本次修改')
+            if data.enabled and hashlib.sha256(image_path.read_bytes()).hexdigest() != image_digest:
+                raise HTTPException(409, '核心图已变化，请重新核对人物')
+            _invalidate_shot_video(current, target, '讲解员对口型方案已修改')
+            for key in ('action', 'video_prompt', 'presenter_override', 'presenter_plan_status',
+                        'reference_audio_enabled', 'reference_audio_lipsync', 'visual_design'):
+                target[key] = updated[key]
+            for key in ('motion_plan', 'h3_prompt', 'h3_prompt_source', 'h3_prompt_fingerprint', 'h3_source_fingerprint'):
+                target.pop(key, None)
+            target['prompt_refresh_note'] = ('对口型方案已就绪；已核对核心图人物，将注入本镜最终配音。请手动生成视频。'
+                                             if data.enabled else '已关闭本镜对口型，更新为画外配音方案；请手动生成视频。')
+            current.setdefault('logs', []).append(f'{shot_id}：{target["prompt_refresh_note"]}')
+            current['revision'] += 1
+            save(path, current)
+            return current
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        with LOCK:
+            IMAGE_EDITS.discard(edit_key)
 
 
 @router.post('/{identity}/shots/{shot_id}/refresh-prompts')

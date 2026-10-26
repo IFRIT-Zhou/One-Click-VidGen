@@ -156,6 +156,7 @@ image_undo|POST|/{identity}/images/{shot_id}/undo|edit|恢复上一版核心图�
 reset_prompt|POST|/{identity}/images/{shot_id}/reset-prompt|edit|恢复初始提示词。
 motion|POST|/{identity}/shots/{shot_id}/motion|edit|切换动静类型或修改动态方案。
 refresh_prompts|POST|/{identity}/shots/{shot_id}/refresh-prompts|generate|按当前字幕重新规划单镜提示词，可能收费。
+presenter|POST|/{identity}/shots/{shot_id}/presenter|generate|核对实际核心图并设置本镜对口型；可能调用语言模型，不生成视频。enabled=false关闭。
 reopen|POST|/{identity}/shots/{shot_id}/reopen|edit|打开单镜返修。
 images_confirm|POST|/{identity}/images/confirm|edit|用户审图后确认核心图并进入动态制作。
 plan|POST|/{identity}/plan|generate|按最终配音文案时间轴重新规划画面，可能收费。

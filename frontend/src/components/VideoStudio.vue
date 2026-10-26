@@ -13,6 +13,7 @@ import ProjectImageRoute from './ProjectImageRoute.vue'
 import ResizableShotWorkspace from './ResizableShotWorkspace.vue'
 import WorkspacePanels from './WorkspacePanels.vue'
 import ShotResultOverview from './ShotResultOverview.vue'
+import PresenterControls from './PresenterControls.vue'
 import {useWorkspaceLayout} from '../workspaceLayout'
 import DynamicTextModeSelector from './DynamicTextModeSelector.vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
@@ -82,11 +83,20 @@ const workspaceTitles={audio:'配音与字幕',storyboard:'分镜与动态制作
 const workspaceHints={audio:'试听配音、核对字幕；需要调整时进入配音精修。',storyboard:'在同一工作区编辑画面、排队生成和预览视频；生成时可继续调整空闲镜头。',motions:'逐镜试看、重新生成或替换本地视频，满意后合成成片。',export:'预览和下载成片；合成选项可随时调整，不必重新生成镜头。',parameters:'查看本项目保存的配置，也可以用相同配置新建作品。'}
 function moveShot(delta){selected.value=Math.max(0,Math.min((project.value?.shots.length||1)-1,selected.value+delta));boundary.value=1;closeBoundaryEditor()}
 const motionDrafts=ref({})
+async function applyPresenter({ids,enabled,speaker}){
+ await run(async()=>{
+  if(dirty.value)await save()
+  for(const id of ids){
+   try{acceptImageUpdate(await call('/'+project.value.id+'/shots/'+encodeURIComponent(id)+'/presenter','POST',{revision:project.value.revision,enabled,speaker}))}
+   catch(e){throw new Error('第 '+(project.value.shots.findIndex(s=>s.id===id)+1)+' 镜：'+e.message+'；此前成功的镜头已保存，未处理镜头保持原样。')}
+  }
+ })
+}
 function rememberMotionDraft(shot){if(shotEditingStage.value){motionDrafts.value[shot.id]={intent:shot.intent||'',kind:shot.kind,action:shot.action||'',video_prompt:shot.video_prompt||'',reference_audio_enabled:shot.reference_audio_enabled!==false,reference_audio_lipsync:shot.reference_audio_lipsync!==false,presenter_speaking:shot.visual_design?.presenter_speaking??null};dirty.value=true}else dirty.value=true}
 function setPresenterSpeaking(shot,enabled){
  shot.visual_design={...(shot.visual_design||{}),presenter_speaking:enabled,...(enabled?{presenter_visible:true}:{})}
  const id=project.value?.context?.video_direction?.presenter?.reference_id||project.value?.creation_parameters?.presenter_reference_id
- if(enabled&&id&&!shot.reference_ids.includes(id))shot.reference_ids.push(id)
+ if(enabled&&id&&id!=='__shot__'&&!shot.reference_ids.includes(id))shot.reference_ids.push(id)
  rememberMotionDraft(shot)
 }
 async function saveMotionDrafts(){for(const [id,fields] of Object.entries(motionDrafts.value)){const updated=await call('/'+project.value.id+'/shots/'+encodeURIComponent(id)+'/motion','POST',{revision:project.value.revision,...fields});delete motionDrafts.value[id];acceptImageUpdate(updated)}dirty.value=false;sessionStorage.removeItem(draftKey(project.value.id))}
@@ -837,6 +847,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
        <details v-if="selectedShot.kind==='video'&&selectedShot.video_status==='completed'&&selectedShot.image" class="motion-core-reference"><summary>查看核心分镜图</summary><div class="storyboard-result"><img :src="imageUrl(selectedShot)" :alt="'第 '+(selected+1)+' 镜核心分镜图'"></div></details>
        <details class="planning-log motion-result-log"><summary>任务日志 · {{project.logs?.length||0}} 条</summary><div class="video-logs" role="log" aria-live="polite"><div v-for="(line,index) in project.logs" :key="index">{{line}}</div><p v-if="!project.logs?.length">暂无任务日志</p></div></details>
       </template>
+      <template #presenter><PresenterControls :shot="selectedShot" :shots="project.shots" :disabled="busy||shotRenderLocked(selectedShot)" @apply="applyPresenter" /></template>
      </ShotResultOverview>
     </article>
 
@@ -859,7 +870,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <p v-if="shot.duration_repair?.note" class="duration-repair-note" :class="{'needs-review':['boundary_fallback','single_subtitle_static'].includes(shot.duration_repair.method)}">{{shot.duration_repair.note}}</p>
      <p v-if="shot.warning" class="studio-notice">{{shot.warning}}</p>
      <label v-if="shot.kind==='video'" class="motion-field">动态表达<textarea v-model="shot.action" rows="3" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)"/></label>
-     <div v-if="i>=0&&shot.kind==='video'&&project.creation_parameters?.presenter_mode" class="shot-audio-settings"><label><input type="checkbox" :checked="shot.visual_design?.presenter_speaking===true" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @change="setPresenterSpeaking(shot,$event.target.checked)">本镜讲解员出镜开口</label><small class="muted">仅在图中确有指定讲解员时开启；勾选且本镜音频、对口型均启用时，将按本镜台词和配音驱动口型。不重新生图。</small><button v-if="project.status==='image_review'" :disabled="busy||!dirty||imageAssetRunning(shot)" @click="run(save)">保存讲解设置</button></div>
+     <PresenterControls v-if="i>=0" :shot="shot" :shots="project.shots" :disabled="busy||imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @apply="applyPresenter" />
      <label class="image-prompt-field">{{i<0?'场景图提示词':'核心分镜图提示词'}} <small v-if="project.status==='image_review'" class="muted">修改后点击“按当前提示词重绘”提交，当前图片不会自动变化。</small><textarea v-model="shot.image_prompt" rows="4" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @input="shotEditingStage&&rememberImagePrompt(shot)"/></label>
      <label v-if="shot.kind==='video'" class="video-prompt-field">视频模型最终提示词<textarea v-model="shot.video_prompt" rows="5" @input="rememberMotionDraft(shot)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)"/></label>
      <p v-if="motionQueueState(shot)" role="status" class="muted">{{({queued:'本镜已排队，可继续切换其他镜头。',running:'正在处理本镜动静态切换及动态提示词规划…',completed:'本镜切换与规划已完成。',failed:'本镜切换或规划失败，可检查后重试；其他镜头继续处理。'})[motionQueueState(shot)]}} 不会生成图片或视频。</p>

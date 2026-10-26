@@ -24,7 +24,13 @@ MCP 适配层覆盖图文、动态视频及图片工作室的现有制作接口�
 & .\tools\setup_ocv_mcp.ps1 -AllowGeneration -UploadRoots 'D:\OCV素材'
 ```
 
-不配置上传目录就不能读取本地文件上传。不要授权整个用户目录、盘符根目录或存放密钥的目录。
+聊天附件可以只授权用户指定的单个文件，无需开放整个临时目录：
+
+```powershell
+& .\tools\setup_ocv_mcp.ps1 -AllowGeneration -UploadFiles 'C:\path\selected-image.png'
+```
+
+对应服务参数为 `--allow-upload-file`，可重复指定。客户端需重新加载 MCP 进程使新授权生效；不必重启 OCV。文件上传仍使用 `ocv_prepare → ocv_commit`，提交时校验文件哈希，拒绝预览后被替换的文件。未配置上传目录或单文件授权时不能读取本地文件上传。不要授权整个用户目录、盘符根目录或存放密钥的目录。
 
 本地免登录模式沿用 OCV 本地用户；账号模式需用 `-CookieFile` 指定已有、未过期的 Netscape cookie 文件。不要把 cookie 内容或 API key 贴进对话。MCP 不能替用户登录，不能绕过 OCV 用户隔离；关闭制作桥会阻止后续 MCP 调用，但不会自动停止已提交任务。
 

@@ -337,9 +337,9 @@ def _inputs(path, record, shot):
     return (core, *selected)
 
 
-def _freeze_shot_audio(path: Path, shot: dict, destination: Path) -> None:
+def _freeze_shot_audio(path: Path, shot: dict, destination: Path, *, audio_source: Path | None = None) -> None:
     """Cut the confirmed TTS interval into the immutable local request."""
-    source = path / 'assets' / 'audio.wav'
+    source = audio_source if audio_source is not None else path / 'assets' / 'audio.wav'
     if not source.is_file():
         raise ValueError('当前动态项目缺少完整配音，无法传入本镜参考音频')
     start = float(shot.get('start') or 0)
@@ -502,7 +502,7 @@ def _freeze_local_request(path, record, shot, profile_id, *, prompt=None, prompt
         if include_reference_audio:
             snapshot['reference_audio_lipsync'] = bool(shot.get('reference_audio_lipsync', True))
             audio_relative = f'{relative}/references/voice.wav'
-            _freeze_shot_audio(path, shot, _asset(path, audio_relative))
+            _freeze_shot_audio(path, shot, _asset(path, audio_relative), audio_source=_asset(path, record.get('audio') or 'assets/audio.wav'))
             snapshot['reference_audio_file'] = audio_relative
         (target / 'request.json').write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception:
@@ -651,7 +651,29 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     with studio.LOCK:
                         source_record = studio.read(path)
                         source_shot = copy.deepcopy(studio._find_shot(source_record, identity))
-                    from .presenter_mode import audio_policy, spoken_text
+                    from .presenter_mode import audio_policy, spoken_text, presenter_requested
+                    if not resume_prompt_id and presenter_requested(source_record.get('creation_parameters', {}), source_shot, source_record.get('references', [])):
+                        from .presenter_refresh import inspect_speaker, prepare_presenter
+                        core_path = studio._storyboard_image_path(path, source_shot)
+                        prior = source_shot.get('presenter_override') or {}
+                        if prior.get('image_fingerprint') != hashlib.sha256(core_path.read_bytes()).hexdigest():
+                            with studio.project_language_scope(user_id, studio.planning_parameters(source_record)):
+                                inspection = inspect_speaker(core_path, prior.get('speaker', ''))
+                            source_shot = prepare_presenter(source_shot, inspection)
+                            with studio.LOCK:
+                                latest = studio.read(path)
+                                target = studio._find_shot(latest, identity)
+                                for field in ('action', 'video_prompt', 'presenter_override', 'presenter_plan_status', 'visual_design'):
+                                    target[field] = source_shot[field]
+                                target.pop('motion_plan', None)
+                                latest['logs'].append(f'{identity}：已依据最终核心图定稿讲解员对口型方案；使用本镜最终配音。')
+                                latest['revision'] += 1
+                                studio.save(path, latest)
+                        elif source_shot.get('presenter_plan_status') == 'audio_changed':
+                            with studio.LOCK:
+                                latest = studio.read(path)
+                                studio._find_shot(latest, identity)['presenter_plan_status'] = 'ready'
+                                studio.save(path, latest)
                     shot_reference_audio, shot_lipsync = audio_policy(
                         source_record.get('creation_parameters', {}), source_shot, use_h3_agent, source_record.get('references', []))
                     effective_source_prompt = enforce_no_auto_subtitles(source_shot.get('video_prompt'))
@@ -659,7 +681,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                         effective_source_prompt = _prompt_with_reference_audio(effective_source_prompt, lipsync=shot_lipsync)
                         if shot_lipsync:
                             effective_source_prompt += '\n【仅用于发音，不可上屏的台词】\n' + spoken_text(source_shot)
-                        audio_source = path / 'assets' / 'audio.wav'
+                        audio_source = _asset(path, source_record.get('audio') or 'assets/audio.wav')
                         if not audio_source.is_file():
                             raise ValueError('当前项目缺少完整配音，无法启用讲解员参考音频')
                         source_shot['reference_audio_digest'] = hashlib.sha256(audio_source.read_bytes()).hexdigest()
@@ -1162,7 +1184,7 @@ def _generate_for_user(identity, data, user_id):
                     needs_audio, _ = audio_policy(record.get('creation_parameters', {}), shot, options['h3_prompt_agent'], record.get('references', []))
                     if needs_audio and not (binding.get('node_id') and binding.get('input_name')):
                         raise ValueError(f'{shot["id"]} 的工作流没有映射参考音频节点')
-                    if needs_audio and not (path / 'assets' / 'audio.wav').is_file():
+                    if needs_audio and not _asset(path, record.get('audio') or 'assets/audio.wav').is_file():
                         raise ValueError('当前项目缺少完整配音，无法启用讲解员参考音频')
                 elif not previous or data.regenerate_completed or shot.get('video_terminal'):
                     from .presenter_mode import presenter_requested

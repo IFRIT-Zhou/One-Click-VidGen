@@ -132,12 +132,15 @@ class HttpSession:
 
 
 class Adapter:
-    def __init__(self, base_url, state_dir, *, cookie_file=None, upload_roots=(),
+    def __init__(self, base_url, state_dir, *, cookie_file=None, upload_roots=(), upload_files=(),
                  read_only=False, allow_generation=False, allow_delete=False, transport_factory=None):
         self.base_url = base_url.rstrip('/')
         self.transport_factory = transport_factory or (lambda: HttpSession(base_url, cookie_file))
         self.state = State(state_dir)
         self.upload_roots = tuple(Path(p).resolve(strict=True) for p in upload_roots)
+        self.upload_files = frozenset(Path(p).resolve(strict=True) for p in upload_files)
+        if any(not p.is_file() or p.suffix.lower() not in UPLOAD_EXTENSIONS for p in self.upload_files):
+            raise ValueError('单文件上传授权必须指向支持的素材文件')
         if any(not p.is_dir() for p in self.upload_roots):
             raise ValueError('上传授权根必须是目录')
         self.read_only, self.allow_generation, self.allow_delete = read_only, allow_generation, allow_delete
@@ -183,7 +186,9 @@ class Adapter:
         return {'connected': True, 'base_url': self.base_url, 'operations': len(self.bound),
                 'read_only': self.read_only, 'generation_enabled': self.allow_generation,
                 'delete_enabled': self.allow_delete, 'unavailable_operations': self.unavailable,
-                'ui_automation': False, 'remote_connections': False}
+                'ui_automation': False, 'remote_connections': False,
+                'upload_roots': [str(p) for p in self.upload_roots],
+                'upload_files': [str(p) for p in sorted(self.upload_files)]}
 
     def operations(self, group='', offset=0, limit=30):
         client, _ = self.connect()
@@ -232,7 +237,7 @@ class Adapter:
         if not raw.is_absolute():
             raise ValueError('上传路径必须是绝对路径')
         file = raw.resolve(strict=True)
-        if not any(root in file.parents for root in self.upload_roots):
+        if file not in self.upload_files and not any(root in file.parents for root in self.upload_roots):
             raise ValueError('文件不在用户授权的上传目录内')
         if not file.is_file() or file.suffix.lower() not in UPLOAD_EXTENSIONS:
             raise ValueError('不支持该上传文件类型')

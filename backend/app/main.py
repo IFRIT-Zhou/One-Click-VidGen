@@ -1719,7 +1719,8 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                         if use_cloud_pool: add("image_api", "云端号池", "error", message)
 
         if data.get('dynamic_video') and data.get('presenter_mode'):
-            valid_presenter = data.get('presenter_reference_id') in (data.get('reference_image_ids') or [])
+            valid_presenter = (data.get('presenter_reference_id') == '__shot__' or
+                               data.get('presenter_reference_id') in (data.get('reference_image_ids') or []))
             add('presenter', '讲解员参考图', 'passed' if valid_presenter else 'error',
                 '已指定讲解员，按镜头规划开口表演' if valid_presenter else '请选择已上传的讲解员参考图')
         if data.get('dynamic_video') and data.get('video_generation_backend') == 'comfyui':

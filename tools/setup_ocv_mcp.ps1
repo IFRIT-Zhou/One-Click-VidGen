@@ -3,6 +3,7 @@ param(
     [switch]$AllowDelete,
     [switch]$ReadOnly,
     [string[]]$UploadRoots = @(),
+    [string[]]$UploadFiles = @(),
     [string]$CookieFile = '',
     [switch]$SkipInstall
 )
@@ -32,6 +33,11 @@ foreach ($uploadRoot in $UploadRoots) {
 }
 if ($CookieFile) {
     $serverArgs += @('--cookie-file', (Resolve-Path -LiteralPath $CookieFile).Path)
+}
+foreach ($uploadFile in $UploadFiles) {
+    $resolved = (Resolve-Path -LiteralPath $uploadFile).Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) { throw '上传文件授权必须指向文件。' }
+    $serverArgs += @('--allow-upload-file', $resolved)
 }
 $config = @{ mcpServers = @{ ocv = @{ command = $python; args = $serverArgs } } }
 $destination = Join-Path $environment 'client-config.json'

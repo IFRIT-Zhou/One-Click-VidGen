@@ -228,7 +228,10 @@ def _render(path, record):
             if duration > source_duration + 0.03:
                 stretch = duration / source_duration
                 vf = f'setpts={stretch:.9f}*PTS,{base_vf}'
-        keep_source_audio = bool(use_video_audio and shot['kind'] == 'video' and _has_audio_stream(source))
+        from .presenter_mode import presenter_requested
+        keep_source_audio = bool(use_video_audio and shot['kind'] == 'video'
+                                 and not presenter_requested(record.get('creation_parameters', {}), shot, record.get('references', []))
+                                 and _has_audio_stream(source))
         if keep_source_audio:
             audio_filter = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo'
             if duration > source_duration + 0.03:

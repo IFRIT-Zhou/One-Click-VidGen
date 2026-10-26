@@ -51,6 +51,7 @@ async function moveTab(direction) {
       <div :id="uid+'-prompt'" role="tabpanel" :aria-labelledby="uid+'-'+selected.key" class="shot-readable-prompt" :class="{clamped:longPrompt&&!expanded}" tabindex="0">{{ selected.text || '尚未填写，可点击上方按钮补充本镜设计。' }}</div>
       <button v-if="longPrompt" type="button" class="shot-prompt-expand" :aria-expanded="expanded" @click="expanded=!expanded">{{ expanded ? '收起全文' : '展开全文' }}</button>
       <p v-if="shot.image_prompt_out_of_sync||shot.video_prompt_out_of_sync" class="shot-prompt-note">设计已修改，当前效果可能仍为上一版，请核对后再生成。</p>
+      <slot name="presenter" />
     </section>
     <div class="shot-review-auxiliary"><slot name="auxiliary" /></div>
   </div>

@@ -4,6 +4,8 @@ import copy
 PRESENTER_CONTRACT = '''
 【用户显式开启的讲解员模式，优先于默认静音/不要求口型规则】
 video_direction.presenter 指定唯一讲解员参考素材，不要求每镜出现讲解员。
+若 presenter.source=shot，则无需外部人物照片，按各镜内容设计人物；讲解镜头必须正面或轻微侧面、嘴部无遮挡。
+此模式不能虚构 reference_id；核心图生成后以实际画面定稿对口型方案。机制示意镜头仍为画外音。
 Agent 2 必须在 visual_design 输出 presenter_visible 和 presenter_speaking 两个布尔值。
 只有该参考人物实际可见、且本镜由其直接讲述，才两项都为 true，并选择其 reference_id。
 纯机制示意、风景、物品特写、只沿用人物画风、人物背影或闭嘴听众均不得标为开口讲解。
@@ -14,6 +16,8 @@ Agent 3/5 根据已确认 presenter_speaking 安排讲话表演；禁止额外�
 '''
 
 def presenter_config(parameters, references):
+    if parameters.get('presenter_mode') and parameters.get('presenter_reference_id') == '__shot__':
+        return {'source': 'shot', 'label': '各镜核心图人物', 'description': '按各镜实际画面选择唯一讲解员，不要求上传人物照片'}
     identity = parameters.get('presenter_reference_id') if parameters.get('presenter_mode') else ''
     reference = next((r for r in references if identity and (r.get('id') == identity or r.get('source_asset_id') == identity)), None)
     if identity and not reference:
@@ -34,6 +38,14 @@ def presenter_contract(context):
 
 def presenter_requested(parameters, shot, references=None):
     design = shot.get('visual_design') or {}
+    override = shot.get('presenter_override')
+    if isinstance(override, dict):
+        return bool(override.get('enabled') and design.get('presenter_visible') is True
+                    and design.get('presenter_speaking') is True
+                    and shot.get('reference_audio_enabled', True) and shot.get('reference_audio_lipsync', True))
+    if parameters.get('presenter_mode') and parameters.get('presenter_reference_id') == '__shot__':
+        return bool(design.get('presenter_visible') is True and design.get('presenter_speaking') is True
+                    and shot.get('reference_audio_enabled', True) and shot.get('reference_audio_lipsync', True))
     identity = (presenter_config(parameters, references).get('reference_id') if references is not None
                 else parameters.get('presenter_reference_id'))
     return bool(parameters.get('presenter_mode') and identity

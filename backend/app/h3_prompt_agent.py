@@ -320,7 +320,8 @@ def _enforce_visual_and_sound_policy(prompt: str, *, lipsync: bool = False) -> s
             "chanting, humming, singing, crowd voices, or vocal reactions."
         )
         if lipsync:
-            sound += (' This restriction concerns generated sound only: the visible presenter must '
+            sound = ('Silent generated soundtrack: no speech, music, ambience or sound effects. '
+                     'This restriction concerns generated sound only: the visible presenter must '
                       'speak visually with natural mouth movement synchronized to <Audio 1>, never closed-mouth narration.')
         prompt = prompt[:body_start] + sound + "\n" + prompt[body_end:]
     subtitle_policy = (
@@ -377,6 +378,9 @@ def _validate(prompt: str, duration: int, *, reference_audio: bool = False,
     prompt = _enforce_reference_audio(prompt, reference_audio=reference_audio, lipsync=lipsync)
     prompt = _enforce_visual_and_sound_policy(prompt, lipsync=bool(reference_audio and lipsync))
     prompt = _enforce_no_background_music(prompt)
+    if reference_audio and lipsync:
+        prompt = prompt.replace('N/A; no background music; retain only diegetic ambient and action sound effects.',
+                                'N/A; no generated soundtrack. Final narration is supplied separately.')
     prompt = _repair_timeline(prompt, duration)
     ranges = re.findall(r"\[(\d{2}):(\d{2})-(\d{2}):(\d{2})\]", prompt)
     if not ranges:

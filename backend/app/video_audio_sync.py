@@ -60,6 +60,10 @@ def sync_shot_timings(record, scenes, old_audio, new_audio, *, new_duration=None
                 shot['design_needs_review'] = True
                 shot['design_review_confirmed'] = False
         if text_changed or changed or timing_changed:
+            from .presenter_mode import presenter_requested
+            if (changed or timing_changed) and presenter_requested(record.get('creation_parameters', {}), shot, record.get('references', [])):
+                shot['presenter_plan_status'] = 'audio_changed'
+                shot['video_prompt_out_of_sync'] = True
             pending = original.get('audio_timing_adjustment') or {}
             shot['audio_timing_adjustment'] = dict(
                 mode='trim_or_slow', needs_review=True,

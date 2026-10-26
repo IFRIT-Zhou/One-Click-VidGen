@@ -14,10 +14,10 @@ const url = (id) => `/api/editor/uploads/${encodeURIComponent(id)}`
     <div v-if="form.dynamic_video" class="presenter-settings">
       <label><input v-model="form.presenter_mode" type="checkbox"> 讲解员模式</label>
       <template v-if="form.presenter_mode">
-        <label>讲解员参考图<select v-model="form.presenter_reference_id"><option value="">请选择人物参考图</option><option v-for="(id,index) in form.reference_image_ids" :key="id" :value="id">{{form.reference_image_labels[id]||`图${index+1}`}} · {{names[index]||assets.find(a=>a.id===id)?.name||'参考人物'}}</option></select></label>
+        <label>讲解员来源<select v-model="form.presenter_reference_id"><option value="">请选择人物来源</option><option value="__shot__">使用各镜生成的人物（无需上传照片）</option><option v-for="(id,index) in form.reference_image_ids" :key="id" :value="id">{{form.reference_image_labels[id]||`图${index+1}`}} · {{names[index]||assets.find(a=>a.id===id)?.name||'参考人物'}}</option></select></label>
         <small>仅在指定讲解员出镜讲述的镜头自动注入本镜配音并同步口型；示意图仍用画外旁白。单镜可关闭，台词不会生成字幕。</small>
         <small v-if="form.video_generation_backend!=='comfyui'">音频对口型需选用内置 ComfyUI 或支持参考音频的外部工作流；视频 API 暂不支持此音频注入。</small>
-        <small v-if="!form.presenter_reference_id" class="board-error">请先上传并选择讲解员的人物参考图。</small>
+        <small v-if="!form.presenter_reference_id" class="board-error">请选择已有参考人物，或使用各镜生成的人物。</small>
       </template>
     </div>
     <article v-for="(id,index) in form.reference_image_ids" :key="id" class="reference-material-row">

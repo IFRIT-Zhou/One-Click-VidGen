@@ -301,6 +301,48 @@ class McpAdapterTests(unittest.TestCase):
             self.adapter.commit(plan['plan_id'])
         self.assertFalse(self.backend.calls)
 
+    def test_single_attachment_does_not_authorize_its_directory(self):
+        image = self.folder/'selected.png'
+        other = self.folder/'other.png'
+        image.write_bytes(b'selected')
+        other.write_bytes(b'other')
+        self.adapter = self.new_adapter(upload_files=[image])
+        self.assertEqual(self.adapter.upload_file({'local_path':str(image)}), image.resolve())
+        with self.assertRaisesRegex(ValueError, '授权'):
+            self.adapter.upload_file({'local_path':str(other)})
+        plan = self.prep('ocv_upload', {'local_path':str(image)})
+        image.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, '已变化'):
+            self.adapter.commit(plan['plan_id'])
+
+    def test_single_attachment_rejects_directories_and_scripts(self):
+        script = self.folder/'secret.py'
+        script.write_text('')
+        for path in (self.folder, script):
+            with self.assertRaises(ValueError):
+                self.new_adapter(upload_files=[path])
+
+    def test_single_attachment_does_not_authorize_its_directory(self):
+        image = self.folder/'selected.png'
+        other = self.folder/'other.png'
+        image.write_bytes(b'selected')
+        other.write_bytes(b'other')
+        self.adapter = self.new_adapter(upload_files=[image])
+        self.assertEqual(self.adapter.upload_file({'local_path':str(image)}), image.resolve())
+        with self.assertRaisesRegex(ValueError, '授权'):
+            self.adapter.upload_file({'local_path':str(other)})
+        plan = self.prep('ocv_upload', {'local_path':str(image)})
+        image.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, '已变化'):
+            self.adapter.commit(plan['plan_id'])
+
+    def test_single_attachment_rejects_directories_and_scripts(self):
+        script = self.folder/'secret.py'
+        script.write_text('')
+        for path in (self.folder, script):
+            with self.assertRaises(ValueError):
+                self.new_adapter(upload_files=[path])
+
     def test_upload_no_scripts_or_credentials(self):
         self.adapter = self.new_adapter(upload_roots=[self.folder])
         script = self.folder/'test.py'
