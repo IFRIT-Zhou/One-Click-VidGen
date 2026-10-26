@@ -1,5 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\WindowsPowerShell\v1.0;%PATH%"
 
 set "STOP_FAILED=0"
 for %%R in (8010 5173 8030) do (

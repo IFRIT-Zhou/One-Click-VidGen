@@ -128,6 +128,13 @@ namespace OcvLauncher
             "frontend/src/videoPromptWarnings.js",
             "frontend/src/serialTaskQueue.js",
             "frontend/src/rhWorkflowResolution.js",
+            "frontend/src/components/ShotResultOverview.vue",
+            "frontend/src/components/TtsStructureControls.vue",
+            "backend/app/narration_structure.py",
+            "backend/app/tts_structure_edit.py",
+            "backend/app/final_narration.py",
+            "backend/app/video_audio_sync.py",
+            "tools/launcher_service_probe.py",
             "backend/app/comfyui_bridge.py",
             "backend/app/h3_prompt_agent.py",
             "backend/app/presenter_mode.py",
@@ -198,6 +205,16 @@ namespace OcvLauncher
             "plugins/codex_bridge/plugin.json",
             "plugins/codex_bridge/ocv_bridge.py",
             "plugins/codex_bridge/README.md",
+            "plugins/codex_bridge/README_MCP.md",
+            "plugins/codex_bridge/mcp_server.py",
+            "plugins/codex_bridge/mcp-requirements.txt",
+            "plugins/codex_bridge/ocv_mcp/__init__.py",
+            "plugins/codex_bridge/ocv_mcp/adapter.py",
+            "plugins/codex_bridge/ocv_mcp/catalog.py",
+            "plugins/codex_bridge/ocv_mcp/contracts.py",
+            "plugins/codex_bridge/ocv_mcp/server.py",
+            "plugins/codex_bridge/ocv_mcp/state.py",
+            "tools/setup_ocv_mcp.ps1",
             "plugins/codex_bridge/skills/ocv-production-bridge/SKILL.md",
             "plugins/codex_bridge/skills/ocv-production-bridge/agents/openai.yaml",
             "comfyui_plugins/README.md",
@@ -285,7 +302,7 @@ namespace OcvLauncher
             if (!File.Exists(StartScript)) throw new FileNotFoundException("找不到 start_windows.bat", StartScript);
 
             var info = new ProcessStartInfo();
-            info.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+            info.FileName = WindowsToolPath("cmd.exe");
             // Run the batch file by name from its working directory.  Passing the
             // absolute path through cmd /c makes directory names such as
             // "One-click VidGen (1)" part of CMD's command grammar, where the
@@ -529,7 +546,7 @@ namespace OcvLauncher
             if (!string.IsNullOrWhiteSpace(plan.PackagePath)) arguments.Append(" -PackagePath ").Append(QuoteArgument(plan.PackagePath));
 
             var info = new ProcessStartInfo();
-            info.FileName = "powershell.exe";
+            info.FileName = WindowsToolPath("powershell.exe");
             info.Arguments = arguments.ToString();
             info.WorkingDirectory = root;
             info.UseShellExecute = true;
@@ -1118,7 +1135,7 @@ namespace OcvLauncher
             var result = new HashSet<int>();
             int exitCode;
             string output = RunAndCapture("netstat.exe", "-ano -p tcp", Environment.CurrentDirectory, 10000, out exitCode);
-            if (exitCode != 0) return result;
+            if (exitCode != 0) throw new InvalidOperationException("无法检查 OCV 端口，已取消操作：" + output);
 
             foreach (string rawLine in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
@@ -1167,10 +1184,31 @@ namespace OcvLauncher
             }
         }
 
+        private static string WindowsToolPath(string fileName)
+        {
+            string relative;
+            switch (fileName.ToLowerInvariant())
+            {
+                case "netstat.exe":
+                case "taskkill.exe":
+                case "cmd.exe":
+                    relative = fileName;
+                    break;
+                case "powershell.exe":
+                    relative = Path.Combine("WindowsPowerShell", "v1.0", fileName);
+                    break;
+                default:
+                    return fileName;
+            }
+            string full = Path.Combine(Environment.SystemDirectory, relative);
+            if (!File.Exists(full)) throw new FileNotFoundException("缺少 Windows 系统工具，已取消操作", full);
+            return full;
+        }
+
         private static string RunAndCapture(string fileName, string arguments, string workingDirectory, int timeoutMs, out int exitCode)
         {
             var info = new ProcessStartInfo();
-            info.FileName = fileName;
+            info.FileName = WindowsToolPath(fileName);
             info.Arguments = arguments;
             info.WorkingDirectory = workingDirectory;
             info.UseShellExecute = false;

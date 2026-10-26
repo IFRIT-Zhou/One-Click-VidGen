@@ -68,7 +68,7 @@ def text_mode_contract(context: dict[str, Any]) -> str:
     return VISUAL_FIRST_CONTRACT if dynamic_text_mode(context) == VISUAL_FIRST else TEXT_CONTRACT
 
 
-def approved_visible_texts(plan: Any, *, include_reference: bool = True) -> list[str]:
+def approved_visible_texts(plan: Any, *, include_reference: bool = True, medium: str = 'video') -> list[str]:
     """Return the exact visible strings selected by the structured director.
 
     Narration and subtitle text deliberately do not enter this list.  It is the
@@ -77,10 +77,20 @@ def approved_visible_texts(plan: Any, *, include_reference: bool = True) -> list
     if not isinstance(plan, dict):
         return []
     entries = []
-    for beat in plan.get('beats') or []:
-        if isinstance(beat, dict):
-            entries.extend(beat.get('texts') or [])
-    if include_reference:
+    if medium == 'image':
+        # A core still is not the union of every phase in the video.
+        if 'reference_texts' in plan:
+            entries.extend(plan.get('reference_texts') or [])
+        else:
+            beats = plan.get('beats') or []
+            index = int(plan.get('reference_beat') or 1) - 1
+            if 0 <= index < len(beats) and isinstance(beats[index], dict):
+                entries.extend(beats[index].get('texts') or [])
+    else:
+        for beat in plan.get('beats') or []:
+            if isinstance(beat, dict):
+                entries.extend(beat.get('texts') or [])
+    if medium != 'image' and include_reference:
         entries.extend(plan.get('reference_texts') or [])
     result = []
     for entry in entries:
@@ -134,19 +144,74 @@ _VISIBLE_TEXT_INSTRUCTION = re.compile(
 _NEGATIVE_VISIBLE_TEXT = re.compile(
     r'不|无|禁止|避免|移除|消失|删去|清除|不要|不得|\b(?:no|not|without|remove|omit|avoid|disappear)\b', re.I)
 
+_QUOTED_TEXT = re.compile(r'[“「『\"](?P<text>[^”」』\"\n]{1,120})[”」』\"]')
+_DISPLAY_VERB = re.compile(r'(?:显示|写着|写有|浮现|呈现|出现|标有|标为|变为|内容为)\s*$')
+_DISPLAY_SUFFIX = re.compile(r'^\s*(?:(?:[一二三四五六七八九十两\d]+个?)?(?:大字|文字|字样)|几个字|标题|标签)')
+
+
+def explicit_visible_texts(prompt: str) -> list[str]:
+    """Read explicit display instructions, never all quoted source narration.
+
+    Also cover a list of labels after a single display verb and floating words
+    such as 浮现“先用药”三个大字. Negative/removal clauses are not additions.
+    """
+    result = []
+    prompt = str(prompt or '')
+    for clause in re.split(r'[。；;\n]', prompt):
+        previous_end = 0
+        previous_display = False
+        for match in _QUOTED_TEXT.finditer(clause):
+            prefix = clause[previous_end:match.start()]
+            # Don't let an earlier disappearance suppress a later appearance.
+            local = re.split(r'[，,]', prefix)[-1]
+            negative = bool(_NEGATIVE_VISIBLE_TEXT.search(local))
+            continued = previous_display and bool(re.fullmatch(r'\s*[、和及与,，]\s*', prefix))
+            # A suffix on the preceding quote (…“研究”标题，下方出现“人群”的图标)
+            # must not turn the next, unrelated illustration into literal text.
+            labelled = bool(_VISIBLE_TEXT_INSTRUCTION.search(local + match.group(0)))
+            explicit = (labelled or continued or
+                        bool(_DISPLAY_VERB.search(local) and
+                             _DISPLAY_SUFFIX.match(clause[match.end():])))
+            previous_display = explicit and not negative
+            if previous_display and match.group('text').strip() not in result:
+                result.append(match.group('text').strip())
+            previous_end = match.end()
+    return result
+
+
+def motion_text_handoff_issues(plan: Any) -> list[str]:
+    """Ask the director to reconcile display prose with its own registry.
+
+    Do not promote subtitles/intent to approved text or guess an owner/container.
+    """
+    if not isinstance(plan, dict):
+        return []
+    issues = []
+    scopes = [(f'第{index}阶段', beat.get('action', ''), beat.get('texts') or [])
+              for index, beat in enumerate(plan.get('beats') or [], 1) if isinstance(beat, dict)]
+    if plan.get('version') == 2:
+        scopes.append(('核心图', plan.get('reference_visual', ''), plan.get('reference_texts') or []))
+    for label, prose, entries in scopes:
+        allowed = {_visible_text_key(str(row.get('text') or '')) for row in entries if isinstance(row, dict)}
+        for text in explicit_visible_texts(prose):
+            if _visible_text_key(text) not in allowed:
+                issues.append(f'{label}描述要求显示“{text}”，但对应文字清单漏登；'
+                              '若确需显示，请补齐本阶段的 text、owner、container；'
+                              '否则将该处改为具体动作或图案，不要把后续阶段文字加入核心图')
+    return issues
+
 
 def _visible_text_key(text: str) -> str:
     # Only normalize punctuation width, not words, numbers, units or operators.
     return text.strip().translate(str.maketrans('？，！：；（）', '?,!:;()'))
 
 
-def visual_first_prompt_issues(prompt: str, plan: Any) -> list[str]:
+def visual_first_prompt_issues(prompt: str, plan: Any, *, medium: str = 'video') -> list[str]:
     """Find finalizers that reintroduced narration as visible dialogue."""
-    allowed = {_visible_text_key(text) for text in approved_visible_texts(plan)}
+    allowed = {_visible_text_key(text) for text in approved_visible_texts(plan, medium=medium)}
     issues = []
-    for match in _VISIBLE_TEXT_INSTRUCTION.finditer(str(prompt or '')):
-        text = match.group('text').strip()
-        if _visible_text_key(text) in allowed or _NEGATIVE_VISIBLE_TEXT.search(match.group('context')):
+    for text in explicit_visible_texts(prompt):
+        if _visible_text_key(text) in allowed:
             continue
         issues.append(f'擅自新增未入选的画中文字“{text}”；应改用动作、表情或具体图案')
     return list(dict.fromkeys(issues))

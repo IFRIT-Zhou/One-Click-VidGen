@@ -898,6 +898,7 @@
               <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前配音没有可逐句精修的素材。' }}</div>
               <template v-else>
               <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
+                  <TtsStructureControls :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" @undo="undoLastTtsEdit" />
               <details class="guided-tts-settings">
                 <summary>本次重配参数（默认沿用当前项目）</summary>
                 <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
@@ -1654,6 +1655,7 @@
                 <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
                 <template v-else>
                   <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
+                  <TtsStructureControls :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" @undo="undoLastTtsEdit" />
                   <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
                     <div class="tts-refine-parameter-head">
                       <div>
@@ -2240,6 +2242,7 @@
               <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前任务没有可精修的逐句音频。' }}</div>
               <template v-else>
                 <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
+                  <TtsStructureControls :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" @undo="undoLastTtsEdit" />
                 <details class="guided-tts-settings">
                   <summary>本次重配参数（默认沿用项目）</summary>
                   <div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
@@ -2681,6 +2684,7 @@
 </template>
 
 <script>
+import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
 import TtsSentenceControls from './components/TtsSentenceControls.vue'
 import TtsRebuildButton from './components/TtsRebuildButton.vue'
@@ -2693,5 +2697,5 @@ import ReferenceMaterials from './components/ReferenceMaterials.vue'
 import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
-export default { components: { ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

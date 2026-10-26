@@ -9,6 +9,11 @@
 !codex_bridge/plugin.json
 !codex_bridge/ocv_bridge.py
 !codex_bridge/README.md
+!codex_bridge/README_MCP.md
+!codex_bridge/mcp_server.py
+!codex_bridge/mcp-requirements.txt
+!codex_bridge/ocv_mcp/
+!codex_bridge/ocv_mcp/*.py
 !codex_bridge/skills/
 !codex_bridge/skills/ocv-production-bridge/
 !codex_bridge/skills/ocv-production-bridge/SKILL.md

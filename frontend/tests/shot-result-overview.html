@@ -1,0 +1,50 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分镜结果信息层级回归</title><div id="app"></div>
+<script type="module">
+import {createApp} from 'vue'
+import VideoStudio from '../src/components/VideoStudio.vue'
+import '../src/style.css'
+import '../src/studio.css'
+const record={id:'result-fixture',revision:1,status:'video_review',audio:'audio.wav',audio_version:'1',references:[],source_images:[],logs:[],settings:{name:'西南医院 · 分镜效果审阅',ratio:'16:9',style:'',characters:'',world:''},creation_parameters:{video_generation_backend:'comfyui',comfyui_profile_id:'ocv-h3-test',comfyui_h3_prompt_agent:true,scene_references_enabled:false},final_narration:{duration:14},scenes:[
+ {slide_id:'s1',start:0,end:3,text:'如果肝癌一开始不能手术，以后还有机会吗？'},
+ {slide_id:'s2',start:3,end:7,text:'经过治疗，肿瘤缩小了，手术就一定更容易吗？'},
+ {slide_id:'s3',start:7,end:14,text:'接下来，我们看看团队如何评估手术时机。'},
+],shots:[
+ {id:'shot1',kind:'video',intent:'用卡通肝脏与医生评估画面提出两个问题。',slide_ids:['s1','s2'],start:0,end:7,duration:7,generation_duration:8,image:'core1.png',image_status:'completed',video:'clip1.mp4',video_status:'completed',video_version:'1',image_prompt:'清爽的医学科普插画。左侧用卡通肝脏呈现病灶，右侧医生观察影像。构图简洁，主体突出，浅色背景。',video_prompt:'镜头从肝脏全景缓缓推近，病灶区域轻轻高亮。随后平滑转到医生查看影像的画面，医生思考后指向屏幕。以稳定构图结束，动作自然克制。',video_request:{backend:'comfyui',profile_id:'ocv-h3-test',prompt_format:'h3_ref2va',duration:8,width:1664,height:936,resolution:'custom',prompt:'H3_INTERNAL_PAYLOAD_NOT_FOR_REVIEW '+('转换后的冗长机器指令。'.repeat(100)),source_prompt:'过期原始提示词，不应覆盖当前编辑内容'},video_history:[]},
+ {id:'shot2',kind:'static',intent:'说明团队评估的重要性。',slide_ids:['s3'],start:7,end:14,duration:7,image:'core2.png',image_status:'completed',image_prompt:'医生与团队共同查看影像的科普插画，视觉中心是讨论中的影像，人物表情专注。',video_prompt:''},
+]}
+if(new URLSearchParams(location.search).has('references')){
+ record.status='image_review'
+ record.creation_parameters.dynamic_text_mode='visual_first'
+ record.creation_parameters.scene_references_enabled=true
+ record.references=[{id:'ref1',name:'肝脏结构参考',kind:'object',file:'reference.png'}]
+ record.scene_assets=[{id:'scene1',name:'医学科普留白空间',kind:'static',asset_kind:'scene_reference',image:'scene.png',image_status:'completed',image_prompt:'浅色医学科普空间。',used_by:['shot1']}]
+ record.shots[0].reference_ids=['ref1']
+ record.shots[0].scene_reference_id='scene1'
+}
+if(new URLSearchParams(location.search).has('running')){
+ record.status='video_generating'
+ record.shots[0].video_status='running'
+}
+sessionStorage.setItem('ocv-video-open',record.id)
+sessionStorage.setItem('ocv-video-view','motions')
+localStorage.setItem('ocv.layout.v1.dynamic-motions',JSON.stringify({order:['logs','prompts','preview'],collapsed:{preview:true,prompts:true}}))
+localStorage.setItem('ocv.layout.v1.dynamic-storyboard',JSON.stringify({order:['preview','prompts','logs'],collapsed:{prompts:true}}))
+const calls=[]
+window.fetch=async(url,options={})=>{
+ calls.push({url:String(url),method:options.method||'GET'})
+ const path=String(url).split('?')[0]
+ let data={}
+ if(path==='/api/video-studio/'+record.id)data=record
+ else if(path==='/api/video-studio')data={items:[{id:record.id,settings:record.settings,status:record.status}]}
+ else if(path==='/api/comfyui')data={profiles:[{id:'ocv-h3-test',name:'OCV H3',kind:'video',engine:'managed'}]}
+ else if(path==='/api/comfyui/managed/models')data={items:[],profiles:[],runtime_missing:[]}
+ else if(path==='/api/language-presets')data={presets:[],current:{provider:'custom',model:'fixture-model',providers:[]}}
+ else if(path.includes('/models')||path.includes('video-model'))data={configured:true,models:[],resolution:'720p',duration_options:[4,6,8,10]}
+ else if(path.includes('resource-estimate'))data={risk:'low',vram_estimate_gb:[16,20],ram_estimate_gb:[12,16],vram_free_gb:24,ram_available_gb:40}
+ else if(path.includes('image-profile'))data={profiles:[]}
+ else if(path.includes('fonts'))data={fonts:[]}
+ return new Response(JSON.stringify(data),{status:200,headers:{'Content-Type':'application/json'}})
+}
+createApp(VideoStudio).mount('#app')
+window.fixture={calls}
+</script></html>

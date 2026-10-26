@@ -138,6 +138,7 @@ try {
     Set-Content -LiteralPath (Join-Path $failureRoot 'blocked') -Value 'parent-is-a-file' -Encoding UTF8
     New-Item -ItemType Directory -Path (Join-Path $failureSource 'launcher'), (Join-Path $failureSource 'blocked') -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $failureSource 'start_windows.bat') -Value '@echo off' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $failureSource '.env.example') -Value 'EXAMPLE=template' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $failureSource 'app.txt') -Value 'rollback-new-source' -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $failureSource 'blocked\child.txt') -Value 'force-copy-failure' -Encoding UTF8
     @{
@@ -155,6 +156,9 @@ try {
         -PackagePath $failurePackage `
         -NoRestart
     if ($LASTEXITCODE -eq 0) { throw 'Rollback smoke test unexpectedly succeeded.' }
+    if ((Get-Content -LiteralPath (Join-Path $failureRoot 'runtime_logs\launcher_update_result.txt') -Raw) -notmatch '\[overlay\]') {
+        throw 'Rollback smoke test did not reach the file-overlay failure.'
+    }
     if ((Get-Content -LiteralPath (Join-Path $failureRoot 'app.txt') -Raw).Trim() -ne 'rollback-old-source') {
         throw 'Assertion failed: failed update did not restore overwritten source.'
     }

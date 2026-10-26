@@ -394,6 +394,16 @@ class TtsSubtitleOnlyRequest(BaseModel):
     expected_revision: int | None = Field(default=None, ge=0)
 
 
+class TtsStructureRequest(BaseModel):
+    action: Literal['insert', 'delete']
+    expected_revision: int = Field(ge=0)
+    indices: list[int] = Field(default_factory=list, max_length=200)
+    anchor_index: int | None = Field(default=None, ge=1)
+    position: Literal['before', 'after'] = 'after'
+    text: str = Field(default='', max_length=1200)
+    pause_after: float = Field(default=0, ge=0, le=30)
+
+
 class TtsTokenCountRequest(BaseModel):
     texts: list[str] = Field(min_length=1, max_length=24)
 
@@ -3637,6 +3647,45 @@ def save_tts_subtitle_only(job_id: str, payload: TtsSubtitleOnlyRequest, request
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _tts_structure_context(job_id, request):
+    job, user_id = _owned_completed_job(job_id, request)
+    current = visual_editor.status(job_id)
+    if current.get('task', {}).get('status') == 'running' or current.get('has_active_image_tasks'):
+        raise HTTPException(409, '请等待当前重绘或渲染结束后再增删配音')
+    if job.request.get('dynamic_video'):
+        from . import video_studio
+        with video_studio.LOCK:
+            record = video_studio.find_audio_storyboard(user_id, job_id)
+            if record:
+                video_studio.editable(record, record['revision'])
+    return job, user_id
+
+
+@app.post('/api/jobs/{job_id}/tts-editor/structure/preview')
+def preview_tts_structure(job_id: str, payload: TtsStructureRequest, request: Request):
+    job, user_id = _tts_structure_context(job_id, request)
+    from .tts_structure_edit import preview
+    try:
+        return preview(tts_editor, job, user_id, payload.model_dump())
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post('/api/jobs/{job_id}/tts-editor/structure')
+def edit_tts_structure(job_id: str, payload: TtsStructureRequest, request: Request):
+    job, user_id = _tts_structure_context(job_id, request)
+    from .tts_structure_edit import start
+    try:
+        start(tts_editor, job, user_id, payload.model_dump())
+        return {'ok': True, 'message': '配音增删已开始，请等待时间轴同步完成'}
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/jobs/{job_id}/visual-editor/subtitles/hide")

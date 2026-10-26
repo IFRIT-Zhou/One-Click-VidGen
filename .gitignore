@@ -41,6 +41,7 @@ tools/*
 !tools/local_service_watchdog.py
 !tools/create_portable_archive.py
 !tools/release_integrity.py
+!tools/setup_ocv_mcp.ps1
 !tools/portable_release_audit.py
 !tools/publish_launcher_release.py
 !tools/deploy_indextts25.ps1

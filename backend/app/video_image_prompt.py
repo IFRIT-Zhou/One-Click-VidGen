@@ -1,7 +1,31 @@
 """Render Agent-authored image sections without delegating layout to the LLM."""
 from __future__ import annotations
 
+import copy
 import re
+
+
+def image_finalization_shots(shots: list[dict]) -> list[dict]:
+    """Give Agent 4 the core composition, not competing whole-video directions.
+
+    Source semantics remain available for verification, but later phase actions
+    and stale prompts are not alternative instructions for the still image.
+    Only the request copy changes; the stored motion plan stays intact.
+    """
+    prepared = copy.deepcopy(shots)
+    for shot in prepared:
+        plan = shot.get('motion_plan') or {}
+        if shot.get('kind') != 'video' or plan.get('version') != 2:
+            continue
+        shot['visual_description'] = plan['reference_visual']
+        shot['motion_plan'] = {key: plan[key] for key in (
+            'version', 'scene_anchor', 'reference_visual', 'reference_participants', 'reference_texts')}
+        for key in ('action', 'image_prompt', 'video_prompt', 'image_sections'):
+            shot.pop(key, None)
+        shot['core_text_handoff'] = (
+            '本图可见文字只取 reference_texts；空列表表示本图无可读文字。'
+            '字幕、intent 和原设计用于理解语义，不是画中文字授权；不要将视频全过程画进单张图。')
+    return prepared
 
 
 SECTION_FIELDS = (('characters_and_style', '人物与画风'), ('scene', '画面内容'), ('constraints', '必要限制'))

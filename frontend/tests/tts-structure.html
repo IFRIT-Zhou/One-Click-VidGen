@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>配音增删回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive} from 'vue/dist/vue.esm-bundler.js'
+import TtsStructureControls from '../src/components/TtsStructureControls.vue'
+import '../src/style.css'
+const state=reactive({projectId:'fixture',busy:false,hasDrafts:false,selected:[2,3],started:0,undo:0,calls:[],fail:false,
+  editor:{available:true,structural_edit_available:true,revision:7,history_count:2,task:{status:'idle'},
+    segments:[{index:1,text:'原有第一段，不需要重新配音。'},{index:2,text:'删除这段说明。'},{index:3,text:'删除另外这段说明。'}]}})
+window.fixture=state
+window.fetch=async(url,options={})=>{
+  const data=JSON.parse(options.body||'{}');state.calls.push({url,body:data})
+  const result=String(url).endsWith('/preview')?{revision:7,action:'delete',segments:state.editor.segments.slice(1).map(s=>({...s,duration:2})),removed_seconds:4,affected_visuals:[]}:state.fail?{detail:'模拟上游失败，原配音保留'}:{ok:true}
+  return new Response(JSON.stringify(result),{status:state.fail?409:200})
+}
+createApp({components:{TtsStructureControls},setup(){return{state}},template:`<main style="max-width:950px;margin:40px auto;padding:16px"><h2>配音片段</h2><TtsStructureControls :project-id="state.projectId" :editor="state.editor" :selected-indices="state.selected" :anchor-index="2" :busy="state.busy" :has-drafts="state.hasDrafts" show-undo @busy="state.busy=$event" @started="state.started++" @undo="state.undo++"/></main>`}).mount('#app')
+</script></html>

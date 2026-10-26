@@ -390,17 +390,26 @@ def start_export(identity: str, data: ExportRequest, request: Request):
         if record.get('video_waiting_queue') or any(shot.get('video_queued') or shot.get('video_waiting')
                                                    for shot in record.get('shots', [])):
             raise HTTPException(409, '请先完成或取消生成队列，再合成成片')
-        all_static_ready = (bool(record.get('shots')) and
-                            all(shot.get('kind') == 'static' and shot.get('image_status') == 'completed'
-                                for shot in record['shots']))
-        if record['status'] not in {'video_review', 'export_failed', 'completed'} and not (
-                record['status'] == 'video_generation_ready' and all_static_ready):
+        # Switching an unfinished motion shot to static can leave this stage
+        # unchanged even when every remaining motion clip is already complete.
+        # Validate each shot's current kind/assets instead of requiring an
+        # all-static project to escape the generation-ready stage.
+        if record['status'] not in {'video_generation_ready', 'video_review', 'export_failed', 'completed'}:
             raise HTTPException(409, '请先完成全部动态镜头')
         if not record.get('shots'):
             raise HTTPException(409, '项目没有可合成的镜头')
         missing = [shot['id'] for shot in record['shots'] if shot['kind']=='video' and shot.get('video_status')!='completed']
         if missing:
             raise HTTPException(409, f'仍有 {len(missing)} 个动态镜头未完成')
+        for index, shot in enumerate(record['shots'], 1):
+            if shot.get('design_needs_review'):
+                raise HTTPException(409, f'第 {index:02d} 镜的设计修改尚未确认，请先核对')
+            if shot.get('kind') == 'static' and shot.get('image_status') != 'completed':
+                raise HTTPException(409, f'第 {index:02d} 镜的静态画面尚未完成')
+            try:
+                _source(path, shot)
+            except ValueError as exc:
+                raise HTTPException(409, f'第 {index:02d} 镜的素材不可用：{exc}') from exc
         if str(path) in studio.ACTIVE:
             raise HTTPException(409, '此任务正在处理')
         studio.ACTIVE.add(str(path))

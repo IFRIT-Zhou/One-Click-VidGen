@@ -1,0 +1,2 @@
+# Isolated environment only. Never install into OCV's production interpreter.
+mcp==1.26.0

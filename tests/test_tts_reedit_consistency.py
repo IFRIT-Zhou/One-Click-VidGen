@@ -208,6 +208,7 @@ class ReeditConsistencyTests(unittest.TestCase):
                 generated.append(dict(filename=path.name))
             (directory / 'manifest.json').write_text(json.dumps(dict(segments=generated)), encoding='utf-8')
         with (patch('backend.app.cloud_client.cloud_client_for', return_value=Mock()),
+              patch('backend.app.tts_segmentation.build_indextts25_token_counter', return_value=len),
               patch('backend.app.cloud_tts.synthesize_cloud_tts', side_effect=synth),
               patch('backend.app.tts_editor._speech_alignment', side_effect=RuntimeError('needs review'))):
             with self.assertRaisesRegex(RuntimeError, 'needs review'):

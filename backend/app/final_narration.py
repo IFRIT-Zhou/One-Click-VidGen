@@ -17,15 +17,32 @@ def final_narration_snapshot(project_dir, scenes=None):
     """Never use phonetic TTS spellings or independent captions as spoken copy."""
     if scenes is None:
         scenes = json.loads((project_dir / 'other' / '画面时间线.json').read_text(encoding='utf-8-sig'))
+    from .narration_structure import IDENTITY_FIELDS
+    # SRT has no identity metadata. Enrich its exact matching cues from the
+    # canonical timeline so structural edits reach dynamic projects as well.
+    try:
+        canonical = json.loads((project_dir / 'other' / '画面时间线.json').read_text(encoding='utf-8-sig'))
+        def cue_key(row):
+            return (str(row.get('text_content', row.get('text', ''))),
+                    round(float(row['start']), 3), round(float(row['end']), 3))
+        keyed = {cue_key(row): row for row in canonical}
+        enriched = []
+        for row in scenes:
+            source = keyed.get(cue_key(row), {})
+            enriched.append({**row, **{key: source[key] for key in IDENTITY_FIELDS if key in source}})
+        scenes = enriched
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
     rows = [dict(slide_id=s.get('slide_id', f'scene_{i:03d}'),
                  text=str(s.get('text_content', s.get('text', ''))),
                  start=float(s['start']), end=float(s['end']),
-                 **{k: v for k, v in s.items() if k.startswith('subtitle_hidden')}) for i, s in enumerate(scenes, 1)]
+                 **{k: v for k, v in s.items() if k.startswith('subtitle_hidden') or k in IDENTITY_FIELDS}) for i, s in enumerate(scenes, 1)]
     try:
         manifest = json.loads((project_dir / 'other' / 'tts_segments' / 'manifest.json').read_text(encoding='utf-8-sig'))
         segments = manifest.get('segments') or []
     except (OSError, ValueError):
         segments = []
+        manifest = {}
     semantic_rows = rows
     try:
         complete = json.loads((project_dir / 'other' / '画面时间线.json').read_text(encoding='utf-8-sig'))
@@ -41,6 +58,8 @@ def final_narration_snapshot(project_dir, scenes=None):
     snapshot = dict(version=1, script=script, scenes=rows,
                     duration=max((s['end'] for s in rows), default=0),
                     text_source='recorded_segments' if matched else 'final_timeline')
+    if manifest.get('structure_token'):
+        snapshot['structure_token'] = manifest['structure_token']
     try:
         with wave.open(str(project_dir / 'input' / '配音.wav'), 'rb') as audio:
             snapshot['duration'] = max(snapshot['duration'], audio.getnframes()/audio.getframerate())
@@ -73,6 +92,10 @@ def remap_visual_groups(old_scenes, new_scenes, groups, *, key='slide_ids'):
         raise ValueError('原画面与字幕对应关系不完整，请先核对原分镜；已有素材未修改')
     if not new_scenes:
         raise ValueError('最终配音时间轴为空；已有素材未修改')
+    from .narration_structure import remap_structure
+    structural = remap_structure(old_scenes, new_scenes, groups, key)
+    if structural is not None:
+        return structural
     lengths = [len(group[key]) for group in groups]
     if len(old_scenes) == len(new_scenes):
         edges, cursor = [0], 0

@@ -629,10 +629,18 @@ class VisualEditor:
             after = {s['slide_id']: s for s in new_scenes}
             original = {m['macro_scene_id']: m for m in mapping}
             for row in updated:
-                old = [before[sid] for sid in original[row['macro_scene_id']]['includes_slides']]
+                original_row = original.get(row['macro_scene_id']) or original.get(row.get('narration_parent_visual_id'))
+                old = [before[sid] for sid in original_row['includes_slides']] if original_row else []
                 new = [after[sid] for sid in row['includes_slides']]
                 text = lambda items: ''.join(s.get('text_content', s.get('text', '')) for s in items)
-                old_duration, duration = old[-1]['end']-old[0]['start'], new[-1]['end']-new[0]['start']
+                old_duration = old[-1]['end']-old[0]['start'] if old else 0
+                duration = new[-1]['end']-new[0]['start']
+                if row['macro_scene_id'] not in original and row.get('narration_parent_visual_id'):
+                    image = VisualEditor._find_image(project_dir/'image', row['narration_parent_visual_id'])
+                    shutil.copy2(image, project_dir/'image'/f"{row['macro_scene_id']}{image.suffix}")
+                elif row['macro_scene_id'] not in original and row.get('narration_inserted'):
+                    (project_dir/'image').mkdir(exist_ok=True)
+                    VisualEditor._write_black_placeholder(project_dir/'image'/f"{row['macro_scene_id']}.png")
                 if text(old) != text(new) or abs(duration-old_duration) > .01:
                     row['audio_timing_adjustment'] = dict(needs_review=True, text_changed=text(old)!=text(new),
                                                          previous_duration=old_duration, target_duration=duration)

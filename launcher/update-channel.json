@@ -1,16 +1,15 @@
 {
-  "release_id": "2026.10.23.1",
-  "release_order": 2026102301,
-  "display_version": "2026.10.23 启动检测与更新诊断修复",
+  "release_id": "2026.10.26.1",
+  "release_order": 2026102601,
+  "display_version": "2026.10.26 配音增删、分镜界面与规划修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.23.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复启动检测失败却误报后端已运行；本地服务检测改用内置 Python，减少对 PowerShell 的依赖。改进更新解压和错误定位，保留失败回滚与用户数据保护。后端未就绪时改善空白 500 提示。请待任务结束后更新并重启；不修改安全软件规则。",
-  "content_fingerprint": "42e3014ba27f8cfd499bdf2001d377f46c5e1438ac345005daf376f8ed3f0993"
+  "notes": "配音支持整段删除与插入，图文和动态同步最终文案、字幕与时间轴；分镜界面突出文案、画面和原始提示词，参考图及生成设置后置。修复无场景参考规划、导出完成状态和启动器兼容问题，新增可选 MCP 制作接口并保留旧桥接。保留项目与素材，不部署云端或重启节点；待任务完成后更新并自行重启。此版先发布 GitHub，魔搭稍后同步。",
+  "content_fingerprint": "1f988b28578fefc3c25b8153a3d4a971e1506ccd6844e7c1838f7d75bff4a256"
 }

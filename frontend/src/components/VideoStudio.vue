@@ -12,6 +12,8 @@ import LanguageModelPresets from './LanguageModelPresets.vue'
 import ProjectImageRoute from './ProjectImageRoute.vue'
 import ResizableShotWorkspace from './ResizableShotWorkspace.vue'
 import WorkspacePanels from './WorkspacePanels.vue'
+import ShotResultOverview from './ShotResultOverview.vue'
+import {useWorkspaceLayout} from '../workspaceLayout'
 import DynamicTextModeSelector from './DynamicTextModeSelector.vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
 import ShotReferencePreview from './ShotReferencePreview.vue'
@@ -27,6 +29,19 @@ const imageRouteEditor=ref(null)
 const items=ref([]), project=ref(null), selected=ref(0), error=ref(''), busy=ref(false), dirty=ref(false)
 function requestCloudLogin() { window.dispatchEvent(new Event('ocv-cloud-login-required')) }
 const view=ref('storyboard'), productionPanel=ref('design')
+const workspaceElement=ref(null)
+const {state:designLayout}=useWorkspaceLayout('dynamic-storyboard')
+async function editSelectedDesign(promptType='image') {
+ const id=selectedShot.value?.id
+ if(!id||busy.value||shotRenderLocked(selectedShot.value))return
+ productionPanel.value='design'
+ designLayout.collapsed.prompts=false
+ await nextTick()
+ const panel=[...(workspaceElement.value?.querySelectorAll('[data-design-shot]')||[])].find(el=>el.dataset.designShot===id)
+ const input=panel?.querySelector(promptType==='video'?'.video-prompt-field textarea':'.image-prompt-field textarea')||panel?.querySelector('textarea')
+ input?.scrollIntoView({behavior:'smooth',block:'center'})
+ input?.focus({preventScroll:true})
+}
 const autoSplitOpen=ref(false),autoSplitNeighbors=ref(false)
 const selectedSplitMaximum=computed(()=>splitMaximum(project.value?.shots?.[selected.value],project.value?.creation_parameters||{}))
 const autoSplitTargets=computed(()=>autoSplitWindow(project.value?.shots||[],selected.value,autoSplitNeighbors.value))
@@ -672,7 +687,7 @@ watch(previewNarration,enabled=>{if(!enabled)stopMotionPreviewAudio()})
 onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAudio()})
 </script>
 <template>
-<section class="content video-workspace">
+<section ref="workspaceElement" class="content video-workspace">
  <div v-if="project" class="workspace-project-heading"><div><p class="eyebrow">动态视频工作台</p><h1>{{project.settings.name}}</h1></div><div class="workspace-project-actions"><span v-if="dirty" class="workspace-draft" role="status">有未保存修改</span><button class="ghost-btn" @click="exportPlan">导出分镜草案</button><button class="ghost-btn" @click="emit('new-project')">＋ 新建项目</button></div></div>
  <nav v-if="project" class="video-stage-nav" aria-label="动态视频任务阶段">
   <button v-for="(stage,index) in stageSteps" :key="stage.key" type="button" :aria-current="view===stage.key?'step':undefined" :class="[stage.state,{active:view===stage.key}]" @click="openStage(stage)">
@@ -785,43 +800,49 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
    </div>
     <article v-if="selectedShot&&selected>=0&&productionPanel==='video'" :key="selectedShot.id" class="video-detail motion-detail">
      <div class="shot-local-navigation"><strong>镜头 {{String(selected+1).padStart(2,'0')}} <span>/ {{project.shots.length}}</span></strong><div><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
-     <details open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in selectedShot.slide_ids" :key="id">{{scenesById[id]?.text}}</p></details>
-     <div class="motion-shot-heading"><div><h3>第 {{String(selected+1).padStart(2,'0')}} 镜 · {{videoStatusLabel(selectedShot)}}</h3><p class="muted">{{selectedShot.intent}}</p></div><div class="motion-heading-actions"><span v-if="selectedShot.kind==='video'" class="readonly-badge">使用 {{selectedShot.duration}} 秒 · 请求 {{requestedSeconds(selectedShot)}} 秒 · {{requestedResolution(selectedShot)}}</span><label v-if="selectedShot.kind==='video'" class="motion-upload-button" :class="{disabled:busy||videoRunning}">上传本地视频替换<input type="file" accept="video/mp4,.mp4" :disabled="busy||videoRunning" @change="uploadReplacementVideo(selectedShot,$event)"></label><button type="button" @click="productionPanel='design'">编辑本镜画面与提示词</button></div></div>
-     <ShotVideoOptions v-if="selectedShot.kind==='video'" v-model="selectedOptions" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="shotOptionsLocked" :dirty="selectedOptionsDirty" :saved="Boolean(selectedShot.video_generation_options)" :save-disabled="shotOptionsLocked" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="requestedSeconds(selectedShot)" :image-src="imageUrl(selectedShot)" @refresh="loadComfyProfiles" @save="saveShotOptions" @apply-all="applyAllShotOptions"/>
-     <p v-if="selectedShot.video_request" class="muted">当前片段实际使用：{{selectedShot.video_request.backend==='cloud_h3'?'集群 H3':selectedShot.video_request.backend==='comfyui'?'ComfyUI · '+(comfyProfiles.find(item=>item.id===selectedShot.video_request.profile_id)?.name||selectedShot.video_request.profile_id):'视频 API'}} · {{requestedResolution(selectedShot)}}。上方修改在下次生成时生效。</p>
-     <p v-if="selectedLocalVideo&&comfyError" class="studio-notice error">工作流读取失败：{{comfyError}}</p>
+     <ShotResultOverview :shot="selectedShot" :subtitles="selectedShot.slide_ids.map(id=>scenesById[id]?.text).filter(Boolean)" :status-label="videoStatusLabel(selectedShot)" :edit-disabled="busy||shotRenderLocked(selectedShot)" @edit="editSelectedDesign">
+      <template #preview>
+       <div v-if="selectedShot.kind==='video'&&selectedShot.video_status==='completed'" class="motion-preview"><video :key="selectedShot.id+':'+selectedShot.video_version+':'+project.audio_version" controls muted playsinline preload="metadata" :src="videoUrl(selectedShot)" :poster="imageUrl(selectedShot)" @loadedmetadata="syncMotionPreview($event,'metadata')" @play="syncMotionPreview($event,'play')" @pause="syncMotionPreview($event,'pause')" @ended="syncMotionPreview($event,'ended')" @seeking="syncMotionPreview($event,'seeking')" @timeupdate="syncMotionPreview($event,'timeupdate')" @ratechange="syncMotionPreview($event,'seeking')"></video></div>
+       <div v-else-if="selectedShot.image" class="storyboard-result motion-result-image"><img :src="imageUrl(selectedShot)" :alt="'第 '+(selected+1)+' 镜分镜效果'"><span v-if="selectedShot.kind==='video'" class="motion-image-caption">核心分镜图 · 动态片段尚未就绪</span></div>
+       <p v-else class="motion-result-placeholder">本镜暂无画面，可先编辑提示词，再生成核心分镜图。</p>
+      </template>
+      <template #auxiliary>
+       <div class="motion-secondary-tools">
+        <template v-if="selectedShot.kind==='video'&&selectedShot.video_status==='completed'">
+         <label v-if="project.audio" class="motion-audio-toggle"><input type="checkbox" v-model="previewNarration">同步播放本镜配音</label>
+         <a :href="videoUrl(selectedShot)" :download="'镜头'+String(selected+1).padStart(2,'0')+'.mp4'" class="motion-download">↓ 下载本镜原片</a>
+        </template>
+        <label v-if="selectedShot.kind==='video'" class="motion-upload-button" :class="{disabled:busy||videoRunning}">上传本地视频替换<input type="file" accept="video/mp4,.mp4" :disabled="busy||videoRunning" @change="uploadReplacementVideo(selectedShot,$event)"></label>
+       </div>
+       <p v-if="selectedShot.kind==='video'" class="motion-preview-note muted">使用 {{selectedShot.duration}} 秒 · 请求 {{requestedSeconds(selectedShot)}} 秒 · {{requestedResolution(selectedShot)}}。试看与导出按本镜配音时长裁切或降速。</p>
+       <p v-if="selectedShot.audio_timing_adjustment" class="motion-preview-note">当前试听与导出均使用新版配音：{{previewAdaptRate<1?'画面降速至 '+previewAdaptRate.toFixed(2)+' 倍':'画面按新时长裁切'}}，目标 {{Number(selectedPlaybackRange?.duration||selectedShot.duration).toFixed(2)}} 秒。播放器进度显示原片时间。<strong v-if="previewAdaptRate<0.8">降速较明显，建议重点检查，必要时重新生成本镜。</strong></p>
+       <p v-if="selectedShot.kind!=='video'" class="motion-preview-note muted">静态镜头使用已确认图片，不提交视频 API，也不产生视频生成费用。</p>
+       <details v-if="selectedShot.kind==='video'" class="motion-generation-settings">
+        <summary>本镜生成设置 <span>{{selectedOptionsDirty?'有未保存配置':'下次生成使用'}}</span></summary>
+        <ShotVideoOptions v-if="selectedShot.kind==='video'" v-model="selectedOptions" :profiles="comfyProfiles" :loading="comfyLoading" :disabled="shotOptionsLocked" :dirty="selectedOptionsDirty" :saved="Boolean(selectedShot.video_generation_options)" :save-disabled="shotOptionsLocked" :api-ready="Boolean(apiVideoReady)" :api-resolution="videoModel?.resolution||'720p'" :ratio="project.settings.ratio||'16:9'" :seconds="requestedSeconds(selectedShot)" :image-src="imageUrl(selectedShot)" @refresh="loadComfyProfiles" @save="saveShotOptions" @apply-all="applyAllShotOptions"/>
+        <p v-if="selectedShot.video_request" class="muted">当前片段实际使用：{{selectedShot.video_request.backend==='cloud_h3'?'集群 H3':selectedShot.video_request.backend==='comfyui'?'ComfyUI · '+(comfyProfiles.find(item=>item.id===selectedShot.video_request.profile_id)?.name||selectedShot.video_request.profile_id):'视频 API'}} · {{requestedResolution(selectedShot)}}。修改配置不会改变已有片段。</p>
+        <p v-if="selectedLocalVideo&&comfyError" class="studio-notice error">工作流读取失败：{{comfyError}}</p>
+       </details>
      <div v-if="selectedShot.kind==='video'&&!shotRenderLocked(selectedShot)" class="motion-shot-actions">
       <button v-if="selectedShot.video_status==='completed'" type="button" class="primary-btn" :disabled="busy||rerunQueued(selectedShot)||selectedShot.video_queued||!selectedVideoConfigured" @click="regenerateVideo(selectedShot)">{{rerunQueued(selectedShot)?'已加入重生成队列':videoRunning?'加入重生成队列':'按此配置重新生成本镜'}}</button>
       <button v-else-if="selectedShot.video_terminal" type="button" class="primary-btn" :disabled="busy||!selectedVideoConfigured" @click="generateVideos([selectedShot],true,false,true)">{{selectedLocalVideo||selectedOptions.backend==='cloud_h3'?'重新生成本镜':'重新付费生成本镜'}}</button>
       <button v-else-if="selectedShot.video_resume_available" type="button" class="primary-btn" :disabled="busy||!selectedVideoConfigured" @click="generateVideos([selectedShot],false,false,true)">{{selectedShot.video_not_submitted?'继续生成（尚未提交）':'继续查询原任务'}}</button>
       <button v-else-if="canProcessVideo(selectedShot)" type="button" class="primary-btn" :disabled="busy||!selectedVideoConfigured||Boolean(videoRunning&&selectedShot.video_queued)" @click="generateVideos([selectedShot],false,false,true)">{{videoRunning&&selectedShot.video_queued?'已加入生成队列':selectedLocalVideo&&videoRunning?'加入本地生成队列':'试生成当前镜头'}}</button>
      </div>
-     <WorkspacePanels scope="dynamic-motions" :log-count="project.logs?.length||0">
-      <template #preview>
-     <div v-if="selectedShot.kind==='video'&&selectedShot.video_status==='completed'" class="motion-preview">
-      <video :key="selectedShot.id+':'+selectedShot.video_version+':'+project.audio_version" controls muted playsinline preload="metadata" :src="videoUrl(selectedShot)" :poster="imageUrl(selectedShot)" @loadedmetadata="syncMotionPreview($event,'metadata')" @play="syncMotionPreview($event,'play')" @pause="syncMotionPreview($event,'pause')" @ended="syncMotionPreview($event,'ended')" @seeking="syncMotionPreview($event,'seeking')" @timeupdate="syncMotionPreview($event,'timeupdate')" @ratechange="syncMotionPreview($event,'seeking')"></video>
-      <p v-if="selectedShot.audio_timing_adjustment" class="motion-preview-note">当前试听与导出均使用新版配音：{{previewAdaptRate<1?'画面降速至 '+previewAdaptRate.toFixed(2)+' 倍':'画面按新时长裁切'}}，目标 {{Number(selectedPlaybackRange?.duration||selectedShot.duration).toFixed(2)}} 秒。播放器进度显示原片时间。<strong v-if="previewAdaptRate<0.8">降速较明显，建议重点检查，必要时重新生成本镜。</strong></p>
-      <label v-if="project.audio" class="motion-audio-toggle"><input type="checkbox" v-model="previewNarration">同步播放本镜配音</label>
-      <p v-else class="muted">该任务没有配音快照，只能预览画面。</p>
-      <a :href="videoUrl(selectedShot)" :download="'镜头'+String(selected+1).padStart(2,'0')+'.mp4'" class="motion-download">↓ 下载本镜原片</a>
-     </div>
-     <OperationStatus v-if="selectedShot.kind==='video'" title="本镜运行状态" :task="videoTask(selectedShot)"/>
-     <div v-if="selectedShot.video_error" class="studio-notice error"><p>{{selectedShot.video_error}}</p><button v-if="/同编号.*视频.*资产/.test(selectedShot.video_error)" type="button" :disabled="busy||rerunQueued(selectedShot)" @click="regenerateVideo(selectedShot)">确认新建编号并重新生成</button></div>
-     <p v-if="selectedShot.video_task_id" class="motion-task-id muted">云端任务编号：<code>{{selectedShot.video_task_id}}</code><span v-if="selectedShot.video_attempt"> · 第 {{selectedShot.video_attempt}} 次请求</span></p>
-     <p v-if="selectedShot.kind==='video'&&selectedShot.video_status==='unknown'&&!selectedShot.video_resume_available" class="duration-repair-note needs-review">本次提交结果未知，且无法安全查询原任务。请先向服务商核实，不要重新提交，避免重复扣费。</p>
-     <p v-if="selectedShot.kind==='video'" class="motion-preview-note muted">原始视频音轨保持静音；试看时可同步本镜对应的项目配音。为覆盖字幕时长，请求秒数可能向上取整，试看和最终合成都只使用本镜字幕时长。</p>
-     <p v-else class="studio-notice">这是静态镜头，保留已确认的图片，不提交视频 API，也不产生视频生成费用。</p>
-     <details v-if="selectedShot.kind==='video'&&selectedVideoHistory.length" class="motion-history"><summary>历史生成结果 · {{selectedVideoHistory.length}} 个</summary><p class="muted">重生成和本地替换都不会覆盖旧片段。可先预览，再决定采用或删除。</p><div class="motion-history-list"><div v-for="(row,position) in selectedVideoHistory" :key="row.index+':'+(row.entry.video_version||row.entry.video)" class="motion-history-row"><span><b>{{historyVersionLabel(row,position)}}</b><small>{{row.entry.invalidated_reason||'此前生成的动态片段'}}</small></span><div class="actions"><button type="button" @click="historyPreviewIndex=historyPreviewIndex===row.index?null:row.index">{{historyPreviewIndex===row.index?'收起':'预览'}}</button><button type="button" class="primary-btn" :disabled="busy||videoRunning" @click="adoptHistoryVersion(selectedShot,row.index)">采用</button><button type="button" :disabled="busy||videoRunning" @click="deleteHistoryVersion(selectedShot,row.index)">删除</button></div><video v-if="historyPreviewIndex===row.index" controls muted playsinline preload="metadata" :src="historyVideoUrl(selectedShot,row.index)"></video></div></div></details>
-     <details class="motion-core-reference" :open="selectedShot.video_status!=='completed'"><summary>已确认的核心分镜图 · 图1</summary><div class="storyboard-result"><img :src="imageUrl(selectedShot)" :alt="'第 '+(selected+1)+' 镜核心分镜图'"></div></details>
+       <OperationStatus v-if="selectedShot.kind==='video'" title="本镜运行状态" :task="videoTask(selectedShot)"/>
+       <div v-if="selectedShot.video_error" class="studio-notice error"><p>{{selectedShot.video_error}}</p><button v-if="/同编号.*视频.*资产/.test(selectedShot.video_error)" type="button" :disabled="busy||rerunQueued(selectedShot)" @click="regenerateVideo(selectedShot)">确认新建编号并重新生成</button></div>
+       <p v-if="selectedShot.video_task_id" class="motion-task-id muted">云端任务编号：<code>{{selectedShot.video_task_id}}</code><span v-if="selectedShot.video_attempt"> · 第 {{selectedShot.video_attempt}} 次请求</span></p>
+       <p v-if="selectedShot.kind==='video'&&selectedShot.video_status==='unknown'&&!selectedShot.video_resume_available" class="duration-repair-note needs-review">本次提交结果未知，且无法安全查询原任务。请先向服务商核实，不要重新提交，避免重复扣费。</p>
+       <details v-if="selectedShot.kind==='video'&&selectedVideoHistory.length" class="motion-history"><summary>历史生成结果 · {{selectedVideoHistory.length}} 个</summary><p class="muted">重生成和本地替换都不会覆盖旧片段。可先预览，再决定采用或删除。</p><div class="motion-history-list"><div v-for="(row,position) in selectedVideoHistory" :key="row.index+':'+(row.entry.video_version||row.entry.video)" class="motion-history-row"><span><b>{{historyVersionLabel(row,position)}}</b><small>{{row.entry.invalidated_reason||'此前生成的动态片段'}}</small></span><div class="actions"><button type="button" @click="historyPreviewIndex=historyPreviewIndex===row.index?null:row.index">{{historyPreviewIndex===row.index?'收起':'预览'}}</button><button type="button" class="primary-btn" :disabled="busy||videoRunning" @click="adoptHistoryVersion(selectedShot,row.index)">采用</button><button type="button" :disabled="busy||videoRunning" @click="deleteHistoryVersion(selectedShot,row.index)">删除</button></div><video v-if="historyPreviewIndex===row.index" controls muted playsinline preload="metadata" :src="historyVideoUrl(selectedShot,row.index)"></video></div></div></details>
+       <details v-if="selectedShot.kind==='video'&&selectedShot.video_status==='completed'&&selectedShot.image" class="motion-core-reference"><summary>查看核心分镜图</summary><div class="storyboard-result"><img :src="imageUrl(selectedShot)" :alt="'第 '+(selected+1)+' 镜核心分镜图'"></div></details>
+       <details class="planning-log motion-result-log"><summary>任务日志 · {{project.logs?.length||0}} 条</summary><div class="video-logs" role="log" aria-live="polite"><div v-for="(line,index) in project.logs" :key="index">{{line}}</div><p v-if="!project.logs?.length">暂无任务日志</p></div></details>
       </template>
-      <template #prompts><p class="muted">{{selectedShot.video_request?'本次实际提交内容（只读）':'将提交的视频提示词（只读）'}}</p><p class="motion-final-prompt">{{selectedShot.video_request?.prompt||selectedShot.video_prompt||'本镜为静态画面，无视频提示词。'}}</p></template>
-      <template #logs><div class="video-logs" role="log" aria-live="polite"><div v-for="(line,index) in project.logs" :key="index">{{line}}</div><p v-if="!project.logs?.length">暂无任务日志</p></div></template>
-     </WorkspacePanels>
+     </ShotResultOverview>
     </article>
 
    <div v-if="selected>=0&&selectedShot&&needsAutoSplit(selectedShot,selectedSplitMaximum)" class="auto-split-notice"><div><strong>本镜超过 {{selectedSplitMaximum}} 秒</strong><p>可拆分本镜或连同前后动态镜头重规划；也可单独更换支持该时长的生成通道。</p></div><button type="button" :disabled="!canEditStructure" @click="openAutoSplit()">自动拆分并重规划</button></div>
    <template v-if="selected>=0&&selectedShot&&productionPanel==='design'"><div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure||videoRunning||Boolean(project.video_waiting_queue?.length)" @click="undoStructure">撤回结构调整</button><button v-if="shotEditingStage&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div></template>
-   <div v-for="{shot,i} in storyboardRows" :key="shot.id" v-show="i===selected&&productionPanel==='design'" class="video-detail">
+   <div v-for="{shot,i} in storyboardRows" :key="shot.id" :data-design-shot="shot.id" v-show="i===selected&&productionPanel==='design'" class="video-detail">
     <div class="shot-local-navigation"><strong>{{i<0?'场景 '+(-i):'镜头 '+String(i+1).padStart(2,'0')}} <span v-if="i>=0">/ {{project.shots.length}}</span></strong><div v-if="i>=0"><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
     <p v-if="i>=0&&storyboardLocked" class="readonly-stage-note">{{shotEditingStage?'字幕分组与时长已经确认；你仍可切换动静态、修改本镜提示词、重绘或替换图片。切换类型自动保存，不会重新生成图片。':'本阶段已经确认，以下内容仅供回顾，不会提供修改入口。'}}</p>
     <p v-if="i<0" class="readonly-stage-note">场景参考 · 用于镜头 {{sceneUsedByLabel(shot)}}。不占用视频时长；相关镜头下次重绘才采用新版场景。</p>
@@ -829,12 +850,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      <WorkspacePanels scope="dynamic-storyboard" :log-count="project.logs.length">
       <template #preview><fieldset :disabled="busy||['planning','stopping'].includes(project.status)">
      <details v-if="i>=0" open class="shot-subtitles"><summary>对应字幕（只读）</summary><p v-for="id in shot.slide_ids" :key="id">{{project.scenes.find(s=>s.slide_id===id)?.text}}</p></details>
-     <ShotReferencePreview :shot="shot" :references="project.references||[]" :redraw-references="project.redraw_references||[]" :scene="sceneAssetFor(shot)" :scene-enabled="sceneReferencesEnabled" :reference-url="redrawReferenceUrl" :image-url="imageUrl" :continuity="project.image_continuity?.[shot.id]" :shots="project.shots" />
      <div v-if="shot.image_status" class="storyboard-result" :class="shot.image_status"><img v-if="shot.image_status==='completed'" :src="imageUrl(shot)" :alt="'核心分镜图 '+(i+1)"><div v-else><strong>{{shot.image_status==='running'?'正在生成核心分镜图':shot.image_status==='failed'?'生成失败':'等待生成'}}</strong><p v-if="shot.image_error">{{shot.image_error}}</p></div></div>
-     <div v-if="sceneAssetFor(shot)" class="shot-scene-reference">
-      <img v-if="sceneAssetFor(shot).image_status==='completed'" :src="imageUrl(sceneAssetFor(shot))" :alt="sceneAssetFor(shot).name||'场景参考'">
-      <div><strong>场景参考 · {{sceneAssetFor(shot).name||sceneAssetFor(shot).id}}</strong><p class="muted">{{sceneUsageLabel(shot)}}</p><label v-if="project.status==='image_review'" class="scene-reference-toggle"><input type="checkbox" v-model="useSceneReference" :disabled="imageAssetRunning(shot)||sceneAssetFor(shot).image_status!=='completed'">重绘时使用场景参考</label><p v-if="sceneAssetFor(shot).image_status!=='completed'" class="muted">场景图尚未完成，可在上方场景参考资产中查看或重试。</p></div>
-     </div>
       </fieldset></template>
       <template #prompts><fieldset :disabled="busy||imageAssetRunning(shot)||['planning','stopping'].includes(project.status)">
      <label v-if="i>=0">这一镜头想表达什么<input v-model="shot.intent" :disabled="busy||imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @input="rememberMotionDraft(shot)"></label>
@@ -857,6 +873,16 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
       <template #logs><div v-if="i===selected" class="video-logs" role="log" aria-live="polite"><div v-for="(line,index) in project.logs" :key="index">{{line}}</div><p v-if="!project.logs.length">暂无任务日志</p></div></template>
      </WorkspacePanels>
     </div>
+    <details class="shot-design-references">
+     <summary>{{i<0?'场景参考素材':'本镜参考素材'}} <span>规划参考图与场景设置</span></summary>
+     <fieldset :disabled="busy||['planning','stopping'].includes(project.status)">
+      <ShotReferencePreview :shot="shot" :references="project.references||[]" :redraw-references="project.redraw_references||[]" :scene="sceneAssetFor(shot)" :scene-enabled="sceneReferencesEnabled" :reference-url="redrawReferenceUrl" :image-url="imageUrl" :continuity="project.image_continuity?.[shot.id]" :shots="project.shots" />
+      <div v-if="sceneAssetFor(shot)" class="shot-scene-reference">
+       <img v-if="sceneAssetFor(shot).image_status==='completed'" :src="imageUrl(sceneAssetFor(shot))" :alt="sceneAssetFor(shot).name||'场景参考'">
+       <div><strong>场景参考 · {{sceneAssetFor(shot).name||sceneAssetFor(shot).id}}</strong><p class="muted">{{sceneUsageLabel(shot)}}</p><label v-if="project.status==='image_review'" class="scene-reference-toggle"><input type="checkbox" v-model="useSceneReference" :disabled="imageAssetRunning(shot)||sceneAssetFor(shot).image_status!=='completed'">重绘时使用场景参考</label><p v-if="sceneAssetFor(shot).image_status!=='completed'" class="muted">场景图尚未完成，可在上方场景参考资产中查看或重试。</p></div>
+      </div>
+     </fieldset>
+    </details>
     <section v-if="shot.kind==='video'&&(shotEditingStage||project.status==='storyboard_review')" class="single-shot-refresh">
      <div><strong>重新规划本镜</strong><p class="muted">完整重规划从字幕与项目设定重新设计；局部更新沿用当前编辑内容。均不改变字幕、时长或其他镜头。</p></div>
      <button type="button" :disabled="busy||imageAssetRunning(shot)" @click="refreshShotPrompts(shot,'full')">完整重规划本镜</button>
@@ -964,6 +990,8 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </Teleport>
 </template>
 <style scoped>
+.shot-design-references{padding:13px 15px;border:1px solid var(--border,#35423f);border-radius:10px;margin:0 0 16px}.shot-design-references>summary{cursor:pointer;font-size:13px;font-weight:650}.shot-design-references>summary span{font-weight:400;font-size:12px;color:var(--muted,#aab8b3);margin-left:10px}.shot-design-references[open]>summary{margin-bottom:14px}.shot-design-references :deep(.planned-references){margin-bottom:0}.shot-design-references .shot-scene-reference{margin:12px 0 0}@media(max-width:600px){.shot-design-references>summary span{display:block;margin:6px 0 0}}
+.motion-detail .motion-preview{display:block;margin:0}.motion-detail .motion-preview video{max-height:min(48vh,480px);margin:0}.motion-result-image{position:relative;border-radius:12px;overflow:hidden}.video-workspace .motion-result-image img{display:block;max-height:min(48vh,480px);width:100%;object-fit:contain}.motion-image-caption{display:block;padding:8px 12px;font-size:12px;color:var(--muted,#aab8b3);background:var(--panel,#1e2625)}.motion-result-placeholder{display:grid;place-items:center;min-height:190px;padding:24px;border:1px dashed var(--border,#35423f);border-radius:12px;color:var(--muted,#aab8b3);text-align:center;line-height:1.7}.motion-secondary-tools{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}.motion-secondary-tools .motion-upload-button{margin-left:auto}.motion-generation-settings{padding:13px 15px;border:1px solid var(--border,#35423f);border-radius:10px;margin:16px 0}.motion-generation-settings>summary{cursor:pointer;font-size:13px;font-weight:650}.motion-generation-settings>summary span{font-size:12px;font-weight:400;margin-left:10px;color:var(--muted,#aab8b3)}.motion-generation-settings[open]>summary{margin-bottom:14px}.motion-result-log{margin-bottom:0!important}.motion-core-reference{margin-top:14px}.motion-secondary-tools .motion-download{margin:0}@media(max-width:600px){.motion-secondary-tools{align-items:flex-start}.motion-secondary-tools .motion-upload-button{margin-left:0}.motion-detail .motion-preview video{min-height:140px}.motion-generation-settings>summary span{display:block;margin:6px 0 0}}
 .auto-split-dialog header>button{flex-shrink:0;white-space:nowrap}
 .auto-split-notice{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;margin:12px 0;border:1px solid color-mix(in srgb,var(--accent,#81d9bd) 45%,var(--border,#35423f));border-radius:12px;background:color-mix(in srgb,var(--accent,#81d9bd) 7%,var(--panel,#1e2625))}.auto-split-notice p{margin:5px 0 0;font-size:13px;color:var(--muted)}.auto-split-dialog{max-width:680px}.auto-split-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.auto-split-dialog p{line-height:1.65}.auto-split-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}.auto-split-choices button{display:grid;text-align:left;gap:7px;padding:16px;border:1px solid var(--border,#35423f);border-radius:12px;color:inherit;background:transparent}.auto-split-choices button.active{border-color:var(--accent,#81d9bd);background:color-mix(in srgb,var(--accent,#81d9bd) 10%,transparent)}.auto-split-choices small{color:var(--muted)}.auto-split-targets{display:flex;gap:8px;flex-wrap:wrap}.auto-split-targets span{padding:6px 10px;border-radius:8px;background:var(--bg,#141918);font-size:13px}@media(max-width:600px){.auto-split-choices{grid-template-columns:1fr}.auto-split-notice{align-items:stretch;flex-direction:column}}
 .production-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:16px;margin-bottom:16px;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border:1px solid var(--border);border-radius:14px}

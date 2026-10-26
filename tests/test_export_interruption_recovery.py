@@ -19,6 +19,7 @@ class ExportInterruptionTests(unittest.TestCase):
             path = Path(directory)
             before = self.record()
             (path / 'record.json').write_text(json.dumps(before), encoding='utf-8')
+            (path / 'clip.mp4').write_bytes(b'test clip')
             with patch.object(studio, 'project_has_image_edits', return_value=False):
                 recovered = studio.read(path)
                 self.assertEqual(recovered['status'], 'export_failed')

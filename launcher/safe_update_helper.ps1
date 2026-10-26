@@ -28,6 +28,7 @@ $logPath = Join-Path $logsDir 'launcher_update.log'
 $resultPath = Join-Path $logsDir 'launcher_update_result.txt'
 $createdFiles = New-Object System.Collections.Generic.List[string]
 $portableMutationStarted = $false
+$updatePhase = 'preflight'
 
 New-Item -ItemType Directory -Path $logsDir, $historyDir -Force | Out-Null
 
@@ -57,10 +58,69 @@ function Wait-LauncherExit {
     throw "Launcher process $LauncherPid did not exit within 45 seconds."
 }
 
+function Expand-OcvUpdateArchive {
+    param([string]$Package, [string]$Destination)
+    # Use ZIP streams directly, without Expand-Archive's provider/metadata handling.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path -LiteralPath $Destination) { throw "Extraction directory already exists: $Destination" }
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($Package)
+    try {
+        $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+        $entries = New-Object System.Collections.Generic.List[object]
+        foreach ($entry in $archive.Entries) {
+            $name = $entry.FullName.Replace('/', '\')
+            if (-not $name -or [IO.Path]::IsPathRooted($name) -or $name.Contains(':')) {
+                throw "Unsafe ZIP entry: $name"
+            }
+            foreach ($part in $name.TrimEnd('\').Split('\')) {
+                if (-not $part -or $part -in @('.', '..') -or $part -match '[. ]$' -or
+                    $part -match '[<>"|?*\x00-\x1f]' -or
+                    $part -match '^(?i:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|$)') {
+                    throw "Unsafe ZIP entry: $name"
+                }
+            }
+            $unixType = ([long]$entry.ExternalAttributes -shr 16) -band 61440
+            if ($unixType -eq 40960) { throw "ZIP links are not allowed: $name" }
+            $target = Assert-UnderRoot (Join-Path $Destination $name) $Destination
+            if (-not $seen.Add($target.TrimEnd('\'))) { throw "Duplicate ZIP entry: $name" }
+            $entries.Add(@{ Entry = $entry; Target = $target; Directory = $name.EndsWith('\') })
+        }
+        [IO.Directory]::CreateDirectory($Destination) | Out-Null
+        foreach ($item in $entries) {
+            $entry = $item.Entry
+            try {
+                if ($item.Directory) {
+                    [IO.Directory]::CreateDirectory($item.Target) | Out-Null
+                    continue
+                }
+                [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($item.Target)) | Out-Null
+                $inputStream = $entry.Open()
+                try {
+                    $outputStream = [IO.File]::Open($item.Target, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+                    try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+                } finally { $inputStream.Dispose() }
+                $info = New-Object IO.FileInfo($item.Target)
+                if (-not $info.Exists -or $info.Length -ne $entry.Length) {
+                    throw 'Extracted file is missing or its length does not match the ZIP entry.'
+                }
+            } catch {
+                throw "ZIP extraction failed at '$($entry.FullName)': $($_.Exception.Message)"
+            }
+        }
+        Write-UpdateLog "ZIP stream extraction completed: $($entries.Count) entries."
+    } finally { $archive.Dispose() }
+}
+
 function Assert-OcvServicesStopped {
-    $netstat = & netstat.exe -ano -p tcp 2>$null
+    # Query the OS directly: a damaged PATH must not disable the safety gate.
+    try {
+        $listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+    }
+    catch {
+        throw "Cannot inspect listening ports; update cancelled: $($_.Exception.Message)"
+    }
     foreach ($port in @(8010, 5173, 8030)) {
-        if ($netstat | Select-String -Pattern (':{0}\s+.*LISTENING' -f $port)) {
+        if ($listeners | Where-Object { $_.Port -eq $port }) {
             throw "OCV managed port $port is still listening; update cancelled."
         }
     }
@@ -113,7 +173,7 @@ function Test-ProtectedRelativePath {
 function Restore-PortableBackup {
     Write-UpdateLog 'Restoring the pre-update backup.'
     if (Test-Path -LiteralPath $backupDir) {
-        Get-ChildItem -LiteralPath $backupDir -Recurse -File | ForEach-Object {
+        Get-ChildItem -LiteralPath $backupDir -Recurse -File -Force | ForEach-Object {
             $relative = $_.FullName.Substring($backupDir.Length).TrimStart('\')
             $destination = Assert-UnderRoot (Join-Path $root $relative) $root
             $parent = Split-Path -Parent $destination
@@ -168,22 +228,19 @@ try {
         $package = Assert-UnderRoot $PackagePath $tempRoot
         if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw "Update package not found: $package" }
 
-        $stage = Assert-UnderRoot (Join-Path $tempRoot ("stage_" + $timestamp)) $tempRoot
-        New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        # Avoid Expand-Archive provider/hidden-file behaviour on older Windows.
-        # Stage is unique; validate every entry before extracting any files.
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $archive = [System.IO.Compression.ZipFile]::OpenRead($package)
-        try {
-            foreach ($entry in $archive.Entries) {
-                Assert-UnderRoot (Join-Path $stage $entry.FullName) $stage | Out-Null
-            }
-        } finally { $archive.Dispose() }
-        [System.IO.Compression.ZipFile]::ExtractToDirectory($package, $stage)
-        $source = Get-ChildItem -LiteralPath $stage -Directory | Where-Object {
+        $updatePhase = 'extract'
+        $stage = Assert-UnderRoot (Join-Path $tempRoot ("stage_" + $timestamp + '_' + [Guid]::NewGuid().ToString('N'))) $tempRoot
+        Write-UpdateLog "Extracting ZIP package into $stage"
+        Expand-OcvUpdateArchive -Package $package -Destination $stage
+        $updatePhase = 'validate-package'
+        $sources = @(Get-ChildItem -LiteralPath $stage -Directory -Force | Where-Object {
             Test-Path -LiteralPath (Join-Path $_.FullName 'start_windows.bat')
-        } | Select-Object -First 1
-        if (-not $source) { throw 'Invalid update package: OCV project root was not found.' }
+        })
+        if ($sources.Count -ne 1) { throw 'Invalid update package: expected exactly one OCV project root.' }
+        $source = $sources[0]
+        if (-not [IO.File]::Exists((Join-Path $source.FullName '.env.example'))) {
+            throw 'The extracted update package is missing .env.example; original installation was not changed.'
+        }
 
         $channelPath = Join-Path $source.FullName 'launcher\update-channel.json'
         if (-not (Test-Path -LiteralPath $channelPath)) { throw 'The update package is missing update-channel.json.' }
@@ -203,6 +260,7 @@ try {
             throw 'This release requires a complete portable package and cannot be overlaid safely.'
         }
 
+        $updatePhase = 'backup'
         $files = Get-ChildItem -LiteralPath $source.FullName -Recurse -File -Force
         foreach ($file in $files) {
             if (-not (Test-Path -LiteralPath $file.FullName -PathType Leaf)) {
@@ -225,6 +283,7 @@ try {
         }
         $createdFiles | Set-Content -LiteralPath $createdListPath -Encoding UTF8
         $portableMutationStarted = $true
+        $updatePhase = 'overlay'
 
         foreach ($file in $files) {
             $relative = $file.FullName.Substring($source.FullName.Length).TrimStart('\')
@@ -253,14 +312,15 @@ try {
     exit 0
 }
 catch {
-    Write-UpdateLog ("Safe update failed: " + $_.Exception.Message)
-    Write-UpdateLog ("Failure location: " + $_.InvocationInfo.PositionMessage)
-    Write-UpdateLog ("Failure stack: " + $_.ScriptStackTrace)
+    $failure = $_
+    Write-UpdateLog ("Safe update failed: " + $failure.Exception.Message)
+    Write-UpdateLog ("Phase=$updatePhase; PowerShell=$($PSVersionTable.PSVersion); MutationStarted=$portableMutationStarted")
+    Write-UpdateLog ("Location: " + $failure.InvocationInfo.PositionMessage + " Stack: " + $failure.ScriptStackTrace)
     if ($Mode -eq 'portable' -and $portableMutationStarted) {
         try { Restore-PortableBackup }
         catch { Write-UpdateLog ("Automatic rollback failed: " + $_.Exception.Message) }
     }
-    ("FAILED|$Mode|" + $_.Exception.Message) | Set-Content -LiteralPath $resultPath -Encoding UTF8
+    ("FAILED|$Mode|[$updatePhase] " + $failure.Exception.Message) | Set-Content -LiteralPath $resultPath -Encoding UTF8
     Restart-Launcher
     exit 1
 }

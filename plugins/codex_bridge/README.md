@@ -17,7 +17,7 @@
 
 想长期安装到自己的 Codex，可让 Codex 按当前安装规范将 `skills/ocv-production-bridge` 整个目录安装为个人 Skill，已有同名版本须先检查；这份拷贝不会随 OCV 自动更新。Skill 的结构参考 [OpenAI 官方说明](https://learn.chatgpt.com/docs/build-skills)。OCV 不自动改动用户的 Codex 配置。
 
-目前桥接的是动态视频草稿与分镜规划，不是图文视频编辑或一键全自动出片；它也不是 MCP 服务。完整操作契约以随包 Skill 和接口 schema 为准。
+旧 `ocv_bridge.py` 客户端及上述流程保持兼容，主要用于动态视频交接。新增的独立本地 MCP 入口覆盖图文与动态制作，见 [MCP 安装与使用](README_MCP.md)。MCP 不自动启用、不替换旧接口，也不修改客户端配置；完整操作参数按正在运行的 OCV 接口获取。
 
 ## 固定客户端
 

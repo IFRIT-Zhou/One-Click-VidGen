@@ -259,6 +259,12 @@ export const api = {
   }),
   ttsEditor: (id) => requestJSON(`/api/jobs/${id}/tts-editor`),
   ttsEditorStatus: (id) => requestJSON(`/api/jobs/${id}/tts-editor/status`),
+  previewTtsStructure: (id, payload) => requestJSON(`/api/jobs/${id}/tts-editor/structure/preview`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  editTtsStructure: (id, payload) => requestJSON(`/api/jobs/${id}/tts-editor/structure`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   regenerateTtsSegments: (id, indices, settings = {}, textOverrides = {}, subtitleTextOverrides = {}) => requestJSON(`/api/jobs/${id}/tts-editor/regenerate`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ indices, tts_text_overrides: textOverrides, subtitle_text_overrides: subtitleTextOverrides, ...settings }),
   }),

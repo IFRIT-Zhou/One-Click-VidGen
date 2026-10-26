@@ -397,6 +397,18 @@ def plan_storyboard(scenes, style, characters, world, references, progress, para
         persist_state(stage)
         if checkpoint:
             checkpoint(copy.deepcopy(context), copy.deepcopy(shots), stage)
+    # Resume old partial plans that described a displayed label in prose but
+    # omitted it from the structured registry. Repair only unfinished shots;
+    # completed neighbors and their media are not a migration target.
+    from .video_text_policy import motion_text_handoff_issues
+    for shot in shots:
+        if (shot['kind'] == 'video' and shot['id'] in completed.get('motion', [])
+                and any(shot['id'] not in completed.get(phase, []) for phase in ('image', 'video'))):
+            issues = motion_text_handoff_issues(shot.get('motion_plan'))
+            if issues:
+                for phase in ('motion', 'image', 'video'):
+                    completed[phase] = [identity for identity in completed.get(phase, []) if identity != shot['id']]
+                progress(f"镜头 {shot['id']}：修复未完成方案的可见文字登记，其他镜头保持不变。")
     preserve('镜头划分')
     # Keep structured responses below the shared output budget, including
     # providers that spend part of that budget on reasoning.

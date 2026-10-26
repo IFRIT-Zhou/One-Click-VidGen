@@ -1,5 +1,5 @@
 @echo off
-chcp 65001 >nul
+"%SystemRoot%\System32\chcp.com" 65001 >nul 2>nul
 setlocal EnableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
@@ -26,7 +26,8 @@ set "NUMBA_CACHE_DIR=%ROOT_DIR%runtime\cache\numba"
 set "MPLCONFIGDIR=%ROOT_DIR%runtime\cache\matplotlib"
 set "CUDA_CACHE_PATH=%ROOT_DIR%runtime\cache\cuda"
 set "npm_config_cache=%ROOT_DIR%runtime\npm-cache"
-set "PATH=%ROOT_DIR%runtime\python;%ROOT_DIR%runtime\python\Scripts;%ROOT_DIR%runtime\python\Lib\site-packages\torch\lib;%ROOT_DIR%tools\ffmpeg\bin;%ROOT_DIR%runtime\node;%PATH%"
+rem Repair only this process environment, never the user's global PATH.
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\WindowsPowerShell\v1.0;%ROOT_DIR%runtime\python;%ROOT_DIR%runtime\python\Scripts;%ROOT_DIR%runtime\python\Lib\site-packages\torch\lib;%ROOT_DIR%tools\ffmpeg\bin;%ROOT_DIR%runtime\node;%PATH%"
 set "HYPERFRAMES_BROWSER_PATH="
 for /r "%ROOT_DIR%runtime\hyperframes\.cache\hyperframes\chrome" %%F in (chrome-headless-shell.exe) do if not defined HYPERFRAMES_BROWSER_PATH set "HYPERFRAMES_BROWSER_PATH=%%F"
 
@@ -68,9 +69,27 @@ if not defined HYPERFRAMES_BROWSER_PATH (
     exit /b 1
 )
 
-where ffmpeg >nul 2>nul
+rem Prefer the bundled executable; do not confuse a missing WHERE with missing FFmpeg.
+set "FFMPEG_EXE=%ROOT_DIR%tools\ffmpeg\bin\ffmpeg.exe"
+if not exist "!FFMPEG_EXE!" (
+    set "FFMPEG_EXE="
+    if not exist "%SystemRoot%\System32\where.exe" (
+        echo [ERROR] Bundled FFmpeg is missing and Windows where.exe is unavailable.
+        echo Expected: %ROOT_DIR%tools\ffmpeg\bin\ffmpeg.exe
+        pause
+        exit /b 1
+    )
+    for /f "delims=" %%F in ('%SystemRoot%\System32\where.exe ffmpeg.exe 2^>nul') do if not defined FFMPEG_EXE set "FFMPEG_EXE=%%F"
+)
+if not defined FFMPEG_EXE (
+    echo [ERROR] FFmpeg was not found in the portable package or PATH.
+    echo Expected: %ROOT_DIR%tools\ffmpeg\bin\ffmpeg.exe
+    pause
+    exit /b 1
+)
+"!FFMPEG_EXE!" -version >nul 2>nul
 if errorlevel 1 (
-    echo [ERROR] FFmpeg was not found.
+    echo [ERROR] FFmpeg exists but could not run: !FFMPEG_EXE!
     pause
     exit /b 1
 )

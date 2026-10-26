@@ -1253,6 +1253,7 @@ def sync_edited_audio(identity: str, data: Review, request: Request):
         new_audio = source / 'input' / '配音.wav'
         from .final_narration import final_narration_snapshot
         snapshot = final_narration_snapshot(source, scenes)
+        scenes = snapshot['scenes']
         if (audio_path.read_bytes() == new_audio.read_bytes() and old == scenes
                 and record.get('final_narration', {}).get('fingerprint') == snapshot['fingerprint']):
             return record
@@ -1260,6 +1261,21 @@ def sync_edited_audio(identity: str, data: Review, request: Request):
             'shots': copy.deepcopy(record['shots']), 'audio': record['audio'], 'reason': '配音编辑'})
         record['edit_history'] = record['edit_history'][-10:]
         from .video_audio_sync import sync_shot_timings
+        old_token = record.get('final_narration', {}).get('structure_token', 'initial')
+        new_token = snapshot.get('structure_token', 'initial')
+        if old_token != new_token:
+            history = record.setdefault('audio_structure_history', [])
+            restore = next((item for item in reversed(history) if item['token'] == new_token), None)
+            history.append(dict(token=old_token, scenes=copy.deepcopy(old), shots=copy.deepcopy(record['shots']),
+                                audio=record['audio'], final_narration=copy.deepcopy(record.get('final_narration', {}))))
+            record['audio_structure_history'] = history[-20:]
+            if restore:
+                # Audio undo restores the corresponding visual bindings/assets,
+                # instead of trying to infer deleted shots from repeated text.
+                record['scenes'] = copy.deepcopy(restore['scenes'])
+                record['shots'] = copy.deepcopy(restore['shots'])
+                record['final_narration'] = copy.deepcopy(restore['final_narration'])
+                audio_path = path / restore['audio']
         try:
             detached = sync_shot_timings(record, scenes, audio_path, new_audio, new_duration=snapshot['duration'])
         except ValueError as exc:
@@ -1369,6 +1385,7 @@ def import_new_project(data, user):
                     description=row['description'], kind=row['kind'], file=relative))
         from .final_narration import final_narration_snapshot
         record['final_narration'] = final_narration_snapshot(source, scenes)
+        record['scenes'] = record['final_narration']['scenes']
         record['creation_parameters']['script'] = record['final_narration']['script']
         with LOCK:
             save(target, record)

@@ -191,6 +191,7 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
         raise ValueError("精修后的完整字幕时间线为空，无法重建时间轴")
 
     canonical: list[dict[str, Any]] = []
+    narration_ids = set()
     for position, entry in enumerate(entries, 1):
         start = float(entry["start"])
         end = float(entry["end"])
@@ -215,6 +216,12 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
             "start": round(start, 6),
             "end": round(end, 6),
         })
+        if base.get('narration_unit_id'):
+            if base['narration_unit_id'] in narration_ids:
+                base['narration_ancestors'] = list(dict.fromkeys([
+                    *(base.get('narration_ancestors') or []), base['narration_unit_id']]))
+                base['narration_unit_id'] = uuid.uuid4().hex
+            narration_ids.add(base['narration_unit_id'])
         canonical.append(base)
 
     payload = json.dumps(canonical, ensure_ascii=False, indent=2)
@@ -1746,6 +1753,8 @@ class TtsEditor:
             _concat_segment_wavs(restored["segments"], segment_dir, temp_audio)
             temp_audio.replace(project_dir / "input" / "配音.wav")
         TtsEditor._sync_module1_flat_outputs(project_dir)
+        from .tts_structure_edit import restore_extras
+        restore_extras(project_dir, history)
         if consume:
             shutil.rmtree(history, ignore_errors=True)
 
@@ -1759,8 +1768,14 @@ class TtsEditor:
         history = entries[-1]
         meta_path = history / "history.json"
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+        prior_revision = self.revision(job.id, user_id)
         self._restore_boundary_script(job, project_dir, history)
         self._restore_history(project_dir, history, consume=True)
+        if meta.get('action') in {'插入配音片段', '删除配音片段'}:
+            manifest = self._load_manifest(project_dir)
+            manifest['revision'] = prior_revision + 1
+            (self._segment_dir(project_dir)/SEGMENT_MANIFEST).write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
         self._sync_module1_flat_outputs(project_dir, job.id)
         _commit_step_audio_edit(job, project_dir)
         store.log(job, f"已撤销音频编辑：{meta.get('action') or '上一步'}")
