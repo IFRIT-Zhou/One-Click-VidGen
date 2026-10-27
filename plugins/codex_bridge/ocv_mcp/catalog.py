@@ -75,6 +75,7 @@ subtitle_render|POST|/{job_id}/subtitle-render|generate|按字幕样式与 BGM �
 group('tts_', '/api/jobs/{job_id}/tts-editor', '''
 get|GET||read|读取逐句配音、显示字幕、朗读文本和编辑版本；两种文本不能混用。
 status|GET|/status|read|查询配音编辑和重配进度。
+cancel|POST|/cancel|edit|仅停止指定 task_id 的配音编辑，保留正式配音；不停止整期制作。取消请求不等于上游已停止，请继续查状态。
 audio|GET|/audio/{index}|read|下载指定句最新音频用于试听。|download
 pending_audio|GET|/pending-audio/{index}|read|试听保留但尚未采用的新配音。|download
 adopt_estimated|POST|/adopt-estimated|edit|采用保留音频及估算对齐；先说明对齐风险。
@@ -86,6 +87,10 @@ undo|POST|/undo|edit|撤销配音编辑，按原生规则恢复时间轴。
 token_count|POST|/token-count|read|检查朗读文本 token 数，不生成。
 suggest_boundaries|POST|/suggest-boundaries|generate|调用断句模型给出建议，不直接重配；可能收费。
 resegment|POST|/resegment|generate|调整或新增交界并局部重配；sync_text=true，文字修改同步字幕、文案和时间轴。
+''')
+
+group('job_', '/api/jobs/{job_id}/step-workflow', '''
+subtitles_preview|POST|/subtitles/preview|read|仅文字校对预检：提交 updates 查看差异，可提供定稿 reference_text 和领域 terms；不修改时间、音频或调用模型。
 ''')
 
 group('visual_', '/api/jobs/{job_id}/visual-editor', '''
@@ -175,6 +180,9 @@ clip_replace|POST|/{identity}/videos/{shot_id}/upload|edit|用授权本地视频
 layout_preview|POST|/{identity}/layout-preview|read|获取字幕布局预览。|download
 export|POST|/{identity}/export|generate|按最终时间轴合成现有素材，裁切或减速，不重新生成动态镜头。
 export_file|GET|/{identity}/export/{variant}|read|下载 raw 或 subtitles 成片。|download
+storyboard_preview_plan|GET|/{identity}/storyboard-preview/plan|read|读取分镜预览动作说明、图片就绪情况与预览任务；不使用 H3 扩写。
+storyboard_preview|POST|/{identity}/storyboard-preview|generate|使用核心图和最终配音本地合成带动静标记及动作说明的预览；不调用生成模型，不改变正式制作进度。
+storyboard_preview_file|GET|/{identity}/storyboard-preview/file|read|下载最近成功的分镜预览 MP4。|download
 ''')
 
 group('bridge_', '/api/codex-bridge', '''
@@ -184,6 +192,7 @@ draft|GET|/drafts/{identity}|read|读取指定草稿。
 draft_save|PUT|/drafts|edit|填写或修改初始草稿。
 draft_archive|PUT|/drafts/{identity}/archive|edit|归档或恢复草稿。
 audio_tasks|GET|/audio-tasks|read|读取可交接配音任务。
+audio_readiness|GET|/audio-tasks/{job_id}/readiness|read|只读预检正式配音能否交接，返回 can_import 与 blocked_reason；不会生成或修改配音。
 from_audio|POST|/from-audio|edit|从用户已确认配音导入制作桥。
 pack|GET|/projects/{identity}/pack|read|读取紧凑规划包、最终字幕、参考素材及版本。
 shot|GET|/projects/{identity}/shots/{shot_id}|read|只读取单镜资料，减少上下文。
@@ -200,9 +209,10 @@ patch_apply|POST|/projects/{identity}/patch-apply|edit|原子提交局部提示�
 scenes|GET|/projects/{identity}/scene-assets|read|读取场景参考资产。
 scene_validate|POST|/projects/{identity}/scene-validate|read|预检场景替换/解绑/恢复影响，取得确认令牌。
 scene_apply|POST|/projects/{identity}/scene-apply|edit|提交已确认场景修改，不绕过原生确认令牌。
-image_validate|POST|/projects/{identity}/image-validate|read|预检单张图片生成。
+image_validate|POST|/projects/{identity}/image-validate|read|在 image_review 阶段预检单张重绘，返回实际素材身份、顺序、有效提示词及渠道；首次生图用 video_images_generate。
+images_preflight|GET|/projects/{identity}/images-preflight|read|首次生图的只读预检：当前阶段、模型渠道、待生图数量和逐镜参考；不提交生成或收费。
 image_apply|POST|/projects/{identity}/image-apply|generate|提交已确认单张图片生成，可能收费。
-batch_validate|POST|/projects/{identity}/image-batch-validate|read|预检批量图片生成。
+batch_validate|POST|/projects/{identity}/image-batch-validate|read|在 image_review 阶段预检批量重绘；其他阶段返回明确下一步，不应盲目等待重试。
 batch_apply|POST|/projects/{identity}/image-batch-apply|generate|提交已确认图片批次，可能收费。
 image_settings|GET|/projects/{identity}/generation-settings|read|读取项目实际图片渠道和参数。
 image_settings_save|PATCH|/projects/{identity}/generation-settings|edit|修改本项目图片生成参数。

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from backend.app.cloud_client import CloudConfig
 from backend.app.cloud_tts import (
+    CloudTtsCancelled,
     CLOUD_MAX_CHUNKS,
     _sanitize_pcm16_wav,
     _wav_info,
@@ -28,6 +29,38 @@ def write_wav(path: Path, frames: int, value: int = 1000) -> None:
 
 
 class CloudTtsTest(unittest.TestCase):
+    def test_cancellation_during_chunk_download_also_cancels_upstream(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        for point in ('after_submit', 'between_downloads', 'before_assemble'):
+            with self.subTest(point=point), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cancelled = False
+                downloads = 0
+                def on_remote(*_):
+                    nonlocal cancelled
+                    if point == 'after_submit':
+                        cancelled = True
+                def download(url, target):
+                    nonlocal cancelled, downloads
+                    downloads += 1
+                    write_wav(target, 1200)
+                    if (point == 'between_downloads' and downloads == 1) or (point == 'before_assemble' and downloads == 2):
+                        cancelled = True
+                remote = dict(job_id='remote', status='completed', progress=100,
+                              result={'chunks':[{'index':0, 'audio_url':'/0'}, {'index':1, 'audio_url':'/1'}]})
+                client = SimpleNamespace(config=SimpleNamespace(max_wait_seconds=30),
+                    create_job=Mock(return_value=remote), download_to=download,
+                    cancel_job=Mock(return_value={'status':'cancelled'}))
+                with self.assertRaises(CloudTtsCancelled):
+                    synthesize_cloud_tts(client=client, local_job_id='job',
+                        request={'cluster_voice_type':'preset','cluster_voice_id':'voice_01.wav'},
+                        output_dir=root/'output', segment_archive_dir=root/'segments', temp_dir=root/'temp',
+                        is_cancelled=lambda:cancelled, on_progress=lambda *_:None,
+                        on_log=lambda *_:None, on_remote_job=on_remote, chunks_override=['甲。','乙。'])
+                client.cancel_job.assert_called_once_with('remote')
+                self.assertFalse((root/'output/final_output.wav').exists())
+
     def test_long_script_is_coalesced_to_cloud_chunk_limit_without_text_loss(self) -> None:
         paragraphs = [
             f"第{index}段用于验证集群报价分块限制，内容保持完整并按原始顺序提交。"

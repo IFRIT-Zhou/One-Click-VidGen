@@ -146,7 +146,37 @@ class ShotEditTests(unittest.TestCase):
         self.assertEqual(result['prompt_image_numbers'], [1, 2])
         result = self.client.get(self.endpoint('shots/shot01/references-preview?use_current_image=false')).json()
         self.assertFalse(result['ok'])
-        self.assertEqual(result['unmapped_image_numbers'], [2])
+        self.assertEqual(result['error']['code'], 'REFERENCE_IDENTITY_MISSING')
+        self.assertIn('current_image:shot01', result['error']['message'])
+
+    def test_enabling_current_image_remaps_material_by_identity_once(self):
+        r = self.load()
+        r['redraw_references'] = [{'id': 'ref_04', 'file': 'assets/other.jpg'}]
+        r['shots'][0].update(reference_ids=['ref_04'], image_material_numbers_bound=True,
+                            image_prompt='图1为文献中的器械结构')
+        bridge.studio.save(self.path, r)
+        url = self.endpoint('shots/shot01/references-preview?use_current_image=true')
+        first = self.client.get(url).json()
+        self.assertTrue(first['ok'], first)
+        self.assertIn('图2为文献', first['effective_prompt'])
+        second = self.client.get(url).json()
+        self.assertEqual(first['effective_prompt'], second['effective_prompt'])
+        self.assertEqual(self.load()['shots'][0]['image_prompt'], '图1为文献中的器械结构')
+
+    def test_patch_context_and_generation_preview_agree(self):
+        r = self.load()
+        r['redraw_references'] = [{'id': 'photo', 'file': 'assets/other.jpg'}]
+        bridge.studio.save(self.path, r)
+        self.repair['shots'][0].update(reference_ids=['photo'], image_prompt='图1保持主体与底图布局，图2为器械参考',
+            image_reference_context={'use_current_image': True, 'use_scene_reference': False})
+        result = self.run_patch().json()
+        self.assertTrue(result['ok'], result)
+        saved = self.load()['shots'][0]
+        self.assertTrue(saved['redraw_selection']['use_current_image'])
+        preview = self.client.get(self.endpoint('shots/shot01/references-preview')).json()
+        self.assertTrue(preview['ok'], preview)
+        self.assertEqual([r['kind'] for r in preview['references']], ['current_image', 'reference'])
+        self.assertEqual(preview['effective_prompt'], saved['image_prompt'])
 
     def test_replacement_readback_failure_restores_old_record_and_image(self):
         new = self.upload()

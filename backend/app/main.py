@@ -522,6 +522,8 @@ from .video_export import reconcile_completed_projects, router as video_export_r
 app.include_router(video_model_config_router)
 app.include_router(video_generation_router)
 app.include_router(video_export_router)
+from .storyboard_preview import router as storyboard_preview_router
+app.include_router(storyboard_preview_router)
 from .image_profiles import router as image_profiles_router
 app.include_router(image_profiles_router)
 from .subtitle_preview import router as subtitle_preview_router
@@ -2499,12 +2501,22 @@ def get_job(job_id: str, request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
+def cancel_job(job_id: str, request: Request, expected_run_id: str | None = None) -> dict[str, Any]:
     user = require_user(request)
     job = store.get(job_id)
     if not job or job.user_id != int(user["id"]):
         raise HTTPException(status_code=404, detail="job not found")
-    return store.cancel(job)
+    try:
+        if expected_run_id is not None and job.snapshot()['run_id'] != expected_run_id:
+            raise ValueError('任务已重新启动，请刷新后停止对应任务')
+        task = tts_editor.status(job_id)
+        if task.get('status') == 'running' and task.get('task_id'):
+            result = tts_editor.cancel(job_id, task['task_id'])
+            if not result['accepted']:
+                raise ValueError(result.get('reason', '配音编辑正在保存，请稍后停止'))
+        return store.cancel(job, expected_run_id=expected_run_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -2760,6 +2772,12 @@ def save_step_workflow_subtitles(
         timeline_path, subtitle_path, items = _step_subtitle_payload(job)
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    from .subtitle_proofread import preview as proofread_preview, timing_token
+    try:
+        proofread = proofread_preview(items, payload.updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    before_timing = timing_token(items)
     valid_ids = {
         str(item.get("slide_id") or item.get("id") or f"scene_{index:03d}")
         for index, item in enumerate(items, start=1)
@@ -2787,7 +2805,30 @@ def save_step_workflow_subtitles(
     persist_step_workflow_state(job, stage, message="字幕文字已保存，等待确认")
     store.update(job, request=job.request, message="字幕文字已保存，等待确认")
     store.log(job, f"分步模式：已保存 {len(payload.updates)} 句字幕修改")
-    return get_step_workflow_subtitles(job_id, request)
+    result = get_step_workflow_subtitles(job_id, request)
+    result['verification'] = {'timing_unchanged': timing_token(items) == before_timing,
+                              'audio_unchanged': True, 'tts_called': False, 'changes': proofread['changes']}
+    return result
+
+
+class SubtitleProofreadRequest(BaseModel):
+    updates: dict[str, str] = Field(default_factory=dict)
+    reference_text: str = Field(default='', max_length=50000)
+    terms: list[str] = Field(default_factory=list, max_length=200)
+
+
+@app.post('/api/jobs/{job_id}/step-workflow/subtitles/preview')
+def preview_step_subtitles(job_id: str, payload: SubtitleProofreadRequest, request: Request):
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user['id']):
+        raise HTTPException(404, 'job not found')
+    try:
+        _, _, items = _step_subtitle_payload(job)
+        from .subtitle_proofread import preview
+        return preview(items, payload.updates, payload.reference_text or str(job.request.get('script') or ''), payload.terms)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/api/jobs/{job_id}/retry-tts")
@@ -3514,9 +3555,35 @@ def get_tts_editor(job_id: str, request: Request) -> dict[str, Any]:
 
 @app.get("/api/jobs/{job_id}/tts-editor/status")
 def get_tts_editor_status(job_id: str, request: Request) -> dict[str, Any]:
-    _job, user_id = _owned_completed_job(job_id, request)
-    return {"task": tts_editor.status(job_id), "revision": tts_editor.revision(job_id, user_id),
-            "pending_alignment": tts_editor.pending_alignment(job_id, user_id)}
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user['id']):
+        raise HTTPException(404, 'job not found')
+    user_id = int(user['id'])
+    revision = tts_editor.revision(job_id, user_id)
+    try:
+        pending = tts_editor.pending_alignment(job_id, user_id)
+    except (OSError, ValueError):
+        pending = None
+    task = tts_editor.status(job_id)
+    return {"task": task, "revision": revision, "adopted_version": revision,
+            "pending_version": task.get('pending_version'), "pending_alignment": pending}
+
+
+class TtsEditCancelRequest(BaseModel):
+    task_id: str
+
+
+@app.post('/api/jobs/{job_id}/tts-editor/cancel')
+def cancel_tts_editor(job_id: str, payload: TtsEditCancelRequest, request: Request):
+    user = require_user(request)
+    job = store.get(job_id)
+    if not job or job.user_id != int(user['id']):
+        raise HTTPException(404, 'job not found')
+    try:
+        return tts_editor.cancel(job_id, payload.task_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 class TtsEstimatedAdoption(BaseModel):

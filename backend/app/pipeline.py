@@ -275,6 +275,7 @@ class Job:
             "progress": self.progress,
             "message": self.message,
             "created_at": self.created_at,
+            "run_id": self.request.get('_run_generation') or f'legacy:{self.id}:{self.created_at}',
             "updated_at": self.updated_at,
             "logs": self.logs[-250:],
             "artifacts": self.artifacts,
@@ -553,6 +554,8 @@ class JobStore:
         """Queue a pipeline run and execute jobs serially against the shared workspace."""
         with self._lock:
             previous = self._pending_runs.get(job.id)
+            if previous is None:
+                job.request['_run_generation'] = uuid.uuid4().hex
             self._pending_runs[job.id] = (
                 resume or bool(previous and previous[0]),
                 priority or bool(previous and previous[1]),
@@ -755,8 +758,10 @@ class JobStore:
             if self._processes.get(job.id) is process:
                 self._processes.pop(job.id, None)
 
-    def cancel(self, job: Job) -> dict[str, Any]:
+    def cancel(self, job: Job, *, expected_run_id: str | None = None) -> dict[str, Any]:
         with self._lock:
+            if expected_run_id is not None and job.snapshot()['run_id'] != expected_run_id:
+                raise ValueError('任务已重新启动，停止请求对应旧任务；请刷新后重试')
             if job.status in TERMINAL_JOB_STATUSES:
                 return job.snapshot()
             event = self._cancel_events.setdefault(job.id, threading.Event())
@@ -2609,12 +2614,24 @@ def render_semantic_visual_video(
     )
 
 
+def _replace_file_with_retry(pending: Path, target: Path) -> None:
+    """Bounded retry for transient Windows file-reader/antivirus handles."""
+    for attempt in range(4):
+        try:
+            os.replace(pending, target)
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            time.sleep(.05 * (attempt + 1))
+
+
 def _copy_file_atomic(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     pending = target.with_name(f".{target.name}.{uuid.uuid4().hex}.pending")
     try:
         shutil.copy2(source, pending)
-        os.replace(pending, target)
+        _replace_file_with_retry(pending, target)
     finally:
         pending.unlink(missing_ok=True)
 
@@ -3444,6 +3461,7 @@ def _archive_uploaded_audio_segments(
     pending = segment_archive.with_name(f".{segment_archive.name}.{uuid.uuid4().hex}.tmp")
     shutil.rmtree(pending, ignore_errors=True)
     pending.mkdir(parents=True, exist_ok=True)
+    published = False
     try:
         with wave.open(str(audio_path), "rb") as source:
             params = source.getparams()
@@ -3492,11 +3510,18 @@ def _archive_uploaded_audio_segments(
         (pending / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        if segment_archive.exists():
-            shutil.rmtree(segment_archive)
-        os.replace(pending, segment_archive)
+        # Windows readers/AV may hold a directory handle. Publish individual
+        # files with rollback, manifest last; never remove the old directory.
+        _sync_segment_archive_files(pending, segment_archive)
+        published = True
+    except Exception as exc:
+        if (pending / 'manifest.json').is_file():
+            raise RuntimeError(f'上传配音分段保存失败，原始配音未改动；候选分段保留在 {pending}。'
+                               f'请关闭占用文件后恢复任务：{type(exc).__name__}: {exc}') from exc
+        raise
     finally:
-        shutil.rmtree(pending, ignore_errors=True)
+        if published or not (pending / 'manifest.json').is_file():
+            shutil.rmtree(pending, ignore_errors=True)
     return segment_archive
 
 
@@ -3591,7 +3616,15 @@ def _segment_archives_match(source: Path, target: Path) -> bool:
     return True
 
 
+_ARCHIVE_COMMIT_LOCK = threading.RLock()
+
+
 def _sync_segment_archive_files(source: Path, target: Path) -> None:
+    with _ARCHIVE_COMMIT_LOCK:
+        _sync_segment_archive_files_locked(source, target)
+
+
+def _sync_segment_archive_files_locked(source: Path, target: Path) -> None:
     """Publish files without renaming a directory Windows readers may still hold.
 
     Keep a rollback copy and publish the manifest last. The checkpoint revision
@@ -3603,21 +3636,28 @@ def _sync_segment_archive_files(source: Path, target: Path) -> None:
     files = sorted((p for p in source.rglob("*") if p.is_file()),
                    key=lambda p: (p.name == "manifest.json", str(p)))
     published = []
+    keep_backup = False
     try:
         for path in files:
             relative = path.relative_to(source)
             _copy_file_atomic(path, target / relative)
             published.append(relative)
-    except Exception:
-        for relative in reversed(published):
-            old = backup / relative
-            if old.is_file():
-                _copy_file_atomic(old, target / relative)
-            else:
-                (target / relative).unlink(missing_ok=True)
+    except Exception as original:
+        try:
+            for relative in reversed(published):
+                old = backup / relative
+                if old.is_file():
+                    _copy_file_atomic(old, target / relative)
+                else:
+                    (target / relative).unlink(missing_ok=True)
+        except Exception as rollback:
+            keep_backup = True
+            raise RuntimeError(f'配音分段提交及回滚受阻；请勿删除恢复备份 {backup}；'
+                               f'提交错误：{original}；回滚错误：{rollback}') from original
         raise
     finally:
-        shutil.rmtree(backup, ignore_errors=True)
+        if not keep_backup:
+            shutil.rmtree(backup, ignore_errors=True)
 
 
 def sync_refined_step_audio_assets(job: Job, project_dir: Path) -> dict[str, Any]:

@@ -66,11 +66,17 @@ class AudioHandoff(StrictModel):
     audio_confirmed: Literal[True]
 
 
+class ImageReferenceContext(StrictModel):
+    use_current_image: bool = False
+    use_scene_reference: bool = True
+
+
 class ShotPatch(StrictModel):
     id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,80}$')
     intent: str | None = Field(default=None, min_length=1, max_length=3000)
     image_prompt: str | None = Field(default=None, min_length=1, max_length=20000)
     reference_ids: list[str] | None = Field(default=None, max_length=4)
+    image_reference_context: ImageReferenceContext | None = None
     motion_plan: dict[str, Any] | None = None
     video_prompt: str | None = Field(default=None, max_length=20000)
     evidence: str | None = Field(default=None, max_length=6000)
@@ -313,11 +319,19 @@ def projects(request: Request):
 def audio_tasks(request: Request, page: int = 1):
     user = user_for(request)
     from .pipeline import store
+    from .video_sources import source_readiness
     data = store.list_page(user_id=int(user['id']), page=page, page_size=100)
     return {'page': page, 'total_pages': data.get('total_pages', 1), 'items': [
         {'id': r['id'], 'name': r.get('request', {}).get('project_name', ''),
-         'status': r.get('status'), 'message': r.get('message', '')}
+         'status': r.get('status'), 'message': r.get('message', ''),
+         **source_readiness(int(user['id']), r['id'], include_snapshot=False)}
         for r in data['jobs'] if r.get('request', {}).get('dynamic_video')]}
+
+
+@router.get('/audio-tasks/{job_id}/readiness')
+def audio_task_readiness(job_id: str, request: Request):
+    from .video_sources import source_readiness
+    return source_readiness(int(user_for(request)['id']), job_id)
 
 
 @router.post('/from-audio')
@@ -576,6 +590,17 @@ def compile_patches(record, path, data):
             selection['reference_ids'] = list(row['reference_ids'])
             selection['use_current_image'] = False
             row['redraw_selection'] = selection
+        if 'image_reference_context' in values:
+            if 'image_prompt' not in values:
+                raise ValueError(f'{patch.id} 修改参考图上下文时须同时提交 image_prompt')
+            row.setdefault('redraw_selection', {}).update(values['image_reference_context'])
+        if 'image_prompt' in values or 'reference_ids' in values:
+            selection = row.get('redraw_selection') or {}
+            row['image_prompt_reference_order'] = (
+                ['current_image:' + row['id']] if selection.get('use_current_image') else []) + [
+                'reference:' + value for value in selection.get('reference_ids', row.get('reference_ids', []))]
+            from .image_reference_binding import context_key
+            row['image_prompt_reference_context_key'] = context_key(row)
         if image_changed:
             row['image_prompt_out_of_sync'] = bool(row.get('image') or row.get('image_file') or row.get('image_status') == 'completed')
             row['image_prompt_warnings'] = []

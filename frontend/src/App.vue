@@ -889,7 +889,7 @@
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听与选择重配</strong></div>
                 <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
-                <button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button>
+                <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
                 <button v-if="ttsEditor.structural_edit_available !== false" class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
                   {{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}
                 </button>
@@ -1643,6 +1643,7 @@
                   <div class="visual-timing-head-actions">
                     <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
                     <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
+                    <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
                     <button
                       class="primary-btn compact-btn"
                       type="button"
@@ -2236,7 +2237,7 @@
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听、重配、交界与停顿</strong></div>
                 <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
-                <div class="inline-actions"><button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button><button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">重配选中句</button></div>
+                <div class="inline-actions"><TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" /><button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">重配选中句</button></div>
               </div>
               <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
               <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '当前任务没有可精修的逐句音频。' }}</div>

@@ -61,6 +61,48 @@ class FakeBackend:
 
 
 class McpAdapterTests(unittest.TestCase):
+    def test_cancel_survives_progress_but_not_new_generation(self):
+        original = self.backend.call
+        state = {'run_id': 'run-1', 'request': {'tts_speed': 1}}
+        def call(method, path, **kwargs):
+            result = original(method, path, **kwargs)
+            if method == 'GET' and path == '/api/jobs/job1':
+                result.update(state)
+            return result
+        self.backend.call = call
+        plan = self.prep('ocv_job_cancel', {'path': {'job_id': 'job1'}})
+        self.backend.revision += 1
+        self.adapter.commit(plan['plan_id'])
+        self.assertEqual(self.completed(plan['plan_id'])['status'], 'submitted')
+        self.assertEqual(self.backend.calls[-1][2]['params']['expected_run_id'], 'run-1')
+        plan = self.prep('ocv_job_cancel', {'path': {'job_id': 'job1'}}, 'new_cancel_123')
+        state['run_id'] = 'run-2'
+        with self.assertRaisesRegex(ValueError, '变化'):
+            self.adapter.commit(plan['plan_id'])
+
+    def test_cancel_keeps_configuration_conflict_guard(self):
+        original = self.backend.call
+        state = {'tts_speed': 1}
+        def call(method, path, **kwargs):
+            result = original(method, path, **kwargs)
+            if method == 'GET' and path == '/api/jobs/job1':
+                result['request'] = dict(state)
+            return result
+        self.backend.call = call
+        plan = self.prep('ocv_job_cancel', {'path': {'job_id': 'job1'}})
+        state['tts_speed'] = .8
+        with self.assertRaisesRegex(ValueError, '变化'):
+            self.adapter.commit(plan['plan_id'])
+
+    def test_upload_preflight_has_no_submission(self):
+        file = self.folder/'photo.png'; file.write_bytes(b'photo')
+        adapter = self.new_adapter(upload_files=[file])
+        self.assertTrue(adapter.upload_preflight(str(file))['allowed'])
+        other = self.folder/'other.png'; other.write_bytes(b'other')
+        self.assertFalse(adapter.upload_preflight(str(other))['allowed'])
+        self.assertFalse(self.backend.calls)
+        self.assertIn('upload_policy_loaded_at', adapter.status())
+
     @classmethod
     def setUpClass(cls):
         cls.schema = application_schema()
@@ -485,7 +527,9 @@ class StdioProtocolTests(unittest.TestCase):
                     async with stdio_client(params) as (reader, writer):
                         async with ClientSession(reader,writer) as session:
                             await session.initialize()
-                            self.assertEqual(len((await session.list_tools()).tools),10)
+                            tool_names = {tool.name for tool in (await session.list_tools()).tools}
+                            self.assertEqual(len(tool_names), 11)
+                            self.assertIn('ocv_upload_preflight', tool_names)
                             self.assertFalse((await session.call_tool('ocv_connection',{})).isError)
                             self.assertFalse((await session.read_resource('ocv://guide/workflow')).contents == [])
                             described=await session.call_tool('ocv_describe',{'operation':'ocv_video_export'})

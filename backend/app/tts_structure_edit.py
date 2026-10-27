@@ -92,8 +92,8 @@ def start(editor, job, user_id, data):
         if editor._tasks.get(job.id, {}).get('status') == 'running':
             raise RuntimeError('请等待当前配音编辑完成')
         prepared = prepare(editor, job, user_id, data)
-        editor._tasks[job.id] = dict(status='running', progress=0, updated_at=time.time(),
-                                    message='正在新增配音…' if data['action']=='insert' else '正在删除所选配音…')
+        editor._start_edit(job.id, revision=data['expected_revision'], total=1 if data['action']=='insert' else 0,
+                           message='正在新增配音…' if data['action']=='insert' else '正在删除所选配音…')
     threading.Thread(target=execute, args=(editor, job, user_id, data, prepared),
                      daemon=True, name=f'tts-structure-{job.id}').start()
 
@@ -158,6 +158,7 @@ def execute(editor, job, user_id, data, prepared):
         _concat_segment_wavs(updated, editor._segment_dir(root), work/'audio.wav')
         if editor.revision(job.id, user_id) != data['expected_revision']:
             raise RuntimeError('生成期间配音已被修改，新增音频保留，未覆盖现有内容')
+        editor._begin_edit_commit(job.id)
         count, _ = editor._snapshot_history(root, manifest, sorted(removed),
                                             '删除配音片段' if removed else '插入配音片段')
         history = editor._history_entries(root)[-1]
@@ -197,5 +198,6 @@ def execute(editor, job, user_id, data, prepared):
         for file in created_files:
             if history is None:
                 file.unlink(missing_ok=True)
-        editor._set_task(job.id, status='failed', message=f'配音增删失败：{exc}；原素材已保留{rollback_error}')
+        editor._edit_failed(job.id, exc, f'配音增删失败：{exc}{rollback_error}' if rollback_error
+                            else f'配音增删失败：{exc}；原素材已保留', rollback_failed=bool(rollback_error))
         store.log(job, f'配音增删失败：{exc}{rollback_error}')

@@ -92,7 +92,8 @@ def single_pack(record, path, shot):
     selected = set(shot.get('reference_ids') or []) | set((shot.get('redraw_selection') or {}).get('reference_ids') or [])
     keys = ('id', 'kind', 'slide_ids', 'start', 'end', 'duration', 'intent', 'image_prompt', 'motion_plan',
             'video_prompt', 'image_status', 'video_status', 'image_version', 'image_material_numbers_bound',
-            'image_prompt_out_of_sync', 'reference_ids', 'redraw_selection', 'scene_reference_id', 'scene_reference_disabled')
+            'image_prompt_out_of_sync', 'reference_ids', 'redraw_selection', 'image_prompt_reference_order',
+            'image_reference_context', 'scene_reference_id', 'scene_reference_disabled')
     return {'schema_version': 2, 'project_id': record['id'], 'name': record.get('settings', {}).get('name', ''),
             'revision': record['revision'], 'timeline_token': bridge.timeline_token(record, path),
             'status': record['status'], 'shot_number': next(i + 1 for i, s in enumerate(record['shots']) if s['id'] == shot['id']),

@@ -394,7 +394,9 @@ def synthesize_cloud_tts(
     shutil.rmtree(temp_dir, ignore_errors=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
     downloaded_wavs: dict[int, Path] = {}
-    while True:
+
+    def check_cancelled():
+        nonlocal cancel_sent
         if is_cancelled():
             if not cancel_sent:
                 cancel_sent = True
@@ -405,6 +407,9 @@ def synthesize_cloud_tts(
                 except CloudApiError as exc:
                     on_log(f"云端取消请求未确认：{exc}")
             raise CloudTtsCancelled("用户已停止生成")
+
+    while True:
+        check_cancelled()
         status = str(remote.get("status") or "").strip().lower()
         try:
             progress = max(0, min(100, int(remote.get("progress") or 0)))
@@ -439,8 +444,7 @@ def synthesize_cloud_tts(
         for index, item in ready_chunks.items():
             if index in downloaded_wavs:
                 continue
-            if is_cancelled():
-                raise CloudTtsCancelled("用户已停止生成")
+            check_cancelled()
             audio_url = str(item.get("audio_url") or "").strip()
             if not audio_url:
                 audio_url = f"/api/v1/cloud/jobs/{remote_job_id}/chunks/{index}/audio"
@@ -472,6 +476,7 @@ def synthesize_cloud_tts(
         time.sleep(client.config.poll_interval)
         remote = client.get_job(remote_job_id)
 
+    check_cancelled()
     wav_paths = [downloaded_wavs[index] for index in range(len(chunks))]
 
     metadata = {

@@ -28,6 +28,7 @@ from .pipeline import (
     persist_step_workflow_state, store, sync_refined_step_audio_assets,
 )
 from .visual_editor import VisualEditor
+from .tts_edit_tasks import TtsEditTasks
 
 
 SEGMENT_DIRNAME = "tts_segments"
@@ -227,11 +228,12 @@ def _commit_canonical_subtitle_timeline(project_dir: Path) -> None:
     payload = json.dumps(canonical, ensure_ascii=False, indent=2)
     pending = timeline_path.with_name(f".{timeline_path.name}.{uuid.uuid4().hex}.tmp")
     pending.write_text(payload, encoding="utf-8")
-    os.replace(pending, timeline_path)
+    from .pipeline import _replace_file_with_retry
+    _replace_file_with_retry(pending, timeline_path)
     corrected = project_dir / "other" / "模块2.5_校对后字幕场景.json"
     corrected_pending = corrected.with_name(f".{corrected.name}.{uuid.uuid4().hex}.tmp")
     corrected_pending.write_text(payload, encoding="utf-8")
-    os.replace(corrected_pending, corrected)
+    _replace_file_with_retry(corrected_pending, corrected)
     _write_srt_entries(subtitle_path, [
         {"text": item["text_content"], "start": item["start"], "end": item["end"]}
         for item in canonical
@@ -430,21 +432,7 @@ def _build_regeneration_plan(
     return flattened, chunk_positions, token_totals
 
 
-class TtsEditor:
-    def __init__(self) -> None:
-        self._tasks: dict[str, dict[str, Any]] = {}
-        self._lock = threading.Lock()
-
-    def _set_task(self, job_id: str, **values: Any) -> None:
-        with self._lock:
-            current = dict(self._tasks.get(job_id) or {})
-            current.update(values)
-            current["updated_at"] = time.time()
-            self._tasks[job_id] = current
-
-    def status(self, job_id: str) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._tasks.get(job_id) or {"status": "idle", "message": ""})
+class TtsEditor(TtsEditTasks):
 
     def pending_alignment(self, job_id, user_id):
         project = self._project_dir(job_id, user_id)
@@ -481,12 +469,13 @@ class TtsEditor:
             if data['token'] != token or data['fingerprint'] != self._alignment_fingerprint(project):
                 raise RuntimeError('配音或字幕已修改，不能直接采用旧的暂存结果')
             files = {int(i): self.pending_audio(job.id, user_id, token, int(i)) for i in data['indices']}
-            self._tasks[job.id] = {'status': 'running', 'message': '正在采用新配音并估算字幕时间'}
+            self._start_edit(job.id, revision=self.revision(job.id, user_id),
+                             total=len(files), message='正在采用新配音并估算字幕时间')
         try:
             self._regenerate_sync(job, user_id, data['indices'], data['settings'], {}, data['subtitles'], recovery=(data, files))
             self._set_task(job.id, status='completed', message='已采用新配音，字幕时间为估算值，请试听检查同步；可撤回上一次音频编辑。')
         except Exception as exc:
-            self._set_task(job.id, status='failed', message=str(exc))
+            self._edit_failed(job.id, exc, str(exc))
             raise
 
     def revision(self, job_id: str, user_id: int) -> int:
@@ -892,6 +881,7 @@ class TtsEditor:
             engine = "indextts25"
         reading = {index: text for index, text in enumerate(texts, 1)}
         chunks, positions, _totals = _build_regeneration_plan(reading, engine)
+        self._set_task(job.id, total_segments=len(chunks))
         output_dir = work_dir / "output"
         generated_dir = work_dir / "segments"
         chunks_path = work_dir / "chunks.json"
@@ -921,12 +911,12 @@ class TtsEditor:
                 output_dir=output_dir,
                 segment_archive_dir=generated_dir,
                 temp_dir=work_dir / "temp",
-                is_cancelled=lambda: False,
+                is_cancelled=lambda: self._edit_cancelled(job.id),
                 on_progress=lambda percent, message: self._set_task(
                     job.id, status="running", progress=max(1, min(95, int(percent))), message=message
                 ),
                 on_log=lambda line: store.log(job, f"[断句重配] {line}"),
-                on_remote_job=lambda _job_id, _payload: None,
+                on_remote_job=lambda remote_id, payload: self._remote_edit(job.id, remote_id, payload),
                 chunks_override=chunks,
             )
         else:
@@ -956,16 +946,8 @@ class TtsEditor:
                 emotion = str(manifest.get("tts_emotion") or "").strip()
                 if emotion:
                     command.extend(["--tts-emotion", emotion, "--tts-emotion-weight", str(manifest.get("tts_emotion_weight", 0.65))])
-            process = subprocess.run(
-                command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-            )
-            for line in process.stdout.splitlines():
-                if line.strip():
-                    store.log(job, f"[断句重配] {line.strip()}")
-            if process.returncode != 0:
-                raise RuntimeError(f"TTS 子任务退出码 {process.returncode}")
+            self._run_edit_process(job, command, '断句重配')
+        self._check_edit_cancelled(job.id)
         generated = json.loads((generated_dir / SEGMENT_MANIFEST).read_text(encoding="utf-8")).get("segments") or []
         if len(generated) != len(chunks):
             raise RuntimeError("断句重配结果与安全分段计划不一致")
@@ -1277,11 +1259,14 @@ class TtsEditor:
             old_pause = max(0.0, float(left.get('pause_after') or 0))
             changes.append((float(left.get('end') or 0) + old_pause, seconds - old_pause, left_index, seconds))
         action = "重新合成完整配音" if _rebuild_audio else "仅保存字幕"
-        history_count, pruned = self._snapshot_history(project_dir, manifest, [], action)
-        history = self._history_entries(project_dir)[-1]
         restored_cues, timing_fallbacks = 0, 0
-        self._set_task(job.id, status="running", progress=10, message="正在保存配音与字幕编辑")
+        self._start_edit(job.id, revision=int(manifest.get('revision') or 0),
+                         message="正在保存配音与字幕编辑")
+        history = None
         try:
+            self._begin_edit_commit(job.id)
+            history_count, pruned = self._snapshot_history(project_dir, manifest, [], action)
+            history = self._history_entries(project_dir)[-1]
             if subtitle_updates:
                 if display_updates:
                     self._snapshot_boundary_script(job, project_dir, history)
@@ -1347,10 +1332,17 @@ class TtsEditor:
                     for item in segments
                 ])
             _commit_step_audio_edit(job, project_dir)
-        except Exception:
-            self._restore_boundary_script(job, project_dir, history)
-            self._restore_history(project_dir, history, consume=True)
-            self._set_task(job.id, status="failed", progress=0, message="配音编辑未提交，已恢复原配音与字幕")
+        except Exception as exc:
+            rollback_error = ''
+            if history is not None:
+                try:
+                    self._restore_boundary_script(job, project_dir, history)
+                    self._restore_history(project_dir, history, consume=True)
+                except Exception as rollback:
+                    rollback_error = f'；回滚异常，请保留项目并联系支持：{rollback}'
+            self._edit_failed(job.id, exc,
+                f"配音编辑未提交{rollback_error}" if rollback_error else "配音编辑未提交，原配音与字幕已保留",
+                rollback_failed=bool(rollback_error))
             raise
         sync_note = f"，已补同步 {len(display_updates)} 句字幕与文案" if display_updates else ""
         if independent_updates:
@@ -1539,7 +1531,7 @@ class TtsEditor:
             raise ValueError("断句调整范围无效")
         if self.status(job.id).get("status") == "running":
             raise RuntimeError("该项目已有音频编辑任务正在运行")
-        self._set_task(job.id, status="running", progress=0, message="准备调整断句")
+        self._start_edit(job.id, revision=self.revision(job.id, user_id), total=len(parts), message="准备调整交界")
 
         def work() -> None:
             project_dir: Path | None = None
@@ -1636,6 +1628,7 @@ class TtsEditor:
                     project_dir, rows, new_items,
                     {int(item['index']): self._segment_dir(project_dir) / item['filename'] for item in new_items},
                 )
+                self._begin_edit_commit(job.id)
                 if timeline:
                     timeline_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
                 _write_srt_entries(project_dir / "other" / SUBTITLE_FILENAME,
@@ -1663,14 +1656,17 @@ class TtsEditor:
                 )
                 store.log(job, f"断句调整完成：从第 {start_index} 句开始，以 {len(parts)} 句替换原 {replace_count} 句")
             except Exception as exc:
+                rollback_error = ''
                 if project_dir is not None and history is not None and history.is_dir():
                     try:
                         self._restore_boundary_script(job, project_dir, history)
                         self._restore_history(project_dir, history, consume=True)
                     except Exception as rollback_exc:
+                        rollback_error = f"；回滚异常，请保留项目并联系支持：{rollback_exc}"
                         store.log(job, f"断句调整回滚失败：{rollback_exc}")
-                retained = "；新生成音频已保留，原配音和字幕未替换" if work_dir is not None and work_dir.is_dir() else ""
-                self._set_task(job.id, status="failed", progress=0, message=f"断句调整失败：{exc}{retained}")
+                retained = "；新生成音频已保留" if work_dir is not None and work_dir.is_dir() else ""
+                self._edit_failed(job.id, exc, f"交界调整失败：{exc}{retained}{rollback_error}",
+                                  rollback_failed=bool(rollback_error))
                 store.log(job, f"断句调整失败：{type(exc).__name__}: {exc}")
             finally:
                 if work_dir is not None and completed:
@@ -1904,7 +1900,8 @@ class TtsEditor:
             manifest["segments"],
             normalized_subtitle_overrides,
         )
-        self._set_task(job.id, status="running", progress=0, message=f"准备重配 {len(selected)} 句")
+        self._start_edit(job.id, revision=int(manifest.get('revision') or 0), total=len(selected),
+                         message=f"准备重配 {len(selected)} 句；正式配音未变")
 
         def work() -> None:
             try:
@@ -1924,7 +1921,7 @@ class TtsEditor:
                 )
                 store.log(job, f"单句重配完成：已更新 {len(selected)} 句配音、整条音频、字幕和画面时间线{sync_note}")
             except Exception as exc:
-                self._set_task(job.id, status="failed", progress=0, message=f"单句重配失败：{exc}")
+                self._edit_failed(job.id, exc, f"单句重配失败：{exc}")
                 store.log(job, f"单句重配失败：{type(exc).__name__}: {exc}")
 
         threading.Thread(target=work, daemon=True, name=f"tts-edit-{job.id}").start()
@@ -2007,6 +2004,7 @@ class TtsEditor:
             reading_texts,
             engine,
         )
+        self._set_task(job.id, total_segments=len(synthesis_chunks))
         for index, positions in chunk_positions.items():
             if len(positions) > 1:
                 store.log(
@@ -2054,12 +2052,12 @@ class TtsEditor:
             cloud_request["tts_emotion_weight"] = manifest.get("tts_emotion_weight", 0.65)
             synthesize_cloud_tts(
                 client=cloud_client_for(user_id),
-                local_job_id=f"{job.id}-edit-{timestamp}",
+                local_job_id=f"{job.id}-edit-{self.status(job.id).get('task_id') or uuid.uuid4().hex}",
                 request=cloud_request,
                 output_dir=output_dir,
                 segment_archive_dir=generated_dir,
                 temp_dir=work_dir / "temp",
-                is_cancelled=lambda: False,
+                is_cancelled=lambda: self._edit_cancelled(job.id),
                 on_progress=lambda percent, message: self._set_task(
                     job.id,
                     status="running",
@@ -2067,7 +2065,7 @@ class TtsEditor:
                     message=f"单句重配：{message}",
                 ),
                 on_log=lambda line: store.log(job, f"[单句重配] {line}"),
-                on_remote_job=lambda _job_id, _payload: None,
+                on_remote_job=lambda remote_id, payload: self._remote_edit(job.id, remote_id, payload),
                 chunks_override=synthesis_chunks,
             )
         else:
@@ -2106,19 +2104,9 @@ class TtsEditor:
                         str(manifest.get("tts_emotion_weight", 0.65)),
                     ])
 
-            process = subprocess.Popen(
-                command, cwd=str(PROJECT_ROOT), env=os.environ.copy(),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="replace", bufsize=1,
-            )
-            assert process.stdout is not None
-            for line in process.stdout:
-                cleaned = line.strip()
-                if cleaned:
-                    store.log(job, f"[单句重配] {cleaned}")
-            return_code = process.wait()
-            if return_code != 0:
-                raise RuntimeError(f"TTS 子任务退出码 {return_code}")
+            self._run_edit_process(job, command, '单句重配')
+
+        self._check_edit_cancelled(job.id)
 
         generated_manifest = json.loads((generated_dir / SEGMENT_MANIFEST).read_text(encoding="utf-8"))
         generated = generated_manifest.get("segments") or []
@@ -2141,6 +2129,7 @@ class TtsEditor:
 
     def _commit_regenerated(self, job, user_id, indices, settings_override, reading_texts, subtitle_updates, manifest, pending_files, alignment,
                             *, subtitle_text_overrides=None):
+        self._begin_edit_commit(job.id)
         project_dir = self._project_dir(job.id, user_id)
         segment_dir = self._segment_dir(project_dir)
         manifest_path = segment_dir / SEGMENT_MANIFEST

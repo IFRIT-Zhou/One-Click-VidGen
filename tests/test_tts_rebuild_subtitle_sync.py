@@ -98,6 +98,7 @@ class RebuildSubtitleSyncTests(unittest.TestCase):
         self.assertEqual(len(rows), 4)  # Existing subtitle cue boundaries stay intact.
         self.assertEqual(''.join(row['text'] for row in rows), self.new_first + '第二句原文。' + self.new_last)
         self.assertAlmostEqual(rows[-1]['end'], 6.7)
+
         self.assertEqual(''.join(self.job.request['script'].splitlines()), self.new_first + '第二句原文。' + self.new_last)
         self.assertEqual(len(self.editor._history_entries(self.project)), 1)
         for path, data in originals.items():
@@ -111,6 +112,17 @@ class RebuildSubtitleSyncTests(unittest.TestCase):
         self.assertEqual((self.project / 'input' / '文案.txt').read_text(encoding='utf-8'), self.script)
         self.assertEqual((self.jobs / 'job' / 'script.txt').read_text(encoding='utf-8'), self.script)
         self.assertEqual(''.join(row['text'] for row in _srt_entries(self.srt_path)), self.script)
+
+    def test_rebuild_after_cancel_creates_fresh_edit_attempt(self):
+        task = self.editor._start_edit('job', revision=7)
+        self.editor.cancel('job', task['task_id'])
+        self.editor._edit_failed('job', RuntimeError(), 'stopped')
+        self.rebuild(pauses={}, expected_revision=7)
+        current = self.editor.status('job')
+        self.assertEqual(current['status'], 'completed')
+        self.assertFalse(current['cancel_requested'])
+        self.assertEqual(current['adopted_version'], 8)
+        self.assertNotEqual(current['task_id'], task['task_id'])
 
     def test_unchecked_rebuild_only_applies_pauses(self):
         result = self.rebuild(pauses={1: .5})

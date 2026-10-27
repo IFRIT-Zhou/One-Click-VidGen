@@ -1348,15 +1348,16 @@ def import_new_project(data, user):
             raise HTTPException(409, '配音仍在修改，请等待完成')
         from .pipeline import validate_step_audio_snapshot
         try:
-            tts_editor.commit_step_review(job=job, user_id=int(user['id']))
+            if job.status != 'cancelled':
+                tts_editor.commit_step_review(job=job, user_id=int(user['id']))
             validate_step_audio_snapshot(job)
         except (OSError, ValueError, RuntimeError) as exc:
             raise HTTPException(409, f'配音与字幕快照尚未一致，请先完成精修：{exc}') from exc
     try:
-        scenes = parse_srt((source / 'other' / '最终字幕.srt').read_text(encoding='utf-8-sig'))
         identity = uuid.uuid4().hex
         target = directory(user['id'], identity)
         audio = copy_assets(source, target)
+        scenes = parse_srt((target / 'assets/subtitles.srt').read_text(encoding='utf-8-sig'))
         record = dict(id=identity, revision=1, status='draft', scenes=scenes, shots=[], logs=[], error='',
                       references=[], source_images=[], audio=audio, import_scope='audio_subtitles',
                       narration_groups=narration_groups(source, scenes),

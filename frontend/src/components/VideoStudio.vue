@@ -14,6 +14,7 @@ import ResizableShotWorkspace from './ResizableShotWorkspace.vue'
 import WorkspacePanels from './WorkspacePanels.vue'
 import ShotResultOverview from './ShotResultOverview.vue'
 import PresenterControls from './PresenterControls.vue'
+import StoryboardPreviewExport from './StoryboardPreviewExport.vue'
 import {useWorkspaceLayout} from '../workspaceLayout'
 import DynamicTextModeSelector from './DynamicTextModeSelector.vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
@@ -28,6 +29,11 @@ const props=defineProps({pendingImageRoute:Object})
 const emit=defineEmits(['new-project','duplicate-config','edit-audio','edit-config','project-change','image-route-applied'])
 const imageRouteEditor=ref(null)
 const items=ref([]), project=ref(null), selected=ref(0), error=ref(''), busy=ref(false), dirty=ref(false)
+function acceptPreviewUpdate(record){
+ if(project.value?.id!==record.id)return
+ // Preview completion must not replace unsaved shot drafts or change production status.
+ Object.assign(project.value,{storyboard_preview_task:record.storyboard_preview_task,storyboard_preview:record.storyboard_preview})
+}
 function requestCloudLogin() { window.dispatchEvent(new Event('ocv-cloud-login-required')) }
 const view=ref('storyboard'), productionPanel=ref('design')
 const workspaceElement=ref(null)
@@ -698,7 +704,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
 </script>
 <template>
 <section ref="workspaceElement" class="content video-workspace">
- <div v-if="project" class="workspace-project-heading"><div><p class="eyebrow">动态视频工作台</p><h1>{{project.settings.name}}</h1></div><div class="workspace-project-actions"><span v-if="dirty" class="workspace-draft" role="status">有未保存修改</span><button class="ghost-btn" @click="exportPlan">导出分镜草案</button><button class="ghost-btn" @click="emit('new-project')">＋ 新建项目</button></div></div>
+ <div v-if="project" class="workspace-project-heading"><div><p class="eyebrow">动态视频工作台</p><h1>{{project.settings.name}}</h1></div><div class="workspace-project-actions"><span v-if="dirty" class="workspace-draft" role="status">有未保存修改</span><StoryboardPreviewExport v-if="project.shots.length" :key="project.id" :project="project" :disabled="busy" :has-drafts="dirty" @update="acceptPreviewUpdate"/><button class="ghost-btn" @click="exportPlan">导出分镜草案</button><button class="ghost-btn" @click="emit('new-project')">＋ 新建项目</button></div></div>
  <nav v-if="project" class="video-stage-nav" aria-label="动态视频任务阶段">
   <button v-for="(stage,index) in stageSteps" :key="stage.key" type="button" :aria-current="view===stage.key?'step':undefined" :class="[stage.state,{active:view===stage.key}]" @click="openStage(stage)">
    <span v-if="stage.state==='done'">✓</span><span v-else-if="stage.state==='upcoming'">{{index+1}}</span><span v-else>•</span>

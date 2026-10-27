@@ -5,6 +5,25 @@ from backend.app import codex_image_generation as images
 
 
 class ImageGenerationTests(SceneBridgeTests):
+    def test_invalid_stage_is_not_a_retryable_busy_error(self):
+        for stage, action in [('storyboard_review', 'ocv_video_review'), ('generation_ready', 'ocv_video_images_generate')]:
+            r = self.load(); r['status'] = stage; studio.save(self.path, r)
+            result = self.client.post(self.url('image-validate'), json=self.request_payload()).json()['detail']
+            self.assertEqual(result['code'], 'INVALID_STAGE')
+            self.assertEqual(result['next_action'], action)
+            self.assertNotIn('retry_after', result)
+
+    def test_initial_generation_preflight_does_not_submit(self):
+        r = self.load(); r['status'] = 'generation_ready'; r['shots'][0]['image_status'] = 'pending'
+        studio.save(self.path, r)
+        with patch.object(studio, '_image_configs', return_value=[{'method': 'mock', 'api_key': 'secret'}]), patch.object(images, 'pump') as pump:
+            result = self.client.get(self.url('images-preflight')).json()
+        self.assertTrue(result['can_generate'])
+        self.assertEqual(result['image_count'], 1)
+        self.assertFalse(result['charge_submitted'])
+        self.assertNotIn('secret', str(result))
+        pump.assert_not_called()
+
     def setUp(self):
         super().setUp()
         images.RUNTIME.clear(); images.RUNNING.clear(); studio.IMAGE_EDITS.clear()
@@ -143,6 +162,35 @@ class ImageGenerationTests(SceneBridgeTests):
         self.assertEqual(current['codex_bridge']['image_requests']['test-request-01']['status'], 'completed')
         self.assertEqual(current['audio'], self.record['audio'])
         self.assertEqual(current['scenes'], self.record['scenes'])
+
+    def test_legacy_project_numbers_survive_successful_redraw_and_repeat(self):
+        from shutil import copyfile
+        copyfile(self.path/'assets/old.jpg', self.path/'assets/current.jpg')
+        copyfile(self.path/'assets/other.jpg', self.path/'assets/material.jpg')
+        record = self.load()
+        record['references'] = [{'id':'ref_04', 'label':'图4', 'file':'assets/material.jpg'}]
+        shot = record['shots'][0]
+        shot.update(reference_ids=['ref_04'], image_prompt='图4为器械依据',
+                    image_material_numbers_bound=False, scene_reference_disabled=True,
+                    image='assets/current.jpg', image_status='completed')
+        studio.save(self.path, record)
+        before_other_shots = record['shots'][1:]
+        payload = self.request_payload(use_current_image=True, use_scene_reference=False)
+        with patch.object(studio, '_image_configs', return_value=[{'method':'mock'}]), patch.object(images, 'pump'):
+            self.assertEqual(self.submit(payload).status_code, 200)
+            frozen = images.RUNTIME[(str(self.path), 'test-request-01')]
+            self.assertIn('图2为器械依据', frozen['prompt'])
+            with patch.object(images, 'render', return_value=self.path/'assets/other.jpg'):
+                images.worker(self.path, 'test-request-01')
+        current = self.load()
+        self.assertFalse(current['shots'][0]['image_material_numbers_bound'])
+        self.assertEqual(current['shots'][0]['image_prompt'], '图4为器械依据')
+        self.assertEqual(current['shots'][1:], before_other_shots)
+        from backend.app.codex_shot_edit import reference_preview
+        again = reference_preview(self.path, current, current['shots'][0],
+                                         use_current_image=True, use_scene_reference=False)
+        self.assertTrue(again['ok'], again)
+        self.assertIn('图2为器械依据', again['effective_prompt'])
 
     def test_late_result_preserved_without_overwrite(self):
         with patch.object(studio, '_image_configs', return_value=[{'method': 'mock'}]), patch.object(images, 'pump'):

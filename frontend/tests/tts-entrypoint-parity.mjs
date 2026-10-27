@@ -4,7 +4,7 @@ const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
 for(const [file,count] of [['../src/Studio.vue',1],['../src/App.vue',3]]){
   const source=read(file)
   for(const name of ['TtsSentenceControls','TtsStructureControls','TtsRebuildButton','TtsEditorFeedback','TtsBoundaryEditor'])
-    assert.equal((source.match(new RegExp('<'+name+'\\b','g'))||[]).length,count,file+' '+name)
+    assert.equal((source.match(new RegExp('<'+name+'\\b','g'))||[]).length,name==='TtsStructureControls'?count*2:count,file+' '+name)
   assert.equal((source.match(/<TtsDraftResolutionDialog\b/g)||[]).length,1)
   for(const tag of source.match(/<TtsSentenceControls[\s\S]*?\/>/g)||[]){
     assert.ok(!tag.includes('dynamic_video'))

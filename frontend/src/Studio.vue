@@ -554,6 +554,7 @@
                   </div>
                   <div class="visual-timing-head-actions">
                     <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
+                    <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
                     <button
                       class="primary-btn compact-btn"
                       type="button"

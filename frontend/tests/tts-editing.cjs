@@ -79,6 +79,27 @@ const path=require('node:path')
     await page.waitForSelector('.visual-task-message.failed')
     assert.equal(await page.$eval('main > button',e=>e.disabled),true)
     assert.equal(await page.$$eval('.tts-sentence-controls button',els=>els.every(e=>e.disabled)),true)
+    await page.evaluate(()=>{
+      window.fixture.editor.task={status:'running', task_id:'attempt-1', adopted_version:3, pending_version:4, message:'候选生成中'}
+      window.fixture.stops=[]
+      window.fetch=async(url,options)=>{
+        window.fixture.stops.push({url, body:JSON.parse(options.body)})
+        window.fixture.editor.task.cancel_requested=true
+        return new Response(JSON.stringify({accepted:true}),{status:200})
+      }
+    })
+    await page.waitForSelector('.tts-edit-control button')
+    assert.equal(await page.$eval('.tts-edit-control button',e=>e.disabled),false)
+    await page.click('.tts-edit-control button')
+    await page.waitForFunction(()=>window.fixture.stops.length===1)
+    assert.equal(await page.$eval('.tts-edit-control button',e=>e.disabled),true)
+    assert.deepEqual(await page.evaluate(()=>JSON.parse(JSON.stringify(window.fixture.stops))),[
+      {url:'/api/jobs/fixture/tts-editor/cancel',body:{task_id:'attempt-1'}}])
+    await page.evaluate(()=>{window.fixture.editor.task={status:'running',task_id:'attempt-2',phase:'committing'}})
+    assert.equal(await page.$eval('.tts-edit-control button',e=>e.disabled),true)
+    await page.evaluate(()=>{window.fixture.editor.task={status:'cancelled',upstream_may_still_run:true}})
+    await page.waitForFunction(()=>document.body.textContent.includes('云端尚未确认结束'))
+    await page.waitForSelector('.tts-edit-control',{hidden:true})
     await page.evaluate(()=>{window.fixture.editor.task={status:'idle'};window.fixture.editor.segments=[];window.fixture.editor.available=false})
     assert.equal(await page.$eval('main > button',e=>e.disabled),true)
     await page.evaluate(()=>{window.fixture.editor.available=true;window.fixture.editor.segments=[{index:1}];window.fixture.item.subtitle_independent=true})

@@ -139,6 +139,7 @@ class Adapter:
         self.state = State(state_dir)
         self.upload_roots = tuple(Path(p).resolve(strict=True) for p in upload_roots)
         self.upload_files = frozenset(Path(p).resolve(strict=True) for p in upload_files)
+        self.started_at = time.time()
         if any(not p.is_file() or p.suffix.lower() not in UPLOAD_EXTENSIONS for p in self.upload_files):
             raise ValueError('单文件上传授权必须指向支持的素材文件')
         if any(not p.is_dir() for p in self.upload_roots):
@@ -188,7 +189,18 @@ class Adapter:
                 'delete_enabled': self.allow_delete, 'unavailable_operations': self.unavailable,
                 'ui_automation': False, 'remote_connections': False,
                 'upload_roots': [str(p) for p in self.upload_roots],
-                'upload_files': [str(p) for p in sorted(self.upload_files)]}
+                'upload_files': [str(p) for p in sorted(self.upload_files)],
+                'upload_policy_loaded_at': self.started_at,
+                'upload_policy_fingerprint': digest([sorted(map(str, self.upload_roots)), sorted(map(str, self.upload_files))]),
+                'upload_policy_reload': '启动配置修改后需重新连接 MCP；此处显示当前连接实际生效范围，不自动扩大授权。'}
+
+    def upload_preflight(self, local_path):
+        try:
+            file = self.upload_file({'local_path': local_path})
+            return {'allowed': True, 'bytes': file.stat().st_size, 'upload_started': False}
+        except (OSError, ValueError) as exc:
+            return {'allowed': False, 'reason': clean(str(exc)), 'upload_started': False,
+                    'next_action': '核对 ocv_connection 中当前生效授权；由用户配置精确文件或目录后重新连接，不绕过白名单。'}
 
     def operations(self, group='', offset=0, limit=30):
         client, _ = self.connect()
@@ -254,7 +266,14 @@ class Adapter:
             record = client.call('GET', '/api/jobs/' + quote(str(path['job_id']), safe=''))
             # Guard between preparation and submission. Atomic endpoint guards
             # still apply; this is not a replacement for a backend transaction.
-            result = {k: record.get(k) for k in ('id', 'status', 'updated_at', 'step')}
+            if op.name == 'ocv_job_cancel':
+                result = {k: record.get(k) for k in ('id', 'created_at', 'run_id')}
+                result['configuration'] = digest({k: v for k, v in record.get('request', {}).items() if not k.startswith('_')})
+            elif op.name == 'ocv_tts_cancel':
+                task = client.call('GET', '/api/jobs/' + quote(str(path['job_id']), safe='') + '/tts-editor/status')
+                result = {'id': record.get('id'), 'task_id': task.get('task', {}).get('task_id')}
+            else:
+                result = {k: record.get(k) for k in ('id', 'status', 'updated_at', 'step')}
         else:
             result = {}
         if op.transfer == 'upload':
@@ -377,6 +396,8 @@ class Adapter:
 
             def submit():
                 try:
+                    if op.name == 'ocv_job_cancel' and guard.get('run_id'):
+                        args.setdefault('query', {})['expected_run_id'] = guard['run_id']
                     result = self.execute(client, owner, op, args, guard.get('upload_sha256'))
                     self.state.finish(owner, plan_id, 'submitted', result)
                 except ApiError as exc:

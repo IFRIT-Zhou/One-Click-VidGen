@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分镜预览回归</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive} from 'vue/dist/vue.esm-bundler.js'
+import StoryboardPreviewExport from '../src/components/StoryboardPreviewExport.vue'
+import '../src/style.css'
+const state=reactive({calls:[],fail:false,hasDrafts:false,busy:false,project:{id:'fixture',revision:7,status:'image_review',audio:'latest.wav',shots:[
+ {id:'a',kind:'video',start:0,end:7,image:'a.png',image_status:'completed',video_status:'pending',video_prompt:'主角面对镜头，双手持创可贴与酒精瓶，将酒精喷洒在创可贴棉垫上，持续3秒。\n将创可贴贴在手臂内侧，用手指按压固定，持续4秒。\n保持按压姿势，自然停留至结束。'},
+ {id:'b',kind:'static',start:7,end:11,image:'b.png',image_status:'completed',video_status:'pending'}]}})
+window.fixture=state
+window.fetch=async(url,options={})=>{
+ const body=JSON.parse(options.body||'{}');state.calls.push({url,method:options.method||'GET',body})
+ if(options.method==='POST'){
+  if(state.fail)return new Response(JSON.stringify({detail:'项目已变化，请重新读取'}),{status:409})
+  state.project.storyboard_preview_task={status:'running',task_id:'task1'}
+  return new Response(JSON.stringify(state.project))
+ }
+ return new Response(JSON.stringify({revision:state.project.revision,shots:state.project.shots.map((s,i)=>({...s,index:i+1,text:s.video_prompt||'',image_ready:s.image_status==='completed'})),task:state.project.storyboard_preview_task||{},preview:state.project.storyboard_preview}))
+}
+createApp({components:{StoryboardPreviewExport},setup(){return{state,update:r=>Object.assign(state.project,r)}},template:`<main style="max-width:1000px;margin:50px auto;padding:16px"><h1>动态视频 · 分镜预览</h1><StoryboardPreviewExport :project="state.project" :disabled="state.busy" :has-drafts="state.hasDrafts" @update="update"/></main>`}).mount('#app')
+</script></html>

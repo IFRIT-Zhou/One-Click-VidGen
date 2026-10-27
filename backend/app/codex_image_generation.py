@@ -11,6 +11,7 @@ from typing import Literal
 from fastapi import HTTPException, Request
 from pydantic import Field, model_validator
 from . import codex_bridge as bridge
+from .image_reference_binding import freeze_numbers, render_numbers, prompt_order
 
 RUNTIME = {}  # (project directory, request id) -> frozen inputs; deliberately not persisted
 RUNNING = set()
@@ -116,6 +117,7 @@ def target_state(path, record, shot):
     previous = bridge.studio.image_continuity.previous_shot(record, shot)
     return bridge.digest({'timeline': bridge.timeline_token(record, path),
         'shot': {k: shot.get(k) for k in ('image_prompt', 'reference_ids', 'redraw_selection',
+            'image_prompt_reference_order', 'image_prompt_reference_context_key', 'image_material_numbers_bound',
             'scene_reference_id', 'scene_reference_disabled', 'image', 'image_version')},
         'settings': record.get('settings'), 'generation': record.get('creation_parameters'),
         'scene': bridge.studio._scene_asset(record, shot),
@@ -124,8 +126,14 @@ def target_state(path, record, shot):
 
 
 def context(path, record, data, user, commit):
-    if str(path) in bridge.studio.ACTIVE or record.get('status') != 'image_review':
-        fail('PROJECT_BUSY', '项目正在运行或不在核心分镜图编辑阶段。', retry_after=3)
+    if str(path) in bridge.studio.ACTIVE:
+        fail('PROJECT_RUNNING', '项目正在运行，请查询进度。', retry_after=3,
+             current_stage=record.get('status'), next_action='ocv_video_get', allowed_operations=['ocv_video_get'])
+    if record.get('status') != 'image_review':
+        next_action = {'storyboard_review': 'ocv_video_review', 'generation_ready': 'ocv_video_images_generate'}.get(
+            record.get('status'), 'ocv_video_get')
+        fail('INVALID_STAGE', '本接口用于核心图审核阶段的重绘，不用于首次生图；请执行下一步操作。',
+             current_stage=record.get('status'), next_action=next_action, allowed_operations=[next_action])
     if not commit and data.revision != record['revision']:
         fail('REVISION_CONFLICT', '项目版本已变化，请重新读取资料包。')
     bridge.check_edit_context(record, path,
@@ -155,6 +163,8 @@ def prepare(path, record, item, user):
     snapshot = bridge.digest({'state': state, 'options': item.model_dump(), 'prompt': prompt, 'files': files, 'configs': configs})
     public = {'shot_id': item.shot_id, 'request_id': item.request_id, 'target_snapshot': snapshot,
         'actual_reference_count': len(refs), 'reference_ids': ids, 'references': mapping,
+        'effective_prompt': prompt, 'reference_context': {'use_current_image': item.use_current_image,
+                                                        'use_scene_reference': item.use_scene_reference},
         'effective_image_config': {**effective(record), 'image_resolution': configs[0].get('resolution', effective(record)['image_resolution']),
             'providers': [{k: c.get(k) for k in ('method', 'model', 'resolution', 'size') if k in c} for c in configs],
             'configuration_version': bridge.digest(configs)}}
@@ -191,6 +201,10 @@ def reference_inputs(path, record, shot, *, use_current_image=None, use_scene_re
             fail('REFERENCE_MISSING', '选中的参考图文件不存在。', 422)
     try:
         prompt = bridge.studio._bind_material_numbers(record, shot, shot.get('image_prompt', ''))
+        order = [key.replace('reference:', 'scene_reference:', 1)
+                 if key.startswith('reference:') and key.removeprefix('reference:') in rows
+                 and key.removeprefix('reference:') not in material_ids else key for key in prompt_order(shot)]
+        prompt = freeze_numbers(prompt, order)
         prompt, refs, asset = bridge.studio._image_inputs(path, record, shot, prompt, references=refs, use_scene=scene)
         previous = bridge.studio.image_continuity.previous_shot(record, shot, prompt)
         if previous:
@@ -206,7 +220,13 @@ def reference_inputs(path, record, shot, *, use_current_image=None, use_scene_re
         source = mapping_by_path.get(p) or {'kind': 'scene_reference', 'id': (asset or {}).get('id'),
             'url': f"/api/video-studio/{record['id']}/images/{(asset or {}).get('id')}"}
         mapping.append({**source, 'local_image_number': n + 1, 'sha256': bridge.file_hash(Path(p)),
+                        'role': {'current_image': '修图底图', 'reference': '用户参考素材',
+                                 'scene_reference': '场景参考', 'previous_shot': '连续性参考'}.get(source['kind'], '参考素材'),
                         'file': str(Path(p).relative_to(path.resolve()))})
+    try:
+        prompt = render_numbers(prompt, mapping)
+    except ValueError as exc:
+        fail('REFERENCE_IDENTITY_MISSING', str(exc), 422, shot_id=shot['id'])
     return prompt, refs, asset, ids, mapping
 
 
@@ -328,8 +348,8 @@ def worker(path, rid):
                     image = path / shot['image']
                 image.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(rendered, image)
-                shot.update(image_status='completed', image_error='', image_applied_prompt=shot['image_prompt'],
-                    image_prompt_out_of_sync=False, image_material_numbers_bound=True,
+                shot.update(image_status='completed', image_error='', image_applied_prompt=frozen['prompt'],
+                    image_prompt_out_of_sync=False,
                     scene_reference_used_version=frozen['scene_version'],
                     image_task={'status': 'completed', 'request_id': rid, 'message': '图片生成完成，请人工检查'})
                 bridge.studio._image_version(path, shot)
@@ -363,6 +383,27 @@ def worker(path, rid):
 
 
 def register(router):
+    @router.get('/projects/{identity}/images-preflight')
+    def initial_preflight(identity: str, request: Request):
+        from .codex_shot_edit import reference_preview
+        user = bridge.user_for(request)
+        with bridge.studio.LOCK:
+            path = bridge.studio.directory(user['id'], identity)
+            record = bridge.read_record(path)
+            running = str(path) in bridge.studio.ACTIVE
+            stage = record.get('status')
+            configs = bridge.studio._image_configs(record, user['id'])
+            items = [{'shot_id': shot['id'], 'already_generated': shot.get('image_status') == 'completed',
+                      'preview': reference_preview(path, record, shot)} for shot in record.get('shots', [])]
+            return {'project_id': identity, 'revision': record['revision'], 'current_stage': stage,
+                    'can_generate': not running and stage == 'generation_ready',
+                    'next_action': 'ocv_video_get' if running else {'generation_ready':'ocv_video_images_generate',
+                        'storyboard_review':'ocv_video_review', 'image_review':'ocv_bridge_batch_validate'}.get(stage, 'ocv_video_get'),
+                    'providers': [{k: c.get(k) for k in ('method', 'model', 'resolution', 'size') if k in c} for c in configs],
+                    'image_count': sum(not i['already_generated'] for i in items), 'items': items,
+                    'may_charge_on_generate': True, 'price': None, 'price_note': '预检不收费；实际费用按所选渠道结算，场景参考图可能另行生成。',
+                    'generation_started': False, 'charge_submitted': False}
+
     @router.post('/projects/{identity}/image-validate')
     def validate(identity: str, data: ImageGenerate, request: Request): return execute(identity, data, request, False)
 

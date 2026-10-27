@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.27.1",
-  "release_order": 2026102701,
-  "display_version": "2026.10.27 讲解员对口型与 MCP 更新",
+  "release_id": "2026.10.28.1",
+  "release_order": 2026102801,
+  "display_version": "2026.10.28 配音编辑与制作流程优化",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.27.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.28.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "讲解员对口型支持在分镜阶段单镜或批量设置，可直接使用核心图人物，无需另传照片；核对人物与嘴部可见性，保留原配音、图片和时间轴，不自动生成视频。生成前依据最终核心图定稿；修复重配后仍读取旧音频的问题，讲解镜头导出仅使用原配音。MCP 新增对口型操作及单文件上传授权。请在任务结束后安全更新并自行重启 OCV。",
-  "content_fingerprint": "2bf99b5d139b8d5c35faddfe42f3987913a53b4ada18ba3cc5d64c73f19b873d"
+  "notes": "配音编辑支持独立停止并保留已提交版本；改善 Windows 配音文件提交与恢复。修复参考图编号绑定，新增 MCP 字幕纯文字校对预览、上传预检与阶段操作指引。配音插入和撤回入口常驻，删除选中与重配按钮相邻。动态项目新增带动静标记和动作说明的分镜预览导出，无需先生成动态视频。本次不部署云端服务；请在任务结束后安全更新并自行重启 OCV，MCP 客户端需重新连接。",
+  "content_fingerprint": "8e68614791a4a209a01ea4d50861cceab81c8fc8d9f4a9e74257da9084a56100"
 }
