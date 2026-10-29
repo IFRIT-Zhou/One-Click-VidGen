@@ -158,6 +158,12 @@ function Test-ProtectedRelativePath {
             'plugins\example_plugin\disabled',
             'plugins\codex_bridge\plugin.json', 'plugins\codex_bridge\ocv_bridge.py',
             'plugins\codex_bridge\README.md',
+            'plugins\codex_bridge\README_MCP.md', 'plugins\codex_bridge\AI_GUIDE.md',
+            'plugins\codex_bridge\mcp_server.py', 'plugins\codex_bridge\mcp-requirements.txt',
+            'plugins\codex_bridge\ocv_mcp\__init__.py', 'plugins\codex_bridge\ocv_mcp\adapter.py',
+            'plugins\codex_bridge\ocv_mcp\catalog.py', 'plugins\codex_bridge\ocv_mcp\contracts.py',
+            'plugins\codex_bridge\ocv_mcp\guidance.py', 'plugins\codex_bridge\ocv_mcp\server.py',
+            'plugins\codex_bridge\ocv_mcp\state.py',
             'plugins\codex_bridge\skills\ocv-production-bridge\SKILL.md',
             'plugins\codex_bridge\skills\ocv-production-bridge\agents\openai.yaml'
         )

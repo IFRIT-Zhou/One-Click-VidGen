@@ -1,0 +1,42 @@
+const assert=require('node:assert/strict')
+const puppeteer=require('../../node_modules/puppeteer-core')
+const {spawn}=require('node:child_process')
+const path=require('node:path')
+;(async()=>{
+ const server=spawn(process.execPath,['node_modules/vite/bin/vite.js','--host','127.0.0.1','--port','5186','--strictPort'],{cwd:path.resolve(__dirname,'..'),windowsHide:true,stdio:['ignore','pipe','pipe']})
+ let browser
+ try{
+  await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('server timeout')),12000);server.stdout.on('data',data=>{if(String(data).includes('Local:')){clearTimeout(timer);resolve()}});server.on('exit',code=>{clearTimeout(timer);reject(Error('server exit '+code))})})
+  browser=await puppeteer.launch({executablePath:process.argv[2],headless:true,args:['--disable-gpu']})
+  const page=await browser.newPage(),errors=[]
+  page.on('pageerror',error=>errors.push(error.message))
+  for(const legacy of [false,true]){
+   await page.goto('http://127.0.0.1:5186/tests/bridge-ai-guide.html'+(legacy?'?legacy':''),{waitUntil:'networkidle0'})
+   assert.deepEqual(await page.$$eval('.bridge-tools button',buttons=>buttons.map(b=>b.textContent)),['复制给 AI 的说明'])
+   assert.equal(await page.$('.bridge-guide'),null)
+   await page.click('.bridge-tools button:first-of-type')
+   assert.ok((await page.evaluate(()=>window.fixture.clipboard)).includes('这是新项目'))
+   await page.select('.bridge-tools select','a'.repeat(32))
+   await page.click('.bridge-tools button:first-of-type')
+   const copied=await page.evaluate(()=>window.fixture.clipboard)
+   assert.ok(copied.includes('ocv_guide(topic="all")'))
+   assert.ok(copied.includes('完整阅读 AI 操作说明书'))
+   assert.ok(copied.includes('ai-guide --topic all'))
+   assert.ok(copied.includes('旧版不支持 ai-guide 时用 guide'))
+   assert.ok(copied.includes('优先使用 MCP'))
+   assert.ok(copied.includes('a'.repeat(32)))
+   assert.ok(copied.includes('不授权生成、付费或删除'))
+   assert.ok(copied.includes(legacy?'skills/SKILL.md':'AI_GUIDE.md'))
+   assert.deepEqual(await page.$$eval('.bridge-tools button',buttons=>buttons.map(b=>b.textContent)),['复制给 AI 的说明','打开分镜'])
+   await page.click('.bridge-tools button:nth-of-type(2)')
+   assert.equal(await page.evaluate(()=>window.fixture.openedProject),'a'.repeat(32))
+   await page.evaluate(()=>{window.fixture.clipboardFails=true})
+   await page.click('.bridge-tools button:first-of-type')
+   assert.equal(await page.$eval('.bridge-message',e=>e.textContent),copied)
+   const calls=await page.evaluate(()=>window.fixture.calls)
+   assert.deepEqual(calls,['/api/codex-bridge/info','/api/codex-bridge/drafts?include_archived=true','/api/codex-bridge/projects'])
+  }
+  assert.deepEqual(errors,[])
+  console.log('AI guide UI: single entry, full-guide instructions, new/existing context, legacy compatibility, open-project and clipboard fallback passed')
+ }finally{if(browser)await browser.close();server.kill()}
+})().catch(error=>{console.error(error);process.exitCode=1})

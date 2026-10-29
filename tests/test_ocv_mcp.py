@@ -526,11 +526,24 @@ class StdioProtocolTests(unittest.TestCase):
                         f'http://127.0.0.1:{http.server_port}', '--state-dir', temp, '--allow-generation'])
                     async with stdio_client(params) as (reader, writer):
                         async with ClientSession(reader,writer) as session:
-                            await session.initialize()
+                            initialized = await session.initialize()
+                            self.assertIn('ocv_guide', initialized.instructions)
                             tool_names = {tool.name for tool in (await session.list_tools()).tools}
-                            self.assertEqual(len(tool_names), 11)
+                            self.assertEqual(len(tool_names), 12)
+                            self.assertIn('ocv_guide', tool_names)
+                            with patch.object(backend, 'call', side_effect=AssertionError('guide must be offline')):
+                                doc = await session.call_tool('ocv_guide', {})
+                                self.assertFalse(doc.isError)
+                                self.assertEqual(doc.structuredContent['topic'], 'start')
+                                self.assertIn('ocv://guide/start', {str(r.uri) for r in (await session.list_resources()).resources})
+                                resource = await session.read_resource('ocv://guide/start')
+                                self.assertEqual(resource.contents[0].text, doc.structuredContent['content'])
+                                invalid = await session.call_tool('ocv_guide', {'topic': '../cookies.txt'})
+                                self.assertTrue(invalid.isError)
                             self.assertIn('ocv_upload_preflight', tool_names)
-                            self.assertFalse((await session.call_tool('ocv_connection',{})).isError)
+                            connection = await session.call_tool('ocv_connection',{})
+                            self.assertFalse(connection.isError)
+                            self.assertEqual(connection.structuredContent['ai_guide']['tool'], 'ocv_guide')
                             self.assertFalse((await session.read_resource('ocv://guide/workflow')).contents == [])
                             described=await session.call_tool('ocv_describe',{'operation':'ocv_video_export'})
                             self.assertIn('input_schema',described.structuredContent)

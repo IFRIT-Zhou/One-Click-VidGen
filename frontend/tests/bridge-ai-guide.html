@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 说明入口回归</title><div id="app"></div>
+<script type="module">
+import {createApp} from 'vue/dist/vue.esm-bundler.js'
+import CodexBridgePanel from '../src/components/CodexBridgePanel.vue'
+const legacy=new URLSearchParams(location.search).has('legacy')
+const state={calls:[],clipboard:'',clipboardFails:false,openedProject:''};window.fixture=state
+Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{if(state.clipboardFails)throw Error('clipboard unavailable');state.clipboard=text}},configurable:true})
+window.fetch=async(url)=>{
+ state.calls.push(String(url))
+ let result={items:[]}
+ if(String(url).endsWith('/info'))result={client_path:'<OCV>/plugins/codex_bridge/ocv_bridge.py',skill_path:'<OCV>/skills/SKILL.md',...(legacy?{}:{ai_guide_path:'<OCV>/plugins/codex_bridge/AI_GUIDE.md',ai_guide_url:'/api/codex-bridge/ai-guide'})}
+ else if(String(url).endsWith('/projects'))result={items:[{id:'a'.repeat(32),name:'测试项目',shot_count:2}]}
+ return new Response(JSON.stringify(result))
+}
+createApp({components:{CodexBridgePanel},methods:{openProject(id){state.openedProject=id}},template:'<main style="max-width:950px;margin:auto"><CodexBridgePanel @open-project="openProject"/></main>'}).mount('#app')
+</script></html>

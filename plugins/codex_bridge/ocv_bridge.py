@@ -20,6 +20,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('info', 'guide', 'schema', 'projects', 'drafts', 'audio-tasks'):
         sub.add_parser(name)
+    sub.add_parser('ai-guide').add_argument('--topic', default='start',
+        choices=('start', 'capabilities', 'protocol', 'workflows', 'audio', 'references', 'recovery', 'bridge', 'all'))
     for name in ('draft-save', 'upload'):
         sub.add_parser(name).add_argument('file')
     for name in ('draft-get', 'pack', 'scene-assets', 'generation-settings-get'):
@@ -70,6 +72,8 @@ def main(argv=None):
         info = call(prefix + '/info')  # Authenticate/check plugin before uploads too.
         if args.command == 'info':
             result = info
+        elif args.command == 'ai-guide':
+            result = call(prefix + '/ai-guide?' + urllib.parse.urlencode({'topic': args.topic}))
         elif args.command in ('guide', 'schema', 'projects', 'drafts', 'audio-tasks'):
             result = call(prefix + '/' + args.command)
         elif args.command in ('upload', 'image-upload'):

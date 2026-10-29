@@ -10,6 +10,7 @@
 !codex_bridge/ocv_bridge.py
 !codex_bridge/README.md
 !codex_bridge/README_MCP.md
+!codex_bridge/AI_GUIDE.md
 !codex_bridge/mcp_server.py
 !codex_bridge/mcp-requirements.txt
 !codex_bridge/ocv_mcp/

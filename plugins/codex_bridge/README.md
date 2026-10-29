@@ -5,7 +5,7 @@
 ## 用户流程
 
 1. 启用 **Codex 制作桥**，首页也会出现卡片。
-2. 点 **复制给 Codex 的说明**，粘贴到新对话，提供稿件、参考素材和创作要求。说明包含本机通用 Skill 路径；无需先安装 Skill。Codex 保存初始草稿后，首页制作桥点“刷新 → 打开并核查”。
+2. 点 **复制给 AI 的说明**，粘贴到新对话，提供稿件、参考素材和创作要求。这是页面唯一的 AI 说明入口：引导已连接 MCP 的 AI 调用 `ocv_guide(topic="all")` 完整阅读手册，旧制作桥则读取随包文件或运行 `ai-guide --topic all`，无需用户粘贴全文。说明本身不建立连接、不授权生成或扣费。AI 保存初始草稿后，首页制作桥点“刷新 → 打开并核查”。
 3. 在 OCV 生成并修正配音、字幕，点 **确认配音，交给 Codex 规划**，不必先跑 OCV 自动规划。
 4. Codex 导入方案后，重新打开分镜核查，再由你生成图片、视频。
 
@@ -13,7 +13,9 @@
 
 ## 随软件附带的 Codex Skill
 
-[打开通用 Skill](skills/ocv-production-bridge/SKILL.md)。OCV 中也可点“使用指南”查看。最简单的用法是让 Codex 按绝对路径完整读取此文件，无需复制到全局目录，每次更新自动沿用软件内新版。
+新对话首先使用 [给 AI 的操作说明书](AI_GUIDE.md)：MCP 调用 `ocv_guide(topic="start")`；旧桥 CLI 调用 `ai-guide --topic start`，或从 `info` 返回的 `ai_guide_url` 读取。两条入口使用同一份文档，可按任务章节查阅；原有 `guide` 与下方 Skill 保持兼容。
+
+[打开通用 Skill](skills/ocv-production-bridge/SKILL.md)。旧客户端仍可通过 `guide` 读取。也可让 Codex 按绝对路径完整读取此文件，无需复制到全局目录，每次更新自动沿用软件内新版。
 
 想长期安装到自己的 Codex，可让 Codex 按当前安装规范将 `skills/ocv-production-bridge` 整个目录安装为个人 Skill，已有同名版本须先检查；这份拷贝不会随 OCV 自动更新。Skill 的结构参考 [OpenAI 官方说明](https://learn.chatgpt.com/docs/build-skills)。OCV 不自动改动用户的 Codex 配置。
 

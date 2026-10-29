@@ -187,6 +187,7 @@ storyboard_preview_file|GET|/{identity}/storyboard-preview/file|read|下载最�
 
 group('bridge_', '/api/codex-bridge', '''
 info|GET|/info|read|查询旧制作桥能力和版本。
+ai_guide|GET|/ai-guide|read|读取与 MCP 共用的 AI 制作说明，按 topic 获取；优先使用本地 ocv_guide，实时契约仍用 ocv_describe。
 drafts|GET|/drafts|read|列出制作桥草稿。
 draft|GET|/drafts/{identity}|read|读取指定草稿。
 draft_save|PUT|/drafts|edit|填写或修改初始草稿。

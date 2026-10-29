@@ -14,6 +14,20 @@ spec.loader.exec_module(client)
 
 
 class ClientTests(unittest.TestCase):
+    def test_ai_guide_is_a_read_only_named_topic_command(self):
+        calls = []
+        class Opener:
+            def open(self, request, timeout):
+                calls.append(request)
+                return io.BytesIO(b'{"topic":"audio","content":"fixture"}')
+        with patch.object(client.urllib.request, 'build_opener', return_value=Opener()), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(client.main(['ai-guide', '--topic', 'audio']), 0)
+        self.assertTrue(calls[0].full_url.endswith('/info'))
+        self.assertTrue(calls[1].full_url.endswith('/ai-guide?topic=audio'))
+        self.assertTrue(all(call.get_method() == 'GET' for call in calls))
+        self.assertEqual(json.loads(output.getvalue())['topic'], 'audio')
+
     def test_http_failure_overwrites_out_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)/'receipt.json'; out.write_text('{"ok":true}')

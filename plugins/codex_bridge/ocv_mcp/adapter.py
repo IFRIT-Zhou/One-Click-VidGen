@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 
 from .contracts import bind, is_credential_field
 from .state import State
+from .guidance import discovery
 
 UPLOAD_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.wav', '.mp3', '.m4a', '.aac',
                      '.flac', '.ogg', '.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v',
@@ -184,7 +185,7 @@ class Adapter:
     def status(self):
         client, _ = self.connect(refresh=True)
         client.close()
-        return {'connected': True, 'base_url': self.base_url, 'operations': len(self.bound),
+        return {'connected': True, 'base_url': self.base_url, 'operations': len(self.bound), 'ai_guide': discovery(),
                 'read_only': self.read_only, 'generation_enabled': self.allow_generation,
                 'delete_enabled': self.allow_delete, 'unavailable_operations': self.unavailable,
                 'ui_automation': False, 'remote_connections': False,

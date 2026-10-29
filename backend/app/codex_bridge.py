@@ -185,6 +185,9 @@ def info(request: Request):
     return {'version': 1, 'name': 'Codex 制作桥', 'client_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'ocv_bridge.py'),
             'skill_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'skills' / 'ocv-production-bridge' / 'SKILL.md'),
             'guide_url': '/api/codex-bridge/guide',
+            'ai_guide_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'AI_GUIDE.md'),
+            'ai_guide_url': '/api/codex-bridge/ai-guide',
+            'ai_start': 'MCP 先调用 ocv_guide(topic="start")；旧桥接先读取 ai-guide，再查询 schema。',
             'capabilities': ['drafts', 'draft_archive', 'audio_handoff', 'compact_pack', 'validate', 'apply', 'shot_patch', 'scene_management', 'image_generation',
                              'shot_pack', 'project_image_upload', 'atomic_shot_image_patch', 'reference_preview', 'patch_verification'],
             'plugin_version': '1.6.0', 'max_image_concurrency': 7, 'upstream_task_cancel_supported': False,
@@ -201,6 +204,16 @@ def guide(request: Request):
     except FileNotFoundError as exc:
         raise HTTPException(404, '制作桥使用指南缺失，请检查更新是否完整') from exc
     return {'name': 'ocv-production-bridge', 'skill_path': str(path), 'content': content}
+
+
+@router.get('/ai-guide')
+def ai_guide(request: Request, topic: Literal['start', 'capabilities', 'protocol', 'workflows', 'audio', 'references', 'recovery', 'bridge', 'all'] = 'start'):
+    user_for(request)
+    from plugins.codex_bridge.ocv_mcp.guidance import read_guide
+    try:
+        return read_guide(topic, path=PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'AI_GUIDE.md')
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, 'AI 制作说明书缺失或不完整，请检查更新') from exc
 
 
 @router.get('/schema')

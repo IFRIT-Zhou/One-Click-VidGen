@@ -38,7 +38,10 @@ def is_excluded(relative: Path, *, without_local_tts: bool = False, without_loca
     if parts[:1] == ('comfyui_plugins',):
         return relative.as_posix() not in {'comfyui_plugins/.gitignore', 'comfyui_plugins/README.md'}
     if parts[:2] == ('plugins', 'codex_bridge'):
-        public = {'plugin.json', 'ocv_bridge.py', 'README.md',
+        public = {'plugin.json', 'ocv_bridge.py', 'README.md', 'README_MCP.md', 'AI_GUIDE.md',
+                  'mcp_server.py', 'mcp-requirements.txt',
+                  'ocv_mcp/__init__.py', 'ocv_mcp/adapter.py', 'ocv_mcp/catalog.py',
+                  'ocv_mcp/contracts.py', 'ocv_mcp/guidance.py', 'ocv_mcp/server.py', 'ocv_mcp/state.py',
                   'skills/ocv-production-bridge/SKILL.md',
                   'skills/ocv-production-bridge/agents/openai.yaml'}
         return Path(*parts[2:]).as_posix() not in public

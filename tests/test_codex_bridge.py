@@ -71,6 +71,24 @@ class CodexBridgeTests(unittest.TestCase):
         self.assertEqual((self.path/'record.json').read_bytes(), before)
         self.assertFalse((self.path/'codex_bridge_backups').exists())
 
+    def test_ai_guide_matches_mcp_and_preserves_native_access_gate(self):
+        from plugins.codex_bridge.ocv_mcp.guidance import read_guide
+        before = (self.path/'record.json').read_bytes()
+        info = self.client.get('/api/codex-bridge/info').json()
+        response = self.client.get(info['ai_guide_url'])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), read_guide('start'))
+        self.assertEqual(Path(info['ai_guide_path']).read_text(encoding='utf-8-sig'), read_guide('all')['content'])
+        self.assertEqual(self.client.get(info['ai_guide_url'], params={'topic': 'audio'}).json(), read_guide('audio'))
+        self.assertEqual(self.client.get(info['ai_guide_url'], params={'topic': '../.env'}).status_code, 422)
+        with patch.object(bridge, 'enabled', return_value=False):
+            self.assertEqual(self.client.get(info['ai_guide_url']).status_code, 404)
+        with patch.object(bridge, 'require_user', side_effect=HTTPException(401, 'login')):
+            self.assertEqual(self.client.get(info['ai_guide_url']).status_code, 401)
+        with patch.object(bridge, 'PROJECT_ROOT', self.root):
+            self.assertEqual(self.client.get(info['ai_guide_url']).status_code, 404)
+        self.assertEqual((self.path/'record.json').read_bytes(), before)
+
     def test_apply_backup_readback_idempotency_no_generation(self):
         result = self.client.post(self.endpoint('apply'), json=self.payload).json()
         self.assertTrue(result['written']); self.assertFalse(result['generation_started'])
