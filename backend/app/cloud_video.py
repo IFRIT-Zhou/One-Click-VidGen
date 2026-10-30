@@ -14,6 +14,64 @@ from . import video_studio as studio
 from .h3_limits import fits_dimensions, validate_dimensions
 
 
+def is_cloud_shot(record, shot):
+    saved_backend = (shot.get('video_request') or {}).get('backend')
+    options_backend = (shot.get('video_generation_options') or {}).get('backend')
+    if not shot.get('video_request') and not shot.get('video_task_id') and shot.get('video_execution_started') is False:
+        # A deliberate backend switch can retain the old backend in its history.
+        backend = options_backend or shot.get('video_backend') or record.get('active_video_backend')
+    else:
+        backend = saved_backend or shot.get('video_backend') or options_backend or record.get('active_video_backend')
+    return backend == 'cloud_h3'
+
+
+def not_submitted(shot):
+    """Only positively known pre-submit states are safe to offer as generation."""
+    if shot.get('video_terminal'):
+        # A new attempt can fail before replacing the previous terminal request.
+        return True
+    if shot.get('video_task_id') or shot.get('video_execution_started') is True:
+        return False
+    saved = shot.get('video_request') or {}
+    if saved:
+        # Missing flags on older frozen requests are ambiguous, not proof of no POST.
+        return saved.get('backend') == 'cloud_h3' and shot.get('video_execution_started') is False
+    if shot.get('video_execution_started') is False and not (shot.get('video_state_file') or shot.get('video')):
+        # Invalidating a completed attempt clears the request but keeps its attempt
+        # counter/history, explicitly resetting execution before preparing a new one.
+        return True
+    return not (shot.get('video_state_file') or shot.get('video_attempt') or shot.get('video'))
+
+
+def interrupted_values(shot, *, preparation_message='集群 H3 请求准备已中断，尚未提交视频任务；可重试本镜'):
+    if not_submitted(shot):
+        terminal = bool(shot.get('video_terminal'))
+        saved = shot.get('video_request') or {}
+        return dict(video_status='failed' if terminal else 'pending', video_terminal=terminal,
+                    video_not_submitted=True,
+                    video_resume_available=bool(saved.get('client_job_id')) and not terminal,
+                    video_progress_message=preparation_message, video_finished_at=time.time())
+    return dict(video_status='unknown', video_terminal=False, video_not_submitted=False,
+                video_resume_available=True,
+                video_progress_message='本地查询或下载已中断，尚未确认结果；请继续查询原任务')
+
+
+def recover_unsubmitted(record):
+    """Repair legacy pre-submit errors without contacting a provider or changing assets."""
+    changed = False
+    for index, shot in enumerate(record.get('shots', []), 1):
+        if (shot.get('kind') != 'video' or shot.get('video_status') != 'unknown' or
+                shot.get('video_terminal') or not is_cloud_shot(record, shot) or not not_submitted(shot)):
+            continue
+        shot.update(interrupted_values(shot))
+        message = f'第 {index:02d} 镜（{shot["id"]}）：请求尚未提交，已恢复为可重试；原始错误保留。'
+        record.setdefault('logs', []).append(message)
+        changed = True
+    if changed:
+        record['revision'] += 1
+    return changed
+
+
 def accept_quote(saved, quote, spec):
     if Decimal(str(quote.get('credits_total', quote.get('credits', '-1')))) != 0 or quote.get('test_mode') is not True:
         raise ValueError('集群 H3 已不再免费测试，请确认新价格后再接入；本次未提交')
@@ -187,39 +245,45 @@ def generate_cloud(identity, data, user_id):
 
 def _worker(path,user_id,identities,resolved,event):
     from . import video_generation as vg
-    client=cloud_client_for(user_id)
     current_id=None
+    stage='集群连接'
     def update(identity, **values):
         with studio.LOCK:
             record=studio.read(path);shot=studio._find_shot(record,identity)
             shot.update(values);record['revision']+=1;studio.save(path,record)
     try:
+        client=cloud_client_for(user_id)
         for identity in identities:
             if event.is_set(): break
             current_id=identity
+            stage='请求准备'
             options,selected,dimensions=resolved[identity]
             with studio.LOCK:
                 record=studio.read(path);live=studio._find_shot(record,identity)
                 if live.get('video_queue_cancelled'):continue
-                update(identity,video_queued=False,video_status='running',video_started_at=time.time(),video_error='',video_progress_message='正在准备集群 H3 请求')
+                update(identity,video_queued=False,video_status='running',video_started_at=time.time(),video_finished_at=None,video_error='',video_progress_message='正在准备集群 H3 请求')
                 record=studio.read(path);shot=copy.deepcopy(studio._find_shot(record,identity))
             saved=shot.get('video_request') or {}
             if not saved or shot.get('video_terminal'):
                 prompt=shot['video_prompt']
                 if options['h3_prompt_agent']:
+                    stage='H3 提示词转换（语言模型）'
+                    update(identity,video_progress_message='正在转换 H3 提示词（语言模型），尚未提交视频任务')
                     with studio.project_language_scope(user_id,studio.planning_parameters(record)):
                         prompt,_=vg.convert_for_h3(shot,int(shot['generation_duration']),image_path=studio._storyboard_image_path(path,shot))
                 if event.is_set(): break
+                stage='本地请求准备'
                 with studio.LOCK:
                     record=studio.read(path);live=studio._find_shot(record,identity)
                     vg._freeze_local_request(path,record,live,'h3-fast',prompt=prompt,prompt_format='h3_ref2va' if options['h3_prompt_agent'] else 'generic',dimensions=dimensions,resolution=options['resolution'])
                     saved=live['video_request'];saved.update(backend='cloud_h3',seed=int(saved['seed']) % (2**32),client_job_id='ocv-h3-'+uuid.uuid4().hex,workflow_revision=selected['workflow_revision'],model=selected.get('model','minimax-h3'))
-                    live.update(video_backend='cloud_h3',video_terminal=False,video_resume_available=True,video_execution_started=False,video_status='running')
+                    live.update(video_backend='cloud_h3',video_terminal=False,video_resume_available=True,video_execution_started=False,video_not_submitted=True,video_status='running')
                     request_file=vg._asset(path,live['video']).parent/'request.json'
                     request_file.write_text(json.dumps(saved,ensure_ascii=False,indent=2),encoding='utf-8')
                     studio.save(path,record);shot=copy.deepcopy(live)
             client_id=saved['client_job_id']
             remote=None
+            stage='原任务查询'
             try:
                 remote=client.video_job(shot['video_task_id']) if shot.get('video_task_id') else client.video_job(client_id,by_client=True)
             except CloudApiError as exc:
@@ -236,23 +300,31 @@ def _worker(path,user_id,identities,resolved,event):
                            video_error=str(exc), video_progress_message='原任务不存在，保存的参数超出当前限制，请修改后重新生成')
                     continue
                 if not saved.get('quote_id'):
+                    stage='参考图上传'
                     asset=client.video_asset(vg._asset(path,saved['reference_files'][0]))
                     spec=dict(prompt=saved['prompt'],reference_image_asset_id=asset['asset_id'],width=saved['width'],height=saved['height'],duration_seconds=saved['duration'],seed=saved['seed'])
+                    stage='集群报价核对'
                     quote=client.video_quote(spec)
                     accept_quote(saved,quote,spec)
                     update(identity,video_request=saved)
                 if event.is_set(): break
-                update(identity,video_execution_started=True)
+                stage='集群任务提交'
+                update(identity,video_execution_started=True,video_not_submitted=False)
                 remote=create_or_renew(client,saved,lambda value:update(identity,video_request=value))
+            else:
+                # Even a malformed response is evidence of an existing task.
+                update(identity,video_execution_started=True,video_not_submitted=False)
             remote_id=str(remote.get('id') or remote.get('job_id') or '')
             if not remote_id: raise ValueError('云端返回缺少任务编号，已保留幂等键')
             update(identity,video_task_id=remote_id)
             deadline=time.monotonic()+max(7200,client.config.max_wait_seconds)
             cancel_sent=False
             while True:
+                stage='集群任务查询'
                 state=remote.get('status')
                 update(identity,video_progress_message=str(remote.get('message') or remote.get('stage') or state),video_resume_available=True)
                 if state in {'succeeded','completed'}:
+                    stage='视频结果下载与校验'
                     output=vg._asset(path,shot['video'])
                     client.download_to('/cloud/video/jobs/'+remote_id+'/result',output,max_bytes=1024*1024*1024)
                     from .pipeline import probe_media_duration
@@ -281,11 +353,20 @@ def _worker(path,user_id,identities,resolved,event):
                 remote=client.video_job(remote_id)
             if event.is_set() or state in {'failed','cancelled','expired'}: break
     except Exception as exc:
-        if current_id:
-            update(current_id,video_status='unknown',video_terminal=False,video_resume_available=True,
-                   video_progress_message='本地查询或下载已中断，尚未确认结果；请继续查询原任务',video_error=str(exc)[:1800])
         with studio.LOCK:
-            record=studio.read(path);record['error']=str(exc)[:1800]
+            record=studio.read(path)
+            message=f'{stage}失败：{exc}'[:1800]
+            if current_id:
+                shot=studio._find_shot(record,current_id)
+                index=next(i for i,s in enumerate(record['shots'],1) if s['id']==current_id)
+                message=f'第 {index:02d} 镜（{current_id}）{message}'
+                preparation_message=('H3 提示词转换失败，视频任务尚未提交；请检查或切换语言模型渠道后重试本镜'
+                                     if stage=='H3 提示词转换（语言模型）' else
+                                     f'{stage}失败，视频任务尚未提交；请检查错误后重试本镜')
+                shot.update(interrupted_values(shot,preparation_message=preparation_message),video_error=message)
+            record['error']=message
+            record.setdefault('logs',[]).append(message)
+            record['revision']+=1
             if isinstance(exc,CloudApiError) and exc.status_code==401: record['cloud_login_required']=True
             studio.save(path,record)
     finally:
@@ -293,7 +374,7 @@ def _worker(path,user_id,identities,resolved,event):
             record=studio.read(path)
             for shot in record['shots']:
                 shot['video_queued']=False
-                if shot.get('video_status')=='running':shot.update(video_status='unknown',video_resume_available=True,video_terminal=False)
+                if shot.get('video_status')=='running':shot.update(interrupted_values(shot))
             record.update(status='video_review',revision=record['revision']+1)
             studio.save(path,record)
             studio.ACTIVE.discard(str(path));studio.CANCEL_EVENTS.pop(str(path),None)

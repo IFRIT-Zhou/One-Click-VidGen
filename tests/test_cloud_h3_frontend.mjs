@@ -26,6 +26,20 @@ test('unknown or failed task never displays stale running progress from an inter
  }
  assert.equal(videoTask({kind:'video',video_status:'running',video_progress_message:'GPU 正在生成'}).message,'GPU 正在生成')
 })
+test('pre-submit failure shows its preparation error and offers generation, not a remote query',()=>{
+ const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
+ const code=source.slice(source.indexOf('const videoStatusLabel='),source.indexOf('const videoBatchSummary='))
+ const {videoTask}=new Function('videoRunning',code+'\nreturn {videoTask}')({value:false})
+ const shot={kind:'video',video_status:'pending',video_not_submitted:true,video_resume_available:false,
+  video_terminal:false,video_progress_message:'H3 提示词转换失败，视频任务尚未提交',video_error:'HTTP 500'}
+ assert.equal(videoTask(shot).message,shot.video_progress_message)
+ const canProcess=source.match(/const canProcessVideo=([^\r\n]+)/)[1]
+ assert.equal(new Function('shotRenderLocked','return ('+canProcess+')')(()=>false)(shot),true)
+ const button=source.match(/<button v-else-if="canProcessVideo\(selectedShot\)"[^>]*>([^<]+)<\/button>/)[1]
+ const label=button.slice(2,-2)
+ assert.equal(new Function('selectedShot','videoRunning','selectedLocalVideo','return '+label)(shot,false,false),'重新准备并生成本镜')
+ assert.equal(videoTask({...shot,video_not_submitted:false,video_status:'unknown',video_resume_available:true}).message,'状态待核实，请继续查询原任务')
+})
 test('switching API720 to cluster clears preset but retains unrelated settings',()=>{
  const events=[]
  const state=setup('ShotVideoOptions.vue',{modelValue:{backend:'api',resolution:'720p',profile_id:'old'},profiles:[],ratio:'16:9'},undefined,(name,data)=>events.push(data))

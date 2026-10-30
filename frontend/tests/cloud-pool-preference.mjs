@@ -42,5 +42,7 @@ assert.match(source, /use_cloud_image_pool: readCloudPoolPreference\(\)/)
 assert.match(source, /Object\.entries\(workspaceParameters\(job\.request\)\)/)
 assert.match(source, /Object\.assign\(form, workspaceParameters\(parameters\)\)/)
 assert.match(source, /saveCloudPoolPreference\(enabled\)/)
-assert.match(source, /function guidedVisualParameters\(\)[\s\S]*?use_cloud_image_pool: taskImagePoolEnabled\(form, cloudSession.value.authenticated\)/)
+// Guided steps must preserve the selected cloud route and require login,
+// rather than silently serializing a personal route when authentication expires.
+assert.match(source, /function guidedVisualParameters\(\)[\s\S]*?\.\.\.guidedServiceParameters\(form, cloudSession.value.authenticated\)/)
 console.log('cloud pool preference regression tests passed')

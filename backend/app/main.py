@@ -1385,11 +1385,11 @@ def _required_job_config_error(data: dict[str, Any]) -> str | None:
         return None
     status = _api_key_status()
     if not uses_cloud_language(data) and not status["language"]["configured"]:
-        return "完整视频生成需要语言模型 API Key，请先在接口配置中保存后再启动"
+        return "本项目当前使用个人语言模型 API，但尚未配置密钥。请在“本项目生成渠道”切换为云端语言模型号池，或在“接口与服务”配置个人 API；全局号池开关不会自动修改已有项目。"
     visual_backend = str(data.get("visual_backend") or "poster").lower()
     has_selected_profile = bool(data.get("image_profile_snapshot"))
     if not data.get("use_cloud_image_pool") and visual_backend in {"poster", "online-poster", "runninghub"} and not (status["image"]["configured"] or has_selected_profile):
-        return "在线海报生成需要第三方图像 API Key，请先在接口配置中保存后再启动"
+        return "本项目当前使用个人图像 API，但尚未配置可用接口。请在“本项目生成渠道”切换为云端图像号池，或在“接口与服务”配置个人图像 API。"
     return None
 
 
@@ -2235,6 +2235,10 @@ def save_parameter_preset(payload: ParameterPresetRequest, request: Request) -> 
     user = require_user(request)
     allowed_fields = set(GenerateRequest.model_fields) - {"api_key"}
     raw = {key: value for key, value in payload.parameters.items() if key in allowed_fields}
+    # Older clients serialize an unset route as null. Keep the schema's
+    # project-inheritance semantics instead of forcing personal/cloud.
+    if raw.get("language_route") is None:
+        raw.pop("language_route", None)
     try:
         parameters = GenerateRequest(**raw).model_dump(exclude={"api_key"})
     except ValueError as exc:
@@ -2648,7 +2652,8 @@ def advance_step_workflow(
         config_error = _required_job_config_error(visual_request)
         if config_error:
             raise HTTPException(status_code=400, detail=config_error)
-        if bool(job.request.get("use_cloud_image_pool")):
+        from .language_routing import uses_cloud_language
+        if bool(job.request.get("use_cloud_image_pool")) or uses_cloud_language(job.request):
             client = cloud_client_for(int(user["id"]))
             cloud_state = client.session_snapshot()
             if not cloud_state.get("configured"):
@@ -2657,8 +2662,10 @@ def advance_step_workflow(
                 raise HTTPException(status_code=401, detail="使用号池前请先登录右上角云端账户")
             try:
                 account = client.account_summary()
-                client.model_pool_status()
-                client.image_pool_status(job.request.get("method", "running"))
+                if uses_cloud_language(job.request):
+                    client.model_pool_status()
+                if job.request.get("use_cloud_image_pool"):
+                    client.image_pool_status(job.request.get("method", "running"))
                 credits = account.get("credits") if isinstance(account.get("credits"), dict) else {}
                 if float(credits.get("available") or 0) <= 0:
                     raise HTTPException(status_code=402, detail="云端账户积分不足，无法使用文本与图像号池")

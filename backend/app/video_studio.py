@@ -931,7 +931,9 @@ def read(path):
         save(path, record)
     if record['status'] == 'video_review':
         from .video_generation import recover_missing_clips
-        if recover_missing_clips(path, record):
+        from .cloud_video import recover_unsubmitted
+        repaired = recover_unsubmitted(record)
+        if recover_missing_clips(path, record) or repaired:
             save(path, record)
     return record
 

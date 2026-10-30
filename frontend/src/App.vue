@@ -487,6 +487,7 @@
               </button>
             </div>
           </div>
+          <GuidedServiceRoutes v-if="guidedStage === 'visual_setup'" :form="form" :authenticated="cloudSession.authenticated" :busy="guidedAdvancing" @change="Object.assign(form, $event)" />
           <div v-if="guidedStageMessage" class="guided-stage-message" :class="{ error: guidedStageError }">{{ guidedStageMessage }}</div>
           <div v-if="guidedStage === 'visual_setup'" class="guided-cost-estimate">
             <span>本阶段预估</span>
@@ -2698,5 +2699,6 @@ import ReferenceMaterials from './components/ReferenceMaterials.vue'
 import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
-export default { components: { TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+import GuidedServiceRoutes from './components/GuidedServiceRoutes.vue'
+export default { components: { GuidedServiceRoutes, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

@@ -1,6 +1,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api } from './api'
 import { taskImagePoolEnabled } from './taskImagePool'
+import { guidedServiceParameters, guidedServiceRoutes } from './guidedServiceRoutes.js'
 import { visualPresentation, hydrateVideoPresentation } from './videoPresentation'
 import { normalizeDynamicTextMode } from './dynamicTextMode'
 import { planningPreferences } from './shotPlanningLimit'
@@ -2467,6 +2468,7 @@ async function saveCurrentParameterPreset() {
       name,
       parameters: {
         ...presetParameters,
+        ...guidedServiceRoutes(form),
         manual_script: String(form.script || ''),
         tts_engine: ttsEngine.value,
       },
@@ -4692,6 +4694,7 @@ function generationRequestPayload() {
 
 function guidedVisualParameters() {
   return {
+    ...guidedServiceParameters(form, cloudSession.value.authenticated),
     ...(form.dynamic_video ? planningPreferences(form) : {}),
     video_orientation: form.video_orientation,
     content_mode: form.content_mode,
@@ -4704,8 +4707,6 @@ function guidedVisualParameters() {
     auto_split_long_text: form.auto_split_long_text,
     split_text_threshold: form.split_text_threshold,
     visual_backend: form.visual_backend,
-    use_cloud_image_pool: taskImagePoolEnabled(form, cloudSession.value.authenticated),
-    language_route: form.language_route || (form.use_cloud_image_pool ? 'cloud' : 'personal'),
     method: form.method,
     size: form.size,
     image_profile_id: form.image_profile_id,
