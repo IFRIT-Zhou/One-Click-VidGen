@@ -1,5 +1,6 @@
 """No production project changes or paid calls. Run with runtime/ocv_mcp Python."""
 import asyncio
+import copy
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'plugins/codex_bridge'))
 from ocv_mcp.adapter import Adapter, HttpSession, ApiError, clean
 from ocv_mcp.catalog import OPERATIONS
-from ocv_mcp.contracts import bind
+from ocv_mcp.contracts import bind, MCP_TOOL_NAMES, OperationError
+from ocv_mcp.guidance import TOPICS, read_guide
 
 
 def application_schema():
@@ -163,6 +165,78 @@ class McpAdapterTests(unittest.TestCase):
         self.assertNotIn('api_key', schema['properties']['body']['properties'])
         for key in ('image_api_key', 'image_api_keys', 'qwen_tts_api_key'):
             self.assertNotIn(key, schema['properties']['body']['properties'])
+
+    def test_tools_are_not_operations_and_errors_work_offline(self):
+        from ocv_mcp.server import TOOLS
+        self.assertEqual(MCP_TOOL_NAMES, {tool.name for tool in TOOLS})
+        with patch.object(self.backend, 'call', side_effect=AssertionError('lookup must be offline')):
+            for name in MCP_TOOL_NAMES:
+                for invoke in (lambda: self.adapter.describe(name),
+                               lambda: self.adapter.read(name, {}),
+                               lambda: self.adapter.prepare(name, {}, 'lookup_error_1')):
+                    with self.subTest(name=name), self.assertRaises(OperationError) as caught:
+                        invoke()
+                    self.assertEqual(caught.exception.detail['code'], 'STANDALONE_MCP_TOOL')
+                    self.assertEqual(caught.exception.detail['tool'], name)
+                    self.assertIn('直接调用', caught.exception.detail['next_action'])
+            with self.assertRaises(OperationError) as caught:
+                self.adapter.describe('ocv_no_such_operation')
+            self.assertEqual(caught.exception.detail['code'], 'UNKNOWN_OPERATION')
+            self.assertIn('ocv_operations', caught.exception.detail['next_action'])
+
+    def test_unavailable_operation_has_actionable_error(self):
+        self.backend.schema = {'paths': {}}
+        with self.assertRaises(OperationError) as caught:
+            self.adapter.describe('ocv_bridge_draft_save')
+        self.assertEqual(caught.exception.detail['code'], 'OPERATION_UNAVAILABLE')
+        self.assertIn('契约', caught.exception.detail['message'])
+        self.assertIn('重新连接', caught.exception.detail['next_action'])
+
+    def test_draft_contract_and_prepare_reject_readback_fields_before_plan(self):
+        described = self.adapter.describe('ocv_bridge_draft_save')
+        schema = described['input_schema']['properties']['body']['properties']['parameters']
+        self.assertFalse(schema['additionalProperties'])
+        self.assertIn('project_name', schema['properties'])
+        self.assertIn('tts_speed', schema['properties'])
+        managed = {'dynamic_video': True, 'step_mode': True,
+                   'dynamic_auto_advance': False, 'skip_tts': False}
+        self.assertEqual(set(schema['x-server-managed-fields']), set(managed))
+        base = {'project_name': '草稿测试', 'script': '完整文案'}
+        for key, value in managed.items():
+            self.assertNotIn(key, schema['properties'])
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, '服务端自动设置.*' + key):
+                self.prep('ocv_bridge_draft_save', {'body': {'id': 'b'*32, 'parameters': {**base, key: value}}})
+        for parameters in ({**base, **managed}, {**base, 'typo_field': True},
+                           {**base, 'tts_speed': 9}, {**base, 'image_resolution': '8k'},
+                           {**base, 'script': 'x'*12001}, {**base, 'script': '  '},
+                           {'project_name': '没有文案'}):
+            with self.subTest(parameters=str(parameters)[:100]), self.assertRaisesRegex(ValueError, '契约'):
+                self.prep('ocv_bridge_draft_save', {'body': {'id': 'b'*32, 'parameters': parameters}})
+        with self.adapter.state.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM plans').fetchone()[0], 0)
+        self.assertFalse(self.backend.calls)
+        valid = {**base, 'reference_image_notes': {'ref1': '本次参考'}, 'tts_speed': .9,
+                 'image_resolution': '2k', 'visual_style_prompt': None}
+        plan = self.prep('ocv_bridge_draft_save', {'body': {'id': 'b'*32, 'parameters': valid}})
+        self.assertEqual(plan['status'], 'prepared')
+        self.assertFalse(self.backend.calls)
+        self.adapter.commit(plan['plan_id'])
+        self.assertEqual(self.completed(plan['plan_id'])['status'], 'submitted')
+        self.assertEqual(self.backend.calls[0][2]['json']['parameters'], valid)
+
+    def test_old_server_opaque_draft_contract_is_not_approved(self):
+        document = copy.deepcopy(self.schema)
+        for model in document['components']['schemas'].values():
+            if model.get('title') == 'Draft':
+                model['properties']['parameters'] = {'type': 'object', 'additionalProperties': True}
+        self.backend.schema = document
+        with self.assertRaises(OperationError) as caught:
+            self.prep('ocv_bridge_draft_save', {'body': {'id': 'b'*32,
+                'parameters': {'project_name': '测试', 'script': '文案'}}})
+        self.assertEqual(caught.exception.detail['code'], 'OPERATION_UNAVAILABLE')
+        self.assertIn('ocv_bridge_draft_save', self.adapter.unavailable)
+        self.assertIn('ocv_video_get', self.adapter.bound)
+        self.assertFalse(self.backend.calls)
 
     def test_only_local_origins(self):
         for address in ('http://example.com', 'http://localhost@evil.com', 'http://127.0.0.1/path',
@@ -537,10 +611,45 @@ class StdioProtocolTests(unittest.TestCase):
                                 self.assertEqual(doc.structuredContent['topic'], 'start')
                                 self.assertIn('ocv://guide/start', {str(r.uri) for r in (await session.list_resources()).resources})
                                 resource = await session.read_resource('ocv://guide/start')
-                                self.assertEqual(resource.contents[0].text, doc.structuredContent['content'])
+                                self.assertEqual(resource.contents[0].text, doc.content[0].text)
+                                for topic in (*TOPICS, 'all'):
+                                    result = await session.call_tool('ocv_guide', {'topic': topic})
+                                    self.assertFalse(result.isError)
+                                    self.assertEqual(len(result.content), 1)
+                                    self.assertEqual(result.content[0].type, 'text')
+                                    self.assertEqual(result.content[0].text, read_guide(topic)['content'])
+                                    self.assertEqual(result.structuredContent['topic'], topic)
+                                    self.assertEqual(result.structuredContent['content_location'], 'content[0].text')
+                                    self.assertEqual([row['topic'] for row in result.structuredContent['topics']], list(TOPICS))
+                                    self.assertNotIn('content', result.structuredContent)
+                                    self.assertNotIn(result.content[0].text, json.dumps(result.structuredContent, ensure_ascii=False))
+                                    self.assertLess(len(json.dumps(result.structuredContent, ensure_ascii=False)), 1800)
+                                legacy = await session.read_resource('ocv://guide/workflow')
+                                self.assertEqual(legacy.contents[0].text, read_guide('all')['content'])
                                 invalid = await session.call_tool('ocv_guide', {'topic': '../cookies.txt'})
                                 self.assertTrue(invalid.isError)
                             self.assertIn('ocv_upload_preflight', tool_names)
+                            for name, code in [('ocv_upload_preflight', 'STANDALONE_MCP_TOOL'),
+                                               ('ocv_no_such_operation', 'UNKNOWN_OPERATION')]:
+                                error = await session.call_tool('ocv_describe', {'operation': name})
+                                self.assertTrue(error.isError)
+                                self.assertEqual(error.structuredContent['error']['code'], code)
+                                self.assertIn(name, error.content[0].text)
+                                self.assertIn('请', error.structuredContent['error']['next_action'])
+                            denied = await session.call_tool('ocv_upload_preflight',
+                                {'local_path': str(Path(temp) / 'missing.wav')})
+                            self.assertFalse(denied.isError)
+                            self.assertFalse(denied.structuredContent['allowed'])
+                            self.assertFalse(denied.structuredContent['upload_started'])
+                            draft = await session.call_tool('ocv_describe', {'operation': 'ocv_bridge_draft_save'})
+                            params_schema = draft.structuredContent['input_schema']['properties']['body']['properties']['parameters']
+                            self.assertFalse(params_schema['additionalProperties'])
+                            rejected = await session.call_tool('ocv_prepare', {'operation': 'ocv_bridge_draft_save',
+                                'arguments': {'body': {'id': 'b'*32, 'parameters': {'project_name': '测试',
+                                    'script': '文案', 'dynamic_video': True}}}, 'request_id': 'stdio_bad_draft'})
+                            self.assertTrue(rejected.isError)
+                            self.assertIn('服务端自动设置', rejected.content[0].text)
+                            self.assertFalse(backend.calls)
                             connection = await session.call_tool('ocv_connection',{})
                             self.assertFalse(connection.isError)
                             self.assertEqual(connection.structuredContent['ai_guide']['tool'], 'ocv_guide')

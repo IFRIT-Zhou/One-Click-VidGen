@@ -1,6 +1,6 @@
 # OCV：给 AI 助手的制作操作说明书
 
-文档版本：2026-10-29。读者是接手 OCV 的 AI，不是操作软件的人。
+文档版本：2026-10-30。读者是接手 OCV 的 AI，不是操作软件的人。
 这是能力导航，不是执行授权，也不是固定 API 契约。以用户当前请求、运行时权限、实时 Schema 和实际任务状态为准。
 首次只读 start；再按任务读取相应章节。不要每次把全文、所有操作和整期项目一起装入上下文。
 
@@ -48,6 +48,10 @@ MCP 首次接手的最短流程：
 
 ### 工具和操作不是同一层
 
+`ocv_guide`、`ocv_connection`、`ocv_upload_preflight`、`ocv_operations`、`ocv_describe`、`ocv_read`、`ocv_prepare`、`ocv_commit`、`ocv_receipt`、`ocv_discard`、`ocv_result`、`ocv_preview_asset` 是独立 MCP 工具，直接按客户端提供的工具 Schema 调用，不能作为 operation。
+
+例如上传预检直接调用 `ocv_upload_preflight(local_path="用户指定文件的绝对路径")`，不先 describe 它。只有 `ocv_operations` 列出的名称才作为 operation；例如 `ocv_upload` 是上传操作，而 `ocv_upload_preflight` 不是。误传会返回 `STANDALONE_MCP_TOOL` 并指出正确工具；未知名称返回 `UNKNOWN_OPERATION`；当前后端缺失接口或完整契约返回 `OPERATION_UNAVAILABLE`。
+
 工具 `ocv_operations` 返回按需选择的 operation；工具 `ocv_describe` 返回其实时参数。最小只读示例：
 
 ```json
@@ -67,6 +71,14 @@ MCP 首次接手的最短流程：
 - 用户明确授权该范围后才 commit；生成/渲染/删除还需 `confirmed=true`。配置允许、勾选 confirmed、文档示例，都不等于用户授权。用户已经明确授权同一范围时不用重复问同一句。
 - 预览过期或 revision/timeline_token/文件内容变动：重新读取并准备；不要随意填最新版本强行覆盖旧草案。
 - `ocv_discard` 只丢弃未提交计划，不能代替停止已运行任务。
+
+### 初始草稿的可写参数
+
+`ocv_bridge_draft_save` 的 `body.parameters` 仅接受实时 Schema 中 `properties` 列出的字段，不接受其他字段；项目名与文案必填。类型、枚举和长度以该 Schema 为准，prepare 会提前校验，不符合契约时不会创建计划。
+
+读取草稿的 `parameters` 是结果快照，不是可以原样回传的保存请求。`dynamic_video=true`、`step_mode=true`、`dynamic_auto_advance=false`、`skip_tts=false` 由服务端管理，即使值相同也不得提交。它们列在 Schema 的 `x-server-managed-fields` 中；旧桥 schema 也提供 `draft_fields` 和 `draft_server_managed_fields`。编辑/复制草稿时仅按可写字段构造请求，保留当前 revision 规则。
+
+这四项限制只针对初始桥接草稿，不意味着 `ocv_job_create` 等其他操作禁止这些参数；各操作分别读取契约。保存草稿不会启动配音或生成。若 MCP 报草稿完整契约不可用，需加载支持该契约的 OCV 版本，不要尝试提交任意字段。
 
 ### 提交和生成分开跟踪
 
@@ -126,7 +138,7 @@ MCP 首次接手的最短流程：
 
 ## references · 素材身份与局部返修
 
-上传前先 `ocv_upload_preflight`，核对当前连接实际授权、格式和大小。聊天里指定路径不会自动改变白名单；授权缺失时请用户按精确文件或专用目录配置并重连 MCP，不开放整个盘，也不改用桥 CLI/复制到已授权目录来绕过限制。
+上传前直接调用独立工具 `ocv_upload_preflight`，核对当前连接实际授权、格式和大小。聊天里指定路径不会自动改变白名单；授权缺失时请用户按精确文件或专用目录配置并重连 MCP，不开放整个盘，也不改用桥 CLI/复制到已授权目录来绕过限制。任意用户选定的专用工作目录均可授权，不依赖固定项目名；单文件授权不包括同目录其他文件。修改客户端配置时保留已有授权和其他选项；新连接后再次预检。仅预检不会上传，也不创建计划。
 
 上传成功不等于绑定成功。保存 OCV 返回的素材身份，并回读绑定与实际附图。`ocv_preview_asset` 的缓存 ID、上传 asset ID、reference_id、shot_id 不可互换。
 

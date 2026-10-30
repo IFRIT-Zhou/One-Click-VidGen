@@ -13,7 +13,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from jsonschema import Draft202012Validator
 
-from .contracts import bind, is_credential_field
+from .contracts import bind, is_credential_field, check_operation_name, OperationError
 from .state import State
 from .guidance import discovery
 
@@ -213,20 +213,37 @@ class Adapter:
                 'next_offset': offset+limit if offset+limit < len(rows) else None}
 
     def describe(self, operation):
+        check_operation_name(operation)
         client, _ = self.connect()
         client.close()
-        op, schema = self.bound[operation]
+        op, schema = self.operation_contract(operation)
         return {'name': op.name, 'description': op.description, 'access': op.access,
                 'enabled': self.allowed(op), 'input_schema': schema,
                 'method': op.method, 'endpoint': op.path,
                 'workflow': 'read' if op.access == 'read' else 'prepare -> review -> commit -> receipt -> native task status',
                 'warning': '保留原生权限、revision、时间轴和素材校验；无法得知尚未保存的页面编辑。'}
 
-    def validate(self, operation, arguments):
+    def operation_contract(self, operation):
+        check_operation_name(operation)
         if operation not in self.bound:
-            raise ValueError('操作不存在或此 OCV 版本不支持；请先列出操作')
-        op, schema = self.bound[operation]
+            raise OperationError(operation, 'OPERATION_UNAVAILABLE',
+                f'当前 OCV 未提供 {operation} 的可用接口或完整参数契约。',
+                '请调用 ocv_connection 刷新目录，并从 ocv_operations 选择可用操作；'
+                '若刚更新软件，请加载新版 OCV 服务后重新连接 MCP。')
+        return self.bound[operation]
+
+    def validate(self, operation, arguments):
+        op, schema = self.operation_contract(operation)
         no_credentials(arguments)
+        if operation == 'ocv_bridge_draft_save':
+            parameters_schema = schema['properties']['body']['properties']['parameters']
+            body = arguments.get('body')
+            parameters = body.get('parameters') if isinstance(body, dict) else None
+            if isinstance(parameters, dict):
+                managed = set(parameters).intersection(parameters_schema.get('x-server-managed-fields', {}))
+                if managed:
+                    raise ValueError('参数不符合 OCV 契约：以下草稿字段由服务端自动设置，不得提交：'
+                                     + ', '.join(sorted(managed)) + '；请仅提交 parameters.properties 中的可写字段。')
         errors = sorted(Draft202012Validator(schema).iter_errors(arguments), key=lambda e: str(e.path))
         if errors:
             raise ValueError('参数不符合 OCV 契约：' + '; '.join(f'{list(e.path)}: {e.message}' for e in errors[:5]))
@@ -325,6 +342,7 @@ class Adapter:
         return self.compact(owner, payload)
 
     def read(self, operation, arguments):
+        check_operation_name(operation)
         client, owner = self.connect()
         try:
             op = self.validate(operation, arguments)
@@ -335,6 +353,7 @@ class Adapter:
             client.close()
 
     def prepare(self, operation, arguments, request_id):
+        check_operation_name(operation)
         if not re.fullmatch(r'[A-Za-z0-9_-]{8,100}', request_id):
             raise ValueError('request_id 必须为 8～100 位字母、数字、下划线或连字符')
         client, owner = self.connect()

@@ -44,6 +44,14 @@ class AiGuideTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '未知指南章节'):
                 read_guide(topic)
 
+    def test_draft_and_standalone_tool_contracts_are_explained(self):
+        protocol = read_guide('protocol')['content']
+        for text in ('ocv_upload_preflight', '独立 MCP 工具', '不是', 'STANDALONE_MCP_TOOL',
+                     'UNKNOWN_OPERATION', 'OPERATION_UNAVAILABLE', 'x-server-managed-fields',
+                     'dynamic_video', 'step_mode', 'dynamic_auto_advance', 'skip_tts', '不得提交'):
+            self.assertIn(text, protocol)
+        self.assertIn('单文件授权不包括同目录其他文件', read_guide('references')['content'])
+
     def test_missing_or_partial_distribution_fails_explicitly(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'guide.md'

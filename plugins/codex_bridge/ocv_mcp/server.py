@@ -13,7 +13,7 @@ from mcp import types
 
 from . import VERSION
 from .adapter import Adapter, clean
-from .contracts import object_schema
+from .contracts import object_schema, OperationError
 from .guidance import BOOTSTRAP, TOPICS, read_guide
 
 # Keep the legacy resource/constant while initialization stays deliberately small.
@@ -30,15 +30,15 @@ def tool(name, description, properties=None, required=None, *, read=True, destru
 STRING = {'type': 'string', 'minLength': 1, 'maxLength': 200}
 ARGUMENTS = {'type': 'object', 'description': '严格遵循 ocv_describe 的 input_schema。'}
 TOOLS = [
-    tool('ocv_guide', '新对话先读 start：面向 AI 的 OCV 能力与操作说明。按章节查流程、配音、素材和恢复；不连接后端、不改项目。',
+    tool('ocv_guide', '新对话先读 start：面向 AI 的 OCV 能力与操作说明。正文只在 content 文本中返回一次，structuredContent 仅含章节索引等元数据；不连接后端、不改项目。',
          {'topic': {'type': 'string', 'enum': [*TOPICS, 'all'], 'default': 'start'}}),
     tool('ocv_connection', '检查连接、身份、可用权限与版本兼容性；刷新操作目录。初次接手请先读 ocv_guide。'),
-    tool('ocv_upload_preflight', '只检查指定本地文件的上传授权、类型和大小，不上传也不创建计划。',
+    tool('ocv_upload_preflight', '独立 MCP 工具，直接调用，不是 operation。只检查本地文件的上传授权、类型和大小，不上传也不创建计划。',
          {'local_path': {'type': 'string', 'minLength': 1, 'maxLength': 4096}}, ['local_path']),
     tool('ocv_operations', '按制作环节列出可用操作，不一次加载所有契约。',
          {'group': {'type': 'string', 'maxLength': 80}, 'offset': {'type': 'integer', 'minimum': 0},
           'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}),
-    tool('ocv_describe', '取得指定操作的实时参数 JSON Schema、含义及权限。', {'operation': STRING}, ['operation']),
+    tool('ocv_describe', '取得 ocv_operations 列出操作的实时参数 JSON Schema、含义及权限。独立工具（如 ocv_upload_preflight）请直接调用，不传作 operation。', {'operation': STRING}, ['operation']),
     tool('ocv_read', '执行白名单只读/预检操作。素材下载会写入本机 MCP 缓存，不改项目。',
          {'operation': STRING, 'arguments': ARGUMENTS}, ['operation', 'arguments']),
     tool('ocv_prepare', '预览并保存待执行计划，不提交制作操作；同一意图重试必须沿用 request_id。',
@@ -70,8 +70,12 @@ def create_server(adapter):
         try:
             if name == 'ocv_guide':
                 result = await asyncio.to_thread(read_guide, arguments.get('topic', 'start'))
-                return types.CallToolResult(content=[types.TextContent(type='text', text=json.dumps(result, ensure_ascii=False))],
-                                            structuredContent=result)
+                # Some clients display both channels. Keep the full Markdown in
+                # exactly one text block, not duplicated inside JSON metadata.
+                metadata = {key: value for key, value in result.items() if key != 'content'}
+                metadata['content_location'] = 'content[0].text'
+                return types.CallToolResult(content=[types.TextContent(type='text', text=result['content'])],
+                                            structuredContent=metadata)
             if name == 'ocv_preview_asset':
                 path, mime = await asyncio.to_thread(adapter.asset, arguments['asset_id'])
                 data = base64.b64encode(path.read_bytes()).decode('ascii')
@@ -92,6 +96,9 @@ def create_server(adapter):
             result = await asyncio.to_thread(method, **arguments)
             return types.CallToolResult(content=[types.TextContent(type='text', text=json.dumps(result, ensure_ascii=False))],
                                         structuredContent=result)
+        except OperationError as exc:
+            return types.CallToolResult(content=[types.TextContent(type='text', text=clean(str(exc)))],
+                                        structuredContent={'error': clean(exc.detail)}, isError=True)
         except Exception as exc:
             error = clean(str(exc))
             return types.CallToolResult(content=[types.TextContent(type='text', text=error)], isError=True)

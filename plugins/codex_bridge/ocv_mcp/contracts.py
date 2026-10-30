@@ -4,6 +4,32 @@ import re
 
 from .catalog import OPERATIONS
 
+# These are SDK tools, not native operation names. Tested against server.TOOLS.
+MCP_TOOL_NAMES = frozenset(('ocv_guide', 'ocv_connection', 'ocv_upload_preflight',
+    'ocv_operations', 'ocv_describe', 'ocv_read', 'ocv_prepare', 'ocv_commit',
+    'ocv_receipt', 'ocv_discard', 'ocv_result', 'ocv_preview_asset'))
+OPERATION_NAMES = frozenset(op.name for op in OPERATIONS)
+
+
+class OperationError(ValueError):
+    def __init__(self, operation, code, message, next_action, tool=None):
+        self.detail = {'code': code, 'operation': operation, 'message': message,
+                       'next_action': next_action}
+        if tool:
+            self.detail['tool'] = tool
+        super().__init__(f'{code}: {message} {next_action}')
+
+
+def check_operation_name(operation):
+    if operation in MCP_TOOL_NAMES:
+        raise OperationError(operation, 'STANDALONE_MCP_TOOL',
+            f'{operation} 是独立 MCP 工具，不是 operation。',
+            f'请直接调用 {operation}，参数以客户端的工具 inputSchema 为准；'
+            '不要通过 ocv_describe、ocv_read 或 ocv_prepare 包装调用。', tool=operation)
+    if operation not in OPERATION_NAMES:
+        raise OperationError(operation, 'UNKNOWN_OPERATION', f'未知 operation：{operation}。',
+            '请调用 ocv_operations 查找当前可用操作，再用 ocv_describe 获取契约；不要猜测名称。')
+
 
 def is_credential_field(key):
     normalized = re.sub(r'[^a-z]', '', key.lower())
@@ -86,6 +112,13 @@ def bind(document):
             if body.get('required'):
                 required.append('body')
             props = properties['body'].get('properties', {})
+            if op.name == 'ocv_bridge_draft_save':
+                parameters = props.get('parameters', {})
+                if not parameters.get('properties') or parameters.get('additionalProperties') is not False:
+                    # A new adapter against an old server must not approve a
+                    # write under the old opaque/free-form draft contract.
+                    unavailable.append(op.name)
+                    continue
             for key in list(props):
                 if is_credential_field(key):
                     props.pop(key)

@@ -24,6 +24,28 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ROOT = PROJECT_ROOT / 'workspace' / 'codex_bridge'
 PLUGIN_ID = 'codex_bridge'
 DRAFT_FIELDS = set('project_name script content_mode video_orientation visual_style_prompt global_character_prompt story_environment_prompt reference_image_ids reference_image_notes reference_image_labels reference_image_kinds tts_engine tts_voice_id tts_speed tts_emotion tts_emotion_weight cluster_voice_type cluster_voice_id qwen_tts_voice qwen_tts_instructions image_resolution video_render_variant video_generation_backend comfyui_profile_id dynamic_text_mode scene_references_enabled'.split())
+DRAFT_SERVER_PARAMETERS = {'dynamic_video': True, 'step_mode': True,
+                           'dynamic_auto_advance': False, 'skip_tts': False}
+
+
+def draft_parameters_schema(schema):
+    # Resolve lazily: main imports this router, but defines GenerateRequest
+    # before OpenAPI/schema generation. Keep types/limits tied to native inputs.
+    from .main import GenerateRequest
+    native = GenerateRequest.model_json_schema()['properties']
+    properties = {key: copy.deepcopy(native[key]) for key in sorted(DRAFT_FIELDS)}
+    for key in ('project_name', 'script'):
+        properties[key].pop('default', None)
+        properties[key].update(minLength=1, pattern=r'\S')
+    properties['script']['maxLength'] = 12000
+    properties['content_mode']['default'] = 'general'
+    schema.update(type='object', properties=properties, required=['project_name', 'script'],
+                  additionalProperties=False,
+                  description='仅提交此处列出的可写初始参数。读取草稿的 parameters 是结果快照，不能原样回传；'
+                              'dynamic_video、step_mode、dynamic_auto_advance、skip_tts 由服务端设置，不得提交。')
+    schema['x-server-managed-fields'] = {
+        key: {'readOnly': True, 'const': value, 'description': '服务端自动设置；不属于可写参数'}
+        for key, value in DRAFT_SERVER_PARAMETERS.items()}
 
 
 class StrictModel(BaseModel):
@@ -34,7 +56,7 @@ class Draft(StrictModel):
     # Caller-chosen UUID makes retry after an uncertain network response safe.
     id: str = Field(pattern=r'^[a-f0-9]{32}$')
     revision: int = Field(default=0, ge=0)
-    parameters: dict[str, Any]
+    parameters: dict[str, Any] = Field(json_schema_extra=draft_parameters_schema)
 
 
 class DraftArchive(StrictModel):
@@ -225,12 +247,14 @@ def schema(request: Request):
             'image_batch': ImageBatch.model_json_schema(), 'generation_settings': GenerationSettings.model_json_schema(),
             'image_batch_control': BatchControl.model_json_schema(),
             'draft_fields': sorted(DRAFT_FIELDS),
+            'draft_server_managed_fields': dict(DRAFT_SERVER_PARAMETERS),
             'motion_example': {'version': 2, 'scene_anchor': '固定构图，显示本镜空间关系',
                 'participants': ['主体'], 'reference_participants': ['主体'], 'reference_texts': [],
                 'reference_beat': 1, 'reference_visual': '主体处于初始状态',
                 'beats': [{'action': '主体发生本镜所需的可见变化，镜头保持稳定', 'texts': []}]},
             'text_entry_example': {'text': '短标签', 'owner': '主体', 'container': '画面标注'},
-            'notes': ['静态镜头不填 motion_plan/video_prompt。动态必须填写 motion_plan。',
+            'notes': ['draft.parameters 只接受 draft_fields；读取结果中的 draft_server_managed_fields 不得回传，即使值未变。',
+                      '静态镜头不填 motion_plan/video_prompt。动态必须填写 motion_plan。',
                       'shot_patch 只提交稳定 id 与要改的字段；禁止字幕、时间、动静类型、素材路径和生成设置。',
                       '局部返修 image_prompt 图号按本次 reference_ids 顺序；更换引用必须同时提交提示词。',
                       'reference_ids 支持 project、redraw 和 image-upload 返回的当前项目暂存 ID；上传不改版本，提交绑定时纳入素材库。',
@@ -273,10 +297,14 @@ def draft_put(data: Draft, request: Request):
     from .main import GenerateRequest, list_uploads
     unknown = set(data.parameters) - DRAFT_FIELDS
     if unknown:
-        raise HTTPException(422, '不支持的初始参数：' + ', '.join(sorted(unknown)))
+        managed = unknown.intersection(DRAFT_SERVER_PARAMETERS)
+        detail = '不支持的初始参数：' + ', '.join(sorted(unknown))
+        if managed:
+            detail += '；以下字段由服务端自动设置，不得提交：' + ', '.join(sorted(managed))
+        raise HTTPException(422, detail)
     raw = dict(data.parameters)
-    raw.update(dynamic_video=True, step_mode=True, dynamic_auto_advance=False, skip_tts=False,
-               content_mode=raw.get('content_mode', 'general'))
+    raw.update(DRAFT_SERVER_PARAMETERS)
+    raw.setdefault('content_mode', 'general')
     try:
         checked = GenerateRequest(**raw).model_dump()
     except ValueError as exc:
