@@ -582,6 +582,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                         break
                     continue
                 status, error = 'completed', ''
+                preparation_failed = False
                 # Prompt conversion and request freezing happen inside the worker.
                 # Therefore a slow/failed language call cannot block the HTTP
                 # response and never starts a GPU job with a partial prompt.
@@ -704,7 +705,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                         shot = studio._find_shot(current, identity)
                         if resume_prompt_id:
                             shot.update(video_status='running', video_error='', video_execution_started=True,
-                                        video_task_id=resume_prompt_id)
+                                        video_not_submitted=False, video_task_id=resume_prompt_id)
                             snapshot = copy.deepcopy(shot)
                             current['logs'].append(f'{identity}：开始续查原本地任务，不创建新的生成尝试。')
                             current['revision'] += 1
@@ -729,7 +730,8 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                                 resolution=resolution if resolution in {*VIDEO_RESOLUTION_PRESETS, 'custom'} else '',
                                 dimensions=dimensions,
                             )
-                            shot.update(video_status='running', video_error='', video_execution_started=True)
+                            shot.update(video_status='running', video_error='', video_execution_started=True,
+                                        video_not_submitted=False)
                             current['logs'].append(f'{identity}：开始调用本地 ComfyUI，使用预设“{profile.get("name") or profile_id}”，实际分辨率 {dimensions[0]} × {dimensions[1]}，本地任务串行执行。')
                             current['revision'] += 1
                             studio.save(path, current)
@@ -737,6 +739,7 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                 except ComfyUIStopped as exc:
                     status, error = 'stopped', str(exc)
                 except Exception as exc:
+                    preparation_failed = True
                     status, error = 'failed', f'H3 提示词转换或本地请求准备失败：{str(exc)[:1600]}' if use_h3_agent else str(exc)[:1800]
 
                 def progress(message):
@@ -781,6 +784,15 @@ def _start_local_worker(path, record, identities, user_id, profile_id, use_h3_ag
                     live.update(video_status=status, video_error=error,
                                 video_resume_available=False, video_terminal=True)
                     live.update(video_finished_at=time.time(), video_progress_message='已完成，可试看' if status == 'completed' else error)
+                    # A failed H3 conversion without a frozen request has never
+                    # reached ComfyUI. Keep it eligible for the ordinary Start
+                    # / generate-unfinished action, not only terminal retries.
+                    # Never discard or reclassify an existing task identity.
+                    if (use_h3_agent and preparation_failed and not live.get('video_request')
+                            and not live.get('video_task_id') and not live.get('video_state_file')):
+                        live.update(video_status='pending', video_terminal=False,
+                                    video_not_submitted=True, video_execution_started=False,
+                                    video_progress_message=error + '；尚未提交视频任务，可重新点击生成。')
                     if status == 'completed':
                         live['video_design_changed'] = False
                         live['video_version'] = _video_version(_asset(path, live['video']))

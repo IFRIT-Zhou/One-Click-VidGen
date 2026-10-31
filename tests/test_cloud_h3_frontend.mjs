@@ -40,6 +40,29 @@ test('pre-submit failure shows its preparation error and offers generation, not 
  assert.equal(new Function('selectedShot','videoRunning','selectedLocalVideo','return '+label)(shot,false,false),'重新准备并生成本镜')
  assert.equal(videoTask({...shot,video_not_submitted:false,video_status:'unknown',video_resume_available:true}).message,'状态待核实，请继续查询原任务')
 })
+test('unsubmitted H3 failure stays available to Start and generate-unfinished controls',()=>{
+ const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
+ const lines=['shotRenderLocked','canProcessVideo'].map(name=>{
+  const line=source.split('\n').find(line=>line.startsWith('const '+name+'='))
+  assert.ok(line,name+' exists')
+  return line
+ }).join('\n')
+ const {canProcessVideo,shotRenderLocked}=new Function('videoRunning',lines+'\nreturn {canProcessVideo,shotRenderLocked}')({value:false})
+ for(const backend of ['comfyui','cloud_h3']){
+  const shot={kind:'video',video_backend:backend,video_status:'pending',
+   video_terminal:false,video_resume_available:false,video_not_submitted:true,
+   video_queued:false,video_error:'H3 转换失败'}
+  assert.equal(shotRenderLocked(shot),false)
+  assert.equal(canProcessVideo(shot),true)
+  assert.equal(canProcessVideo({...shot,video_status:'completed'}),false)
+  assert.equal(canProcessVideo({...shot,video_status:'unknown',video_not_submitted:false,
+   video_request:{client_job_id:'existing'}}),false)
+  assert.equal(canProcessVideo({...shot,video_status:'failed',video_terminal:true}),false)
+ }
+ assert.match(source,/@click="generateVideos\(pendingVideos\)"/)
+ assert.match(source,/v-else-if="canProcessVideo\(selectedShot\)"/)
+})
+
 test('switching API720 to cluster clears preset but retains unrelated settings',()=>{
  const events=[]
  const state=setup('ShotVideoOptions.vue',{modelValue:{backend:'api',resolution:'720p',profile_id:'old'},profiles:[],ratio:'16:9'},undefined,(name,data)=>events.push(data))

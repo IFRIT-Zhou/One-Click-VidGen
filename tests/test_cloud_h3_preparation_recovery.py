@@ -93,6 +93,26 @@ class CloudPreparationRecoveryTests(unittest.TestCase):
         client.video_job.assert_not_called()
         client.create_video_job.assert_not_called()
 
+    def test_actual_incomplete_h3_conversion_never_reaches_video_submission(self):
+        from backend.app import h3_prompt_agent as agent
+
+        def convert(shot, duration, **kwargs):
+            return agent.convert_for_h3(shot, duration)
+
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({
+                'h3_prompt': 'subject_definitions: <Subject 1> is a liver with three lesions.'})) as ask:
+            record, client, _, freezer = self.run_worker(convert=convert)
+        self.assertEqual(ask.call_count, 3)
+        shot = record['shots'][1]
+        self.assertEqual(shot['video_status'], 'pending')
+        self.assertTrue(shot['video_not_submitted'])
+        self.assertIn('动作/阶段', shot['video_error'])
+        self.assertIn('第 02 镜（s5）', record['error'])
+        freezer.assert_not_called()
+        client.video_asset.assert_not_called()
+        client.video_quote.assert_not_called()
+        client.create_video_job.assert_not_called()
+
     def test_failed_conversion_after_explicit_regeneration_keeps_history(self):
         shot = dict(id='s5', kind='video', video_prompt='tree', generation_duration=4,
                     video_status='completed', video_backend='cloud_h3', video_attempt=2,

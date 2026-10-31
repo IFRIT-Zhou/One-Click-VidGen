@@ -360,7 +360,7 @@ def _worker(path,user_id,identities,resolved,event):
                 shot=studio._find_shot(record,current_id)
                 index=next(i for i,s in enumerate(record['shots'],1) if s['id']==current_id)
                 message=f'第 {index:02d} 镜（{current_id}）{message}'
-                preparation_message=('H3 提示词转换失败，视频任务尚未提交；请检查或切换语言模型渠道后重试本镜'
+                preparation_message=('H3 提示词转换失败，视频任务尚未提交；可直接重新开始本镜，反复失败时可检查或切换语言模型渠道'
                                      if stage=='H3 提示词转换（语言模型）' else
                                      f'{stage}失败，视频任务尚未提交；请检查错误后重试本镜')
                 shot.update(interrupted_values(shot,preparation_message=preparation_message),video_error=message)

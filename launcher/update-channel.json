@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.10.31.1",
-  "release_order": 2026103101,
-  "display_version": "2026.10.31 项目渠道、预设与 H3 恢复修复",
+  "release_id": "2026.10.31.2",
+  "release_order": 2026103102,
+  "display_version": "2026.10.31 H3 动作完整性与重试修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.31.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.10.31.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
   "notes": "分步画面设置新增本项目生成渠道，语言与图片可分别切换号池或个人 API，并支持一键全部使用号池；登录失效明确提示，不静默切换个人 API。修复我的预设保存时 language_route 为空的校验错误，兼容旧客户端并保留继承语义。修复 H3 提示词转换或请求准备失败被误判为继续查询原任务；尚未提交的镜头可重试，已提交或结果不明的任务继续保留原身份，避免重复生成。保留已有配音、字幕和素材，不部署云端、不重启 OCV 或集群。请在任务结束后安全更新并自行重启 OCV。",
-  "content_fingerprint": "5bb4383e949cca8c204c27e5b1ace9c99d16fd8204dec98e1fc44befc79f8120"
+  "content_fingerprint": "ea5df6ee83fa1d0e620366c2580711de913e0a509687134b2cec42e3ca33b60b"
 }

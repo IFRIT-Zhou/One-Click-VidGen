@@ -32,6 +32,30 @@ _TIME_RANGE = re.compile(
     r"\[\s*(\d{1,2}):(\d{1,2}(?:\.\d+)?)\s*[-–—~至]\s*"
     r"(\d{1,2}):(\d{1,2}(?:\.\d+)?)\s*\]"
 )
+_SUBTITLE_POLICY = (
+    "Do not generate subtitles, automatic captions, lower thirds, narration transcription, title "
+    "cards, explanatory overlays, or watermarks. Only exact approved short in-scene text may appear "
+    "inside its assigned object or bubble; never turn it into subtitles."
+)
+_PICTURE_ACTION_ANCHOR = (
+    "<Picture 1> anchors the opening composition; its depicted elements may unfold over time "
+    "rather than remain simultaneous."
+)
+_LIPSYNC_DIRECTION = (
+    "The visible speaking subject must continuously lip-sync to <Audio 1> with accurate "
+    "mouth opening, closing, syllable rhythm, pauses, facial expression, and matching body "
+    "performance. Do not merely use <Audio 1> as loose pacing. The supplied audio is a "
+    "performance reference rather than the final soundtrack; do not visualize or transcribe it."
+)
+_AUDIO_TIMING_DIRECTION = (
+    "Use <Audio 1> only for action timing, pauses, and emotional cadence. Mouth lip-sync is "
+    "not required. The supplied audio is a performance reference rather than the final soundtrack."
+)
+
+
+class H3PromptIncomplete(ValueError):
+    """A conversion omitted actual visual instructions; retry, never invent them."""
+
 
 _SYSTEM = r"""You are OCV H3 Prompt Agent. Your only job is to convert one already-approved,
 model-neutral video prompt into the official MiniMax H3 full-reference (Ref2VA) prompt format.
@@ -113,6 +137,10 @@ Follow the official h3-prompt-writing skill contract:
    Avoid empty adjectives such as cinematic, atmospheric, stunning, or dramatic. Aim for roughly
    250-500 English words when the approved action has enough events, but never pad a short
    shot or schedule more actions than can visibly finish.
+17. detailed_description must contain the actual approved visual actions or explicitly requested
+   hold, in their approved order. Never replace them with placeholders such as "the approved action
+   unfolds continuously" or "follow the source prompt". The video generator receives this conversion,
+   not the original source prompt. A subject list, safety policy, or reference label is not an action.
 
 Return only a JSON object: {"h3_prompt":"..."}. The h3_prompt value contains the six sections.
 """
@@ -142,7 +170,7 @@ def _image_data(image_path: Path | None) -> tuple[dict[str, str] | None, str]:
 
 
 def _repair_section_structure(prompt: str) -> str:
-    """Normalize harmless heading variants and restore omitted H3 sections."""
+    """Normalize headings and policy sections, but never fabricate visual action."""
     prompt = _clean_prompt(prompt)
     # Compatible providers sometimes wrap the required names in Markdown or
     # use spaces/hyphens instead of underscores despite the exact contract.
@@ -166,13 +194,14 @@ def _repair_section_structure(prompt: str) -> str:
         "subject_definitions": "<Picture 1> is the supplied core storyboard image and visual anchor.",
         "summary": "Create the approved target-video action using <Picture 1> as the visual anchor.",
         "retention_analysis": "<Picture 1> is preserved for composition, subjects, style, lighting, and spatial relationships.",
-        "detailed_description": "The approved action unfolds continuously while preserving <Picture 1>.",
         "overall_soundscape": "Generate only scene-appropriate environmental ambience and physical action sound effects.",
         "non_diegetic_music": "N/A; no background music.",
     }
     for index, name in enumerate(_SECTIONS):
         if re.search(rf"(?im)^\s*{re.escape(name)}\s*:\s*", prompt):
             continue
+        if name == 'detailed_description':
+            raise H3PromptIncomplete('H3 转换结果缺少 detailed_description 动作/阶段内容')
         insertion = f"{name}:\n{defaults[name]}\n\n"
         next_match = None
         for later in _SECTIONS[index + 1:]:
@@ -216,6 +245,36 @@ def _section_body(prompt: str, section: str) -> str:
     return prompt[body_start:body_end]
 
 
+def _require_action_description(prompt: str) -> None:
+    """Reject empty/legacy padded actions without imposing a motion or length quota.
+
+    This is a structural guard, not a claim to verify arbitrary semantic fidelity.
+    Run before policy/timing repair so those additions cannot mask a missing body.
+    Strip known boilerplate too: already-normalized cached prompts use the same gate.
+    """
+    body = _section_body(prompt, 'detailed_description')
+    for boilerplate in (
+        _SUBTITLE_POLICY, _PICTURE_ACTION_ANCHOR, _LIPSYNC_DIRECTION, _AUDIO_TIMING_DIRECTION,
+        'The approved action unfolds continuously while preserving <Picture 1>.',
+        'The approved action unfolds continuously across the requested duration.',
+        'Create the approved target-video action using <Picture 1> as the visual anchor.',
+        'Follow the source prompt.', 'Perform the approved actions.',
+        '禁止擅自生成任何字幕、自动字幕、底部字幕条、旁白文字转写、标题卡或水印。'
+        '只有阶段方案明确批准的少量场景内文字可以按原文出现；不得把配音、旁白、动作说明或提示词复制成屏幕字幕。',
+    ):
+        pattern = r'\s+'.join(re.escape(word) for word in boilerplate.split())
+        body = re.sub(pattern, '', body, flags=re.I)
+    body = re.sub(
+        r'\bthe approved action unfolds continuously'
+        r'(?:\s+(?:while preserving\s+<Picture\s+1>|across the requested duration))?\s*[.!]?',
+        '', body, flags=re.I)
+    body = _TIME_RANGE.sub('', body)
+    body = re.sub(r'\[\s*Shot\s+\d+\s*\]|<(?:Picture|Subject|Audio)\s+\d+>', '', body, flags=re.I)
+    residual = re.sub(r'[\W_]+', '', body, flags=re.UNICODE).casefold()
+    if residual in {'', 'na', 'none', 'null', 'todo', 'tbd', '无', '待补充'}:
+        raise H3PromptIncomplete('H3 转换结果缺少有效动作/阶段内容，不能用通用占位说明代替')
+
+
 def _repair_picture_label(prompt: str) -> str:
     """Canonicalize or supply the one image label required by this pipeline.
 
@@ -244,7 +303,7 @@ def _repair_picture_label(prompt: str) -> str:
     for section, sentence in (
         ("summary", "[reference generation] Use <Picture 1> as the visual anchor for the approved target-video action."),
         ("retention_analysis", "<Picture 1> is partially preserved for composition, subject identity, style, and spatial relationships."),
-        ("detailed_description", "<Picture 1> anchors the opening composition; its depicted elements may unfold over time rather than remain simultaneous."),
+        ("detailed_description", _PICTURE_ACTION_ANCHOR),
     ):
         start, end = bounds.get(section, (0, 0))
         if start == end or "<Picture 1>" in prompt[start:end]:
@@ -272,7 +331,7 @@ def _repair_timeline(prompt: str, duration: int) -> str:
         return _insert_in_section(
             prompt,
             "detailed_description",
-            f"[Shot 1] [00:00-{_clock(duration)}] The approved action unfolds continuously across the requested duration.",
+            f"[Shot 1] [00:00-{_clock(duration)}]",
         )
     values = []
     for match in matches:
@@ -324,13 +383,8 @@ def _enforce_visual_and_sound_policy(prompt: str, *, lipsync: bool = False) -> s
                      'This restriction concerns generated sound only: the visible presenter must '
                       'speak visually with natural mouth movement synchronized to <Audio 1>, never closed-mouth narration.')
         prompt = prompt[:body_start] + sound + "\n" + prompt[body_end:]
-    subtitle_policy = (
-        "Do not generate subtitles, automatic captions, lower thirds, narration transcription, title "
-        "cards, explanatory overlays, or watermarks. Only exact approved short in-scene text may appear "
-        "inside its assigned object or bubble; never turn it into subtitles."
-    )
-    if subtitle_policy not in prompt:
-        prompt = _insert_in_section(prompt, "detailed_description", subtitle_policy)
+    if _SUBTITLE_POLICY not in prompt:
+        prompt = _insert_in_section(prompt, "detailed_description", _SUBTITLE_POLICY)
     return prompt
 
 
@@ -344,18 +398,7 @@ def _enforce_reference_audio(prompt: str, *, reference_audio: bool, lipsync: boo
     )
     if definition not in prompt:
         prompt = _insert_in_section(prompt, "subject_definitions", definition)
-    if lipsync:
-        direction = (
-            "The visible speaking subject must continuously lip-sync to <Audio 1> with accurate "
-            "mouth opening, closing, syllable rhythm, pauses, facial expression, and matching body "
-            "performance. Do not merely use <Audio 1> as loose pacing. The supplied audio is a "
-            "performance reference rather than the final soundtrack; do not visualize or transcribe it."
-        )
-    else:
-        direction = (
-            "Use <Audio 1> only for action timing, pauses, and emotional cadence. Mouth lip-sync is "
-            "not required. The supplied audio is a performance reference rather than the final soundtrack."
-        )
+    direction = _LIPSYNC_DIRECTION if lipsync else _AUDIO_TIMING_DIRECTION
     if direction not in prompt:
         prompt = _insert_in_section(prompt, "detailed_description", direction)
     return prompt
@@ -364,7 +407,6 @@ def _enforce_reference_audio(prompt: str, *, reference_audio: bool, lipsync: boo
 def _validate(prompt: str, duration: int, *, reference_audio: bool = False,
               lipsync: bool = False) -> str:
     prompt = _repair_section_structure(prompt)
-    prompt = _repair_picture_label(prompt)
     positions = []
     for name in _SECTIONS:
         match = re.search(rf"(?im)^\s*{re.escape(name)}\s*:\s*", prompt)
@@ -373,6 +415,8 @@ def _validate(prompt: str, duration: int, *, reference_audio: bool = False,
         positions.append(match.start())
     if positions != sorted(positions) or len(set(positions)) != len(positions):
         raise ValueError("H3 转换结果的六段结构顺序不正确")
+    _require_action_description(prompt)
+    prompt = _repair_picture_label(prompt)
     if "<Picture 1>" not in prompt:
         raise ValueError("H3 转换结果没有保留核心分镜图标签 <Picture 1>")
     prompt = _enforce_reference_audio(prompt, reference_audio=reference_audio, lipsync=lipsync)
@@ -409,7 +453,7 @@ def source_fingerprint(shot: dict[str, Any], duration: int, *, reference_audio: 
         "audio_digest": shot.get('reference_audio_digest', '') if reference_audio else '',
         "audio_interval": [shot.get('start'), shot.get('duration')] if reference_audio else [],
         "skill": H3_SKILL_SOURCE,
-        "contract": 13,
+        "contract": 14,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -422,7 +466,11 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
                                      image_digest=image_digest)
     cached = str(shot.get("h3_prompt") or "").strip()
     if cached and shot.get("h3_prompt_source") == fingerprint:
-        return _validate(cached, duration, reference_audio=reference_audio, lipsync=lipsync), fingerprint
+        try:
+            return _validate(cached, duration, reference_audio=reference_audio, lipsync=lipsync), fingerprint
+        except H3PromptIncomplete:
+            # Do not reuse old padded prompts or rewrite the user's stored shot.
+            pass
     generic = str(shot.get("video_prompt") or "").strip()
     if not generic:
         raise ValueError("通用视频提示词为空，无法转换为 H3 提示词")
@@ -440,18 +488,13 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         ] + ([{"label": "<Audio 1>", "role": "final TTS segment / timing and performance reference"}]
              if reference_audio else []),
     }
-    # Bounded repair for malformed JSON or invented visible text; never relax
+    # One shared retry budget for malformed JSON, missing actions or invented text;
+    # never fill missing creative content locally or relax
     # the approved text whitelist or submit an invalid result to generation.
-    text_feedback = ''
+    retry_feedback = ''
     for attempt in range(3):
-        format_instruction = '' if attempt == 0 else (
-            '\nYour previous response could not be parsed as the required JSON object. '
-            'Regenerate from the same approved inputs. Return only one valid JSON object '
-            'with a non-empty string field "h3_prompt". Escape newlines as \\n and '
-            'double quotes as \\" inside JSON strings; no Markdown or extra commentary.'
-        )
         raw = generate_gemini_text(
-            system_prompt=_SYSTEM + format_instruction + text_feedback,
+            system_prompt=_SYSTEM + retry_feedback,
             user_prompt=json.dumps(payload, ensure_ascii=False),
             temperature=0.1,
             max_output_tokens=7000,
@@ -470,8 +513,27 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             if attempt == 2:
                 raise ValueError('H3 提示词转换返回格式不正确，已自动重试 2 次仍未取得有效 JSON；尚未提交 ComfyUI，原提示词及素材保留。请稍后重试或切换语言模型。') from exc
+            retry_feedback = (
+                '\nYour previous response could not be parsed as the required JSON object. '
+                'Regenerate from the same approved inputs. Return only one valid JSON object '
+                'with a non-empty string field "h3_prompt". Escape newlines as \\n and '
+                'double quotes as \\" inside JSON strings; no Markdown or extra commentary.')
         else:
-            prompt = _validate(result['h3_prompt'], duration, reference_audio=reference_audio, lipsync=lipsync)
+            try:
+                prompt = _validate(result['h3_prompt'], duration, reference_audio=reference_audio, lipsync=lipsync)
+            except H3PromptIncomplete as exc:
+                if attempt == 2:
+                    raise H3PromptIncomplete(
+                        'H3 提示词转换缺少有效动作/阶段内容，已自动重试 2 次仍不完整；'
+                        '尚未提交视频生成，原提示词及素材保留。请重试或切换语言模型。') from exc
+                retry_feedback = (
+                    '\nThe previous conversion was missing concrete visual action in detailed_description. '
+                    'Regenerate all six sections from the SAME model_neutral_video_prompt and image. '
+                    'Describe the actual approved actions or explicit hold, their order, and timing. '
+                    'Do not substitute a subject list, safety policy, or generic instruction such as '
+                    '"the approved action unfolds continuously". Do not invent movement for a hold '
+                    'or add unapproved text. Return the complete h3_prompt JSON object.')
+                continue
             issues = visual_first_prompt_issues(
                 _section_body(prompt, 'detailed_description'), shot.get('motion_plan'))
             if not issues:
@@ -479,7 +541,7 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
             if attempt == 2:
                 raise ValueError('H3 转换结果重新加入了未选用的画中文字：' + '；'.join(issues)
                                  + '；已自动纠正重试仍未通过，尚未提交视频生成。')
-            text_feedback = (
+            retry_feedback = (
                 '\nThe previous conversion invented unapproved visible text: '
                 + json.dumps(issues, ensure_ascii=False)
                 + '\nRegenerate from the original approved inputs. Remove those invented labels, '
