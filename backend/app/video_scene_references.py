@@ -73,11 +73,19 @@ def plan_references(path, record):
                'ratio': settings.get('ratio', '16:9'),
                'references': [{key: row.get(key, '') for key in ('id', 'label', 'kind', 'description')}
                               for row in record.get('references', [])]}
-    plan = plan_scene_references(scene_mapping(record), context, path / 'scene_reference_plan.json',
-                                 settings.get('style', ''), contract=VIDEO_CONTRACT + medical_contract(record.get('context') or {}, 'scene'))
     known = {str(row['id']) for row in record.get('references', [])}
+    plan = plan_scene_references(scene_mapping(record), context, path / 'scene_reference_plan.json',
+                                settings.get('style', ''),
+                                contract=VIDEO_CONTRACT + medical_contract(record.get('context') or {}, 'scene'),
+                                validate_result=lambda plan: validate_reference_selection(plan, known))
+    validate_reference_selection(plan, known)
+    return plan
+
+
+def validate_reference_selection(plan, known):
     for scene in plan['scenes']:
         ids = scene.get('reference_ids', [])
         if not isinstance(ids, list) or len(ids) > 3 or any(not isinstance(i, str) or i not in known for i in ids) or len(set(ids)) != len(ids):
-            raise ValueError('场景参考素材选择无效，请重新规划场景参考')
-    return plan
+            invalid = [i for i in ids if isinstance(i, str) and i not in known] if isinstance(ids, list) else []
+            detail = '；不存在的素材编号：' + '、'.join(invalid) if invalid else '；编号须为不重复的字符串数组，最多三张'
+            raise ValueError(f"场景“{scene.get('name') or scene.get('scene_id') or '未命名'}”参考素材选择无效{detail}；请重新开始场景规划，已有配音与分镜保留")

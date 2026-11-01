@@ -96,7 +96,7 @@ def filter_eligible_members(raw, mapping):
     return result
 
 
-def plan_scene_references(mapping, scenes, cache_path, style="", *, contract=None):
+def plan_scene_references(mapping, scenes, cache_path, style="", *, contract=None, validate_result=None):
     source = {"version": 2, "items": [{"index": i, "prompt": m["image_prompt"],
                "visual_design": m.get("visual_design", {})} for i, m in enumerate(mapping)],
               "source": scenes, "style": style}
@@ -105,10 +105,17 @@ def plan_scene_references(mapping, scenes, cache_path, style="", *, contract=Non
     fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     cache_path = Path(cache_path)
     if cache_path.is_file():
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cached.get("fingerprint") == fingerprint:
-            validate_plan(cached, mapping)
-            return cached
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(cached, dict) and cached.get("fingerprint") == fingerprint:
+                validate_plan(cached, mapping)
+                if validate_result is not None:
+                    validate_result(cached)
+                return cached
+        except (ValueError, TypeError, KeyError):
+            # Older builds could persist a plan before caller-specific material
+            # validation. Never trap every subsequent Start on that bad cache.
+            print("场景参考：旧规划缓存未通过校验，重新请求规划；原画面和素材保留。", flush=True)
     raw = parse_json_response(generate_gemini_text(system_prompt=contract or CONTRACT,
         user_prompt=json.dumps(source, ensure_ascii=False), temperature=0.05,
         response_mime_type="application/json", max_output_tokens=4096))
@@ -116,6 +123,8 @@ def plan_scene_references(mapping, scenes, cache_path, style="", *, contract=Non
     rows = validate_plan(filtered, mapping)
     result = {"version": 1, "fingerprint": fingerprint, "scenes": rows,
               "exclusions": filtered.get("exclusions", [])}
+    if validate_result is not None:
+        validate_result(result)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = cache_path.with_suffix(".tmp")
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
