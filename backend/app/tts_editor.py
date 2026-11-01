@@ -38,6 +38,10 @@ TIMELINE_FILENAME = "画面时间线.json"
 TTS_HISTORY_LIMIT = 20
 
 
+class SubtitleAlignmentReview(RuntimeError):
+    """A valid candidate exists, but its subtitle timings need human review."""
+
+
 def _speech_alignment(project_dir, segments, files, subtitle_updates=None, reading_texts=None):
     """Recognize only changed segments before publishing any edited assets."""
     from .pipeline import resolve_asr_python
@@ -74,6 +78,8 @@ def _speech_alignment(project_dir, segments, files, subtitle_updates=None, readi
     result = subprocess.run([resolve_asr_python(), '-m', 'backend.app.tts_alignment', str(request_path), str(result_path)],
                             cwd=str(PROJECT_ROOT), env=env, capture_output=True, text=True,
                             encoding='utf-8', errors='replace', timeout=600)
+    if result.returncode == 42:
+        raise SubtitleAlignmentReview(result.stderr.strip()[-1200:])
     if result.returncode or not result_path.is_file():
         raise RuntimeError('新配音字幕对齐失败，未提交修改：' + (result.stderr or result.stdout)[-1200:])
     aligned = json.loads(result_path.read_text(encoding='utf-8'))
@@ -1920,6 +1926,13 @@ class TtsEditor(TtsEditTasks):
                     message=f"已重配 {len(selected)} 句{sync_note}，并重建配音与时间轴；" + ('请点击左上角“保存配音编辑”，返回检查受影响镜头。' if job.request.get('dynamic_video') else '请点击重新渲染。'),
                 )
                 store.log(job, f"单句重配完成：已更新 {len(selected)} 句配音、整条音频、字幕和画面时间线{sync_note}")
+            except SubtitleAlignmentReview as exc:
+                if self._edit_cancelled(job.id):
+                    self._edit_failed(job.id, exc, str(exc))
+                else:
+                    message = '新配音已生成，字幕时间待核对。请先试听下方暂存配音；读音正确即可采用，不用重新配音。'
+                    self._set_task(job.id, status='awaiting_review', progress=100, message=message, review_reason=str(exc))
+                    store.log(job, f'{message} 原因：{exc}')
             except Exception as exc:
                 self._edit_failed(job.id, exc, f"单句重配失败：{exc}")
                 store.log(job, f"单句重配失败：{type(exc).__name__}: {exc}")

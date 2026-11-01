@@ -14,6 +14,15 @@ def words(*values):
 
 
 class ReadingAlignmentTests(unittest.TestCase):
+    def test_percent_decimal_and_split_asr_tokens_keep_cue_onsets(self):
+        display = ['总反应率达29.7%', '显著高于高体重指数组的9.6％', 'P 值等于0.007']
+        reading = '总反应率达百分之二十九点七，显著高于高体重指数组的百分之九点六，P值等于零点零零七'
+        self.assertEqual(clean(''.join(display)), clean(reading))
+        self.assertNotEqual(clean('9.6%'), clean('96%'))
+        tokens = words('总反应率达','29.','7','%', '显著高于高体重指数组的','9.','6','%', 'P值等于','0.','00','7')
+        self.assertEqual(align_starts(display, tokens, 12, reading), [0,4,8])
+        self.assertEqual(align_starts(['百分之九点六','下一句'], words('9.','6','%','下一句'), 4), [0,3])
+
     def test_reading_override_not_display_is_verified(self):
         display = ['这是一只小鼠', '结果非常明显']
         reading = '这是一只实验小白鼠，实验结果显著不同'
@@ -70,6 +79,13 @@ class ReadingAlignmentTests(unittest.TestCase):
                                                    tts_text='旧朗读')], {1: audio},
                                                    reading_texts={1: '当前朗读修正'})
             self.assertEqual(anchors, {1: [(0.0, 0.0), (1.0, 1.0)]})
+
+            for code, error in ((42, editor.SubtitleAlignmentReview), (1, RuntimeError)):
+                with patch.object(editor.subprocess, 'run', return_value=SimpleNamespace(returncode=code, stderr='测试原因')), \
+                     patch('backend.app.pipeline.resolve_asr_python', return_value='python'), \
+                     self.assertRaises(error) as raised:
+                    editor._speech_alignment(project, [dict(index=1, start=0, end=1)], {1:audio})
+                self.assertIs(type(raised.exception), error)
 
 
 if __name__ == '__main__':

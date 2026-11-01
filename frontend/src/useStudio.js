@@ -173,6 +173,8 @@ export function useStudio(w) {
   }
   const dynamicAudioProjectId = ref(''), dynamicAudioBaselineRevision = ref(0)
   const editingDynamicAudio = computed(()=>Boolean(dynamicAudioProjectId.value))
+  const dynamicAudioHasShots = ref(false)
+  const canReturnDynamicStoryboard = computed(()=>editingDynamicAudio.value && dynamicAudioHasShots.value)
   function clearDynamicAudioContext(){dynamicAudioProjectId.value='';dynamicAudioBaselineRevision.value=0;sessionStorage.removeItem('ocv-video-audio-edit')}
   const studioSearch = ref(''), studioFilter = ref('all'), studioSentence = ref(null)
   const studioLogsOpen = ref(false), studioSaveState = ref(''), studioDraftId = ref('')
@@ -336,6 +338,7 @@ export function useStudio(w) {
     }catch(e){studioError.value=e.message}finally{studioBusy.value=false}
   }
   async function openDynamicAudio(project){
+    dynamicAudioHasShots.value=Boolean(project.shots?.length)
     dynamicAudioProjectId.value=project.id
     sessionStorage.setItem('ocv-video-audio-edit',project.id)
     await openProject({id:project.source_project.id},true)
@@ -505,5 +508,5 @@ export function useStudio(w) {
     try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
     catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
   }
-return {activeVideoProjectId,pendingVideoImageRoute,imageRouteApplied,serviceImageProfileSaved,studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
+return {canReturnDynamicStoryboard,activeVideoProjectId,pendingVideoImageRoute,imageRouteApplied,serviceImageProfileSaved,studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

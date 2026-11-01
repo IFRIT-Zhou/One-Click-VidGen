@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.01.1",
-  "release_order": 2026110101,
-  "display_version": "2026.11.01 场景参考缓存修复",
+  "release_id": "2026.11.02.1",
+  "release_order": 2026110201,
+  "display_version": "2026.11.02 配音批量修正与字幕对齐",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.01.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.02.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "修复场景参考素材选择无效后重试仍反复失败：写入缓存前校验素材编号，读取旧缓存时重新校验，无效缓存重新规划。真实无效素材仍拦截，错误明确定位场景及素材编号。不修改已有配音、字幕、分镜和素材。请在任务结束后安全更新并自行重启 OCV。",
-  "content_fingerprint": "19cb3d967235f585ac6b0bc03e384e0c59af68719b1d62fd964a7a13c0620cb6"
+  "notes": "配音页新增批量查找替换，可仅修正发音、仅修改字幕或重配成功后同步字幕。仅改字幕不调用 TTS、不改变时长，支持整批撤回。首次分镜规划前禁用返回分镜按钮。修复百分数、小数引起的重配对齐误报；时间不确定时保留原配音，支持试听后采用候选音频，不必重复配音。",
+  "content_fingerprint": "2e82ea1c1845f20f40e5f8f93124ecac823603279e1f063624b536f465500e18"
 }

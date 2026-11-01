@@ -890,6 +890,7 @@
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听与选择重配</strong></div>
                 <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
+                <TtsFindReplace :save-subtitles="saveTtsSubtitleBatch" :project-id="visualEditorProjectId" :editor="ttsEditor" :drafts="ttsReadingDrafts" :busy="ttsBoundaryBusy" @reading="updateTtsReadingDraft" @subtitle-sync="setTtsSubtitleSync" @select="selectedTtsSegmentIndices=$event" />
                 <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
                 <button v-if="ttsEditor.structural_edit_available !== false" class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">
                   {{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}
@@ -1644,6 +1645,7 @@
                   <div class="visual-timing-head-actions">
                     <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
                     <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
+                    <TtsFindReplace :save-subtitles="saveTtsSubtitleBatch" :project-id="visualEditorProjectId" :editor="ttsEditor" :drafts="ttsReadingDrafts" :busy="ttsBoundaryBusy" @reading="updateTtsReadingDraft" @subtitle-sync="setTtsSubtitleSync" @select="selectedTtsSegmentIndices=$event" />
                     <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
                     <button
                       class="primary-btn compact-btn"
@@ -2238,6 +2240,7 @@
               <div class="guided-editor-head">
                 <div><div class="sidebar-label">配音精修</div><strong>逐句试听、重配、交界与停顿</strong></div>
                 <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
+                <TtsFindReplace :save-subtitles="saveTtsSubtitleBatch" :project-id="visualEditorProjectId" :editor="ttsEditor" :drafts="ttsReadingDrafts" :busy="ttsBoundaryBusy" @reading="updateTtsReadingDraft" @subtitle-sync="setTtsSubtitleSync" @select="selectedTtsSegmentIndices=$event" />
                 <div class="inline-actions"><TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" /><button class="primary-btn compact-btn" type="button" :disabled="!selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'" @click="regenerateSelectedTtsSegments">重配选中句</button></div>
               </div>
               <div v-if="ttsEditorLoading" class="empty-state">正在读取逐句配音…</div>
@@ -2690,6 +2693,7 @@ import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
 import TtsSentenceControls from './components/TtsSentenceControls.vue'
 import TtsRebuildButton from './components/TtsRebuildButton.vue'
+import TtsFindReplace from './components/TtsFindReplace.vue'
 import TtsDraftResolutionDialog from './components/TtsDraftResolutionDialog.vue'
 import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
 import TtsBoundaryEditor from './components/TtsBoundaryEditor.vue'
@@ -2700,5 +2704,5 @@ import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
 import GuidedServiceRoutes from './components/GuidedServiceRoutes.vue'
-export default { components: { GuidedServiceRoutes, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { GuidedServiceRoutes, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

@@ -539,9 +539,10 @@
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
     <template v-else-if="studioTab==='配音'">
      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :disabled="studioBusy||ttsEditor.task?.status==='running'||!ttsEditor.available||!ttsEditor.segments.length||!studioAudio||['queued','running'].includes(studioJob?.status)" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
+     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :title="canReturnDynamicStoryboard ? '保存并返回已有分镜' : '尚无分镜，请先在下方确认配音并进入自动分镜'" :disabled="!canReturnDynamicStoryboard||studioBusy||ttsEditor.task?.status==='running'||!ttsEditor.available||!ttsEditor.segments.length||!studioAudio||['queued','running'].includes(studioJob?.status)" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
      <button v-if="codexBridgeAvailable && studioJob?.request?.dynamic_video && guidedStage==='audio_review' && !editingDynamicAudio" :disabled="studioBusy||guidedSubtitleSaving||ttsEditor.task?.status==='running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
      <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
+     <TtsFindReplace :save-subtitles="saveTtsSubtitleBatch" :project-id="visualEditorProjectId" :editor="ttsEditor" :drafts="ttsReadingDrafts" :busy="ttsBoundaryBusy" @reading="updateTtsReadingDraft" @subtitle-sync="setTtsSubtitleSync" @select="selectedTtsSegmentIndices=$event" />
      </div>
 
      <div class="studio-audio-player"><audio v-if="studioAudio" :key="studioAudio" :src="studioAudio" controls preload="metadata"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
@@ -1974,6 +1975,7 @@ import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
 import TtsSentenceControls from './components/TtsSentenceControls.vue'
 import TtsRebuildButton from './components/TtsRebuildButton.vue'
+import TtsFindReplace from './components/TtsFindReplace.vue'
 import TtsDraftResolutionDialog from './components/TtsDraftResolutionDialog.vue'
 import CloudPasswordRecovery from './components/CloudPasswordRecovery.vue'
 import CloudImageQuality from './components/CloudImageQuality.vue'
@@ -2005,7 +2007,7 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}

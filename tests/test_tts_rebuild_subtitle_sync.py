@@ -230,6 +230,24 @@ class RebuildSubtitleSyncTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), data)
         self.assertEqual(self.editor._history_entries(self.project), [])
 
+    def test_batch_subtitle_only_preserves_audio_and_reading_with_single_history(self):
+        original = self.read_manifest()['segments']
+        audio_path = self.project / 'input' / '配音.wav'
+        audio = audio_path.read_bytes(), audio_path.stat().st_mtime_ns
+        updates = {1: '第一句（仅显示）。', 3: '第三句（仅显示）。'}
+        history_count = len(self.editor._history_entries(self.project))
+        with patch('backend.app.tts_editor._concat_segment_wavs', side_effect=AssertionError('must not rebuild audio')):
+            result = self.editor.save_subtitle_only(job=self.job, user_id=1, updates=updates, expected_revision=7)
+        self.assertEqual(result['subtitle_only_indices'], [1, 3])
+        current = self.editor._load_manifest(self.project)['segments']
+        for old, new in zip(original, current):
+            self.assertEqual((new['start'], new['end']), (old['start'], old['end']))
+            self.assertEqual(new.get('tts_text'), old.get('tts_text'))
+            self.assertEqual(new['text'], updates.get(old['index'], old['text']))
+        self.assertEqual((audio_path.read_bytes(), audio_path.stat().st_mtime_ns), audio)
+        self.assertEqual(self.job.request['script'], self.script)
+        self.assertEqual(len(self.editor._history_entries(self.project)), history_count + 1)
+
     def test_subtitle_only_api_forwarding(self):
         payload = main.TtsSubtitleOnlyRequest.model_validate(dict(updates={'2': '字幕注释'}, expected_revision=7))
         with (patch.object(main, '_owned_completed_job', return_value=(self.job, 1)),

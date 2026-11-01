@@ -21,6 +21,7 @@ async function stopEdit() {
 </script>
 <template>
   <div v-if="editor.task?.message" class="visual-task-message" :class="editor.task?.status">{{ editor.task.message }}</div>
+  <details v-if="editor.task?.status==='awaiting_review' && editor.task.review_reason"><summary>查看需要核对的位置</summary><p>{{editor.task.review_reason}}</p></details>
   <div v-if="editor.task?.status === 'running' && editor.task?.task_id" class="tts-edit-control">
     <span>正在制作候选配音 · 正式版本 {{ editor.task.adopted_version ?? editor.revision ?? 0 }} 保留</span>
     <button type="button" :disabled="stopping || editor.task.cancel_requested || editor.task.phase === 'committing'" @click="stopEdit">

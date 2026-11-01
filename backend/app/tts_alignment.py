@@ -67,12 +67,35 @@ def _canonical(text, spans=None):
     return ''.join(result), times
 
 
-def _characters(text):
-    return ''.join(c.lower() for c in _simplified(str(text)) if c.isalnum())
+_QUANTITY = re.compile(r'[0-9]+(?:[.．][0-9]+)?(?:[ \t]*[%％])?')
+
+
+def _normalized(text, spans=None):
+    """Expand numeric notation before filtering punctuation. Keep source time offsets."""
+    text = _simplified(str(text))
+    chars, times = [], []
+    def add(char, pos):
+        if char.isalnum():
+            chars.append(char.lower())
+            if spans is not None:
+                times.append(spans[pos])
+    cursor = 0
+    for match in _QUANTITY.finditer(text):
+        for pos in range(cursor, match.start()):
+            add(text[pos], pos)
+        if match.group().endswith(('%', '％')):
+            for char in '百分之':
+                add(char, match.start())
+        for pos in range(match.start(), match.end()):
+            add('点' if text[pos] in '.．' else text[pos], pos)
+        cursor = match.end()
+    for pos in range(cursor, len(text)):
+        add(text[pos], pos)
+    return _canonical(''.join(chars), times if spans is not None else None)
 
 
 def clean(text):
-    return _canonical(_characters(text))[0]
+    return _normalized(text)[0]
 
 
 def spoken_cues(texts, reading_text):
@@ -112,12 +135,12 @@ def align_starts(texts, words, duration, reading_text=None):
         raise ValueError('新配音中存在超过 3 秒的无语音区间，可能是异常停顿或低频噪音；请试听后重配，未替换原配音')
     chars, spans = [], []
     for word in words:
-        value = _characters(word['word'])
+        value = str(word['word'])
         start, end = float(word['start']), float(word['end'])
         for index, char in enumerate(value):
             chars.append(char)
             spans.append((start + (end-start)*index/len(value), end))
-    recognized, spans = _canonical(''.join(chars), spans)
+    recognized, spans = _normalized(''.join(chars), spans)
     expected = ''.join(clean(text) for text in texts)
     try:
         return _matched_starts(texts, expected, recognized, spans, duration, .65)
@@ -180,7 +203,13 @@ def main():
         try:
             segments, _, _ = transcribe_audio(Path(item['audio']), word_timestamps=True, model_cache=model_cache)
             words = [dict(word=w.word, start=w.start, end=w.end) for s in segments for w in (s.words or [])]
-            starts = align_starts(item['texts'], words, item['duration'], item.get('reading_text'))
+            try:
+                starts = align_starts(item['texts'], words, item['duration'], item.get('reading_text'))
+            except ValueError as exc:
+                if 'fallback_starts' not in item:
+                    print(f"{Path(item['audio']).name}：{exc}", file=sys.stderr)
+                    sys.exit(42)  # Reserved for recognition uncertainty, not a runtime error.
+                raise
             result.append(dict(starts=starts, aligned=True) if 'fallback_starts' in item else starts)
         except (ValueError, RuntimeError, OSError) as exc:
             if 'fallback_starts' in item:

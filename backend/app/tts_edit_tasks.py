@@ -39,7 +39,7 @@ class TtsEditTasks:
             current.update(values)
             if current.get('cancel_requested') and current.get('status') == 'running':
                 current['message'] = '正在停止本次配音编辑，等待当前工作安全退出；正式配音未变'
-            if values.get('status') in {'completed', 'failed', 'cancelled'}:
+            if values.get('status') in {'completed', 'failed', 'cancelled', 'awaiting_review'}:
                 current['phase'] = values['status']
                 current['local_cancellation_complete'] = values['status'] == 'cancelled'
                 current['cancellation_complete'] = (values['status'] == 'cancelled' and

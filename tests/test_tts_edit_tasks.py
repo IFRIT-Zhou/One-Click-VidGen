@@ -37,6 +37,14 @@ class TtsEditTaskTests(unittest.TestCase):
         editor._set_task('job', status='completed')
         self.assertEqual(editor.status('job')['adopted_version'], 1)
 
+    def test_uncertain_alignment_leaves_adopted_version_and_allows_next_edit(self):
+        editor = TtsEditTasks()
+        editor._start_edit('job', revision=3)
+        editor._set_task('job', status='awaiting_review', progress=100)
+        task = editor.status('job')
+        self.assertEqual((task['phase'], task['adopted_version'], task['pending_version']), ('awaiting_review', 3, None))
+        self.assertEqual(editor._start_edit('job', revision=3)['status'], 'running')
+
     def test_duplicate_start_and_progress_do_not_erase_cancel(self):
         editor = TtsEditTasks()
         task = editor._start_edit('job')
