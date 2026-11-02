@@ -213,6 +213,17 @@ def snapshot(job):
             "finished_at": job.finished_at}
 
 
+@router.get("/pricing")
+def public_pricing():
+    """Public price information; never expose account or node configuration."""
+    from fastapi.responses import JSONResponse
+    rates = h3_billing.pricing()
+    return JSONResponse({"model": MODEL, "pricing": rates,
+                         "examples": [{"seconds": seconds, "credits": h3_billing.price(seconds, rates=rates)["credits"]}
+                                      for seconds in (10, 12, 14)]},
+                        headers={"Cache-Control": "no-store"})
+
+
 @router.get("/capabilities")
 def capabilities(user: CurrentUser):
     return {"enabled": feature_enabled(user), "test_mode": False, "pricing": h3_billing.pricing(), "model": MODEL,

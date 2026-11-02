@@ -1,0 +1,166 @@
+--- a/deploy/cloud-api/app/dynamic_projects.py
++++ b/deploy/cloud-api/app/dynamic_projects.py
+@@ -91,6 +91,7 @@
+     client_id: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+     shot_id: str | None = Field(default=None, max_length=80)
+     count: int | None = Field(default=None, ge=1, le=200)
++    pricing_version: str | None = Field(default=None, max_length=80)
+
+
+ class ShotInput(BaseModel):
+@@ -256,6 +257,13 @@
+         selected = [s for s in state["shots"] if not operation.get("shot_id") or s["id"] == operation["shot_id"]]
+         if any(s["kind"] == "video" and s["image"]["status"] != "completed" for s in selected):
+             raise HTTPException(409, "请先生成所选分镜的画面素材")
++        from .h3_billing import pricing
++        rates = pricing()
++        if body.pricing_version != rates["version"]:
++            raise HTTPException(409, "请刷新并确认当前 H3 费率后再生成或重试")
++        # All shots in this explicitly approved operation retain this rate,
++        # including shots submitted later after waiting for the GPU.
++        operation["h3_pricing"] = rates
+     if action == "compose" and any(s["video" if s["kind"] == "video" else "image"]["status"] != "completed" for s in state["shots"]):
+         raise HTTPException(409, "请先完成全部分镜的素材")
+     state.update(stage=action, error=None, _operation=operation)
+--- a/deploy/cloud-api/app/dynamic_providers.py
++++ b/deploy/cloud-api/app/dynamic_providers.py
+@@ -219,7 +219,12 @@
+                     expires_at=utcnow()+timedelta(days=30)))
+             spec = h3.normalize_spec(h3.VideoSpec(prompt=prompt, reference_image_asset_id=asset_id,
+                 width=options["width"], height=options["height"], duration_seconds=duration))
+-            spec["_billing"] = h3.h3_billing.price(duration)
++            from .dynamic_projects import DynamicProject
++            project = db.get(DynamicProject, self.project_id)
++            rates = project.state.get("_operation", {}).get("h3_pricing")
++            if not rates:
++                raise HTTPException(409, "请返回动态视频页面，确认当前费率后重试视频生成")
++            spec["_billing"] = h3.h3_billing.price(duration, rates=rates)
+             quote = h3.CloudVideoQuote(id=new_id("h3quote"), user_id=user.id, spec=spec,
+                                        expires_at=utcnow()+timedelta(minutes=15))
+             job = h3.CloudVideoJob(id=new_id("h3job"), user_id=user.id, quote_id=quote.id,
+--- a/deploy/nginx/site/assets/dynamic-project.js
++++ b/deploy/nginx/site/assets/dynamic-project.js
+@@ -332,11 +332,14 @@
+       else if (name === "save-shots") { validate(state.edit, state.project.audio.cues); const value = await client.request(`/${encodeURIComponent(state.project.id)}/shots`, { method: "PUT", body: JSON.stringify({ revision: state.project.revision, shots: editable(state.edit) }) }); state.undo = null; adopt(value, true); }
+       else if (name === "images" || name === "image-one") await quote("images", name === "image-one" ? state.project.shots[state.shot].id : undefined);
+       else if (name === "confirm-quote") { const q = state.quote; if (!q) throw new Error("请重新获取费用预估。"); await action(q.stage, q.shot_id ? { shot_id: q.shot_id } : {}); }
+-      else if (name === "videos" || name === "video-one") {
++      else if (name === "videos" || name === "video-one" || (name === "retry" && state.project?.stage === "videos")) {
+         const caps = await client.request('/api/v1/cloud/video/capabilities'), pricing = caps.pricing;
+         if (!pricing || ![pricing.threshold_seconds, pricing.first_10_seconds_rate, pricing.additional_seconds_rate].every(v => Number.isFinite(Number(v)) && Number(v) > 0)) throw new Error('无法读取云端 H3 费率，请稍后重试');
+         if (!root.confirm(`H3 云端当前费率：每镜前${pricing.threshold_seconds}秒${pricing.first_10_seconds_rate}元/秒，超出部分${pricing.additional_seconds_rate}元/秒。按请求时长计费；提交预留积分，成功扣费，失败或取消释放。是否继续？`)) return;
+-        await action("videos", name === "video-one" ? { shot_id: state.project.shots[state.shot].id } : {});
++        await action(name === "retry" ? "retry" : "videos", {
++          pricing_version: pricing.version,
++          ...(name === "video-one" ? { shot_id: state.project.shots[state.shot].id } : {})
++        });
+       }
+       else if (["compose", "cancel", "retry"].includes(name)) await action(name);
+       else if (name === "refresh") await refresh();
+--- a/deploy/nginx/site/assets/dynamic-video-client.js
++++ b/deploy/nginx/site/assets/dynamic-video-client.js
+@@ -124,6 +124,11 @@
+           const job = await this.call("/jobs", { method: "POST", body: JSON.stringify({ quote_id: pending.quote_id, client_job_id: pending.client_job_id }) }, account);
+           return this.adopt(job, account);
+         } catch (error) {
++          if (error.status === 409 && error.message === "Insufficient credits") {
++            const latest = this.read();
++            if (latest.pending?.client_job_id === pending.client_job_id) { latest.pending = null; this.write(latest, account); }
++            throw new Error("积分不足，未创建视频任务、未扣费。请充值后重新确认报价并生成。");
++          }
+           // The server checks existing client IDs before quote validity. These
+           // precise responses prove no job was created; network errors do not.
+           if ((error.status === 409 && /Quote expired/i.test(error.message))
+--- a/deploy/nginx/site/dynamic-video/index.html
++++ b/deploy/nginx/site/dynamic-video/index.html
+@@ -5,10 +5,12 @@
+ <title>动态视频创作｜One-Click VidGen</title>
+ <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png">
+ <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4"><link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1"><link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1"><link rel="stylesheet" href="/assets/dynamic-project.css?v=20261019-film1">
++<link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
+ </head>
+ <body data-page="dynamic-project">
+ <header class="site-header"><div class="shell header-inner"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen"><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/studio/">图片视频</a><a class="active" aria-current="page" href="/dynamic-video/">动态视频</a><a href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a><a href="/contact/">联系我们</a></nav><button class="header-action header-button" data-account-trigger type="button">登录账户</button></div></header>
+ <main class="dp-page" id="dynamic-project-app">
++<section class="h3-pricing-card" data-h3-pricing aria-label="H3 动态视频价格"><h2>H3 动态视频价格</h2><p data-h3-rate role="status">正在读取云端当前价格…</p><p data-h3-examples></p><p data-h3-terms></p></section>
+ <div class="dp-layout">
+ <aside class="dp-rail"><div class="dp-intro"><span class="dp-eyebrow">DYNAMIC FILM</span><h1>动态视频</h1><p>让文案成为一部完整的视频。先听配音，再确认分镜，逐镜生成。</p><a href="/dynamic-video/clip/">只生成一个动态片段 →</a></div><nav class="dp-steps" aria-label="视频创作步骤"><button type="button" class="dp-step" data-step="1" aria-current="step"><b>01</b><span><strong>内容与配音</strong><small>确定真实时间轴</small></span></button><button type="button" class="dp-step" data-step="2"><b>02</b><span><strong>分镜规划</strong><small>确认镜头与节奏</small></span></button><button type="button" class="dp-step" data-step="3"><b>03</b><span><strong>画面素材</strong><small>生成每个镜头的画面</small></span></button><button type="button" class="dp-step" data-step="4"><b>04</b><span><strong>动态生成</strong><small>让镜头动起来</small></span></button><button type="button" class="dp-step" data-step="5"><b>05</b><span><strong>成片导出</strong><small>合成并下载完整视频</small></span></button></nav></aside>
+ <div class="dp-main"><div class="dp-progress"><span class="dp-eyebrow" id="dp-step-count">STEP 01 / 05</span><progress id="dp-step-progress" max="5" value="1" aria-label="创作步骤"></progress><strong id="dp-step-title">内容与配音</strong></div><div class="dp-message" id="dp-message" role="status" aria-live="polite"></div><section class="dp-card" id="dp-panel" aria-labelledby="dp-panel-title"></section><footer class="dp-footer"><button class="button secondary" id="dp-prev" type="button" disabled>← 上一步</button><small id="dp-page-count">1 / 5</small><button class="button primary" id="dp-next" type="button">下一步：分镜规划 →</button></footer></div>
+@@ -16,5 +18,6 @@
+ </div>
+ <noscript>请启用 JavaScript 后使用动态视频创作。</noscript>
+ </main>
+-<script src="/assets/session-refresh.js?v=20260930-ux4" defer></script><script src="/assets/account-header.js?v=20261008-recovery1" defer></script><script src="/assets/dynamic-project.js?v=20261020-delete1" defer></script>
++<script src="/assets/session-refresh.js?v=20260930-ux4" defer></script><script src="/assets/account-header.js?v=20261008-recovery1" defer></script><script src="/assets/dynamic-project.js?v=20261102-pricing2" defer></script>
++<script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
+ </body></html>
+--- a/deploy/nginx/site/dynamic-video/clip/index.html
++++ b/deploy/nginx/site/dynamic-video/clip/index.html
+@@ -12,7 +12,8 @@
+   <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+     <link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1" />
+     <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+-  </head>
++  <link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
++</head>
+   <body class="studio-body studio-wizard-mode" data-page="studio" data-studio-mode="dynamic" data-generation-mode="dynamic">
+     <header class="site-header">
+       <div class="shell header-inner">
+@@ -151,6 +152,7 @@
+             <section class="workspace-card dynamic-panel" id="dynamic-panel">
+               <div class="workspace-card-head"><div><span id="dynamic-page-number">STEP 01 · 动态视频</span><h3 id="dynamic-page-title">选择参考图片</h3></div></div>
+               <p class="one-click-lead" id="dynamic-page-description">上传图片或选用已有分镜图片。当前 H3 模型生成无声动态片段。</p>
++<section class="h3-pricing-card" data-h3-pricing aria-label="H3 动态视频价格"><h2>H3 动态视频价格</h2><p data-h3-rate role="status">正在读取云端当前价格…</p><p data-h3-examples></p><p data-h3-terms></p></section>
+               <p id="dynamic-availability" role="status">登录后检查动态视频服务</p>
+               <fieldset id="dynamic-inputs" class="dynamic-inputs">
+                 <legend class="sr-only">动态视频参数</legend>
+@@ -258,10 +260,11 @@
+     <script src="/assets/storyboard-plan.js?v=20260930-sceneedit1" defer></script>
+     <script src="/assets/studio-project.js?v=20260930-ux4" defer></script>
+     <script src="/assets/cluster-health.js?v=20261012-admission1" defer></script>
+-    <script src="/assets/dynamic-video-client.js?v=20261019-size14" defer></script>
+-    <script src="/assets/dynamic-video.js?v=20261019-size14" defer></script>
++    <script src="/assets/dynamic-video-client.js?v=20261102-pricing2" defer></script>
++    <script src="/assets/dynamic-video.js?v=20261102-pricing2" defer></script>
+     <script src="/assets/studio.js?v=20261019-size14" defer></script>
+   <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
+     <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+-  </body>
++  <script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
++</body>
+ </html>
+--- a/deploy/nginx/site/studio/index.html
++++ b/deploy/nginx/site/studio/index.html
+@@ -12,7 +12,8 @@
+   <link rel="stylesheet" href="/assets/project-cloud.css?v=20260930-ux4" />
+     <link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1" />
+     <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+-  </head>
++  <link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
++</head>
+   <body class="studio-body studio-wizard-mode" data-page="studio" data-studio-mode="slideshow" data-generation-mode="slideshow">
+     <header class="site-header">
+       <div class="shell header-inner">
+@@ -151,6 +152,7 @@
+             <section class="workspace-card dynamic-panel" id="dynamic-panel" hidden>
+               <div class="workspace-card-head"><div><span id="dynamic-page-number">STEP 01 · 动态视频</span><h3 id="dynamic-page-title">选择参考图片</h3></div></div>
+               <p class="one-click-lead" id="dynamic-page-description">上传图片或选用已有分镜图片。当前 H3 模型生成无声动态片段。</p>
++<section class="h3-pricing-card" data-h3-pricing aria-label="H3 动态视频价格"><h2>H3 动态视频价格</h2><p data-h3-rate role="status">正在读取云端当前价格…</p><p data-h3-examples></p><p data-h3-terms></p></section>
+               <p id="dynamic-availability" role="status">登录后检查动态视频服务</p>
+               <fieldset id="dynamic-inputs" class="dynamic-inputs">
+                 <legend class="sr-only">动态视频参数</legend>
+@@ -258,10 +260,11 @@
+     <script src="/assets/storyboard-plan.js?v=20260930-sceneedit1" defer></script>
+     <script src="/assets/studio-project.js?v=20260930-ux4" defer></script>
+     <script src="/assets/cluster-health.js?v=20261012-admission1" defer></script>
+-    <script src="/assets/dynamic-video-client.js?v=20261019-size14" defer></script>
+-    <script src="/assets/dynamic-video.js?v=20261019-size14" defer></script>
++    <script src="/assets/dynamic-video-client.js?v=20261102-pricing2" defer></script>
++    <script src="/assets/dynamic-video.js?v=20261102-pricing2" defer></script>
+     <script src="/assets/studio.js?v=20261019-size14" defer></script>
+   <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
+     <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+-  </body>
++  <script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
++</body>
+ </html>

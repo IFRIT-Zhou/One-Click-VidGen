@@ -30,8 +30,9 @@ def pricing():
         raise HTTPException(503, 'H3 定价配置不可用，请稍后重试') from None
 
 
-def price(seconds):
-    rates = pricing()
+def price(seconds, *, rates=None):
+    # Only server-persisted operation rates may be supplied by internal callers.
+    rates = pricing() if rates is None else rates
     duration = Decimal(str(seconds))
     if not duration.is_finite() or not 0 < duration <= 14:
         raise ValueError('Invalid H3 billing duration')

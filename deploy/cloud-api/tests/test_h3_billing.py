@@ -21,6 +21,17 @@ from app.security import create_access_token
 
 
 class BillingTests(unittest.TestCase):
+    def test_public_pricing_is_anonymous_and_uncached(self):
+        response = self.client.get('/api/v1/cloud/video/pricing')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['cache-control'], 'no-store')
+        self.assertEqual([e['credits'] for e in response.json()['examples']], ['0.70', '0.88', '1.06'])
+
+    def test_persisted_batch_rate_does_not_change_while_queued(self):
+        rates = billing.pricing()
+        with patch.object(billing, 'pricing', side_effect=RuntimeError('current rates unavailable')):
+            self.assertEqual(billing.price(12, rates=rates)['credits'], '0.88')
+
     def test_live_rate_reload_and_frozen_quotes(self):
         config=Path(self.temp.name)/'prices.json'
         config.write_text(json.dumps({'first_10_seconds_rate':'0.07','additional_seconds_rate':'0.09'}))

@@ -1,0 +1,6 @@
+.h3-pricing-card{padding:20px 24px;margin:20px 0;border:1px solid #c8dddd;border-radius:16px;background:#f0f8f7;color:#163b42;line-height:1.7}
+.h3-pricing-card h2{font-size:18px;margin:0 0 8px;color:#12343b}
+.h3-pricing-card p{margin:5px 0;font-size:14px}
+.h3-pricing-card [data-h3-rate]{font-weight:650;font-size:16px}
+.h3-pricing-card [data-h3-terms]{color:#526e74;font-size:13px}
+@media(max-width:640px){.h3-pricing-card{padding:16px}}
