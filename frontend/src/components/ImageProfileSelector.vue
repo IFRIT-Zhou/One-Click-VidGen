@@ -1,4 +1,5 @@
 <script setup>
+import IcanChannelHint from './IcanChannelHint.vue'
 import CloudImageQuality from './CloudImageQuality.vue'
 import { imageChoice } from '../icanImageSizes'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
@@ -39,7 +40,7 @@ onMounted(load)
 <template>
  <section class="image-profile-selector" :class="{manager:manage}">
   <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{poolEnabled?'选择本任务的云端图片渠道':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'使用已配置的个人 API；仅影响本任务出图。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button><label v-if="!manage" class="task-pool-toggle" :title="authenticated?'仅切换本任务图像渠道':'请先登录云端账户'"><span>使用集群</span><input type="checkbox" role="switch" :checked="poolEnabled" :disabled="!authenticated" @change="toggleTaskPool" /></label></div>
-  <div v-if="poolEnabled" class="cloud-profile-settings"><strong class="cloud-profile-summary">{{cloudSummary}}</strong><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" compact /></div>
+  <div v-if="poolEnabled" class="cloud-profile-settings"><strong class="cloud-profile-summary">{{cloudSummary}}</strong><label class="stack"><span>图片生成渠道</span><IcanChannelHint :active="form.method === 'ican'"><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></IcanChannelHint></label><CloudImageQuality :form="form" compact /></div>
   <template v-if="!poolEnabled">
    <div v-if="!manage||!editing" class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>

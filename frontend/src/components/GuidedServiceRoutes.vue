@@ -21,10 +21,10 @@
         </select>
       </label>
       <label v-if="routes.use_cloud_image_pool">号池图片渠道
-        <select :value="form.method" :disabled="busy" @change="$emit('change', { method: $event.target.value })">
+        <IcanChannelHint :active="form.method === 'ican'"><select :value="form.method" :disabled="busy" @change="$emit('change', { method: $event.target.value })">
           <option value="ican">ICAN</option>
           <option value="running">稳定版</option>
-        </select>
+        </select></IcanChannelHint>
       </label>
     </div>
     <p v-if="!authenticated && (routes.language_route === 'cloud' || routes.use_cloud_image_pool)" class="route-warning">请先在“接口与服务”登录云端账户，再继续生成。</p>
@@ -33,6 +33,7 @@
 </template>
 
 <script setup>
+import IcanChannelHint from './IcanChannelHint.vue'
 import { computed } from 'vue'
 import { guidedServiceRoutes } from '../guidedServiceRoutes.js'
 const props = defineProps({ form: { type: Object, required: true }, authenticated: Boolean, busy: Boolean })

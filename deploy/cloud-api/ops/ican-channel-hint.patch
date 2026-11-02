@@ -1,0 +1,82 @@
+--- a/deploy/nginx/site/studio/index.html
++++ b/deploy/nginx/site/studio/index.html
+@@ -13,6 +13,7 @@
+     <link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1" />
+     <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+   <link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
++<link rel="stylesheet" href="/assets/ican-hint.css?v=20261102-hint1">
+ </head>
+   <body class="studio-body studio-wizard-mode" data-page="studio" data-studio-mode="slideshow" data-generation-mode="slideshow">
+     <header class="site-header">
+@@ -130,7 +131,7 @@
+             <section class="workspace-card" id="image-settings-panel" data-parameter-page="3" hidden>
+               <div class="workspace-card-head"><div><span>STEP 3.4</span><h3>画面与视频尺寸</h3></div></div>
+               <div class="settings-grid one-click-image-settings">
+-                <label class="setting-field"><span><strong>画面生成渠道</strong><small>用于视频中的图片</small></span><select id="image-method"><option value="running">平价gpt image2.5</option><option value="ican">ICAN · GPT Image 2.5</option></select></label>
++                <label class="setting-field"><span><strong>画面生成渠道</strong><small>用于视频中的图片</small></span><select id="image-method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label>
+                 <label class="setting-field"><span><strong>视频画幅</strong><small>画面和导出视频一致</small></span><select id="aspect-ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option><option value="1:1">方形 1:1</option><option value="2:1">宽银幕 2:1</option></select></label>
+                 <label class="setting-field"><span><strong>图片清晰度</strong><small>由云端图片号池生成</small></span><select id="image-resolution"><option value="1k">1K</option><option value="2k">2K</option></select></label>
+               </div>
+@@ -266,5 +267,6 @@
+   <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
+     <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+   <script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
++<script src="/assets/ican-hint.js?v=20261102-hint1" defer></script>
+ </body>
+ </html>
+--- a/deploy/nginx/site/dynamic-video/index.html
++++ b/deploy/nginx/site/dynamic-video/index.html
+@@ -6,6 +6,7 @@
+ <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png">
+ <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4"><link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1"><link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1"><link rel="stylesheet" href="/assets/dynamic-project.css?v=20261019-film1">
+ <link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
++<link rel="stylesheet" href="/assets/ican-hint.css?v=20261102-hint1">
+ </head>
+ <body data-page="dynamic-project">
+ <header class="site-header"><div class="shell header-inner"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="One-Click VidGen"><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/studio/">图片视频</a><a class="active" aria-current="page" href="/dynamic-video/">动态视频</a><a href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a><a href="/contact/">联系我们</a></nav><button class="header-action header-button" data-account-trigger type="button">登录账户</button></div></header>
+@@ -18,6 +19,7 @@
+ </div>
+ <noscript>请启用 JavaScript 后使用动态视频创作。</noscript>
+ </main>
+-<script src="/assets/session-refresh.js?v=20260930-ux4" defer></script><script src="/assets/account-header.js?v=20261008-recovery1" defer></script><script src="/assets/dynamic-project.js?v=20261102-pricing2" defer></script>
++<script src="/assets/session-refresh.js?v=20260930-ux4" defer></script><script src="/assets/account-header.js?v=20261008-recovery1" defer></script><script src="/assets/dynamic-project.js?v=20261102-hint1" defer></script>
+ <script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
++<script src="/assets/ican-hint.js?v=20261102-hint1" defer></script>
+ </body></html>
+--- a/deploy/nginx/site/dynamic-video/clip/index.html
++++ b/deploy/nginx/site/dynamic-video/clip/index.html
+@@ -13,6 +13,7 @@
+     <link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1" />
+     <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+   <link rel="stylesheet" href="/assets/h3-pricing.css?v=20261102-pricing2">
++<link rel="stylesheet" href="/assets/ican-hint.css?v=20261102-hint1">
+ </head>
+   <body class="studio-body studio-wizard-mode" data-page="studio" data-studio-mode="dynamic" data-generation-mode="dynamic">
+     <header class="site-header">
+@@ -130,7 +131,7 @@
+             <section class="workspace-card" id="image-settings-panel" data-parameter-page="3" hidden>
+               <div class="workspace-card-head"><div><span>STEP 3.4</span><h3>画面与视频尺寸</h3></div></div>
+               <div class="settings-grid one-click-image-settings">
+-                <label class="setting-field"><span><strong>画面生成渠道</strong><small>用于视频中的图片</small></span><select id="image-method"><option value="running">平价gpt image2.5</option><option value="ican">ICAN · GPT Image 2.5</option></select></label>
++                <label class="setting-field"><span><strong>画面生成渠道</strong><small>用于视频中的图片</small></span><select id="image-method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label>
+                 <label class="setting-field"><span><strong>视频画幅</strong><small>画面和导出视频一致</small></span><select id="aspect-ratio"><option value="16:9">横屏 16:9</option><option value="9:16">竖屏 9:16</option><option value="1:1">方形 1:1</option><option value="2:1">宽银幕 2:1</option></select></label>
+                 <label class="setting-field"><span><strong>图片清晰度</strong><small>由云端图片号池生成</small></span><select id="image-resolution"><option value="1k">1K</option><option value="2k">2K</option></select></label>
+               </div>
+@@ -266,5 +267,6 @@
+   <script src="/assets/project-cloud.js?v=20260930-account1" defer></script>
+     <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+   <script src="/assets/h3-pricing.js?v=20261102-pricing2" defer></script>
++<script src="/assets/ican-hint.js?v=20261102-hint1" defer></script>
+ </body>
+ </html>
+--- a/deploy/nginx/site/assets/dynamic-project.js
++++ b/deploy/nginx/site/assets/dynamic-project.js
+@@ -199,7 +199,7 @@
+   }
+   function styleOptions() { return options([["电影感写实摄影", "电影感写实"], ["精致二维动画", "二维动画"], ["中国风水墨插画", "中国风水墨"], ["商业扁平插画", "商业插画"], ["赛博朋克概念艺术", "赛博朋克"]], state.draft.style); }
+   function settingsHTML() {
+-    return `<div class="dp-fields"><label class="dp-label">视频画幅<select data-setting="orientation" ${disabled() ? "disabled" : ""}>${options([["landscape", "横屏 16:9"], ["portrait", "竖屏 9:16"]], state.draft.orientation)}</select><small>画面和成片统一使用此画幅。</small></label><label class="dp-label">图片渠道<select data-setting="image_method" ${disabled() ? "disabled" : ""}>${options([["running", "平价 GPT Image 2.5"], ["ican", "ICAN · GPT Image 2.5"]], state.draft.image_method)}</select></label><label class="dp-label">图片清晰度<select data-setting="image_resolution" ${disabled() ? "disabled" : ""}>${options(resolutionChoices(state.draft).map(value => [value, value.toUpperCase()]), state.draft.image_resolution)}</select></label></div><div class="dp-references"><strong>角色参考图</strong><p class="dp-note">最多 3 张，生成每个镜头时自动带入，帮助保持角色一致。</p><label class="dp-quiet dp-upload"><input id="dp-reference-files" type="file" accept="image/png,image/jpeg,image/webp" multiple ${disabled() ? "disabled" : ""}>＋ 上传参考图</label><div class="dp-reference-list">${state.refs.map((url, i) => `<div class="dp-ref-tile">${mediaHTML(url, "image", `预览参考图 ${i + 1}`)}<span>参考图 ${i + 1}<button type="button" class="dp-quiet" data-remove-ref="${i}" aria-label="移除参考图 ${i + 1}" ${disabled() ? "disabled" : ""}>×</button></span></div>`).join("")}</div></div>${state.settingsDirty ? `<div class="dp-estimate"><p>保存画面参数会清除已生成的受影响素材，重新生成图片按实际用量结算。</p>${btn("save-settings", "保存画面参数")}${quiet("discard-settings", "撤销参数修改")}</div>` : ""}`;
++    return `<div class="dp-fields"><label class="dp-label">视频画幅<select data-setting="orientation" ${disabled() ? "disabled" : ""}>${options([["landscape", "横屏 16:9"], ["portrait", "竖屏 9:16"]], state.draft.orientation)}</select><small>画面和成片统一使用此画幅。</small></label><label class="dp-label">图片渠道<select data-setting="image_method" ${disabled() ? "disabled" : ""}>${options([["running", "稳定版"], ["ican", "ICAN · GPT Image 2.5"]], state.draft.image_method)}</select></label><label class="dp-label">图片清晰度<select data-setting="image_resolution" ${disabled() ? "disabled" : ""}>${options(resolutionChoices(state.draft).map(value => [value, value.toUpperCase()]), state.draft.image_resolution)}</select></label></div><div class="dp-references"><strong>角色参考图</strong><p class="dp-note">最多 3 张，生成每个镜头时自动带入，帮助保持角色一致。</p><label class="dp-quiet dp-upload"><input id="dp-reference-files" type="file" accept="image/png,image/jpeg,image/webp" multiple ${disabled() ? "disabled" : ""}>＋ 上传参考图</label><div class="dp-reference-list">${state.refs.map((url, i) => `<div class="dp-ref-tile">${mediaHTML(url, "image", `预览参考图 ${i + 1}`)}<span>参考图 ${i + 1}<button type="button" class="dp-quiet" data-remove-ref="${i}" aria-label="移除参考图 ${i + 1}" ${disabled() ? "disabled" : ""}>×</button></span></div>`).join("")}</div></div>${state.settingsDirty ? `<div class="dp-estimate"><p>保存画面参数会清除已生成的受影响素材，重新生成图片按实际用量结算。</p>${btn("save-settings", "保存画面参数")}${quiet("discard-settings", "撤销参数修改")}</div>` : ""}`;
+   }
+   function shotAsset(kind) {
+     const shot = state.project?.shots?.[state.shot];

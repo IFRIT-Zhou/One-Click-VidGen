@@ -1,0 +1,2 @@
+.ican-channel-tooltip{position:fixed;z-index:10000;max-width:min(320px,calc(100vw - 32px));padding:10px 12px;border-radius:8px;background:#183d43;color:#fff;font-size:13px;font-weight:400;line-height:1.6;white-space:normal;box-shadow:0 4px 16px #0003;pointer-events:none;box-sizing:border-box}
+.ican-channel-tooltip[hidden]{display:none}

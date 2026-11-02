@@ -1,4 +1,5 @@
 <script setup>
+import IcanChannelHint from './IcanChannelHint.vue'
 import { computed, ref, watch, onMounted } from 'vue'
 import { api } from '../api'
 import { ICAN_SIZES } from '../icanImageSizes'
@@ -47,7 +48,7 @@ defineExpose({ ensureSaved })
  <section class="project-image-route">
   <header><strong>本项目图像模型</strong><span>当前：{{currentLabel}}</span></header>
   <div class="route-fields">
-   <label>出图渠道<select v-model="draft.channel" :disabled="disabled||saving" @change="chooseChannel"><option value="ican">ICAN 号池 · GPT Image 2.5</option><option value="running">稳定版号池</option><option value="personal">个人 API</option></select></label>
+   <label>出图渠道<IcanChannelHint :active="draft.channel === 'ican'"><select v-model="draft.channel" :disabled="disabled||saving" @change="chooseChannel"><option value="ican">ICAN 号池 · GPT Image 2.5</option><option value="running">稳定版号池</option><option value="personal">个人 API</option></select></IcanChannelHint></label>
    <label v-if="draft.channel==='personal'">模型配置<select v-model="draft.image_profile_id" :disabled="disabled||saving" @change="chooseProfile"><option value="" disabled>请选择已配置的接口</option><option v-for="profile in profiles" :key="profile.id" :value="profile.id" :disabled="!profile.configured">{{profile.name}} · {{profile.model_id}}{{profile.configured?'':'（缺少 Key）'}}</option></select></label>
    <label v-if="draft.channel==='ican'">出图尺寸<select v-model="draft.size" :disabled="disabled||saving"><option v-if="!Object.values(sizes).includes(draft.size)" :value="draft.size">{{draft.size}}（已保存）</option><option v-for="(pixels,quality) in sizes" :key="pixels" :value="pixels">{{quality}} · {{pixels.replace('x','×')}}</option></select></label>
    <label v-else-if="draft.channel==='personal'&&selectedProfile?.protocol==='openai_sync'">出图尺寸<input :value="selectedProfile.size||'auto'" disabled /></label>

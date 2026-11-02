@@ -222,7 +222,7 @@
             <span class="switch-track"><span></span></span>
           </label>
         </div>
-        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
+        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><IcanChannelHint :active="form.method === 'ican'"><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></IcanChannelHint></label><CloudImageQuality :form="form" /></div>
         <div v-if="form.use_cloud_image_pool" class="cloud-pool-status" :class="cloudSession.authenticated ? 'ready' : 'warning'">
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
@@ -2689,6 +2689,7 @@
 </template>
 
 <script>
+import IcanChannelHint from './components/IcanChannelHint.vue'
 import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
 import TtsSentenceControls from './components/TtsSentenceControls.vue'
@@ -2704,5 +2705,5 @@ import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
 import GuidedServiceRoutes from './components/GuidedServiceRoutes.vue'
-export default { components: { GuidedServiceRoutes, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { IcanChannelHint, GuidedServiceRoutes, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

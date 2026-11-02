@@ -141,7 +141,7 @@
           </label>
         </div>
         <p class="cloud-pool-price-note">无需自行配置语言和图像 API；稳定版渠道仅收取 5% 服务费（该比例仅适用于稳定版）。稳定版与 ICAN 每张图片约 0.05 积分；每 1000 字文案的 LLM 消耗通常约 0.1 元，实际费用会随模型、输出长度及重试次数略有浮动。</p>
-        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></label><CloudImageQuality :form="form" /></div>
+        <div v-if="form.use_cloud_image_pool"><label class="stack"><span>图片生成渠道</span><IcanChannelHint :active="form.method === 'ican'"><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></IcanChannelHint></label><CloudImageQuality :form="form" /></div>
         <div v-if="form.use_cloud_image_pool" class="cloud-pool-status" :class="cloudSession.authenticated ? 'ready' : 'warning'">
           <span v-if="cloudSession.authenticated">文本 + 图像号池已启用 · 可用积分 {{ cloudAvailableCredits }}</span>
           <button v-else type="button" @click="openCloudLogin">请先登录云端账户</button>
@@ -1971,6 +1971,7 @@
   <TtsDraftResolutionDialog v-if="ttsDraftResolution.open" :items="ttsDraftResolution.items" @close="closeTtsDraftResolution" @resolve="resolveTtsDrafts" />
 </template>
 <script>
+import IcanChannelHint from './components/IcanChannelHint.vue'
 import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
 import TtsSentenceControls from './components/TtsSentenceControls.vue'
@@ -2007,7 +2008,7 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { IcanChannelHint, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}
