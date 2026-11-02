@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.02.1",
-  "release_order": 2026110201,
-  "display_version": "2026.11.02 配音批量修正与字幕对齐",
+  "release_id": "2026.11.02.2",
+  "release_order": 2026110202,
+  "display_version": "2026.11.02 集群计费与邀请奖励",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.02.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.02.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "配音页新增批量查找替换，可仅修正发音、仅修改字幕或重配成功后同步字幕。仅改字幕不调用 TTS、不改变时长，支持整批撤回。首次分镜规划前禁用返回分镜按钮。修复百分数、小数引起的重配对齐误报；时间不确定时保留原配音，支持试听后采用候选音频，不必重复配音。",
-  "content_fingerprint": "2e82ea1c1845f20f40e5f8f93124ecac823603279e1f063624b536f465500e18"
+  "notes": "H3 集群读取云端价格，批量任务锁定费率并按档结算；同步邀请奖励积分和 ICAN 渠道提示。",
+  "content_fingerprint": "6220600e40eec890b18ffb342d7d68bf4e3b3cbe7b84be0768d0bc1bcabcb41b"
 }
