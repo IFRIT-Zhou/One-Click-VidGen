@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from .cloud_video_api import CloudVideoAsset, CloudVideoJob, TERMINAL, aware, save_bytes, storage_path, utcnow
 from .db import SessionLocal
+from . import h3_billing
 
 
 class WorkerUnsafeState(RuntimeError):
@@ -126,6 +127,7 @@ class H3Queue:
             job.timings = self._safe_timings(timings)
             job.finished_at = utcnow()
             job.lease_expires_at = None
+            h3_billing.settle(db, job)
             db.commit()
 
     @staticmethod

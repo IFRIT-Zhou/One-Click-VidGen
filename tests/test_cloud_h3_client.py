@@ -14,6 +14,29 @@ CAPS_SAFE={**CAPS,'resolutions':CAPS['resolutions']+[
     'default_resolutions':{'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}}}
 
 class CloudVideoTests(unittest.TestCase):
+    def test_new_server_rates_do_not_require_client_update(self):
+        spec=dict(prompt='tree',reference_image_asset_id='asset',width=640,height=384,duration_seconds=12,seed=3)
+        rates=dict(version='arbitrary-new-version',first_10_seconds_rate='0.08',additional_seconds_rate='0.12',threshold_seconds=10,currency='CNY',duration_basis='requested',rounding='ceil_cent')
+        saved={}
+        c.accept_quote(saved,dict(quote_id='q',credits='1.04',pricing=rates,spec=spec,test_mode=False),spec)
+        self.assertEqual(saved['credits'],'1.04')
+    def test_expired_free_quote_cannot_silently_become_paid(self):
+        client=Mock()
+        client.create_video_job.side_effect=CloudApiError('Quote expired; request a new quote',status_code=409)
+        client.video_job.side_effect=CloudApiError('missing',status_code=404)
+        spec=dict(prompt='tree',reference_image_asset_id='asset',width=640,height=384,duration_seconds=12,seed=3)
+        client.video_quote.return_value=dict(quote_id='paid',credits='0.88',test_mode=False,spec=spec,pricing={'version':'server-config-v2','first_10_seconds_rate':'0.07','additional_seconds_rate':'0.09','threshold_seconds':10,'currency':'CNY','duration_basis':'requested','rounding':'ceil_cent'})
+        with self.assertRaisesRegex(ValueError,'费用发生变化'):
+            c.create_or_renew(client,{'quote_id':'free','client_job_id':'stable','spec':spec},Mock())
+        self.assertEqual(client.create_video_job.call_count,1)
+    def test_tiered_quote_accepted_and_unexpected_increase_rejected(self):
+        for seconds, amount in [(10,'0.70'),(12,'0.88'),(14,'1.06')]:
+            spec=dict(prompt='tree',reference_image_asset_id='asset',width=640,height=384,duration_seconds=seconds,seed=3)
+            quote=dict(quote_id='paid',credits=amount,test_mode=False,spec=spec,pricing={'version':'server-config-v2','first_10_seconds_rate':'0.07','additional_seconds_rate':'0.09','threshold_seconds':10,'currency':'CNY','duration_basis':'requested','rounding':'ceil_cent'})
+            saved={};c.accept_quote(saved,quote,spec)
+            self.assertEqual(saved['credits'],amount)
+            quote['credits']='2'
+            with self.assertRaises(ValueError): c.accept_quote({},quote,spec)
     def test_client_hardware_limit_is_14_even_when_server_advertises_15(self):
         caps = {**CAPS, 'duration_seconds': {'min': 2, 'max': 15}}
         c.validate_duration({'id':'shot-a','duration':14,'generation_duration':14},caps)
@@ -342,6 +365,6 @@ class CloudVideoTests(unittest.TestCase):
             saved=shot['video_request'];saved.pop('quote_id');saved.update(reference_files=['core.jpg'],prompt='test',duration=2,seed=7)
         record=self.run_worker(client,before=before)
         client.create_video_job.assert_not_called()
-        self.assertIn('不再免费',record['error'])
+        self.assertIn('报价不符合',record['error'])
 
 if __name__=='__main__':unittest.main()

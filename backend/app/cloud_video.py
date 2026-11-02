@@ -7,7 +7,7 @@ import math
 import threading
 import time
 import uuid
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from fastapi import HTTPException
 from .cloud_client import cloud_client_for, CloudApiError
 from . import video_studio as studio
@@ -73,8 +73,25 @@ def recover_unsubmitted(record):
 
 
 def accept_quote(saved, quote, spec):
-    if Decimal(str(quote.get('credits_total', quote.get('credits', '-1')))) != 0 or quote.get('test_mode') is not True:
-        raise ValueError('集群 H3 已不再免费测试，请确认新价格后再接入；本次未提交')
+    try:
+        amount = Decimal(str(quote.get('credits_total', quote.get('credits', '-1'))))
+        duration = Decimal(str(spec['duration_seconds']))
+        legacy_free = amount == 0 and quote.get('test_mode') is True
+        if not legacy_free:
+            pricing = quote['pricing']
+            first, extra = Decimal(str(pricing['first_10_seconds_rate'])), Decimal(str(pricing['additional_seconds_rate']))
+            threshold = Decimal(str(pricing['threshold_seconds']))
+            if (not all(v.is_finite() and v > 0 for v in (amount, first, extra, threshold))
+                    or not pricing.get('version') or pricing.get('currency') != 'CNY'
+                    or pricing.get('duration_basis') != 'requested' or pricing.get('rounding') != 'ceil_cent'):
+                raise ValueError()
+            expected = (min(duration, threshold)*first + max(duration-threshold, Decimal(0))*extra).quantize(Decimal('.01'), rounding=ROUND_CEILING)
+            if amount != expected:
+                raise ValueError()
+        saved['credits'] = str(amount)
+        saved['pricing'] = quote.get('pricing')
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        raise ValueError('集群 H3 报价不符合服务端费率，本次未提交，请刷新价格') from None
     normalized=quote.get('normalized_spec',quote.get('spec',spec))
     if any(normalized.get(key)!=spec[key] for key in ('prompt','reference_image_asset_id','width','height','duration_seconds','seed')):
         raise ValueError('云端报价更改了生成参数，本次未提交，请刷新配置')
@@ -98,6 +115,8 @@ def create_or_renew(client, saved, persist):
         # authorizes a second job because the server also locks that identity.
         spec=saved['spec']
         quote=client.video_quote(spec)
+        if Decimal(str(quote.get('credits_total', quote.get('credits', '-1')))) != Decimal(str(saved.get('credits', '0'))):
+            raise ValueError('原报价已过期且费用发生变化，请确认新价格后重新生成；本次未提交')
         accept_quote(saved,quote,spec)
         persist(saved)
         return client.create_video_job(saved['quote_id'],saved['client_job_id'])

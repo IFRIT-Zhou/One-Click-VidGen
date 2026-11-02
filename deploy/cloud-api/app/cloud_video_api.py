@@ -1,6 +1,7 @@
-"""Authenticated, free-test H3 queue. GPU execution belongs to a separate worker.
+"""Authenticated, metered H3 queue. GPU execution belongs to a separate worker.
 
-No wallet mutation, remote URL fetch, or caller-supplied ComfyUI graph is allowed.
+Quotes freeze the price; job submission reserves credits and terminal states settle them.
+No remote URL fetch or caller-supplied ComfyUI graph is allowed.
 Enable explicitly with CLOUD_VIDEO_ENABLED=1; optionally restrict account IDs with
 CLOUD_VIDEO_TEST_USER_IDS (comma-separated). Storage must not be served statically.
 """
@@ -30,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .db import Base
 from .deps import CurrentUser, Db
 from .models import User
+from . import h3_billing
 
 router = APIRouter(prefix="/api/v1/cloud/video", tags=["cloud-video-test"])
 MODEL = "minimax-h3"
@@ -150,9 +152,7 @@ class VideoSpec(BaseModel):
     reference_image_asset_id: str = Field(pattern=r"^h3asset_[0-9a-f]{32}$")
     width: int
     height: int
-    # Storyboard duration policy belongs to the client. Do not clamp or reject
-    # a valid duration here because an older cluster limit can block a new plan.
-    duration_seconds: float = Field(gt=0, allow_inf_nan=False)
+    duration_seconds: float = Field(gt=0, le=14, allow_inf_nan=False)
     seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
 
 
@@ -205,7 +205,8 @@ def snapshot(job):
         stage, message = 'reconnecting', '执行状态暂未更新，正在核对节点连接；请勿重复提交'
     return {"job_id": job.id, "client_job_id": job.client_job_id, "status": job.status,
             "stage": stage, "message": message,
-            "spec": job.spec, "progress": job.progress, "credits": "0", "test_mode": True,
+            "spec": job.spec, "progress": job.progress, "credits": h3_billing.frozen(job.spec)["credits"],
+            "test_mode": not bool(job.spec.get("_billing")), "pricing": h3_billing.frozen(job.spec),
             "error": {"code": job.error_code, "message": job.error_message} if job.error_code else None,
             "result_url": f"/api/v1/cloud/video/jobs/{job.id}/result" if job.status == "succeeded" else None,
             "timings": job.timings, "created_at": job.created_at, "started_at": job.started_at,
@@ -214,14 +215,12 @@ def snapshot(job):
 
 @router.get("/capabilities")
 def capabilities(user: CurrentUser):
-    return {"enabled": feature_enabled(user), "test_mode": True, "credits": "0", "model": MODEL,
+    return {"enabled": feature_enabled(user), "test_mode": False, "pricing": h3_billing.pricing(), "model": MODEL,
             "workflow_revision": REVISION, "fps": 24, "resolutions": [{"width": w, "height": h} for w, h in RESOLUTIONS],
             "default_resolutions": DEFAULT_RESOLUTIONS,
             "max_output_pixels": MAX_VIDEO_PIXELS,
-            # Retain planning hints for existing clients that expect min/max.
-            # They are not server validation limits; new clients can use policy.
-            "duration_seconds": {"min": 2, "max": 15}, "duration_policy": "client",
-            "duration_limit_enforced": False, "audio_supported": False,
+            "duration_seconds": {"min": 2, "max": 14}, "duration_policy": "server",
+            "duration_limit_enforced": True, "audio_supported": False,
             "max_upload_bytes": MAX_UPLOAD, "frame_divisor": 17, "frame_remainder": 5,
             "frame_rule": {"divisor": 17, "remainder": 5}}
 
@@ -279,13 +278,15 @@ async def upload_asset(db: Db, user: CurrentUser, kind: Literal["image"] = Form(
 def quote(body: QuoteRequest, db: Db, user: CurrentUser):
     require_enabled(user)
     spec = normalize_spec(body.spec)
+    spec["_billing"] = h3_billing.price(spec["duration_seconds"])
     asset = db.scalar(select(CloudVideoAsset).where(CloudVideoAsset.id == spec["reference_image_asset_id"], CloudVideoAsset.user_id == user.id))
     if asset is None or aware(asset.expires_at) <= utcnow() or not storage_path(asset.storage_key).is_file():
         raise HTTPException(404, "Reference image not found or expired")
     record = CloudVideoQuote(id=identifier("h3quote"), user_id=user.id, spec=spec, expires_at=utcnow() + timedelta(minutes=15))
     db.add(record)
     db.commit()
-    return {"quote_id": record.id, "spec": record.spec, "credits": "0", "test_mode": True, "expires_at": record.expires_at}
+    return {"quote_id": record.id, "spec": record.spec, "credits": h3_billing.frozen(record.spec)["credits"], "test_mode": False,
+            "pricing": h3_billing.frozen(record.spec), "expires_at": record.expires_at}
 
 
 @router.post("/jobs", status_code=201)
@@ -318,6 +319,7 @@ def create_job(body: JobRequest, db: Db, user: CurrentUser):
         raise HTTPException(429, "Too many pending H3 test jobs")
     job = CloudVideoJob(id=identifier("h3job"), user_id=user.id, quote_id=record.id, client_job_id=client_id, spec=dict(record.spec), status="queued")
     db.add(job)
+    h3_billing.reserve(db, job)
     try:
         db.commit()
     except IntegrityError:
@@ -346,6 +348,7 @@ def cancel_job(job_id: str, db: Db, user: CurrentUser):
         job.status, job.finished_at = "cancelled", utcnow()
     elif job.status == "running":
         job.status = "cancelling"
+    h3_billing.settle(db, job)
     db.commit()
     return snapshot(job)
 

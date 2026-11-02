@@ -1747,7 +1747,7 @@ def preflight_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
                 workflow(capabilities)
                 if data.get('presenter_mode') or data.get('comfyui_reference_audio'):
                     raise ValueError('集群 H3 测试阶段暂不支持参考音频或对口型，请关闭该功能')
-                add('video_backend', '动态镜头生成', 'passed', '集群 H3（测试免费）；配音和核心图确认后提交，容器按需启停')
+                add('video_backend', '动态镜头生成', 'passed', '集群 H3：费率从云端读取，生成前确认；按请求时长收费')
             except (CloudApiError, ValueError) as exc:
                 add('video_backend', '动态镜头生成', 'error', str(exc))
         elif data.get('dynamic_video'):

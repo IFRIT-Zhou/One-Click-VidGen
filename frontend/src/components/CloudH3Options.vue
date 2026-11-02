@@ -37,6 +37,8 @@ onMounted(refresh)
 <template>
  <div class="cluster-h3-options">
   <strong>集群 H3</strong>
+  <p v-if="capabilities?.pricing">云端当前费率：前 {{capabilities.pricing.threshold_seconds}} 秒 {{capabilities.pricing.first_10_seconds_rate}} 元/秒，超过部分 {{capabilities.pricing.additional_seconds_rate}} 元/秒。按请求时长计费，补帧不加收；总价向上取整到分。</p>
+  <p v-else>尚未取得云端费率，生成前会重新获取并确认报价。</p>
   <p>请求最长 14 秒，尺寸上限 1664 × 936。竖屏交换宽高；列表只显示符合当前时长限制、且集群支持的尺寸。</p>
   <p>本镜尺寸上限：{{maximum[0]}} × {{maximum[1]}}（长边 × 短边）。</p>
   <p>由集群排队并按需启动；模型首次加载会增加等待时间。参考配音、对口型暂不支持，原配音在导出时合成。</p>

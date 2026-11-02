@@ -215,7 +215,16 @@ async function submitVideoBatch(shots,{automated=false,regenerate=false}={}){
  if(!confirmLongApiShots(shots))return
  const lines=shots.map(shot=>'第 '+String(project.value.shots.findIndex(item=>item.id===shot.id)+1).padStart(2,'0')+' 镜：'+generationSummary(shot))
  const paid=shots.filter(shot=>optionsFor(shot).backend==='api').length
- if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'按各镜头的 ComfyUI 或集群 H3 配置执行。')+'\n是否开始？'))return
+ const h3Shots=shots.filter(shot=>optionsFor(shot).backend==='cloud_h3')
+ if(h3Shots.length){
+  try{
+   const caps=await requestJSON('/api/video-studio/cloud/capabilities'),p=caps.pricing
+   if(!p||![p.threshold_seconds,p.first_10_seconds_rate,p.additional_seconds_rate].every(v=>Number.isFinite(Number(v))&&Number(v)>0))throw new Error('无法读取云端 H3 费率，请刷新后重试')
+   const amount=h3Shots.reduce((sum,shot)=>{const s=requestedSeconds(shot);return sum+Math.ceil((Math.min(s,Number(p.threshold_seconds))*Number(p.first_10_seconds_rate)+Math.max(s-Number(p.threshold_seconds),0)*Number(p.additional_seconds_rate))*100-1e-8)},0)/100
+   lines.push(`集群 H3 共 ${h3Shots.length} 镜，当前预估 ${amount.toFixed(2)} 元；前${p.threshold_seconds}秒${p.first_10_seconds_rate}元/秒，超出部分${p.additional_seconds_rate}元/秒。`)
+  }catch(e){error.value=e.message;return}
+ }
+ if(!automated&&!confirm((regenerate?'重新生成全部所选镜头，已有片段会保留到历史记录。':'生成所选未完成镜头。')+'\n按各镜头设置执行；页面内尚未保存的配置也会随本次提交保存。\n\n'+lines.join('\n')+'\n\n'+(paid?paid+' 个镜头使用视频 API，可能产生费用。':'按各镜头配置执行，H3 按云端报价收费；失败或取消释放预留积分。')+'\n是否开始？'))return
  const shot_options=Object.fromEntries(shots.map(shot=>[shot.id,normalizedOptions(optionsFor(shot))]))
  await run(async()=>{project.value=await call('/'+project.value.id+'/videos/generate','POST',{revision:project.value.revision,shot_ids:shots.map(shot=>shot.id),shot_options,regenerate_completed:regenerate});for(const shot of shots)delete shotOptionDrafts.value[project.value.id+':'+shot.id];view.value='motions';videoLogsOpen.value=true})
 }
@@ -284,7 +293,7 @@ async function loadVideoModel(){
 }
 async function generateVideos(shots,retryFailed=false,automated=false,singleShot=false){
  if(!shots.length)return
- if(!singleShot)return submitVideoBatch(shots,{automated})
+ if(!singleShot||optionsFor(shots[0]).backend==='cloud_h3')return submitVideoBatch(shots,{automated})
  const options=singleShot?optionsFor(shots[0]):null
  const useLocal=options?options.backend==='comfyui':localVideo.value
  const optionsPayload=options?{options}:{}

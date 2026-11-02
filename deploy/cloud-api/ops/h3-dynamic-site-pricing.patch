@@ -1,0 +1,64 @@
+--- a/deploy/cloud-api/app/dynamic_providers.py
++++ b/deploy/cloud-api/app/dynamic_providers.py
+@@ -61,6 +61,7 @@
+
+ def cancel_children(db, project):
+     from .cloud_video_api import CloudVideoJob
++    from .h3_billing import settle
+     for kind, job_id in resolved_children(db, project):
+         model = {"audio": CloudJob, "image": ImagePoolJob, "video": CloudVideoJob}[kind]
+         child = db.get(model, job_id, with_for_update=True)
+@@ -78,7 +79,11 @@
+             release_image_pool_job(db, job=child)
+         elif kind == "video":
+             if child.status == "queued":
+-                child.status, child.finished_at = "cancelled", utcnow()
++                if child.attempt_token or child.remote_prompt_id:
++                    child.status = "cancelling"
++                else:
++                    child.status, child.finished_at = "cancelled", utcnow()
++                    settle(db, child)
+             elif child.status == "running":
+                 child.status = "cancelling"
+         # In-flight image providers have no cancellation API. Their existing job is
+@@ -214,11 +219,13 @@
+                     expires_at=utcnow()+timedelta(days=30)))
+             spec = h3.normalize_spec(h3.VideoSpec(prompt=prompt, reference_image_asset_id=asset_id,
+                 width=options["width"], height=options["height"], duration_seconds=duration))
++            spec["_billing"] = h3.h3_billing.price(duration)
+             quote = h3.CloudVideoQuote(id=new_id("h3quote"), user_id=user.id, spec=spec,
+                                        expires_at=utcnow()+timedelta(minutes=15))
+             job = h3.CloudVideoJob(id=new_id("h3job"), user_id=user.id, quote_id=quote.id,
+                                    client_job_id=key, spec=spec, status="queued")
+             db.add_all([quote, job])
++            h3.h3_billing.reserve(db, job)
+             db.commit()
+             return job.id
+
+--- a/deploy/nginx/site/assets/dynamic-video.js
++++ b/deploy/nginx/site/assets/dynamic-video.js
+@@ -120,7 +120,7 @@
+         const value = await api("/cloud/video/capabilities");
+         if (epoch !== generation) return;
+         capabilities = value;
+-        $("dynamic-availability").textContent = value.enabled ? `H3 动态视频 · ${value.test_mode ? "测试服务" : "已开放"} · ${value.credits} 积分` : "当前账号暂未开放动态视频服务";
++        $("dynamic-availability").textContent = value.enabled ? `H3 动态视频 · ${value.test_mode ? "免费测试" : value.pricing ? `前${value.pricing.threshold_seconds}秒${value.pricing.first_10_seconds_rate}元/秒，超出部分${value.pricing.additional_seconds_rate}元/秒` : "费率暂不可用"}` : "当前账号暂未开放动态视频服务";
+         refreshResolutions();
+         controls();
+       }
+--- a/deploy/nginx/site/assets/dynamic-project.js
++++ b/deploy/nginx/site/assets/dynamic-project.js
+@@ -332,7 +332,12 @@
+       else if (name === "save-shots") { validate(state.edit, state.project.audio.cues); const value = await client.request(`/${encodeURIComponent(state.project.id)}/shots`, { method: "PUT", body: JSON.stringify({ revision: state.project.revision, shots: editable(state.edit) }) }); state.undo = null; adopt(value, true); }
+       else if (name === "images" || name === "image-one") await quote("images", name === "image-one" ? state.project.shots[state.shot].id : undefined);
+       else if (name === "confirm-quote") { const q = state.quote; if (!q) throw new Error("请重新获取费用预估。"); await action(q.stage, q.shot_id ? { shot_id: q.shot_id } : {}); }
+-      else if (name === "videos" || name === "video-one") await action("videos", name === "video-one" ? { shot_id: state.project.shots[state.shot].id } : {});
++      else if (name === "videos" || name === "video-one") {
++        const caps = await client.request('/api/v1/cloud/video/capabilities'), pricing = caps.pricing;
++        if (!pricing || ![pricing.threshold_seconds, pricing.first_10_seconds_rate, pricing.additional_seconds_rate].every(v => Number.isFinite(Number(v)) && Number(v) > 0)) throw new Error('无法读取云端 H3 费率，请稍后重试');
++        if (!root.confirm(`H3 云端当前费率：每镜前${pricing.threshold_seconds}秒${pricing.first_10_seconds_rate}元/秒，超出部分${pricing.additional_seconds_rate}元/秒。按请求时长计费；提交预留积分，成功扣费，失败或取消释放。是否继续？`)) return;
++        await action("videos", name === "video-one" ? { shot_id: state.project.shots[state.shot].id } : {});
++      }
+       else if (["compose", "cancel", "retry"].includes(name)) await action(name);
+       else if (name === "refresh") await refresh();
+       else if (name === "recover") adopt(await client.recover(), true);

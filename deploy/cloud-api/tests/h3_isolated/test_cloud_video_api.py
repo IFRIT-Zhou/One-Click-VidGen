@@ -7,6 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 from datetime import timedelta
 from typing import Annotated
 
@@ -43,7 +44,7 @@ def current_user(authorization: str = Header(default="")):
 
 
 package = types.ModuleType("h3test")
-package.__path__ = []
+package.__path__ = [str(Path(__file__).parents[2] / "app")]
 sys.modules["h3test"] = package
 for name, values in {
     "db": {"Base": Base, "SessionLocal": sessionmaker(engine, expire_on_commit=False)}, "models": {"User": User},
@@ -64,6 +65,10 @@ PREFIX = "/api/v1/cloud/video"
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
+        for method in ("reserve", "settle"):
+            stub = patch.object(api.h3_billing, method)
+            stub.start()
+            self.addCleanup(stub.stop)
         Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
         with Session(engine) as db:
@@ -99,13 +104,13 @@ class ApiTests(unittest.TestCase):
         os.environ["CLOUD_VIDEO_TEST_USER_IDS"] = "b"
         caps = client.get(PREFIX + "/capabilities", headers=self.headers).json()
         self.assertFalse(caps["enabled"])
-        self.assertTrue(caps["test_mode"])
+        self.assertFalse(caps["test_mode"])
         image = io.BytesIO(b"x")
         self.assertEqual(client.post(PREFIX + "/assets", headers=self.headers, data={"kind": "image"}, files={"file": ("x", image)}).status_code, 503)
 
     def test_normalization_free_seed_snapshot(self):
         job, quote = self.job()
-        self.assertEqual(quote["credits"], "0")
+        self.assertEqual(quote["credits"], "0.14")
         self.assertEqual(job["spec"], quote["spec"])
         self.assertEqual(job["spec"]["num_frames"], 56)
         self.assertEqual(job["spec"]["num_frames"] % 17, 5)
@@ -116,21 +121,21 @@ class ApiTests(unittest.TestCase):
         caps=client.get(PREFIX + "/capabilities", headers=self.headers).json()
         self.assertEqual(caps['default_resolutions'],{
             'landscape':{'width':1664,'height':936},'portrait':{'width':936,'height':1664}})
-        self.assertEqual(caps['duration_seconds'],{'min':2,'max':15})
-        self.assertEqual(caps['duration_policy'],'client')
-        self.assertIs(caps['duration_limit_enforced'],False)
+        self.assertEqual(caps['duration_seconds'],{'min':2,'max':14})
+        self.assertEqual(caps['duration_policy'],'server')
+        self.assertIs(caps['duration_limit_enforced'],True)
         for dimensions in list(caps['default_resolutions'].values())+[{'width':640,'height':384}]:
             with self.subTest(dimensions=dimensions):
                 self.assertIn(dimensions,caps['resolutions'])
-                response=self.quote(**dimensions,duration_seconds=15)
+                response=self.quote(**dimensions,duration_seconds=14)
                 self.assertEqual(response.status_code,201,response.text)
                 spec=response.json()['spec']
                 self.assertEqual({key:spec[key] for key in ('width','height')},dimensions)
-                self.assertEqual(spec['duration_seconds'],15)
-                self.assertGreaterEqual(spec['actual_duration_seconds'],15)
+                self.assertEqual(spec['duration_seconds'],14)
+                self.assertGreaterEqual(spec['actual_duration_seconds'],14)
 
-    def test_client_duration_is_preserved_without_a_server_ceiling(self):
-        for seconds in (0.25,1.9,10.48,10.68,11,15,15.01,16,30):
+    def test_client_duration_is_preserved_within_server_ceiling(self):
+        for seconds in (0.25,1.9,10.48,10.68,11,14):
             with self.subTest(seconds=seconds):
                 response=self.quote(duration_seconds=seconds)
                 self.assertEqual(response.status_code,201,response.text)
@@ -147,7 +152,7 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(client.post(PREFIX+'/jobs/'+job.json()['job_id']+'/cancel',headers=self.headers).status_code,200)
 
     def test_invalid_duration_is_rejected_before_creating_a_quote(self):
-        for seconds in (0,-1,'NaN','Infinity','-Infinity'):
+        for seconds in (0,-1,14.001,15,30,'NaN','Infinity','-Infinity'):
             with self.subTest(seconds=seconds):
                 self.assertEqual(self.quote(duration_seconds=seconds).status_code,422)
         with Session(engine) as db:
