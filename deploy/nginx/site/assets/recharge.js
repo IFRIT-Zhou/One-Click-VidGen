@@ -9,6 +9,7 @@
   const guestPanel = document.querySelector("#account-guest");
   const accountPanel = document.querySelector("#account-summary");
   let authMode = "login";
+  let registrationPending = false;
   let session = readSession();
 
   function readSession() {
@@ -89,6 +90,14 @@
   document.querySelectorAll("[data-auth-mode]").forEach((tab) => {
     tab.addEventListener("click", () => {
       authMode = tab.dataset.authMode;
+      if (authMode === "login" && registrationPending) {
+        registrationPending = false;
+        document.querySelector("#register-code-field").hidden = true;
+        authForm.elements.code.required = false;
+        authForm.elements.email.readOnly = false;
+        authForm.elements.password.hidden = false;
+        authForm.elements.password.required = true;
+      }
       document.querySelectorAll("[data-auth-mode]").forEach((item) => item.classList.toggle("active", item === tab));
       document.querySelector("#auth-title").textContent = authMode === "login" ? "登录云端账户" : "注册云端账户";
       document.querySelector("#auth-submit").textContent = authMode === "login" ? "登录" : "注册并继续";
@@ -106,7 +115,25 @@
     const payload = { email: authForm.email.value.trim(), password: authForm.password.value };
     try {
       if (authMode === "register") {
-        await api("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+        if (!registrationPending) {
+          const inviteCode = new URLSearchParams(window.location.search).get("invite");
+          if (inviteCode) payload.inviteCode = inviteCode;
+          const result = await api("/auth/register", { method: "POST", body: JSON.stringify(payload) });
+          registrationPending = true;
+          document.querySelector("#register-code-field").hidden = false;
+          authForm.elements.code.required = true;
+          authForm.elements.email.readOnly = true;
+          authForm.elements.password.hidden = true;
+          authForm.elements.password.required = false;
+          submit.textContent = "验证邮箱";
+          showMessage(authMessage, result.message || "验证码已发送，请查收邮箱。", "success");
+          return;
+        }
+        await api("/auth/register/verify", { method: "POST", body: JSON.stringify({ email: authForm.email.value.trim(), code: authForm.elements.code.value.trim() }) });
+        showMessage(authMessage, "邮箱验证完成，请前往登录。", "success");
+        registrationPending = false;
+        window.setTimeout(() => { authDialog.close(); location.href = "/studio/#login"; }, 700);
+        return;
       }
       const login = await api("/auth/login", { method: "POST", body: JSON.stringify(payload) });
       saveSession(login);
@@ -117,8 +144,17 @@
       showMessage(authMessage, error.message, "error");
     } finally {
       submit.disabled = false;
-      submit.textContent = authMode === "login" ? "登录" : "注册并继续";
+      submit.textContent = authMode === "login" ? "登录" : registrationPending ? "验证邮箱" : "注册并继续";
     }
+  });
+
+  document.querySelector("#resend-register-code").addEventListener("click", async (event) => {
+    const button = event.currentTarget; button.disabled = true;
+    try {
+      const result = await api("/auth/register/resend", { method: "POST", body: JSON.stringify({ email: authForm.email.value.trim() }) }, false, null);
+      showMessage(authMessage, result.message || "验证码已重新发送。", "success");
+    } catch (error) { showMessage(authMessage, error.message, "error"); }
+    finally { window.setTimeout(() => { button.disabled = false; }, 60000); }
   });
 
   document.querySelector("#logout").addEventListener("click", () => {

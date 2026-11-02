@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/one-click-vidgen-logo.png" type="image/png" />
+    <link rel="stylesheet" href="/assets/site.css?v=20260930-ux4" />
+    <link rel="stylesheet" href="/assets/public-nav.css?v=20261019-entries1" />
+    <link rel="stylesheet" href="/assets/account-header.css?v=20261008-recovery1" />
+    <link rel="stylesheet" href="/assets/invite.css?v=20261028-invites1" />
+    <title>邀请奖励｜One-Click VidGen</title>
+  </head>
+  <body>
+    <header class="site-header"><div class="shell header-inner"><a class="brand" href="/"><img src="/one-click-vidgen-logo.png" alt="" /><span><strong>One-Click VidGen</strong><small>云端视频创作服务</small></span></a><nav class="nav" aria-label="主导航"><a href="/">首页</a><a href="/studio/">图片视频</a><a href="/dynamic-video/">动态视频</a><a href="/projects/">我的作品</a><a href="/recharge/">账户与积分</a></nav><button class="header-action header-button" id="header-account" data-account-trigger type="button">登录账户</button></div></header>
+    <main class="shell invite-main">
+      <header class="invite-heading"><div><span class="eyebrow"><span></span>INVITE & EARN</span><h1>邀请奖励</h1><p>好友完成邮箱验证后，你获得 10 积分，有效期 30 天。发布带有邀请码的公开视频并通过审核，可再获 30 积分。</p></div></header>
+      <p class="invite-notice" id="invite-notice" role="status">正在读取邀请信息…</p>
+      <section class="invite-grid">
+        <article class="invite-panel"><div class="panel-title"><div><span>01 · 邀请好友</span><h2>分享专属邀请码</h2></div></div><div class="invite-code-row"><code id="invite-code">—</code><button class="button secondary" id="copy-code" type="button">复制邀请码</button></div><label class="invite-field"><span>邀请链接</span><input id="invite-link" readonly /></label><button class="button primary" id="copy-link" type="button">复制邀请链接</button><div class="qr-area"><img id="invite-qr" alt="邀请链接二维码" /><small>扫码打开注册页</small></div><dl class="invite-stats"><div><dt>已验证好友</dt><dd id="verified-count">—</dd></div><div><dt>待验证邀请</dt><dd id="pending-count">—</dd></div><div><dt>可用奖励积分</dt><dd id="bonus-count">—</dd></div></dl><div class="invite-expiry" id="bonus-expiry"></div></article>
+        <article class="invite-panel"><div class="panel-title"><div><span>02 · 视频推广</span><h2>提交公开视频</h2></div></div><p class="panel-copy">在你本人运营的平台账号发布视频，并在视频中展示邀请码或二维码。每个平台账号限申请一次，审核通过后奖励 30 积分，有效期 30 天。</p><form id="claim-form"><label class="invite-field"><span>发布平台</span><select name="platform" required><option value="bilibili">哔哩哔哩</option><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="kuaishou">快手</option><option value="other">其他平台</option></select></label><label class="invite-field"><span>平台账号名称</span><input name="account_name" maxlength="120" required placeholder="填写你发布视频的账号名称" /></label><label class="invite-field"><span>公开视频链接</span><input name="video_url" type="url" required placeholder="https://..." /></label><button class="button primary" type="submit">提交审核</button></form><div class="claim-list" id="claim-list"><h3>我的申请</h3><p>登录后读取</p></div></article>
+      </section>
+    </main>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 One-Click VidGen</span><a href="/contact/">联系我们</a></div></footer>
+    <script src="/assets/session-refresh.js?v=20260930-account1" defer></script><script src="/assets/account-header.js?v=20261028-invites1" defer></script><script src="/assets/invite.js?v=20261028-invites1" defer></script>
+  </body>
+</html>

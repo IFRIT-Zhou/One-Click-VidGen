@@ -13,6 +13,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=10, max_length=200)
     captcha_token: str | None = None
     source: Literal[1, 2] = 1
+    invite_code: str | None = Field(default=None, alias="inviteCode", min_length=6, max_length=24)
 
 
 class LoginRequest(BaseModel):

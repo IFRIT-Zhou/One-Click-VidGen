@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, load_only
@@ -22,6 +22,7 @@ from . import ican_images
 from .config import settings
 from .storyboard_free import StoryboardStageRequest, stage_payload
 from .deps import CurrentAdmin, CurrentUser, Db
+from .referral_program import create_registration
 from .documents import MAX_DOCUMENT_BYTES, DocumentParseError, parse_document
 from .exceptions import ServiceError, UpstreamAuthError, UpstreamBusyError, UpstreamPermanentError
 from .service_control import ServiceControlError, decorate_services, enqueue as enqueue_service_control
@@ -284,26 +285,8 @@ def health() -> dict[str, Any]:
         return {"ok": False, "control_api": True, "ray_error": str(exc), "tts_admission": admission}
 
 @router.post("/auth/register", status_code=201)
-def register(payload: RegisterRequest, db: Db) -> dict[str, Any]:
-    if not settings.allow_registration:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Registration is disabled")
-    email = str(payload.email).lower()
-    if db.scalar(select(User).where(User.email == email)):
-        raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
-    try:
-        password_hash = hash_password(payload.password)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    user = User(id=new_id("usr"), email=email, password_hash=password_hash,
-                status=UserStatus.ACTIVE.value, role=UserRole.USER.value,
-                source=payload.source)
-    db.add(user)
-    db.add(WalletAccount(user_id=user.id))
-    db.add(QuotaPolicy(user_id=user.id, max_concurrent_jobs=settings.default_max_concurrent_jobs,
-                       daily_characters_limit=settings.default_daily_characters,
-                       max_queue_jobs=settings.default_max_queue_jobs))
-    db.commit()
-    return {"user": UserPublic.model_validate(user), "verification_required": False}
+def register(payload: RegisterRequest, request: Request, background: BackgroundTasks, db: Db) -> dict[str, Any]:
+    return create_registration(payload, request, background, db)
 
 @router.post("/auth/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: Db) -> TokenResponse:
@@ -358,7 +341,11 @@ def summary(user: CurrentUser, db: Db) -> dict[str, Any]:
     wallet, quota = db.get(WalletAccount, user.id), db.get(QuotaPolicy, user.id)
     running = db.scalar(select(func.count(CloudJob.id)).where(CloudJob.user_id == user.id, CloudJob.status.in_([JobStatus.RUNNING.value, JobStatus.FINALIZING.value]))) or 0
     usage = db.scalar(select(DailyUsage).where(DailyUsage.user_id == user.id, DailyUsage.usage_date == utcnow().date()))
-    return {"credits": {"available": _credit(wallet.available), "reserved": _credit(wallet.reserved), "consumed": _credit(wallet.consumed)},
+    from .bonus_credits import bonus_summary
+    bonus = bonus_summary(db, user.id)
+    db.commit()
+    return {"credits": {"available": _credit(wallet.available), "reserved": _credit(wallet.reserved), "consumed": _credit(wallet.consumed),
+                         "bonus_available": _credit(bonus["available"]), "bonus_expiring": bonus["expiring"]},
             "quota": {"max_concurrent_jobs": quota.max_concurrent_jobs, "running_jobs": running,
                       "daily_characters_limit": quota.daily_characters_limit,
                       "daily_characters_used": usage.characters if usage else 0,

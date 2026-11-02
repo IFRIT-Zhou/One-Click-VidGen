@@ -250,6 +250,10 @@ def apply_wallet_entry(
     idempotency_key: str,
     note: str | None = None,
 ) -> WalletLedger:
+    from .bonus_credits import expire_available, reserve_bonus, settle_bonus_reservation
+
+    now = utcnow()
+    expire_available(db, wallet, now=now)
     existing = db.scalar(
         select(WalletLedger).where(
             WalletLedger.idempotency_key == idempotency_key
@@ -257,6 +261,27 @@ def apply_wallet_entry(
     )
     if existing:
         return existing
+    if entry_type.startswith("reserve") and available_delta < 0:
+        reserve_bonus(
+            db, wallet, amount=min(-Decimal(str(available_delta)), wallet.available),
+            reference_type=reference_type, reference_id=reference_id, now=now,
+        )
+    if entry_type.startswith("consume") and reserved_delta < 0:
+        settle_bonus_reservation(
+            db, wallet, amount=-Decimal(str(reserved_delta)),
+            reference_type=reference_type, reference_id=reference_id,
+            consume=True, now=now,
+        )
+    if entry_type.startswith("release") and reserved_delta < 0:
+        settled, refunded_bonus = settle_bonus_reservation(
+            db, wallet, amount=-Decimal(str(reserved_delta)),
+            reference_type=reference_type, reference_id=reference_id,
+            consume=False, now=now,
+        )
+        # Expired promotional reservations are dropped; purchased credits and
+        # unexpired promotional reservations return to the available balance.
+        purchased_refund = max(Decimal("0"), -Decimal(str(reserved_delta)) - settled)
+        available_delta = purchased_refund + refunded_bonus
     next_available = wallet.available + available_delta
     next_reserved = wallet.reserved + reserved_delta
     next_consumed = wallet.consumed + consumed_delta

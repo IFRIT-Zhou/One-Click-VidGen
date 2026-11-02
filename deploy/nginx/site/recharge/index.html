@@ -70,6 +70,7 @@
         <form id="auth-form">
           <div class="field"><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="email" placeholder="name@example.com" required /></div>
           <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" minlength="1" autocomplete="current-password" placeholder="请输入密码" required /></div>
+          <div class="field" id="register-code-field" hidden><label for="register-code">邮箱验证码</label><input id="register-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /><button class="resend-code" id="resend-register-code" type="button">重新发送验证码</button></div>
           <p class="forgot-password-link"><a href="/forgot-password/?return=/recharge/">忘记密码？</a></p><button class="button primary full" id="auth-submit" type="submit">登录</button>
           <div class="message" id="auth-message" role="status"></div>
         </form>
@@ -80,7 +81,7 @@
     <script src="/assets/session-refresh.js?v=20260930-account1" defer></script>
     <script src="/assets/cluster-health.js?v=20261012-admission1" defer></script>
     <script src="/assets/site.js?v=20261012-admission1" defer></script>
-    <script src="/assets/recharge.js?v=20261008-password1" defer></script>
-    <script src="/assets/account-header.js?v=20261008-recovery1" defer></script>
+    <script src="/assets/recharge.js?v=20261028-invites1" defer></script>
+    <script src="/assets/account-header.js?v=20261028-invites1" defer></script>
   </body>
 </html>
