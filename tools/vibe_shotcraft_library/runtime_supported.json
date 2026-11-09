@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "styles": {
+    "spotlight-hero-card": {
+      "renderer_id": "spotlight-hero-card",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "word-relay-filmstrip": {
+      "renderer_id": "word-relay-filmstrip",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "outro-group-photo-launch": {
+      "renderer_id": "outro-group-photo-launch",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "card-flip-reveal": {
+      "renderer_id": "card-flip-reveal",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "carousel-3d": {
+      "renderer_id": "carousel-3d",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "card-stack": {
+      "renderer_id": "card-stack",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "timeline-travel": {
+      "renderer_id": "timeline-travel",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "document-typewriter-reveal": {
+      "renderer_id": "document-typewriter-reveal",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "marker-underline-title": {
+      "renderer_id": "marker-underline-title",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "quad-split-parallel-scenes": {
+      "renderer_id": "quad-split-parallel-scenes",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "scanline-annotate-focus": {
+      "renderer_id": "scanline-annotate-focus",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    },
+    "title-demote-to-label": {
+      "renderer_id": "title-demote-to-label",
+      "status": "supported",
+      "render_validation": "local_twelve_adapter_regression_20261104"
+    }
+  }
+}

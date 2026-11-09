@@ -222,7 +222,19 @@ namespace OcvLauncher
             "comfyui_plugins/README.md",
             "comfyui/README.md",
             "tts/README.md",
-            "tools/migrate_optional_components.ps1"
+            "tools/migrate_optional_components.ps1",
+            "backend/app/vibe_rmbg.py",
+            "backend/app/vibe_rmbg_runtime.py",
+            "backend/app/vibe_rmbg_model.py",
+            "tools/rmbg/README.md",
+            "tools/rmbg/worker.py",
+            "tools/rmbg/setup_runtime.py",
+            "tools/rmbg/runtime-spec.json",
+            "tools/rmbg/vendor/birefnet/birefnet.py",
+            "tools/rmbg/vendor/birefnet/BiRefNet_config.py",
+            "tools/rmbg/vendor/birefnet/config.json",
+            "tools/rmbg/vendor/birefnet/LICENSE",
+            "tools/rmbg/vendor/birefnet/NOTICE.md"
         };
         private readonly string root;
 

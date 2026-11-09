@@ -1,7 +1,7 @@
 // Match the saved per-shot route used by the backend storyboard confirmation.
 // Historical requests and unsaved option drafts must not change this verdict.
 export function shotDurationIssue(shot, parameters={}) {
-  if (shot?.kind !== 'video') return null
+  if (shot?.kind !== 'video' || shot.vibe_reserved || shot.video_request?.backend === 'vibe') return null
   const duration = Number(shot.duration)
   if (!Number.isFinite(duration) || duration <= 0) return null
   const backend = shot.video_generation_options?.backend || parameters.video_generation_backend || 'api'

@@ -192,7 +192,18 @@ def _subtitle_style(record, height):
             f"Outline={float(defaults['outline']):g},Shadow=0")
 
 
+def _vibe_export_issue(record):
+    for index, shot in enumerate(record.get('shots', ()), 1):
+        if shot.get('vibe_reserved'):
+            return f'第 {index:02d} 镜已预留 Vibe 动效，请先预览并采用，或取消预留；不会按静图导出'
+        if studio.has_vibe_output(shot) and (shot.get('audio_timing_adjustment') or {}).get('needs_review'):
+            return f'第 {index:02d} 镜的配音或字幕时间轴已变，请先试看并确认沿用，或重新预览并采用 Vibe 动效'
+    return None
+
+
 def _render(path, record):
+    if issue := _vibe_export_issue(record):
+        raise ValueError(issue)
     path = path.resolve()
     output_root = PROJECT_ROOT / 'output' / (_safe_name(record['settings'].get('name')) + '_动态视频')
     work = path / 'export_work'
@@ -202,6 +213,7 @@ def _render(path, record):
     output_root.mkdir(parents=True, exist_ok=True)
     clips = []
     use_video_audio = bool((record.get('export_settings') or {}).get('use_video_audio', True))
+    has_kept_audio = False
     layout = presentation(record)
     base_vf = frame_filter(layout)
     from .final_narration import visual_playback_range
@@ -229,10 +241,11 @@ def _render(path, record):
                 stretch = duration / source_duration
                 vf = f'setpts={stretch:.9f}*PTS,{base_vf}'
         from .presenter_mode import presenter_requested
-        keep_source_audio = bool(use_video_audio and shot['kind'] == 'video'
+        keep_source_audio = bool(use_video_audio and shot['kind'] == 'video' and not studio.has_vibe_output(shot)
                                  and not presenter_requested(record.get('creation_parameters', {}), shot, record.get('references', []))
                                  and _has_audio_stream(source))
         if keep_source_audio:
+            has_kept_audio = True
             audio_filter = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo'
             if duration > source_duration + 0.03:
                 tempo = source_duration / duration
@@ -246,25 +259,31 @@ def _render(path, record):
         else:
             command += ['-f', 'lavfi', '-t', f'{duration:.3f}', '-i', 'anullsrc=r=48000:cl=stereo',
                         '-map', '0:v:0', '-map', '1:a:0']
-        command += ['-t', f'{duration:.3f}', '-vf', vf, '-c:v', 'libx264', '-preset', 'fast',
+        # overlay/fps can drop the final decoded image at EOF (e.g. 29 out
+        # of 30 frames for an exact 1 s clip). Pad just the boundary then trim.
+        command += ['-t', f'{duration:.3f}', '-vf', vf + ',tpad=stop_mode=clone:stop_duration=0.1', '-c:v', 'libx264', '-preset', 'fast',
                     '-crf', '18', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'aac', '-b:a', '192k', str(clip)]
         _run(command, f'第 {index} 镜标准化')
         clips.append(clip)
     concat = work / 'concat.txt'
     concat.write_text('\n'.join("file '" + clip.as_posix().replace("'", "'\\''") + "'" for clip in clips), encoding='utf-8')
     assembled = work / 'assembled.mp4'
-    _run([ffmpeg_binary(), '-y', '-f', 'concat', '-safe', '0', '-i', str(concat), '-c', 'copy', str(assembled)], '镜头拼接')
+    concat_streams = [] if has_kept_audio else ['-map','0:v:0']
+    _run([ffmpeg_binary(), '-y', '-f', 'concat', '-safe', '0', '-i', str(concat), *concat_streams, '-c', 'copy', str(assembled)], '镜头拼接')
     audio = _asset(path, record['audio'])
     raw = output_root / '最终视频_纯净版.mp4'
-    if use_video_audio:
+    # Normalizing two amix inputs attenuates narration even when the first
+    # input is pure, synthetic silence. Vibe and stills use the actual master.
+    if has_kept_audio:
         mix = ('[0:a:0]volume=0.65[effects];[1:a:0]volume=1.0[narration];'
                '[effects][narration]amix=inputs=2:duration=first:dropout_transition=0,'
                'alimiter=limit=0.95[mixed]')
         audio_args = ['-filter_complex', mix, '-map', '0:v:0', '-map', '[mixed]']
     else:
         audio_args = ['-map', '0:v:0', '-map', '1:a:0']
+    end_args = ['-shortest'] if has_kept_audio else ['-t',f'{narration_duration:.6f}']
     _run([ffmpeg_binary(), '-y', '-i', str(assembled), '-i', str(audio), *audio_args,
-          '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', str(raw)], '配音与音效合成')
+          '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', *end_args, '-movflags', '+faststart', str(raw)], '配音与音效合成')
     srt = _asset(path, record.get('subtitles', 'assets/subtitles.srt'))
     shutil.copy2(srt, output_root / '最终字幕.srt')
     subtitled = output_root / '最终视频_字幕版.mp4'
@@ -401,6 +420,8 @@ def start_export(identity: str, data: ExportRequest, request: Request):
             raise HTTPException(409, '请先完成全部动态镜头')
         if not record.get('shots'):
             raise HTTPException(409, '项目没有可合成的镜头')
+        if issue := _vibe_export_issue(record):
+            raise HTTPException(409, issue)
         missing = [shot['id'] for shot in record['shots'] if shot['kind']=='video' and shot.get('video_status')!='completed']
         if missing:
             raise HTTPException(409, f'仍有 {len(missing)} 个动态镜头未完成')

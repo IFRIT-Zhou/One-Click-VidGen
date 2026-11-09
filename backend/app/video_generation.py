@@ -286,6 +286,11 @@ def recover_missing_clips(path, record):
             file = _asset(path, str(shot.get('video') or ''))
             if file.is_file() and file.stat().st_size:
                 continue
+            if studio.has_vibe_output(shot):
+                shot.update(video_status='failed', video_error='正式动效文件缺失，请重新采用或撤回本镜动效；不会提交付费任务。',
+                            video_resume_available=False, video_terminal=True)
+                changed = True
+                continue
             if shot.get('video_backend') == 'comfyui':
                 shot.update(video_status='failed', video_error='本地 ComfyUI 视频文件缺失，可重新生成本镜。',
                             video_resume_available=False, video_terminal=True)
@@ -1094,7 +1099,7 @@ def _generate_for_user(identity, data, user_id):
             raise HTTPException(400, '静态镜头不需要生成视频')
         if data.regenerate_completed and not data.shot_ids:
             raise HTTPException(400, '重新生成必须明确选择镜头')
-        selected = [shot for shot in record['shots'] if shot['kind'] == 'video'
+        selected = [shot for shot in record['shots'] if shot['kind'] == 'video' and not studio.has_vibe_output(shot)
                     and (not data.shot_ids or shot['id'] in data.shot_ids)
                     and (data.regenerate_completed or shot.get('video_status') != 'completed')]
         if not selected:
@@ -1407,6 +1412,10 @@ def adopt_historical_video(identity: str, shot_id: str, index: int,
         if shot.get('kind') != 'video':
             raise HTTPException(409, '静态镜头没有历史视频版本')
         entry, output = _history_video(path, shot, index)
+        if (entry.get('video_request') or {}).get('backend') == 'vibe':
+            # Never use the legacy history switch to bypass Vibe's live-source
+            # check or accidentally attach a previous adoption's undo target.
+            raise HTTPException(409, '这是历史 Vibe 动效；请在本镜动效面板重新预览并采用，以核对最新配音字幕')
         _archive_current_video(path, shot, '切换历史版本前保留的当前片段')
         history = list(shot.get('video_history') or [])
         # The current version may have just been appended, so remove by the

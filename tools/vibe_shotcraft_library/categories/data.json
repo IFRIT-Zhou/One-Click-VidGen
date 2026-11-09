@@ -1,0 +1,394 @@
+{
+  "category": "data",
+  "zh": "数据与指标",
+  "en": "Data & Metrics",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "before-after-slider-scrub",
+      "category": "data",
+      "summary": "前后对比拉杆——\"处理前/后\"两版叠放，分割杆先猛甩后慢扫，杆过处新版\"显影\"揭出",
+      "recipe_path": "source/references/shots/data/before-after-slider-scrub.md",
+      "style_ids": [
+        "before-after-slider-scrub"
+      ]
+    },
+    {
+      "id": "chart-live-moves",
+      "category": "data",
+      "summary": "活体图表三式——oscilloscope-stream 示波流线（曲线右端实时写入+突发尖峰）、unit-dot-swarm-regroup 点阵重组（点群三幕迁徙聚成数字）、axis-rescale-shock 轴爆表重标（新值冲出画框逼 y 轴重标）",
+      "recipe_path": "source/references/shots/data/chart-live-moves.md",
+      "style_ids": [
+        "oscilloscope-stream",
+        "unit-dot-swarm-regroup",
+        "axis-rescale-shock"
+      ]
+    },
+    {
+      "id": "gauge-readout-moves",
+      "category": "data",
+      "summary": "仪表读数两式——needle-sweep-selftest 满弧扫针（点火自检指针甩满全弧再回落真值）与 tape-scroll-fixed-pointer 滚带定针（针不动刻度带滚过+冲刺刹车）",
+      "recipe_path": "source/references/shots/data/gauge-readout-moves.md",
+      "style_ids": [
+        "needle-sweep-selftest",
+        "tape-scroll-fixed-pointer"
+      ]
+    },
+    {
+      "id": "scroll-brake-moves",
+      "category": "data",
+      "summary": "长卷急刹两式——changelog-scroll-brake 基本款（高速长卷指数减速精准停位+目标抬升）与 brake-reticle-lock 组合款（急刹帧同帧准星咬合）",
+      "recipe_path": "source/references/shots/data/scroll-brake-moves.md",
+      "style_ids": [
+        "changelog-scroll-brake",
+        "brake-reticle-lock"
+      ]
+    },
+    {
+      "id": "timeline-travel",
+      "category": "data",
+      "summary": "时间轴横移——镜头沿水平刻度轴加速掠过版本刻度，每过一格卡片弹立短停，末刻度急停推近",
+      "recipe_path": "source/references/shots/data/timeline-travel.md",
+      "style_ids": [
+        "timeline-travel"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "before-after-slider-scrub",
+      "card_id": "before-after-slider-scrub",
+      "category": "data",
+      "tags": [
+        "data",
+        "interaction"
+      ],
+      "label": "before-after-slider-scrub",
+      "description": "前后对比拉杆——\"处理前/后\"两版叠放，分割杆先猛甩后慢扫，杆过处新版\"显影\"揭出",
+      "use": "AI 增强/优化/重构类功能的效果对比段落（\"用前 vs 用后\"一镜讲清）",
+      "duration": "4–5s",
+      "recipe_path": "source/references/shots/data/before-after-slider-scrub.md",
+      "demo_paths": [
+        "source/demos/data/before-after-slider-scrub/BeforeAfterSliderScrub.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/data/before-after-slider-scrub.mp4",
+      "upstream_preview_url": "./media/before-after-slider-scrub.mp4?v=1790980736772",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/before-after-slider-scrub.md": "5c585d6a4d1df4c43bcc3cc501b3e1141d87ab8977c273ec136c67e56d897d9f",
+        "source/demos/data/before-after-slider-scrub/BeforeAfterSliderScrub.tsx": "924435426b3e0f3378ab05ca5a04e66b8b1a7ab198410b8bc2ee1ddb69458359",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "f1ba6f3d3404c3f73fe27d40ac6bfad35b3c2cfc4bceccac8627353cb22da7b8",
+      "preview_available": true
+    },
+    {
+      "id": "oscilloscope-stream",
+      "card_id": "chart-live-moves",
+      "category": "data",
+      "tags": [
+        "data"
+      ],
+      "label": "oscilloscope-stream",
+      "description": "采样窗平移 8px/f + 余弦包络尖峰 + 刹停真静止",
+      "use": "监控/实时类产品：\"活着\"的系统",
+      "duration": "各 165–192f（5.5–6.4s）",
+      "recipe_path": "source/references/shots/data/chart-live-moves.md",
+      "demo_paths": [
+        "source/demos/data/chart-live-moves/OscilloscopeStreamV2.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/oscilloscope-stream.mp4",
+      "upstream_preview_url": "./media/oscilloscope-stream.mp4?v=1790980736785",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/chart-live-moves.md": "f1641e2daee76148f6ebb0019620d500fbb25c0518b963c87b4f56289ce68b17",
+        "source/demos/data/chart-live-moves/OscilloscopeStreamV2.tsx": "00548471ea812de87e3e010cb45a2c0722dd0ca4eaa3146eb7e8ad6d82b3b30a",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "c6484ad7e81835fc7113cda7b61616b10096b0dfad5fa0cdbab1b6ca49c4c52e",
+      "preview_available": true
+    },
+    {
+      "id": "unit-dot-swarm-regroup",
+      "card_id": "chart-live-moves",
+      "category": "data",
+      "tags": [
+        "data"
+      ],
+      "label": "unit-dot-swarm-regroup",
+      "description": "三幕 spring 错峰迁徙（stiffness 150、错峰 8f），终幕点阵拼数字",
+      "use": "用户量/构成叙事：\"每个点是一个人\"",
+      "duration": "各 165–192f（5.5–6.4s）",
+      "recipe_path": "source/references/shots/data/chart-live-moves.md",
+      "demo_paths": [
+        "source/demos/data/chart-live-moves/UnitDotSwarmRegroupV2.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/unit-dot-swarm-regroup.mp4",
+      "upstream_preview_url": "./media/unit-dot-swarm-regroup.mp4?v=1790980736786",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/chart-live-moves.md": "f1641e2daee76148f6ebb0019620d500fbb25c0518b963c87b4f56289ce68b17",
+        "source/demos/data/chart-live-moves/UnitDotSwarmRegroupV2.tsx": "9898bae674ed759eb9d888dcae1ec2a556463d9854dbbf870e44cd324945f496",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "dba32e06d1f879ad25030fafdd69fb8c1a60b39d960946c595899692987b72af",
+      "preview_available": true
+    },
+    {
+      "id": "axis-rescale-shock",
+      "card_id": "chart-live-moves",
+      "category": "data",
+      "tags": [
+        "data"
+      ],
+      "label": "axis-rescale-shock",
+      "description": "冲出框 220px + 重标三联动（刻度换/网格密/旧线压扁）+ 震 8px",
+      "use": "增长曲线高光：\"off the charts\" 字面化",
+      "duration": "各 165–192f（5.5–6.4s）",
+      "recipe_path": "source/references/shots/data/chart-live-moves.md",
+      "demo_paths": [
+        "source/demos/data/chart-live-moves/AxisRescaleShockV2.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/axis-rescale-shock.mp4",
+      "upstream_preview_url": "./media/axis-rescale-shock.mp4?v=1790980736787",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/chart-live-moves.md": "f1641e2daee76148f6ebb0019620d500fbb25c0518b963c87b4f56289ce68b17",
+        "source/demos/data/chart-live-moves/AxisRescaleShockV2.tsx": "7f6003c967329cc7d9bd5e9c78cd4924ca2ffec84aedc1d6537b865b0a529c94",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "206a6e201e55d8462236d6ec186fd32b0916a8ef2811676d46f66185df50e002",
+      "preview_available": true
+    },
+    {
+      "id": "needle-sweep-selftest",
+      "card_id": "gauge-readout-moves",
+      "category": "data",
+      "tags": [
+        "data"
+      ],
+      "label": "needle-sweep-selftest",
+      "description": "指针去程 ~12f ease-out 甩满弧，回程 ~20f 带 5-8° 过冲回摆落真值；多表错峰 3-5f；落定同帧盘下数值弹出",
+      "use": "dashboard 开场/系统就绪仪式",
+      "duration": "A 140f（4.7s）/ B 150f（5s）",
+      "recipe_path": "source/references/shots/data/gauge-readout-moves.md",
+      "demo_paths": [
+        "source/demos/data/gauge-readout-moves/NeedleSweepSelftest.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/needle-sweep-selftest.mp4",
+      "upstream_preview_url": "./media/needle-sweep-selftest.mp4?v=1790980736806",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/gauge-readout-moves.md": "f6eb9c44389dad9704863cd64cb2e104ba0c14d4fba7fbe0b932e51e3a348ca0",
+        "source/demos/data/gauge-readout-moves/NeedleSweepSelftest.tsx": "7d869f984b89fe0d6c2b339737990faceb3556ff0489bf03404fe72042f3e577",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "c0bc3c5430576d44aee2ba59d55d7e960afc2a270d2e3860744531382993ebac",
+      "preview_available": true
+    },
+    {
+      "id": "tape-scroll-fixed-pointer",
+      "card_id": "gauge-readout-moves",
+      "category": "data",
+      "tags": [
+        "data"
+      ],
+      "label": "tape-scroll-fixed-pointer",
+      "description": "长刻度带 translate：慢爬段→45px/f 冲刺 ~25f→spring 刹车过冲回摆停位；窗内读数同步刷新",
+      "use": "单指标大跳变（性能翻倍/配额提升）",
+      "duration": "A 140f（4.7s）/ B 150f（5s）",
+      "recipe_path": "source/references/shots/data/gauge-readout-moves.md",
+      "demo_paths": [
+        "source/demos/data/gauge-readout-moves/TapeScrollFixedPointer.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/tape-scroll-fixed-pointer.mp4",
+      "upstream_preview_url": "./media/tape-scroll-fixed-pointer.mp4?v=1790980736807",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/gauge-readout-moves.md": "f6eb9c44389dad9704863cd64cb2e104ba0c14d4fba7fbe0b932e51e3a348ca0",
+        "source/demos/data/gauge-readout-moves/TapeScrollFixedPointer.tsx": "0fd3fd8cf726f75852ac3d6d02509252e8d806bf82e96b502d81207f0d7f4204",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "20f7b5518bffc6e16fb48073ad8eda313604c2dba92f4d09428b6079865f08a8",
+      "preview_available": true
+    },
+    {
+      "id": "changelog-scroll-brake",
+      "card_id": "scroll-brake-moves",
+      "category": "data",
+      "tags": [
+        "data",
+        "rhythm"
+      ],
+      "label": "changelog-scroll-brake",
+      "description": "translateY 扫 ~2400px（out exp 指数减速 ~50f），blur 由帧间位移差分驱动（0-6px 自动清零）；停点行 scale 1.03 抬升+阴影+3px 描边，其余 opacity 退 0.38",
+      "use": "changelog 段落基本款",
+      "duration": "A 4–5s / B 5s",
+      "recipe_path": "source/references/shots/data/scroll-brake-moves.md",
+      "demo_paths": [
+        "source/demos/data/scroll-brake-moves/ChangelogScrollBrake.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/changelog-scroll-brake.mp4",
+      "upstream_preview_url": "./media/changelog-scroll-brake.mp4?v=1790980736862",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/scroll-brake-moves.md": "da8381402f9528a0b5a2063be6ea5aaac0b41574554351cc5d0f4cdd5cba527d",
+        "source/demos/data/scroll-brake-moves/ChangelogScrollBrake.tsx": "624034efec290edb04c789f5b96c1c6aac5cdffa18417fc5f2ff6f547c68f75c",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "0d6530fe05c6141a96118e3016ceb7007004cd5019c13003d5c4b5b4dd63e744",
+      "preview_available": true
+    },
+    {
+      "id": "brake-reticle-lock",
+      "card_id": "scroll-brake-moves",
+      "category": "data",
+      "tags": [
+        "data",
+        "rhythm"
+      ],
+      "label": "brake-reticle-lock",
+      "description": "滚动三段：sin-in 加速→cubic-out 猛减速冲过头 +30px→回弹落定；blur=v×0.12 封顶 24px；角标从 ±620/±320 画外 Easing.back(2.4) 飞入咬合，高亮 6f 内完成、标签 back(2.6) 弹出",
+      "use": "停点需要更强打击感的高光段",
+      "duration": "A 4–5s / B 5s",
+      "recipe_path": "source/references/shots/data/scroll-brake-moves.md",
+      "demo_paths": [
+        "source/demos/data/scroll-brake-moves/BrakeReticleLock.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/data/brake-reticle-lock.mp4",
+      "upstream_preview_url": "./media/brake-reticle-lock.mp4?v=1790980736863",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/scroll-brake-moves.md": "da8381402f9528a0b5a2063be6ea5aaac0b41574554351cc5d0f4cdd5cba527d",
+        "source/demos/data/scroll-brake-moves/BrakeReticleLock.tsx": "d7a835169382d630a6a0c76922a75eee7ff7d66d78fa0b47e9c8a7580eb3f63b",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e84a737e04e4b9b6c1fbfea7155f0908977d80e2aee29d9ac4e1c4c50f336cfb",
+      "preview_available": true
+    },
+    {
+      "id": "timeline-travel",
+      "card_id": "timeline-travel",
+      "category": "data",
+      "tags": [
+        "data",
+        "camera"
+      ],
+      "label": "timeline-travel",
+      "description": "时间轴横移——镜头沿水平刻度轴加速掠过版本刻度，每过一格卡片弹立短停，末刻度急停推近",
+      "use": "changelog/里程碑/发展史段落（\"我们一直在发货\"的另一种拍法）；与 scroll-brake-moves 分工：那卡是纵向列表急刹，本卡是横向时间旅行",
+      "duration": "4–5s",
+      "recipe_path": "source/references/shots/data/timeline-travel.md",
+      "demo_paths": [
+        "source/demos/data/timeline-travel/TimelineTravel.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/data/timeline-travel.mp4",
+      "upstream_preview_url": "./media/timeline-travel.mp4?v=1790980736887",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/data/timeline-travel.md": "c5f7ceceaf74cb9b88368e9a89d7006afdf53734ec5919ea6d79f4a0ca77fe14",
+        "source/demos/data/timeline-travel/TimelineTravel.tsx": "d93d1b33db8ad29f69a913b15662670121031f5be2df90188c5680527b8eccf7",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "7aede27ebc916f1ebebebdf996c9aab4c1379ab45b3fa91fe7c0bed152861408",
+      "preview_available": true
+    }
+  ]
+}

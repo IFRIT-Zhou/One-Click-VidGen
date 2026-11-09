@@ -1,0 +1,14 @@
+{
+  "spotlight-hero-card": {"label":"聚光主卡", "min_frames":120, "min_items":1, "max_items":1, "use":"一个重点或真实主体的聚光推近"},
+  "word-relay-filmstrip": {"label":"胶片接力", "min_frames":51, "per_item_frames":51, "min_items":1, "max_items":4, "sequential":true, "use":"逐项讲解、并列观点，不暗示因果"},
+  "outro-group-photo-launch": {"label":"聚合收束", "min_frames":75, "max_seconds":6, "min_items":1, "max_items":4, "use":"短结尾聚合；小卡body最多22字"},
+  "card-flip-reveal": {"label":"翻牌揭示", "min_frames":150, "min_items":1, "max_items":3, "body_required":true, "use":"正面标题/照片，背面揭示对应解释；每项body必填，不制造前后因果"},
+  "carousel-3d": {"label":"立体轮播", "min_frames":120, "per_item_frames":75, "min_items":2, "max_items":4, "item_body_max":50, "sequential":true, "use":"逐个展示照片/对象，每项停留；非时间线"},
+  "card-stack": {"label":"叠卡展开", "min_frames":150, "min_items":3, "max_items":3, "item_body_max":22, "use":"三项并列内容依次叠入、共同扇开、中心卡抬起"},
+  "timeline-travel": {"label":"时间线推进", "min_frames":120, "per_item_frames":75, "min_items":2, "max_items":4, "item_body_max":50, "sequential":true, "use":"确有先后顺序的流程/时间线；不得用于无序比较"},
+  "document-typewriter-reveal": {"label":"文档逐行揭示", "min_frames":150, "min_items":1, "max_items":3, "item_body_max":45, "use":"文档拉远、逐行显露；引文、研究方法、短条目"},
+  "marker-underline-title": {"label":"重点划线", "min_frames":120, "min_items":1, "max_items":1, "text_only":true, "use":"单个短结论落定后手绘划线；无照片，不代替复杂图表"},
+  "quad-split-parallel-scenes": {"label":"四格并行", "min_frames":150, "min_items":4, "max_items":4, "item_body_max":22, "use":"四个真实并列信息，四格错峰独立入场"},
+  "scanline-annotate-focus": {"label":"原图扫描聚焦", "min_frames":150, "min_items":1, "max_items":1, "image_required":true, "use":"完整原图扫描后框定整图、揭示说明；不自动诊断或标记病灶"},
+  "title-demote-to-label": {"label":"标题转场", "min_frames":150, "min_items":1, "max_items":3, "headline_max":10, "item_body_max":28, "use":"最多10字的大标题连续移动成顶部标签，再展开内容"}
+}

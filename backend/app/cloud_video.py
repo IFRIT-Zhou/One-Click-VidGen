@@ -189,7 +189,12 @@ def validate_duration(shot, selected):
 def handles(identity, data, user_id):
     with studio.LOCK:
         record = studio.read(studio.directory(user_id, identity))
-        chosen = [s for s in record['shots'] if s['kind'] == 'video' and (not data.shot_ids or s['id'] in data.shot_ids)]
+        if any(s.get('vibe_reserved') and s['id'] in data.shot_ids for s in record['shots']):
+            raise HTTPException(409, '所选镜头已预留 Vibe，请采用本机动效，或先取消预留再调用视频模型')
+        if any(studio.has_vibe_output(s) and s['id'] in data.shot_ids and
+               (data.regenerate_completed or s.get('video_status') != 'completed') for s in record['shots']):
+            raise HTTPException(409, '所选镜头已采用本机 Vibe 动效；如需切换到视频模型，请先撤回采用')
+        chosen = [s for s in record['shots'] if s['kind'] == 'video' and not studio.has_vibe_output(s) and (not data.shot_ids or s['id'] in data.shot_ids)]
         return any(((data.options or data.shot_options.get(s['id'])).backend if (data.options or data.shot_options.get(s['id'])) else
                    (s.get('video_generation_options') or {}).get('backend') or (s.get('video_request') or {}).get('backend') or
                    record.get('creation_parameters', {}).get('video_generation_backend')) == 'cloud_h3' for s in chosen)
@@ -215,7 +220,7 @@ def generate_cloud(identity, data, user_id):
             raise HTTPException(400, '镜头配置与本次选择不一致')
         if data.regenerate_completed and not data.shot_ids:
             raise HTTPException(400, '重新生成必须明确选择镜头')
-        shots = [s for s in record['shots'] if s['kind']=='video' and (not data.shot_ids or s['id'] in data.shot_ids) and (data.regenerate_completed or s.get('video_status')!='completed')]
+        shots = [s for s in record['shots'] if s['kind']=='video' and not studio.has_vibe_output(s) and (not data.shot_ids or s['id'] in data.shot_ids) and (data.regenerate_completed or s.get('video_status')!='completed')]
         if not shots:
             raise HTTPException(409, '没有需要生成的镜头')
         resolved = {}

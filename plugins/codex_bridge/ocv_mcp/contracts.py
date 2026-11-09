@@ -128,6 +128,78 @@ def bind(document):
             if op.name == 'ocv_tts_resegment' and 'sync_text' in props:
                 props['sync_text'] = {'type': 'boolean', 'const': True}
                 properties['body'].setdefault('required', []).append('sync_text')
+            if op.name == 'ocv_video_vibe_cloud_continue_review':
+                needed_fields={'confirm_model','additional_model_calls','expected_model_calls','expected_model_limit','request_id'}
+                if not needed_fields <= props.keys():
+                    unavailable.append(op.name)
+                    continue
+                props['confirm_model']={'type':'boolean','const':True}
+                needed=properties['body'].setdefault('required',[])
+                needed.extend(key for key in sorted(needed_fields) if key not in needed)
+            if op.name == 'ocv_video_vibe_cloud_continue_steps':
+                needed_fields={'confirm_model','additional_model_calls','expected_model_calls','expected_model_limit',
+                    'request_id','confirm_remaining_images','expected_image_requests','expected_image_limit'}
+                if not needed_fields <= props.keys():
+                    # Never silently degrade an explicit checkpoint/image
+                    # permission contract against an older running backend.
+                    unavailable.append(op.name)
+                    continue
+                props['confirm_model']={'type':'boolean','const':True}
+                for name in ('expected_image_requests','expected_image_limit'):
+                    props[name]={'allOf':[copy.deepcopy(props[name]),{'type':'integer','minimum':0}],
+                        'description':'从本次 latest 的图片用量/原授权填写；即使禁止新增图也绑定原记录，不接受空值。'}
+                needed=properties['body'].setdefault('required',[])
+                needed.extend(key for key in sorted(needed_fields) if key not in needed)
+            if op.name == 'ocv_video_vibe_cloud_create':
+                # Consent must bind a concrete per-shot budget, not a mutable
+                # UI default. A client talking to an incomplete old contract
+                # must not approve a possibly billed request.
+                if not {'confirm_cloud', 'max_image_requests'} <= props.keys():
+                    unavailable.append(op.name)
+                    continue
+                budget_variants=props['max_image_requests'].get('anyOf',[props['max_image_requests']])
+                if not any(v.get('type')=='integer' and v.get('minimum',1)<=0 for v in budget_variants):
+                    unavailable.append(op.name)
+                    continue
+                props['confirm_cloud'] = {'type': 'boolean', 'const': True}
+                template_mode = props.get('template_mode', {})
+                layered = template_mode.get('type') == 'string' and 'layered' in template_mode.get('enum', [])
+                if 'advanced_subject_separation' in props:
+                    # Keep the live field/default, but expose the backend's
+                    # cross-field rule before commit rather than at HTTP 422.
+                    properties['body'].setdefault('allOf', []).append({
+                        'if': {'properties': {'template_mode': {'const': 'layered'}}, 'required': ['template_mode']},
+                        'else': {'properties': {'advanced_subject_separation': {'const': False}}},
+                    })
+                if layered:
+                    # Intersect with the live limit; never manufacture image
+                    # authority absent from this application's own contract.
+                    native_budget = copy.deepcopy(props['max_image_requests'])
+                    props['max_image_requests'] = {
+                        'allOf': [native_budget, {'type': 'integer', 'enum': [0, 1]}],
+                        'description': '必须显式填写：layered 原图分层为0或1（最多一次背景提取，沿用本项目图像模型）；semantic/shotcraft必须为0。不会静默改写预算。'}
+                    properties['body'].setdefault('allOf', []).append({
+                        'if': {'properties': {'template_mode': {'const': 'layered'}}, 'required': ['template_mode']},
+                        'then': {'properties': {'max_image_requests': {'enum': [0, 1]}}},
+                        'else': {'properties': {'max_image_requests': {'const': 0}}},
+                    })
+                else:
+                    props['max_image_requests'] = {
+                        'type': 'integer', 'const': 0,
+                        'description': '当前服务未开放原图分层，代码动效必须显式填0；不自动抠图、不调用图像模型。'}
+                if template_mode.get('type') == 'string' and 'shotcraft' in template_mode.get('enum', []):
+                    # New MCP preparations select verified templates; the
+                    # backend keeps its semantic default for older clients.
+                    template_mode['default'] = 'shotcraft'
+                    template_mode['description'] = (
+                        '新计划默认 shotcraft：专用 API 选择已验证镜头模板，按原图风格编排并在本机渲染；'
+                        'semantic 使用旧代码动效。' +
+                        (('layered 为原图分层：默认稳定保留主体于底板；仅显式 advanced_subject_separation=true 才启用独立主体分离，可用本地 RMBG。背景编辑沿用项目图像模型；检查预览后再采用。'
+                          if 'advanced_subject_separation' in props else
+                          'layered 为旧版原图分层：本地 RMBG 提取主体、沿用项目图像模型提取背景；当前服务未提供主体策略开关。') if layered else '') +
+                        '无需 GPT 会员；均只生成预览，不自动采用。')
+                needed = properties['body'].setdefault('required', [])
+                needed.extend(k for k in ('confirm_cloud', 'max_image_requests') if k not in needed)
         for placeholder in re.findall(r'{(\w+)}', op.path):
             if placeholder not in properties.get('path', {}).get('properties', {}):
                 raise ValueError(f'Missing path contract: {op.name}/{placeholder}')

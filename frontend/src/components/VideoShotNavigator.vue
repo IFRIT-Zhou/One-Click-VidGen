@@ -1,12 +1,12 @@
 <script setup>
 import {computed,ref,nextTick} from 'vue'
-const props=defineProps({shots:{type:Array,default:()=>[]},sceneAssets:{type:Array,default:()=>[]},durationIssues:{type:Object,default:()=>({})},selected:Number,imageUrl:Function,motion:Boolean,statusLabel:Function,hasWarning:Function})
+const props=defineProps({shots:{type:Array,default:()=>[]},sceneAssets:{type:Array,default:()=>[]},vibeRecommendations:{type:Object,default:()=>({})},durationIssues:{type:Object,default:()=>({})},selected:Number,imageUrl:Function,motion:Boolean,statusLabel:Function,hasWarning:Function})
 const emit=defineEmits(['select'])
 const filter=ref('all')
 const listElement=ref(null)
 const needsAttention=shot=>props.durationIssues[shot.id]||shot.audio_timing_adjustment?.needs_review||props.hasWarning?.(shot)||['failed','unknown'].includes(shot.video_status)||shot.image_status==='failed'
 const splitRows=computed(()=>props.shots.map((shot,index)=>({shot,index,issue:props.durationIssues[shot.id]})).filter(row=>row.issue))
-const rows=computed(()=>props.shots.map((shot,index)=>({shot,index})).filter(({shot})=>filter.value==='all'||(filter.value==='attention'?needsAttention(shot):filter.value==='split'?props.durationIssues[shot.id]:shot.kind===filter.value)))
+const rows=computed(()=>props.shots.map((shot,index)=>({shot,index})).filter(({shot})=>filter.value==='all'||(filter.value==='vibe'?(shot.vibe_reserved||props.vibeRecommendations[shot.id]?.route==='vibe'||shot.video_request?.backend==='vibe'):filter.value==='attention'?needsAttention(shot):filter.value==='split'?props.durationIssues[shot.id]:shot.kind===filter.value)))
 async function selectSplit(index){
  if(!rows.value.some(row=>row.index===index))filter.value='all'
  emit('select',index)
@@ -17,12 +17,12 @@ async function selectSplit(index){
 <template>
  <aside class="shot-navigator" aria-label="镜头导航">
   <div class="navigator-heading"><strong>镜头列表</strong><span>{{shots.length}} 镜</span></div>
-  <select v-model="filter" aria-label="筛选镜头"><option value="all">全部镜头</option><option value="video">动态镜头</option><option value="static">静态镜头</option><option value="attention">需要留意</option><option v-if="splitRows.length||filter==='split'" value="split">需拆分（{{splitRows.length}}）</option></select>
+  <select v-model="filter" aria-label="筛选镜头"><option value="all">全部镜头</option><option value="video">动态镜头</option><option value="static">静态镜头</option><option v-if="Object.values(vibeRecommendations).some(r=>r.route==='vibe')||shots.some(s=>s.vibe_reserved||s.video_request?.backend==='vibe')" value="vibe">Vibe 动效（含推荐）</option><option value="attention">需要留意</option><option v-if="splitRows.length||filter==='split'" value="split">需拆分（{{splitRows.length}}）</option></select>
   <div ref="listElement" class="navigator-list">
    <button v-for="(asset,index) in sceneAssets" :key="asset.id" type="button" :class="{active:selected===-index-1}" @click="emit('select',-index-1)"><img v-if="asset.image_status==='completed'" :src="imageUrl(asset)" alt=""><span v-else class="thumbnail-placeholder">场景</span><div class="shot-copy"><b>场景 {{index+1}}</b><span class="shot-intent">{{asset.name}}</span><small>参考资产 · 不占视频时长</small></div></button>
    <button v-for="{shot,index} in rows" :key="shot.id" :data-shot-index="index" type="button" :aria-current="selected===index?'true':undefined" :class="{active:selected===index,'pending-design':shot.design_needs_review,'queue-shot':shot.video_queued||shot.video_waiting,'running-shot':shot.video_status==='running',warning:needsAttention(shot)}" @click="emit('select',index)">
     <img v-if="shot.image_status==='completed'&&imageUrl" :src="imageUrl(shot)" loading="lazy" alt=""><span v-else class="thumbnail-placeholder">{{String(index+1).padStart(2,'0')}}</span>
-    <div class="shot-copy"><b>{{String(index+1).padStart(2,'0')}} <small>{{shot.kind==='video'?'动态':'静态'}}</small></b><small v-if="shot.audio_timing_adjustment?.needs_review" class="design-review-label">{{shot.audio_timing_adjustment.text_changed?'配音文案已变 · 待核对':'配音时长已变 · 待核对'}}</small><small v-if="shot.design_needs_review" class="design-review-label">已变动，待确认</small><small v-else-if="shot.design_review_confirmed">修改已确认</small><time>{{shot.start.toFixed(1)}}–{{shot.end.toFixed(1)}}s</time><small v-if="durationIssues[shot.id]" class="split-required-label" :title="durationIssues[shot.id].detail">{{durationIssues[shot.id].label}}</small><span class="shot-intent">{{shot.intent||'待设计镜头'}}</span><em v-if="motion">{{statusLabel?.(shot)}}</em><em v-else-if="hasWarning?.(shot)">待核对</em><em v-else-if="shot.image_status==='failed'">图片生成失败</em></div>
+    <div class="shot-copy"><b>{{String(index+1).padStart(2,'0')}} <small>{{shot.vibe_reserved?'Vibe 待采用':shot.video_request?.backend==='vibe'?'Vibe 动效':shot.kind==='video'?'动态':'静态'}}</small><small v-if="vibeRecommendations[shot.id]?.route==='vibe'&&!shot.vibe_reserved&&shot.video_request?.backend!=='vibe'" :title="vibeRecommendations[shot.id].reason">推荐动效</small></b><small v-if="shot.audio_timing_adjustment?.needs_review" class="design-review-label">{{shot.audio_timing_adjustment.text_changed?'配音文案已变 · 待核对':'配音时长已变 · 待核对'}}</small><small v-if="shot.design_needs_review" class="design-review-label">已变动，待确认</small><small v-else-if="shot.design_review_confirmed">修改已确认</small><time>{{shot.start.toFixed(1)}}–{{shot.end.toFixed(1)}}s</time><small v-if="durationIssues[shot.id]" class="split-required-label" :title="durationIssues[shot.id].detail">{{durationIssues[shot.id].label}}</small><span class="shot-intent">{{shot.intent||'待设计镜头'}}</span><em v-if="motion">{{statusLabel?.(shot)}}</em><em v-else-if="hasWarning?.(shot)">待核对</em><em v-else-if="shot.image_status==='failed'">图片生成失败</em></div>
    </button>
    <p v-if="!rows.length" class="navigator-empty">没有符合条件的镜头</p>
   </div>

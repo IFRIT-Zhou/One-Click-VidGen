@@ -20,6 +20,7 @@ from .video_sources import list_sources, source_project, copy_assets, narration_
 from . import video_scene_references as scene_references
 from . import image_request_control as image_control
 from . import shot_image_continuity as image_continuity
+from . import storyboard_reference_snapshot as reference_snapshots
 from .video_text_policy import normalize_text_mode
 from .video_duration_limits import max_video_duration
 from .language_routing import project_language_scope, uses_cloud_language
@@ -27,12 +28,83 @@ from .language_routing import project_language_scope, uses_cloud_language
 router = APIRouter(prefix='/api/video-studio')
 
 
+def has_vibe_output(shot):
+    """The chosen output is local animation, even if its formal file went missing."""
+    return shot.get('kind') == 'video' and (shot.get('video_request') or {}).get('backend') == 'vibe'
+
+def uses_vibe(shot):
+    return bool(shot.get('vibe_reserved')) or has_vibe_output(shot)
+
+
+def _preserve_vibe(record, shots):
+    """A planner returns design fields only. Preserve trusted per-shot local choices,
+    never accept a client's media path or silently remap an immutable adopted clip."""
+    before = {s['id']:s for s in record.get('shots',[]) if uses_vibe(s)}
+    if not before:
+        return shots
+    after = {s['id']:s for s in shots}
+    for identity, old in before.items():
+        new = after.get(identity)
+        if new is None or new.get('slide_ids') != old.get('slide_ids'):
+            raise ValueError(f'镜头 {identity} 已选用 Vibe，修改其字幕分组前请先撤回采用或取消预留；其他镜头可正常编辑')
+        # Server-originated image/clip paths and undo history are not writable
+        # plan fields. Only clean plan fields from the normalizer overlay them.
+        merged = {**copy.deepcopy(old), **new}
+        for key in ('video', 'video_version', 'video_attempt', 'video_request', 'video_status',
+                    'video_backend', 'video_history', 'vibe_reserved', 'kind', 'kind_adjustment'):
+            if key in old:
+                merged[key] = copy.deepcopy(old[key])
+            else:
+                merged.pop(key,None)
+        if old.get('image') and old.get('image_prompt') != new.get('image_prompt'):
+            merged['image_prompt_out_of_sync'] = True
+        if old.get('vibe_reserved'):
+            merged.update(action='',video_prompt='',video_prompt_warnings=[])
+            merged.pop('motion_plan',None)
+        elif new.get('kind') == 'static' and has_vibe_output(old):
+            # The local planner authored a core image, not new model prompts.
+            for field in ('action','video_prompt','motion_plan','video_prompt_warnings'):
+                if field in old:
+                    merged[field] = copy.deepcopy(old[field])
+        merged['warning'] = ''
+        merged['generation_duration'] = None if merged['kind']=='static' else max(4,math.ceil(merged['duration']))
+        new.clear()
+        new.update(merged)
+    return shots
+
+
+def _audit_studio_shots(shots, reference_ids):
+    from .video_agents import audit_storyboard
+    # Vibe has a core-image contract, not an H3/Seedance motion prompt.
+    candidates = [dict(s,kind='static',action='',video_prompt='') if uses_vibe(s) else s for s in shots]
+    audited = audit_storyboard(candidates,reference_ids)
+    return [dict(original,audit=row['audit'],image_prompt_warnings=row['image_prompt_warnings'])
+            if uses_vibe(original) else row for original,row in zip(shots,audited)]
+
+def _keep_unedited_mixed_assets(record, shots):
+    """The audio editor can return a produced project to storyboard review.
+    Rechecking the same design must not erase unaffected neighbors' clips."""
+    if not any(uses_vibe(s) for s in record.get('shots', [])):
+        return
+    old = {s['id']: s for s in record.get('shots', [])}
+    for row in shots:
+        before = old.get(row['id'], {})
+        if uses_vibe(before) or not (before.get('image') or before.get('video')):
+            continue
+        if (before.get('kind') == row['kind'] and before.get('slide_ids') == row['slide_ids'] and
+                all((before.get(k) or '') == (row.get(k) or '') for k in ('image_prompt','video_prompt','action')) and
+                before.get('reference_ids',[]) == row.get('reference_ids',[])):
+            for key in before.keys()-row.keys():
+                if key.startswith(('image','video','redraw_')) or key in {'audio_timing_adjustment','baseline_image_prompt'}:
+                    row[key] = copy.deepcopy(before[key])
+
+
 def _project_video_duration_blockers(record, shots):
     from .video_duration_limits import validate_video_duration
     positions = {shot['id']: index + 1 for index, shot in enumerate(record.get('shots', []))}
     blockers = []
     for offset, shot in enumerate(shots):
-        if shot.get('kind') != 'video':
+        if shot.get('kind') != 'video' or uses_vibe(shot):
             continue
         parameters = {**record.get('creation_parameters', {})}
         backend = (shot.get('video_generation_options') or {}).get('backend')
@@ -83,7 +155,7 @@ def _preserve_generation_options(record, shots, split_source=None):
         if shot.get('kind') == 'video':
             shot['warning'] = (f'本镜超过当前通道的 {maximum} 秒上限，请沿字幕边界拆分后再生成；配音与字幕会保留。'
                                if maximum is not None and float(shot.get('generation_duration') or 0) > maximum else '')
-    return shots
+    return _preserve_vibe(record,shots)
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'video_studio'
 LOCK = threading.RLock()
 ACTIVE = set()
@@ -502,7 +574,8 @@ def _archive_storyboard_image(path, shot):
                     'prompt': str(shot.get('image_prompt') or ''), 'created_at': time.time(),
                     'image_origin': shot.get('image_origin', 'generated'),
                     'image_applied_prompt': shot.get('image_applied_prompt', shot.get('image_prompt', '')),
-                    'scene_reference_used_version': shot.get('scene_reference_used_version', '')})
+                    'scene_reference_used_version': shot.get('scene_reference_used_version', ''),
+                    'image_reference_snapshot': copy.deepcopy(shot.get('image_reference_snapshot'))})
     shot['image_history'] = history
     shot.setdefault('baseline_image_prompt', str(shot.get('image_prompt') or ''))
     return image
@@ -513,6 +586,16 @@ def _invalidate_shot_video(record, shot, reason):
     record.pop('export', None)
     if record.get('status') in {'completed', 'export_failed'}:
         record['status'] = 'video_review'
+    if uses_vibe(shot):
+        # Never silently switch this shot back to a paid video model, including
+        # after redrawing its core image. A local animation has its own prompts.
+        if shot.get('vibe_reserved'):
+            shot['vibe_reserved']['original_image_changed'] = True
+        else:
+            shot['design_needs_review'] = True
+            shot['design_review_confirmed'] = False
+        record.setdefault('logs',[]).append(f'{shot["id"]}：{reason}；已保留 Vibe 选择，请核对画面。')
+        return False
     if shot.get('kind') != 'video' or not any(shot.get(key) for key in (
             'video_request', 'video_task_id', 'video', 'video_version')):
         return False
@@ -567,6 +650,11 @@ def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
                 f'【参考图编号】本次附带的第 1 至第 {len(reference_paths)} 张图片依次对应图1至图{len(reference_paths)}；'
                 '提示词中提及图N时，必须严格以第N张参考图作为形象或画面依据。\n' + data.prompt.strip())
         try:
+            frozen_references, reference_entries = reference_snapshots.capture_reference_inputs(
+                path, record, shot, reference_paths,
+                selection_ids=getattr(data, 'reference_ids', None),
+                use_current_image=bool(getattr(data, 'use_current_image', False)))
+            macro['reference_image_paths'] = frozen_references
             pool = visual.shared_runninghub_account_pool(
                 configs, namespace='video_storyboard_redraw', retry_power_exhausted=True,
             )
@@ -590,6 +678,8 @@ def _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
                                  scene_reference_used_version=scene_version,
                                  image_task={'status': 'completed', 'action': 'redraw', 'message': '重绘完成，请检查效果'})
                 _image_version(path, live_shot)
+                live_shot['image_reference_snapshot'] = reference_snapshots.make_snapshot(
+                    live_shot['image_version'], reference_entries)
                 _invalidate_shot_video(latest, live_shot, '核心分镜图已重绘')
                 latest['revision'] += 1
                 latest['logs'].append(f'{shot_id} 重绘完成。')
@@ -667,11 +757,13 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     prompt, references, scene = _image_inputs(path, record, shot, shot.get('image_prompt'))
+                    frozen_references, reference_entries = reference_snapshots.capture_reference_inputs(
+                        path, record, shot, references)
                     macro = {
                         'macro_scene_id': str(shot['id']),
                         'progress_label': f'核心分镜图 {index}/{len(record["shots"])}',
                         'image_prompt': prompt, 'reference_image_ids': [],
-                        'reference_image_paths': references, 'reference_binding_version': 1,
+                        'reference_image_paths': frozen_references, 'reference_binding_version': 1,
                         '_output_path': str(target.resolve()), '_cancel_event': cancelled,
                     }
                     with LOCK:
@@ -701,6 +793,8 @@ def _start_storyboard_images(path, record, configs, *, scenes_only=False):
                                     image_applied_prompt=shot.get('image_prompt', ''), image_prompt_out_of_sync=False,
                                     scene_reference_used_version=scene.get('image_version', '') if scene else '')
                         _image_version(path, shot)
+                        shot['image_reference_snapshot'] = reference_snapshots.make_snapshot(
+                            shot['image_version'], reference_entries)
                         record['logs'].append(f'核心分镜图 {index}/{len(record["shots"])}：生成完成')
                         save(path, record)
                 except Exception as exc:
@@ -861,6 +955,8 @@ def _recover_replanned_image_cache(record):
     affected = []
     for shot in record.get('shots', []):
         old = previous.get(shot['id'], {})
+        if uses_vibe(shot):
+            continue  # intentional reuse of the source image for local animation
         legacy_path = f'assets/storyboards/{shot["id"]}.jpg'
         if (shot.get('image_status') == 'completed' and not shot.get('image_generation_id')
                 and shot.get('image_origin') == 'generated' and not shot.get('image_history')
@@ -945,11 +1041,11 @@ def editable(record, revision, *, allow_image_edits=False):
 SHOT_EDIT_STAGES = {'image_review', *VIDEO_STAGE_STATUSES} - {'exporting'}
 
 
-def shot_editable(record, revision, shot_id):
+def shot_editable(record, revision, shot_id, *, extra_stages=()):
     """Permit independent shot edits while other shots are being rendered."""
     if record['revision'] != revision:
         raise HTTPException(409, '项目刚刚发生变化，请刷新后重试')
-    if record['status'] not in SHOT_EDIT_STAGES | {'storyboard_review'}:
+    if record['status'] not in SHOT_EDIT_STAGES | {'storyboard_review'} | set(extra_stages):
         raise HTTPException(409, '当前阶段不能修改镜头')
     shot = _find_shot(record, shot_id)
     targets = [shot]
@@ -1155,6 +1251,8 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         } - image_generation_keys
         render_parameter_keys = safe_parameter_keys - planning_parameter_keys - image_generation_keys - {'dynamic_max_shot_duration', 'dynamic_cluster_duration_recommended'}
         visual_changed |= any(parameters.get(key) != safe_parameters[key] for key in planning_parameter_keys if key in safe_parameters)
+        if visual_changed and any(uses_vibe(s) for s in record.get('shots', [])):
+            raise HTTPException(409, '此设置将清空全部分镜；请先撤回已采用的 Vibe 或取消预留，再修改全局画面设定')
         render_changed = any(parameters.get(key) != safe_parameters[key] for key in render_parameter_keys if key in safe_parameters)
         record.setdefault('edit_history', []).append({
             'at': time.time(), 'settings': copy.deepcopy(settings),
@@ -1443,11 +1541,14 @@ def update(identity: str, data: Edit, request: Request):
                 raise ValueError('请通过调整边界、拆分或合并修改字幕分组，以保留设计和撤回记录')
             for row in incoming:
                 old = previous.get(row.get('id'), {})
+                if uses_vibe(old) and old.get('kind') != row.get('kind'):
+                    raise ValueError('切换 Vibe 镜头类型前请先撤回采用或取消预留')
                 row['design_needs_review'] = bool(old.get('design_needs_review'))
                 row['previous_designs'] = old.get('previous_designs', [])
             normalized = normalize_shots(incoming, record['scenes'], [r['id'] for r in _material_references(record)],
                                          max_duration=max_video_duration(record.get('creation_parameters')))
             _preserve_generation_options(record, normalized)
+            _keep_unedited_mixed_assets(record, normalized)
             for shot in normalized:
                 old = previous.get(shot['id'], {})
                 if old.get('design_needs_review'):
@@ -1548,6 +1649,8 @@ def auto_split_shot(identity: str, shot_id: str, data: AutoSplit, request: Reque
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         for shot in record['shots'][first:last]:
+            if uses_vibe(shot):
+                raise HTTPException(409, '拆分范围包含已选用 Vibe 的镜头，请改用仅处理本镜，或先取消预留/撤回采用')
             shot_editable(record, data.revision, shot['id'])
         snapshot = copy.deepcopy(record)
         keys = [image_edit_key(identity, shot['id']) for shot in record['shots'][first:last]]
@@ -1609,8 +1712,20 @@ def undo_structure(identity: str, data: Review, request: Request):
         history = record.get('structure_history', [])
         if not history:
             raise HTTPException(409, '没有可撤回的结构调整')
-        snapshot = history.pop()
-        record['shots'] = snapshot['shots']
+        snapshot = history[-1]
+        rows = copy.deepcopy(snapshot['shots'])
+        # Undoing an unrelated grouping must not undo a later Vibe choice.
+        present = {s['id']:s for s in record['shots']}
+        for index, prior in enumerate(rows):
+            current = present.get(prior['id'])
+            if current and (uses_vibe(current) or uses_vibe(prior)) and current['slide_ids']==prior['slide_ids']:
+                rows[index] = copy.deepcopy(current)
+        try:
+            _preserve_vibe(record,rows)
+        except ValueError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        history.pop()
+        record['shots'] = rows
         if snapshot.get('manual_groups'):
             record['manual_groups'] = snapshot['manual_groups']
         else:
@@ -1629,7 +1744,6 @@ def undo_structure(identity: str, data: Review, request: Request):
 
 @router.post('/{identity}/design/confirm')
 def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Request):
-    from .video_agents import audit_storyboard
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
@@ -1648,11 +1762,12 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
                 row['design_needs_review'] = False
                 row['design_review_confirmed'] = True
         try:
-            normalized = normalize_shots(candidate, record['scenes'], [r['id'] for r in record['references']],
+            reference_ids = {r['id'] for r in _material_references(record)}
+            normalized = normalize_shots(candidate, record['scenes'], reference_ids,
                                          max_duration=max_video_duration(record.get('creation_parameters')))
             _preserve_generation_options(record, normalized)
             _validate_project_video_durations(record, [row for row in normalized if row['id'] == data.shot_id])
-            audit_storyboard([row for row in normalized if row['id'] == data.shot_id], {r['id'] for r in record['references']})
+            _audit_studio_shots([row for row in normalized if row['id'] == data.shot_id], reference_ids)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         # Normalization is a planning validator, not a runtime serializer:
@@ -1668,7 +1783,6 @@ def confirm_adjusted_design(identity: str, data: DesignConfirmation, request: Re
 
 @router.post('/{identity}/review')
 def review(identity: str, data: Review, request: Request):
-    from .video_agents import audit_storyboard
     with LOCK:
         path = directory(require_user(request)['id'], identity)
         record = read(path)
@@ -1681,7 +1795,8 @@ def review(identity: str, data: Review, request: Request):
                                          max_duration=max_video_duration(record.get('creation_parameters')))
             _preserve_generation_options(record, normalized)
             _validate_project_video_durations(record, normalized)
-            record['shots'] = audit_storyboard(normalized, {row['id'] for row in record['references']})
+            _keep_unedited_mixed_assets(record, normalized)
+            record['shots'] = _audit_studio_shots(normalized, {row['id'] for row in record['references']})
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         record.update(revision=record['revision']+1, status='generation_ready',
@@ -1978,6 +2093,7 @@ async def replace_storyboard_image(identity: str, shot_id: str, request: Request
         shot['image_prompt_out_of_sync'] = False
         shot['scene_reference_used_version'] = ''
         _image_version(path, shot)
+        shot['image_reference_snapshot'] = reference_snapshots.make_snapshot(shot['image_version'], [])
         _invalidate_shot_video(record, shot, '核心分镜图已替换')
         record['revision'] += 1
         record['logs'].append(f'{shot_id} 已替换本地图片。')
@@ -2015,6 +2131,11 @@ def undo_storyboard_image(identity: str, shot_id: str, data: Review, request: Re
                     scene_reference_used_version=previous.get('scene_reference_used_version', ''),
                     image_task={'status': 'completed', 'action': 'undo', 'message': '已撤回到上一版图片'})
         _image_version(path, shot)
+        previous_snapshot = previous.get('image_reference_snapshot')
+        if isinstance(previous_snapshot, dict) and previous_snapshot.get('image_sha256') == shot['image_version']:
+            shot['image_reference_snapshot'] = copy.deepcopy(previous_snapshot)
+        else:
+            shot.pop('image_reference_snapshot', None)
         _invalidate_shot_video(record, shot, '核心分镜图已撤回到历史版本')
         record['revision'] += 1
         record['logs'].append(f'{shot_id} 已撤回到上一版图片。')
@@ -2052,6 +2173,8 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if shot.get('asset_kind') == 'scene_reference':
             raise HTTPException(400, '场景参考不占用视频时间轴')
         changed_kind = shot['kind'] != data.kind
+        if changed_kind and uses_vibe(shot):
+            raise HTTPException(409, '切换镜头类型前，请先撤回 Vibe 采用或取消预留')
         # Editing is not a video submission. A long static shot must be allowed
         # to become a dynamic draft before the auto-split endpoint can repair it.
         # The generation endpoint still enforces the real provider duration cap.
@@ -2097,7 +2220,7 @@ def edit_shot_motion(identity: str, shot_id: str, data: ShotMotionEdit, request:
         if changed_kind:
             shot['kind_adjustment'] = '用户手动选择动态' if data.kind == 'video' else '用户手动选择静态'
             record['logs'].append(f'{shot_id}：{shot["kind_adjustment"]}；核心图和字幕时间轴保持不变。')
-        if changed_motion or changed_kind:
+        if (changed_motion or changed_kind) and not uses_vibe(shot):
             _invalidate_shot_video(record, shot, '动态表达或视频提示词已修改')
         record['revision'] += 1
         save(path, record)
@@ -2111,6 +2234,8 @@ def configure_shot_presenter(identity: str, shot_id: str, data: PresenterEdit, r
         path = directory(user['id'], identity)
         record = read(path)
         shot = shot_editable(record, data.revision, shot_id)
+        if uses_vibe(shot):
+            raise HTTPException(409, '本镜使用本机 Vibe 动效；如需模型对口型请先撤回采用或取消预留')
         if shot.get('asset_kind') == 'scene_reference' or shot.get('kind') != 'video':
             raise HTTPException(400, '请先将本镜设为动态镜头')
         snapshot = copy.deepcopy(shot)
@@ -2262,7 +2387,7 @@ def refresh_shot_prompts(identity: str, shot_id: str, data: ShotPromptRefresh, r
                     '已按当前核心图提示词更新本镜视频提示词；其他镜头未修改。')
         if analysis:
             target['image_analysis'] = analysis
-        if target.get('action', '') != before_action or target.get('video_prompt', '') != before_video_prompt:
+        if not uses_vibe(target) and (target.get('action', '') != before_action or target.get('video_prompt', '') != before_video_prompt):
             _invalidate_shot_video(current, target, '本镜动态方案已更新')
         target['prompt_refresh_note'] = note
         current['logs'].append(f'{shot_id}：{note}')
@@ -2307,22 +2432,21 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
         if not readiness['can_confirm']:
             raise HTTPException(409, '；'.join(item['message'] for item in readiness['blockers']))
         missing = [str(i + 1) for i, shot in enumerate(record['shots'])
-                   if shot['kind'] == 'video' and not str(shot.get('video_prompt') or '').strip()]
+                   if shot['kind'] == 'video' and not has_vibe_output(shot) and not str(shot.get('video_prompt') or '').strip()]
         if missing:
             raise HTTPException(409, '请先补齐第 ' + '、'.join(missing) + ' 镜的视频提示词，可使用“按核心图更新视频提示词”')
         unchecked = [str(i + 1) for i, shot in enumerate(record['shots']) if shot.get('design_needs_review')]
         if unchecked and not data.confirm_adjusted_designs:
             raise HTTPException(409, '请先更新或确认第 ' + '、'.join(unchecked) + ' 镜的设计，再统一确认分镜')
         if unchecked:
-            from .video_agents import audit_storyboard
             confirmed_candidates = [copy.deepcopy(shot) for shot in record['shots']
                                     if shot.get('design_needs_review')]
             for candidate in confirmed_candidates:
                 candidate['design_needs_review'] = False
                 candidate['design_review_confirmed'] = True
             try:
-                audit_storyboard(confirmed_candidates,
-                                 {ref['id'] for ref in record.get('references', [])})
+                _audit_studio_shots(confirmed_candidates,
+                                 {ref['id'] for ref in _material_references(record)})
             except ValueError as exc:
                 raise HTTPException(409, '现有设计不完整，无法沿用：' + str(exc)) from exc
             for shot in record['shots']:
@@ -2334,12 +2458,14 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
             if data.regenerate_shot_id != record.get('reedit_shot_id'):
                 raise HTTPException(409, '只能重新生成当前返修的镜头')
             reroll = _find_shot(record, data.regenerate_shot_id)
+            if uses_vibe(reroll):
+                raise HTTPException(409, '本镜使用 Vibe，请通过本机动效面板重新预览、采用')
             if reroll.get('kind') != 'video' or reroll.get('video_status') != 'completed':
                 raise HTTPException(409, '当前镜头没有可重新抽取的已完成动态片段')
             _invalidate_shot_video(record, reroll, '用户要求在素材与提示词不变的情况下重新生成本镜动态片段')
         return_status = record.pop('reedit_return_status', '')
         record.pop('reedit_shot_id', None)
-        all_ready = all(shot.get('kind') != 'video' or shot.get('video_status') == 'completed'
+        all_ready = all(not shot.get('vibe_reserved') and (shot.get('kind') != 'video' or shot.get('video_status') == 'completed')
                         for shot in record['shots'])
         if return_status == 'completed' and record.get('export') and all_ready:
             next_status = 'completed'
@@ -2347,6 +2473,9 @@ def confirm_storyboard_images(identity: str, data: StoryboardConfirmation, reque
         elif return_status == 'video_review' and all_ready:
             next_status = 'video_review'
             note = '核心分镜图已确认；现有动态片段仍可继续检查。'
+        elif any(shot.get('vibe_reserved') for shot in record['shots']):
+            next_status = 'video_generation_ready'
+            note = '核心图已确认；请在预留 Vibe 的镜头上预览并采用动效，或取消预留。其他动态镜头可正常生成。'
         elif not any(shot.get('kind') == 'video' for shot in record['shots']):
             next_status = 'video_review'
             note = '全部镜头为静态画面，核心图已确认，可直接合成成片。'
@@ -2372,6 +2501,8 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
             if revision is None:
                 raise HTTPException(400, '重新规划需要当前项目版本')
             editable(record, revision)
+            if regroup and any(uses_vibe(s) for s in record.get('shots', [])):
+                raise HTTPException(409, '重新划分全片边界前请先取消 Vibe 预留或撤回采用；保留镜头边界的重新规划不受影响')
             if repair_only:
                 raise HTTPException(400, '完整重新规划不能同时选择局部修订')
         if record['status'] in VIDEO_STAGE_STATUSES and not fresh:
@@ -2411,7 +2542,13 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
             for row in affected:
                 row['design_needs_review'] = True
             lock_manual_groups(record)
-        fixed_shots = copy.deepcopy(record['shots']) if record.get('manual_groups') else None
+        local_choices = any(uses_vibe(s) for s in record.get('shots', []))
+        fixed_shots = copy.deepcopy(record['shots']) if record.get('manual_groups') or local_choices else None
+        # No H3/Seedance prompt, split, or duration gate for a local animation.
+        if local_choices:
+            for shot in fixed_shots:
+                if uses_vibe(shot):
+                    shot.update(kind='static',action='',video_prompt='',motion_plan=None)
         ACTIVE.add(str(path))
         cancelled = threading.Event()
         CANCEL_EVENTS[str(path)] = cancelled
@@ -2462,7 +2599,7 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
             with LOCK:
                 if cancelled.is_set():
                     raise PlanningStopped()
-                record.update(context=context, shots=shots, status='storyboard_review')
+                record.update(context=context, shots=_preserve_vibe(record,shots), status='storyboard_review')
                 if fresh:
                     archived = {key: value for key, value in previous_record.items() if key != 'replanning_history'}
                     record.setdefault('replanning_history', []).append(archived)

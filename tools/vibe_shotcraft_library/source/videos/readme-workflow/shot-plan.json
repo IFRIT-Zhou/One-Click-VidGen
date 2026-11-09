@@ -1,0 +1,16 @@
+{
+  "category": "kinetic-type", "duration_s": 8, "fps": 30,
+  "canvas": {"w": 1440, "h": 540, "aspect": "8:3"},
+  "style": "Precision production rail: charcoal, ivory, amber; seven persistent readable stages.",
+  "palette": ["#111317", "#1c2026", "#333942", "#f7f4ee", "#adb3bf", "#eab15e"],
+  "font": "system-ui", "asset_needs": [], "block": "onboarding-stepper-flow",
+  "customize": {
+    "layout": "Seven connected milestone cards, horizontal README banner",
+    "motion": "Short smooth stagger entrance; drawn connectors; sequential active card and icon; output chips resolve at the end",
+    "reuse": "Adapt installed milestone/card markup and timeline integration; no button or fake interaction"
+  },
+  "content": {
+    "scenes": [{"id":"pipeline", "start":0, "end":8, "text":"Your product. A finished film.", "emphasis_words":["finished film"], "emotion":"precise", "motion":"Connected steps activate in order", "beats":[0.4,1.2,2,2.8,3.6,4.4,5.2]}],
+    "stages": ["Your product / web page", "Capture real pages", "Storyboard with shot recipe cards", "Animate in Remotion", "Beat sync + sound design", "Render + frame QA", "MP4 / Motion Workbench / JianYing draft"]
+  }
+}

@@ -524,6 +524,22 @@ app.include_router(video_generation_router)
 app.include_router(video_export_router)
 from .storyboard_preview import router as storyboard_preview_router
 app.include_router(storyboard_preview_router)
+from .image_layer_packs import router as image_layer_pack_router
+app.include_router(image_layer_pack_router)
+from .vibe_preview import router as vibe_preview_router
+app.include_router(vibe_preview_router)
+from .vibe_routing import router as vibe_routing_router
+from .vibe_design import router as vibe_design_router
+from .vibe_adoption import router as vibe_adoption_router
+app.include_router(vibe_routing_router)
+app.include_router(vibe_design_router)
+app.include_router(vibe_adoption_router)
+from .vibe_config import router as vibe_config_router
+from .vibe_cloud import router as vibe_cloud_router
+from .vibe_shotcraft_gallery import router as vibe_shotcraft_gallery_router
+app.include_router(vibe_config_router)
+app.include_router(vibe_cloud_router)
+app.include_router(vibe_shotcraft_gallery_router)
 from .image_profiles import router as image_profiles_router
 app.include_router(image_profiles_router)
 from .subtitle_preview import router as subtitle_preview_router

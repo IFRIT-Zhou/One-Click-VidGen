@@ -177,7 +177,7 @@ class ImageRequestControlTests(unittest.TestCase):
             self.assertFalse(output.exists())
             session.post.assert_called_once()
 
-    def test_image_studio_timeout_fails_without_resubmitting(self):
+    def test_image_studio_timeout_waits_for_original_result_without_resubmitting(self):
         from backend.app import image_studio as studio
         record = {'id': 'test', 'prompt': 'test', 'ratio': '16:9', 'resolution': '1k',
                   'references': [], 'remote_task_id': 'original'}
@@ -185,7 +185,7 @@ class ImageRequestControlTests(unittest.TestCase):
         with patch.object(visual, '_request_with_cloud_refresh', side_effect=control.ImageWaitTimeout('等待超时')) as request, \
              patch.object(studio, 'save'):
             studio.execute(1, Path('unused-test-path'), record, config)
-        self.assertEqual(record['status'], 'failed')
+        self.assertEqual(record['status'], 'awaiting_result')
         self.assertEqual(record['remote_task_id'], 'original')
         request.assert_called_once()
 

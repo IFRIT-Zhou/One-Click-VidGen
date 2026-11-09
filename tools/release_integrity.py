@@ -14,6 +14,25 @@ import re
 from pathlib import Path
 
 
+# This tight application payload is intentionally independent of the local
+# editable/installed weights and Python environment.
+RMBG_MANAGED_FILES = (
+    "tools/rmbg/README.md",
+    "tools/rmbg/worker.py",
+    "tools/rmbg/setup_runtime.py",
+    "tools/rmbg/runtime-spec.json",
+    "tools/rmbg/vendor/birefnet/birefnet.py",
+    "tools/rmbg/vendor/birefnet/BiRefNet_config.py",
+    "tools/rmbg/vendor/birefnet/config.json",
+    "tools/rmbg/vendor/birefnet/LICENSE",
+    "tools/rmbg/vendor/birefnet/NOTICE.md",
+)
+
+
+def unmanaged_rmbg_file(path: str) -> bool:
+    return path.casefold().startswith("tools/rmbg/") and path not in RMBG_MANAGED_FILES
+
+
 INTEGRITY_FILES = (
     "OCV_Launcher.exe",
     "start_windows.bat",
@@ -143,6 +162,10 @@ INTEGRITY_FILES = (
     "comfyui/README.md",
     "tts/README.md",
     "tools/migrate_optional_components.ps1",
+    "backend/app/vibe_rmbg.py",
+    "backend/app/vibe_rmbg_runtime.py",
+    "backend/app/vibe_rmbg_model.py",
+    *RMBG_MANAGED_FILES,
 )
 
 TEXT_EXTENSIONS = {".bat", ".cjs", ".css", ".js", ".json", ".ps1", ".py", ".vue", ".md", ".yaml", ".txt"}

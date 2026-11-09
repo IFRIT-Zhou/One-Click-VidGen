@@ -1,0 +1,1005 @@
+{
+  "category": "effects",
+  "zh": "光效与强调",
+  "en": "Light & Emphasis",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "assemble-then-type-flyin",
+      "category": "effects",
+      "summary": "空的暗底网格上，无文字的组件骨架先从四面八方飞入贴合；随后各处文字逐字从 3D 空间旋转着飞来落位，先大标题后小标注，全部落位后页面成形",
+      "recipe_path": "source/references/shots/effects/assemble-then-type-flyin.md",
+      "style_ids": [
+        "assemble-then-type-flyin"
+      ]
+    },
+    {
+      "id": "aurora-bloom-bg-flip",
+      "category": "effects",
+      "summary": "浅灰底从底部升起紫橙柔焦 blob，随后整个底色在约 0.36s 内压暗到近黑、blob 压成余晖；文案同步 blur-out 换句 blur-in，换句间留空档不 cross-fade",
+      "recipe_path": "source/references/shots/effects/aurora-bloom-bg-flip.md",
+      "style_ids": [
+        "aurora-bloom-bg-flip"
+      ]
+    },
+    {
+      "id": "brand-frame-snap",
+      "category": "effects",
+      "summary": "品牌色画框语法——一圈粗纯色画框先于内容长出包住全屏，录屏窗口落进框内；模式切换时整圈画框同帧硬翻色+窗内布局同帧换，一个 borderColor 干完章节导航/状态提示/品牌露出三件事",
+      "recipe_path": "source/references/shots/effects/brand-frame-snap.md",
+      "style_ids": [
+        "brand-frame-snap"
+      ]
+    },
+    {
+      "id": "fui-hud-moves",
+      "category": "effects",
+      "summary": "FUI/HUD 准星咬合——reticle-lock-on 四个 L 形角标组成的取景框从画外飞入、超调回弹后咬合锁定目标",
+      "recipe_path": "source/references/shots/effects/fui-hud-moves.md",
+      "style_ids": [
+        "reticle-lock-on"
+      ]
+    },
+    {
+      "id": "glow-flyline-moves",
+      "category": "effects",
+      "summary": "暗场光斑与飞线三式——glow-orb-ambient 光斑底噪、flyline-arc 飞线连接、orb-flyline-relay 同帧共振组合",
+      "recipe_path": "source/references/shots/effects/glow-flyline-moves.md",
+      "style_ids": [
+        "glow-orb-ambient",
+        "flyline-arc",
+        "orb-flyline-relay"
+      ]
+    },
+    {
+      "id": "icon-performance-moves",
+      "category": "effects",
+      "summary": "图标表演——attention-bounce 求关注弹跳（图标连跳递增+落地压扁+镜头被吸引）",
+      "recipe_path": "source/references/shots/effects/icon-performance-moves.md",
+      "style_ids": [
+        "attention-bounce"
+      ]
+    },
+    {
+      "id": "impact-feedback",
+      "category": "effects",
+      "summary": "命中反馈两式——hit-counter 连招计数（顿帧+伤害数字+combo 跳字）、anime-impact 动漫打击帧（负片+集中线+色散）",
+      "recipe_path": "source/references/shots/effects/impact-feedback.md",
+      "style_ids": [
+        "hit-counter",
+        "anime-impact"
+      ]
+    },
+    {
+      "id": "light-play-moves",
+      "category": "effects",
+      "summary": "光效两式——spotlight-sweep 聚光扫字、sheen 单点扫光",
+      "recipe_path": "source/references/shots/effects/light-play-moves.md",
+      "style_ids": [
+        "spotlight-sweep",
+        "sheen-sweep"
+      ]
+    },
+    {
+      "id": "radial-ripple-phone-chips",
+      "category": "effects",
+      "summary": "暖沙底四层同心圆错相呼吸如水波，中央手机 mockup 屏内 feed 自动缓滚，两侧白色 chip 先后 spring pop 入场并悬浮",
+      "recipe_path": "source/references/shots/effects/radial-ripple-phone-chips.md",
+      "style_ids": [
+        "radial-ripple-phone-chips"
+      ]
+    },
+    {
+      "id": "riso-print-hits",
+      "category": "effects",
+      "summary": "套印错位冲击帧——riso-misregistration-hit 单发：标题撞停瞬间裂成双色 riso 印版，抖两下\"啪\"地套准",
+      "recipe_path": "source/references/shots/effects/riso-print-hits.md",
+      "style_ids": [
+        "misregistration-hit"
+      ]
+    },
+    {
+      "id": "scan-bracket-sweep",
+      "category": "effects",
+      "summary": "文档弹到中央，四角落下 L 形取景括号，一条扫描光带拖着渐变尾迹在文档上往复扫 5 趟——文档全程静止，只有光在读它",
+      "recipe_path": "source/references/shots/effects/scan-bracket-sweep.md",
+      "style_ids": [
+        "scan-bracket-sweep"
+      ]
+    },
+    {
+      "id": "scanline-annotate-focus",
+      "category": "effects",
+      "summary": "一条扫描线自上而下匀速掠过已存在的页面，越过哪块区块的下缘，哪块就被四角取景框从外扩处弹簧收拢对准（一次过冲），随后贴出一枚逐字打出的机器标签，顶部状态行同步计数 00/06→06/06",
+      "recipe_path": "source/references/shots/effects/scanline-annotate-focus.md",
+      "style_ids": [
+        "scanline-annotate-focus"
+      ]
+    },
+    {
+      "id": "scanline-assemble-flyin",
+      "category": "effects",
+      "summary": "页面开场是一张只有网格与虚线槽位的蓝图画板，一条亮扫描线自上而下掠过；扫到每个槽位，该处组件就从画外飞入过冲贴合，带方向性残影模糊与落位咬合角标——扫完整页恰好装配完成",
+      "recipe_path": "source/references/shots/effects/scanline-assemble-flyin.md",
+      "style_ids": [
+        "scanline-assemble-flyin"
+      ]
+    },
+    {
+      "id": "slam-entrance-moves",
+      "category": "effects",
+      "summary": "高能砸入三式——kanada-perspective-snap 金田透视急停、score-slam 比分砸落、impact-burst-kit 落点冲击套件（波及邻卡）",
+      "recipe_path": "source/references/shots/effects/slam-entrance-moves.md",
+      "style_ids": [
+        "kanada-perspective-snap",
+        "score-slam",
+        "impact-burst-kit"
+      ]
+    },
+    {
+      "id": "spotlight-sweep-moves",
+      "category": "effects",
+      "summary": "暗场聚光显影三式——A 醒睡扫过（光到即亮光走即暗）、B 贴边泛光横摇（紫光贴 UI 边缘渗入+聚光匀速右移）、C 角落匀速显影（径向聚光从角落匀速扩张点亮全屏）；黑场里\"光即叙事\"的 UI 展示",
+      "recipe_path": "source/references/shots/effects/spotlight-sweep-moves.md",
+      "style_ids": [
+        "glow-wake-sleep-panel",
+        "slide-spotlight-pan",
+        "corner-spotlight-reveal"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "assemble-then-type-flyin",
+      "card_id": "assemble-then-type-flyin",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "assemble-then-type-flyin",
+      "description": "空的暗底网格上，无文字的组件骨架先从四面八方飞入贴合；随后各处文字逐字从 3D 空间旋转着飞来落位，先大标题后小标注，全部落位后页面成形",
+      "use": "页面/海报\"自己长出来\"的开场；排版类产品的能力展示；从骨架到成稿的两段式叙事",
+      "duration": "约5.6s（168f@30fps）",
+      "recipe_path": "source/references/shots/effects/assemble-then-type-flyin.md",
+      "demo_paths": [
+        "source/demos/effects/assemble-then-type-flyin/AssembleThenTypeFlyin.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/assemble-then-type-flyin.mp4",
+      "upstream_preview_url": "./media/assemble-then-type-flyin.mp4?v=1790980736765",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/assemble-then-type-flyin.md": "e33b01043347d8d4aa2156a3895e692b868afa351ac59480d7ad327cf162ecd8",
+        "source/demos/effects/assemble-then-type-flyin/AssembleThenTypeFlyin.tsx": "ddf865a26f5309e00ae13d64428341f36c4f44054027b2fdd86fbe5679fe6519",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "470d2b73588160cfe2313981d25b751d0f0cf287ecd4d1342da85a32916a1268",
+      "preview_available": true
+    },
+    {
+      "id": "aurora-bloom-bg-flip",
+      "card_id": "aurora-bloom-bg-flip",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "aurora-bloom-bg-flip",
+      "description": "浅灰底从底部升起紫橙柔焦 blob，随后整个底色在约 0.36s 内压暗到近黑、blob 压成余晖；文案同步 blur-out 换句 blur-in，换句间留空档不 cross-fade",
+      "use": "叙事转折点（\"多年以来…→一切都变了\"）；品牌片从铺垫拉到重音的那一拍；深浅色系之间的段落切换",
+      "duration": "约5.2s（156f@30fps）",
+      "recipe_path": "source/references/shots/effects/aurora-bloom-bg-flip.md",
+      "demo_paths": [
+        "source/demos/effects/aurora-bloom-bg-flip/AuroraBloomBgFlip.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/aurora-bloom-bg-flip.mp4",
+      "upstream_preview_url": "./media/aurora-bloom-bg-flip.mp4?v=1790980736766",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/aurora-bloom-bg-flip.md": "dba493d8aca20bf45ad2dd41998f0d5dc856559e367212843fe44768b80029fc",
+        "source/demos/effects/aurora-bloom-bg-flip/AuroraBloomBgFlip.tsx": "2c663caf82bfbb2b564c897bb205ba8e8b65d09ac827e590f62357f08195893f",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "3b16b84c71ec26cc67cb2c30c231bad46151e5a36f69deae0b11b003d137212b",
+      "preview_available": true
+    },
+    {
+      "id": "brand-frame-snap",
+      "card_id": "brand-frame-snap",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "transition"
+      ],
+      "label": "brand-frame-snap",
+      "description": "品牌色画框语法——一圈粗纯色画框先于内容长出包住全屏，录屏窗口落进框内；模式切换时整圈画框同帧硬翻色+窗内布局同帧换，一个 borderColor 干完章节导航/状态提示/品牌露出三件事",
+      "use": "双模式/双章节产品片的全片包装层（蓝=模式A、绿=模式B 颜色编码）；真实录屏素材的品牌化包裹",
+      "duration": "单次翻色 ~4.7s（140f）；画框本身可全片驻场",
+      "recipe_path": "source/references/shots/effects/brand-frame-snap.md",
+      "demo_paths": [
+        "source/demos/effects/brand-frame-snap/BrandFrameSnap.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/brand-frame-snap.mp4",
+      "upstream_preview_url": "./media/brand-frame-snap.mp4?v=1790980736777",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/brand-frame-snap.md": "e057f60567fc5f696a65fe8b7a3c1bd14b9d205ffa7ba972520f3c169a2471f7",
+        "source/demos/effects/brand-frame-snap/BrandFrameSnap.tsx": "52247e0eafc647a86b1ef7cd7408ddf6fcfe6d02b4d5057907a69e02005fc2d4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e829773c7b0190955bde0d1dfc4f5a2b438a6e6f80c4441881ebb6a1a72336dc",
+      "preview_available": true
+    },
+    {
+      "id": "reticle-lock-on",
+      "card_id": "fui-hud-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance"
+      ],
+      "label": "reticle-lock-on",
+      "description": "FUI/HUD 准星咬合——reticle-lock-on 四个 L 形角标组成的取景框从画外飞入、超调回弹后咬合锁定目标",
+      "use": "目标点名；踩音效重拍",
+      "duration": "2–3s（demo 90f）",
+      "recipe_path": "source/references/shots/effects/fui-hud-moves.md",
+      "demo_paths": [
+        "source/demos/effects/fui-hud-moves/ReticleLockOn.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/reticle-lock-on.mp4",
+      "upstream_preview_url": "./media/reticle-lock-on.mp4?v=1790980736805",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/fui-hud-moves.md": "014baed764a43a5eee27bcb760ea9e9b815bb3e004bda7fcd755c8876b2c62fa",
+        "source/demos/effects/fui-hud-moves/ReticleLockOn.tsx": "f24845551c2a68a9393bd527c065acf9062ac2d2b125e97079d6392ec56b013d",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "3f3ac36d34e929650e0253149b3116cf54d0a1b57199bc48809ac297b102d41b",
+      "preview_available": true
+    },
+    {
+      "id": "glow-orb-ambient",
+      "card_id": "glow-flyline-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "data"
+      ],
+      "label": "glow-orb-ambient",
+      "description": "三团 500-700px radial 光斑 + blur(100px)，双正弦漂移；卡缘辉光按光斑距离 [180,720]px→[1,0] 加权取 max 驱动",
+      "use": "暗场段落铺底；卡呼吸感",
+      "duration": "A 170f（~5.7s）/ B 140f（~4.7s）/ C 165f（5.5s）",
+      "recipe_path": "source/references/shots/effects/glow-flyline-moves.md",
+      "demo_paths": [
+        "source/demos/effects/glow-flyline-moves/GlowOrbAmbient.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/glow-orb-ambient.mp4",
+      "upstream_preview_url": "./media/glow-orb-ambient.mp4?v=1790980736810",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/glow-flyline-moves.md": "27a769378a5523df1cfb8a24502982ff8d288663916c97d1aa31f0d28cf937b7",
+        "source/demos/effects/glow-flyline-moves/GlowOrbAmbient.tsx": "c7d1b04d7587a96bfd348dd60589424a0b3311aa92b470b0be0dccaa51e9908f",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e89a0ce2c95e66d88f3fa7c4524d558d9ec97924e772aa4d5728bc6d2a044c74",
+      "preview_available": true
+    },
+    {
+      "id": "flyline-arc",
+      "card_id": "glow-flyline-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "data"
+      ],
+      "label": "flyline-arc",
+      "description": "手写 bezier 100 段采样，22f out-cubic 生长；光头条件挂载领跑，段 opacity 按离头距离渐隐；落点描边脉冲，可接力",
+      "use": "数据流向/指标关联；dashboard 叙事",
+      "duration": "A 170f（~5.7s）/ B 140f（~4.7s）/ C 165f（5.5s）",
+      "recipe_path": "source/references/shots/effects/glow-flyline-moves.md",
+      "demo_paths": [
+        "source/demos/effects/glow-flyline-moves/FlylineArc.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/flyline-arc.mp4",
+      "upstream_preview_url": "./media/flyline-arc.mp4?v=1790980736811",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/glow-flyline-moves.md": "27a769378a5523df1cfb8a24502982ff8d288663916c97d1aa31f0d28cf937b7",
+        "source/demos/effects/glow-flyline-moves/FlylineArc.tsx": "325b9e9e4b946b0750e1ea45a6049b245cf6bda21a046908647a5065c5e50a00",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "31cd1ad714beaaf105aaf40a0e71377b049dde8243ff8f28f8dda84c9f1485a3",
+      "preview_available": true
+    },
+    {
+      "id": "orb-flyline-relay",
+      "card_id": "glow-flyline-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "data"
+      ],
+      "label": "orb-flyline-relay",
+      "description": "A+B 焊接：光斑 surge 与卡脉冲共用落点帧，涨亮 1+1.6×surge、5f 起升 15f 消散",
+      "use": "暗场高光段；三卡接力收束",
+      "duration": "A 170f（~5.7s）/ B 140f（~4.7s）/ C 165f（5.5s）",
+      "recipe_path": "source/references/shots/effects/glow-flyline-moves.md",
+      "demo_paths": [
+        "source/demos/effects/glow-flyline-moves/OrbFlylineRelay.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/orb-flyline-relay.mp4",
+      "upstream_preview_url": "./media/orb-flyline-relay.mp4?v=1790980736812",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/glow-flyline-moves.md": "27a769378a5523df1cfb8a24502982ff8d288663916c97d1aa31f0d28cf937b7",
+        "source/demos/effects/glow-flyline-moves/OrbFlylineRelay.tsx": "bb05cd2c495585fc1635cdf7a09cf55fb372eda77c9210edd105aa646e7bb974",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "9000e7a19ca90e198245ed4083a731af06bb2ec28934f56314a44366fc484361",
+      "preview_available": true
+    },
+    {
+      "id": "attention-bounce",
+      "card_id": "icon-performance-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "interaction"
+      ],
+      "label": "attention-bounce",
+      "description": "图标表演——attention-bounce 求关注弹跳（图标连跳递增+落地压扁+镜头被吸引）",
+      "use": "新功能引出：\"看我\"→镜头看它→它开面板",
+      "duration": "156f（5.2s）",
+      "recipe_path": "source/references/shots/effects/icon-performance-moves.md",
+      "demo_paths": [
+        "source/demos/effects/icon-performance-moves/AttentionBounce.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/attention-bounce.mp4",
+      "upstream_preview_url": "./media/attention-bounce.mp4?v=1790980736819",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/icon-performance-moves.md": "626e4833a2d994a572ad71214e74ef1f8d95d294ad9b13075be2da595405b293",
+        "source/demos/effects/icon-performance-moves/AttentionBounce.tsx": "8fbb1fab7c2165dc3e68b9d012425687b1d1285ea314fdd9138491e3ca45db56",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "b6a1d3e09b39d63a51f9dd2254a1003383d2a19f75956ebfa4ec71c618bc443d",
+      "preview_available": true
+    },
+    {
+      "id": "hit-counter",
+      "card_id": "impact-feedback",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "hit-counter 连招计数",
+      "description": "三卡接连砸入，每命中 = 顿帧 2f + 伤害数字上浮 + ×N 计数跳字逐次加码",
+      "use": "功能点连打段--\"功能很多\"用连招讲；游戏化语言浓",
+      "duration": "n/a（元素级技法，寄生在落位动作上；各式占用帧数见参数表）",
+      "recipe_path": "source/references/shots/effects/impact-feedback.md",
+      "demo_paths": [
+        "source/demos/effects/impact-feedback/HitCounter.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/hit-counter.mp4",
+      "upstream_preview_url": "./media/hit-counter.mp4?v=1790980736820",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/impact-feedback.md": "ce76e43e1f90b252601d5af8afea995a6f760e1a12b3a26315f6a252800c1c98",
+        "source/demos/effects/impact-feedback/HitCounter.tsx": "ccb3a3234faa19b366a3468fbd3e4a9a0d7d3b881f28e47f3db18edbaaf17dce",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "987cf9be2151c3c47b9649f9ef22d86ab8cff832b4f7a14073f9422c7852ab92",
+      "preview_available": true
+    },
+    {
+      "id": "anime-impact",
+      "card_id": "impact-feedback",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "anime-impact 打击帧",
+      "description": "crash-zoom 撞停的 3f 整幅负片反色 + 放射集中线 + 红青色散，第 4f 全撤",
+      "use": "全片唯一高潮的那一拳；强调级封顶",
+      "duration": "n/a（元素级技法，寄生在落位动作上；各式占用帧数见参数表）",
+      "recipe_path": "source/references/shots/effects/impact-feedback.md",
+      "demo_paths": [
+        "source/demos/effects/impact-feedback/AnimeImpact.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/anime-impact.mp4",
+      "upstream_preview_url": "./media/anime-impact.mp4?v=1790980736821",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/impact-feedback.md": "ce76e43e1f90b252601d5af8afea995a6f760e1a12b3a26315f6a252800c1c98",
+        "source/demos/effects/impact-feedback/AnimeImpact.tsx": "8552991a4632b1df974b25898cd3299d2f06f85e5b9a132dce2058cb5f917bd9",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "1709d45e3b6f562d6ad57d582e6588437bcfc50805e88dad85aa28296669ad26",
+      "preview_available": true
+    },
+    {
+      "id": "spotlight-sweep",
+      "card_id": "light-play-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "typography"
+      ],
+      "label": "spotlight-sweep",
+      "description": "双层同文本：暗版 0.07 常驻，亮版 radial mask 随光斑走，锥形光摆两个来回后全亮定格",
+      "use": "暗场大标题揭示开场",
+      "duration": "A 170f ~5.7s / B 150f ~5s",
+      "recipe_path": "source/references/shots/effects/light-play-moves.md",
+      "demo_paths": [
+        "source/demos/effects/light-play-moves/SpotlightSweepReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/spotlight-sweep.mp4",
+      "upstream_preview_url": "./media/spotlight-sweep.mp4?v=1790980736825",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/light-play-moves.md": "cb89525d47fe9c7450ae8b80264f5fa625ac99b8f8c78dabd6a7bcc5bd9eb343",
+        "source/demos/effects/light-play-moves/SpotlightSweepReveal.tsx": "48095a947ebea7c7dafc4e50a77064cd26afe29092aaf2660789f9d51f6d98f3",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "37c76507fb4a575e256232a748b298c7ad7e5fb146124bb59976582ef7e07dfb",
+      "preview_available": true
+    },
+    {
+      "id": "sheen-sweep",
+      "card_id": "light-play-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "typography"
+      ],
+      "label": "sheen-sweep",
+      "description": "深墨卡上 45° 高光带 translateX 扫一次，overflow hidden 圆角裁剪",
+      "use": "主角卡静止段的一次加冕",
+      "duration": "A 170f ~5.7s / B 150f ~5s",
+      "recipe_path": "source/references/shots/effects/light-play-moves.md",
+      "demo_paths": [
+        "source/demos/effects/light-play-moves/SheenSweepRetry.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/sheen-sweep.mp4",
+      "upstream_preview_url": "./media/sheen-sweep.mp4?v=1790980736826",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/light-play-moves.md": "cb89525d47fe9c7450ae8b80264f5fa625ac99b8f8c78dabd6a7bcc5bd9eb343",
+        "source/demos/effects/light-play-moves/SheenSweepRetry.tsx": "5067474b225197224ed0a95fc38e71228fd96de5faee1436501e7d53a798c1df",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4bbc93cb7bffdee758a46852af75f9469fd42196fd9cef59d9d89288e22c08d1",
+      "preview_available": true
+    },
+    {
+      "id": "radial-ripple-phone-chips",
+      "card_id": "radial-ripple-phone-chips",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "radial-ripple-phone-chips",
+      "description": "暖沙底四层同心圆错相呼吸如水波，中央手机 mockup 屏内 feed 自动缓滚，两侧白色 chip 先后 spring pop 入场并悬浮",
+      "use": "移动端产品的\"这就是它\"定格镜头；功能点分列两侧的介绍段；片头/片尾的产品全景",
+      "duration": "约5.6s（168f@30fps）",
+      "recipe_path": "source/references/shots/effects/radial-ripple-phone-chips.md",
+      "demo_paths": [
+        "source/demos/effects/radial-ripple-phone-chips/RadialRipplePhoneChips.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/radial-ripple-phone-chips.mp4",
+      "upstream_preview_url": "./media/radial-ripple-phone-chips.mp4?v=1790980736852",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/radial-ripple-phone-chips.md": "51acf92b06f92c9aa9dfdea12af0efcc5e75347689e07c123c749d423a57e3e5",
+        "source/demos/effects/radial-ripple-phone-chips/RadialRipplePhoneChips.tsx": "2ca99b1ccb2431bf4b2050a32f60f52d764e72839f5594c1f6e58f751116d0ee",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "512af8a482a7877cd7e97c279f301820522a9726cebd2e54363eed26ba5da4da",
+      "preview_available": true
+    },
+    {
+      "id": "misregistration-hit",
+      "card_id": "riso-print-hits",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "typography"
+      ],
+      "label": "misregistration-hit 单发",
+      "description": "套印错位冲击帧——riso-misregistration-hit 单发：标题撞停瞬间裂成双色 riso 印版，抖两下\"啪\"地套准",
+      "use": "全片 1-2 次的命中盖章；标题/大字的到位一瞬",
+      "duration": "4s（120f，单发）",
+      "recipe_path": "source/references/shots/effects/riso-print-hits.md",
+      "demo_paths": [
+        "source/demos/effects/riso-print-hits/RisoMisregistrationHit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/misregistration-hit.mp4",
+      "upstream_preview_url": "./media/misregistration-hit.mp4?v=1790980736856",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/riso-print-hits.md": "00c69e305c984f56eb2080d53fd0123c88120ef1b93d93092e21b6a8d8dcff16",
+        "source/demos/effects/riso-print-hits/RisoMisregistrationHit.tsx": "913226ac62d954206dad1f107626d9eca1a09e1ef8acd1c1ed4476e30738be77",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "6f61745603bc404e0c91c2a9654b719d714c165bbd105790c96bb157ba0d9408",
+      "preview_available": true
+    },
+    {
+      "id": "scan-bracket-sweep",
+      "card_id": "scan-bracket-sweep",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "scan-bracket-sweep",
+      "description": "文档弹到中央，四角落下 L 形取景括号，一条扫描光带拖着渐变尾迹在文档上往复扫 5 趟——文档全程静止，只有光在读它",
+      "use": "\"正在解析/校验这份内容\"的过程镜头；文档类产品的能力演示；上传→分析链路的中段",
+      "duration": "约5.0s（150f@30fps）",
+      "recipe_path": "source/references/shots/effects/scan-bracket-sweep.md",
+      "demo_paths": [
+        "source/demos/effects/scan-bracket-sweep/ScanBracketSweep.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/scan-bracket-sweep.mp4",
+      "upstream_preview_url": "./media/scan-bracket-sweep.mp4?v=1790980736859",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/scan-bracket-sweep.md": "ba3464faafc3ada5a64c4e29e8bcbc4ebe5f4ffb8ef3567f488be5121385a06f",
+        "source/demos/effects/scan-bracket-sweep/ScanBracketSweep.tsx": "64900312007e27b0e7e7ea02b225c86934a07523b093dfedca3d026ffd6a4f3b",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "0c846d9a1e86ac7a1baae7ec167b8258d36676c954fb22ef44bf8a7af60e3d1f",
+      "preview_available": true
+    },
+    {
+      "id": "scanline-annotate-focus",
+      "card_id": "scanline-annotate-focus",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "scanline-annotate-focus",
+      "description": "一条扫描线自上而下匀速掠过已存在的页面，越过哪块区块的下缘，哪块就被四角取景框从外扩处弹簧收拢对准（一次过冲），随后贴出一枚逐字打出的机器标签，顶部状态行同步计数 00/06→06/06",
+      "use": "\"AI 正在读你的页面/品牌\"的分析镜头；设计系统/品牌规范的拆解介绍；产品能力的自我说明段",
+      "duration": "约5s（150f@30fps）",
+      "recipe_path": "source/references/shots/effects/scanline-annotate-focus.md",
+      "demo_paths": [
+        "source/demos/effects/scanline-annotate-focus/ScanlineAnnotateFocus.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/scanline-annotate-focus.mp4",
+      "upstream_preview_url": "./media/scanline-annotate-focus.mp4?v=1790980736860",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/scanline-annotate-focus.md": "4b20f8d91d999cd3f9a0a7922f0fc6b118691ba083bbcd5582dfebe65e75d8e4",
+        "source/demos/effects/scanline-annotate-focus/ScanlineAnnotateFocus.tsx": "da414a1e1ba71dfe59221dafb35a98836d54e79b0aa0ef00e080a1cb7bba4bc9",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "5752c5b9cb576243fd1b438a4a2b0d5a93e8e7c19bebe3e794c3547b3bbd3839",
+      "preview_available": true
+    },
+    {
+      "id": "scanline-assemble-flyin",
+      "card_id": "scanline-assemble-flyin",
+      "category": "effects",
+      "tags": [
+        "effects"
+      ],
+      "label": "scanline-assemble-flyin",
+      "description": "页面开场是一张只有网格与虚线槽位的蓝图画板，一条亮扫描线自上而下掠过；扫到每个槽位，该处组件就从画外飞入过冲贴合，带方向性残影模糊与落位咬合角标——扫完整页恰好装配完成",
+      "use": "\"页面自己生成\"的开场；AI 建站/自动排版类产品的核心演示；从空白到成品的能力叙事",
+      "duration": "约5.2s（156f@30fps）",
+      "recipe_path": "source/references/shots/effects/scanline-assemble-flyin.md",
+      "demo_paths": [
+        "source/demos/effects/scanline-assemble-flyin/ScanlineAssembleFlyin.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/effects/scanline-assemble-flyin.mp4",
+      "upstream_preview_url": "./media/scanline-assemble-flyin.mp4?v=1790980736861",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/scanline-assemble-flyin.md": "b634451c0c997974e99bf6149362015b103f8b8be0ea6c0b00d02cceb1098fb0",
+        "source/demos/effects/scanline-assemble-flyin/ScanlineAssembleFlyin.tsx": "899214f8b124d489d8cd033f2c3ea61c91de21650527e3e8ab30145b44467778",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "b4802c4f14baa1d199409b81d815542157bcd7ac0fa245c2497bdaf2d0c7f895",
+      "preview_available": true
+    },
+    {
+      "id": "kanada-perspective-snap",
+      "card_id": "slam-entrance-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance"
+      ],
+      "label": "kanada-perspective-snap",
+      "description": "perspective 300→1500px + rotate3d 58°→0 + scale 1.7→1 甩入 18f，末 4f 过冲 +5° 弹平，长斜影收正",
+      "use": "单卡潇洒亮相；调性偏动漫/轻快",
+      "duration": "单式动作段 6–22f + 冲击余波 ~16f + hold ≥45f（demo：A 120f / B 135f / C 140f）",
+      "recipe_path": "source/references/shots/effects/slam-entrance-moves.md",
+      "demo_paths": [
+        "source/demos/effects/slam-entrance-moves/KanadaPerspectiveSnap.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/kanada-perspective-snap.mp4",
+      "upstream_preview_url": "./media/kanada-perspective-snap.mp4?v=1790980736867",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/slam-entrance-moves.md": "40f656e15b47270a5ef82f8a8319d500402357ea468869626a9cb688903e2409",
+        "source/demos/effects/slam-entrance-moves/KanadaPerspectiveSnap.tsx": "05327068ad0dc691c1cadd1b64ff029d6fbe77a7897779106a549b1342dfffae",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "41e6d2a043638ebcabdc910cc0815970ee7292b969e0156646722ccc89ac142b",
+      "preview_available": true
+    },
+    {
+      "id": "score-slam",
+      "card_id": "slam-entrance-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance"
+      ],
+      "label": "score-slam",
+      "description": "卡从 scale 2.5/rotate 5° 六帧 Easing.in(quad) 砸落，落点帧圆环扩散+尘点飞散+震屏同帧",
+      "use": "KPI/比分类重磅数字登场",
+      "duration": "单式动作段 6–22f + 冲击余波 ~16f + hold ≥45f（demo：A 120f / B 135f / C 140f）",
+      "recipe_path": "source/references/shots/effects/slam-entrance-moves.md",
+      "demo_paths": [
+        "source/demos/effects/slam-entrance-moves/ScoreSlam.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/score-slam.mp4",
+      "upstream_preview_url": "./media/score-slam.mp4?v=1790980736868",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/slam-entrance-moves.md": "40f656e15b47270a5ef82f8a8319d500402357ea468869626a9cb688903e2409",
+        "source/demos/effects/slam-entrance-moves/ScoreSlam.tsx": "3809e6e77a381b486fe94461e968f5138d196d80fcc12d1eba10a25ea99f4bad",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "01d949b86344e5f34933412dda19ca04d0c8533fb68e262f8cb44d88ebe579e2",
+      "preview_available": true
+    },
+    {
+      "id": "impact-burst-kit",
+      "card_id": "slam-entrance-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance"
+      ],
+      "label": "impact-burst-kit",
+      "description": "B 三件套 + 冲击波前沿按半径-距离精算扫过邻卡帧，邻卡外推 30px + rotate ±3° 阻尼弹回",
+      "use": "页面上已有邻居时的\"全场震动\"",
+      "duration": "单式动作段 6–22f + 冲击余波 ~16f + hold ≥45f（demo：A 120f / B 135f / C 140f）",
+      "recipe_path": "source/references/shots/effects/slam-entrance-moves.md",
+      "demo_paths": [
+        "source/demos/effects/slam-entrance-moves/ImpactBurstKit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/impact-burst-kit.mp4",
+      "upstream_preview_url": "./media/impact-burst-kit.mp4?v=1790980736869",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/slam-entrance-moves.md": "40f656e15b47270a5ef82f8a8319d500402357ea468869626a9cb688903e2409",
+        "source/demos/effects/slam-entrance-moves/ImpactBurstKit.tsx": "88d8c85161612d7e5c55c8698b7fdd86577303080356c558d6ff1a85e59a7461",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "bc798d00026d74f199c5e64482767ca5b4081a2978473a22542148ef81ece342",
+      "preview_available": true
+    },
+    {
+      "id": "glow-wake-sleep-panel",
+      "card_id": "spotlight-sweep-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "label": "glow-wake-sleep-panel",
+      "description": "醒睡扫过：radial 显影罩跟随光头从左向右匀速移动，贴顶边紫色光线三层辉光同行，经过 logo 描光、到右缘点亮竖直残光，尾段面板沉回黑暗",
+      "use": "暗色调品牌片里介绍单个 UI 面板——有醒有睡的登场与谢幕",
+      "duration": "单式 3.5–4.5s；A/B 可串联成巡礼段",
+      "recipe_path": "source/references/shots/effects/spotlight-sweep-moves.md",
+      "demo_paths": [
+        "source/demos/effects/spotlight-sweep-moves/GlowWakeSleepPanel.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/glow-wake-sleep-panel.mp4",
+      "upstream_preview_url": "./media/glow-wake-sleep-panel.mp4?v=1790980736874",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/spotlight-sweep-moves.md": "39657d09b90009f4a18190664820b6cfd28d6808cbd65d47f5f5e4a1b43cdf7d",
+        "source/demos/effects/spotlight-sweep-moves/GlowWakeSleepPanel.tsx": "b99e33200908716c8c451c4b23845099331cafd4ffb558c578c25c5d39b2f188",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2"
+      },
+      "preview_sha256": "846d841365ab6cdc8d9bbbd632ee168b1334cfc291a61b0bfb6328f827e68968",
+      "preview_available": true
+    },
+    {
+      "id": "slide-spotlight-pan",
+      "card_id": "spotlight-sweep-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "label": "slide-spotlight-pan",
+      "description": "贴边泛光横摇：光线先绕左上角竖缘、转角后沿顶边横走，紫光晕染渗入 UI 顶部内侧；聚光头匀速右移显影 + 面板匀速左滑＝相机右摇感",
+      "use": "横向巡礼宽面板/多列看板，逐段点亮功能区",
+      "duration": "单式 3.5–4.5s；A/B 可串联成巡礼段",
+      "recipe_path": "source/references/shots/effects/spotlight-sweep-moves.md",
+      "demo_paths": [
+        "source/demos/effects/spotlight-sweep-moves/SlideSpotlightPan.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/slide-spotlight-pan.mp4",
+      "upstream_preview_url": "./media/slide-spotlight-pan.mp4?v=1790980736875",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/spotlight-sweep-moves.md": "39657d09b90009f4a18190664820b6cfd28d6808cbd65d47f5f5e4a1b43cdf7d",
+        "source/demos/effects/spotlight-sweep-moves/SlideSpotlightPan.tsx": "38b59eedab291378ea42b867220ddb2b8e7d08d0eebf3a26b2c8324e1808c446",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2"
+      },
+      "preview_sha256": "12d02eee405ea829b502a33dc39aba6a1888880abd13c2c309b71b50ee53cca0",
+      "preview_available": true
+    },
+    {
+      "id": "corner-spotlight-reveal",
+      "card_id": "spotlight-sweep-moves",
+      "category": "effects",
+      "tags": [
+        "effects",
+        "ui-entrance",
+        "transition"
+      ],
+      "label": "corner-spotlight-reveal",
+      "description": "角落匀速显影：左上角径向聚光半径严格 linear 扩张，照到显影照不到沉黑，最终全屏亮起——光即转场",
+      "use": "黑场开场点亮界面登场；段落间光转场",
+      "duration": "单式 3.5–4.5s；A/B 可串联成巡礼段",
+      "recipe_path": "source/references/shots/effects/spotlight-sweep-moves.md",
+      "demo_paths": [
+        "source/demos/effects/spotlight-sweep-moves/CornerSpotlightReveal.tsx"
+      ],
+      "dependency_paths": [],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/effects/corner-spotlight-reveal.mp4",
+      "upstream_preview_url": "./media/corner-spotlight-reveal.mp4?v=1790980736876",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/effects/spotlight-sweep-moves.md": "39657d09b90009f4a18190664820b6cfd28d6808cbd65d47f5f5e4a1b43cdf7d",
+        "source/demos/effects/spotlight-sweep-moves/CornerSpotlightReveal.tsx": "8cbc0e970a19d439e45799f1a0efd0a5a95139fb4ba331f2a772945deff9a461"
+      },
+      "preview_sha256": "19a8090e523c413473a4fcc39f8ee16054d9f8d62a8aa90a48eb1de5aeabf927",
+      "preview_available": true
+    }
+  ]
+}

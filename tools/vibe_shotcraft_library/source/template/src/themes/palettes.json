@@ -1,0 +1,74 @@
+{
+  "vintage-kraft": {
+    "page": "#c8aa7d",
+    "surface": "#dfc69e",
+    "field": "#ccb086",
+    "text": "#382a20",
+    "muted": "#6b513b",
+    "accent": "#8b4937",
+    "border": "#ac895e"
+  },
+  "deep-ocean": {
+    "page": "#0b1620",
+    "surface": "#142735",
+    "field": "#1c3443",
+    "text": "#e8f1f5",
+    "muted": "#9fb6c3",
+    "accent": "#7cc8b4",
+    "border": "#304957"
+  },
+  "obsidian-violet": {
+    "page": "#14121b",
+    "surface": "#211d2c",
+    "field": "#2e283d",
+    "text": "#f0edf7",
+    "muted": "#b3a9c5",
+    "accent": "#bca0e8",
+    "border": "#41364f"
+  },
+  "modern-light": {
+    "page": "#f4f7fb",
+    "surface": "#ffffff",
+    "field": "#edf2f8",
+    "text": "#142238",
+    "muted": "#5c6b82",
+    "accent": "#2563eb",
+    "border": "#d8e2ef"
+  },
+  "midnight": {
+    "page": "#090f1a",
+    "surface": "#111c2c",
+    "field": "#162438",
+    "text": "#f0f5ff",
+    "muted": "#9babbe",
+    "accent": "#61d9ef",
+    "border": "#293b52"
+  },
+  "solar-pop": {
+    "page": "#f9faf6",
+    "surface": "#ffffff",
+    "field": "#f0f3e7",
+    "text": "#26342b",
+    "muted": "#637067",
+    "accent": "#527434",
+    "border": "#dde4d5"
+  },
+  "coral-burst": {
+    "page": "#fffffe",
+    "surface": "#ffffff",
+    "field": "#f9f2f3",
+    "text": "#1f1235",
+    "muted": "#716579",
+    "accent": "#d94e59",
+    "border": "#e9dfe6"
+  },
+  "color-play": {
+    "page": "#f7f5fb",
+    "surface": "#ffffff",
+    "field": "#eee9f7",
+    "text": "#282039",
+    "muted": "#726781",
+    "accent": "#7354b5",
+    "border": "#e2dbea"
+  }
+}

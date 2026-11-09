@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shotcraft picker isolated test</title><div id="app"></div>
+<script type="module">
+import {createApp,h,reactive} from 'vue'
+import ShotcraftTemplatePicker from '../src/components/ShotcraftTemplatePicker.vue'
+import '../src/style.css'
+import '../src/prototype/prototype.css'
+import '../src/studio.css'
+const names=['聚光主角','胶片接力','聚合收束','翻牌揭示','立体轮播','叠卡展开','时间线推进','文档逐行','重点划线','四格并行','原图扫描','标题转场']
+const state=reactive({selected:[],disabled:false,duration:13,visible:true,fail:false,meta:null})
+const fixture=window.fixture={state,calls:[],items:names.map((name,index)=>({id:`style-${index}`,name,available:index!==11,preview_available:true,...(window.__gallery?.[index]||{preview_url:`/api/vibe-templates/style-${index}/preview?v=0123456789abcdef`,poster_url:`/api/vibe-templates/style-${index}/poster?v=0123456789abcdef`}),reason:index===11?'测试：本地模板组件缺失':'',capabilities:{content_tags:['person_institution','parallel_points'],material_tags:['single_image','multiple_images'],recommended_use:'介绍人物或机构，围绕真实照片组织内容。',avoid_for:['密集原始图表','多对象精确对照'],hard_constraints:{min_stage_seconds:index===2?2.5:4,max_stage_seconds:index===2?6:null,items:{minimum:1,maximum:4}}}}))}
+window.fetch=(url,options={})=>{fixture.calls.push({url:String(url),method:options.method||'GET'});return Promise.resolve(new Response(JSON.stringify(state.fail?{detail:'模拟目录暂不可用'}:{version:'fixture',items:fixture.items,tag_labels:{content:{person_institution:'人物／机构介绍',parallel_points:'并列要点'},material:{single_image:'单图入画',multiple_images:'多图入画'}}}),{status:state.fail?503:200,headers:{'Content-Type':'application/json'}}))}
+createApp({setup:()=>()=>h('main',{class:'studio live-studio',style:'display:block;width:100%;max-width:1160px;margin:90px auto 40px;padding:18px;box-sizing:border-box'},[h('h2','Vibe 动效 · 本镜试做'),state.visible?h(ShotcraftTemplatePicker,{modelValue:state.selected,disabled:state.disabled,duration:state.duration,'onUpdate:modelValue':value=>state.selected=value,'onSelection-meta':value=>state.meta=value}):null])}).mount('#app')
+</script></html>

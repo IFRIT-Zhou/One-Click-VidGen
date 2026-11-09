@@ -1,0 +1,884 @@
+{
+  "category": "transition",
+  "zh": "转场",
+  "en": "Transitions",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "bottom-push-stack-wipe",
+      "category": "transition",
+      "summary": "底边上推换章——新场景连底色整屏从底边向上推入，把旧场景物理顶出画外，连推数章各配一种饱和底色，内容钉死在各自色底坐标系里随底色走",
+      "recipe_path": "source/references/shots/transition/bottom-push-stack-wipe.md",
+      "style_ids": [
+        "bottom-push-stack-wipe"
+      ]
+    },
+    {
+      "id": "card-flip-reveal",
+      "category": "transition",
+      "summary": "功能卡 3D 翻面揭示——卡片沿 Y 轴翻 180°，正面 UI 翻到侧棱最薄处掠过一道随角度移动的受光，背面揭出大号结论数字，逐张错峰扫过整排",
+      "recipe_path": "source/references/shots/transition/card-flip-reveal.md",
+      "style_ids": [
+        "card-flip-reveal"
+      ]
+    },
+    {
+      "id": "card-flock-tumble",
+      "category": "transition",
+      "summary": "三张 UI 页卡从侧棱薄边 3D 翻飞成阶梯站定（全程清晰、样条连续丝滑），站定后保持慢转不停，快速收束吸入中心，炸出单个湍流烟雾环扩散，巨字横贯收场",
+      "recipe_path": "source/references/shots/transition/card-flock-tumble.md",
+      "style_ids": [
+        "card-flock-tumble"
+      ]
+    },
+    {
+      "id": "circle-match-iris",
+      "category": "transition",
+      "summary": "圆心匹配光圈切——光圈从页面上圆形元素的圆心炸开，圈内新页的圆形图表接在同一个圆上；匹配剪辑给光圈一个语义锚点",
+      "recipe_path": "source/references/shots/transition/circle-match-iris.md",
+      "style_ids": [
+        "circle-match-iris"
+      ]
+    },
+    {
+      "id": "gradient-transition",
+      "category": "transition",
+      "summary": "背景在 linear、radial、conic 三类 CSS 渐变间平滑过渡——角度、色标、中心、半径逐参数插值，段间交叉淡化换类型",
+      "recipe_path": "source/references/shots/transition/gradient-transition.md",
+      "style_ids": [
+        "gradient-transition"
+      ]
+    },
+    {
+      "id": "line-carry-transition",
+      "category": "transition",
+      "summary": "线条接力横移转场——场景 A 的进度条延伸出画，镜头跟线横移，线在移动中拐角围出场景 B 的卡框，全程无剪切",
+      "recipe_path": "source/references/shots/transition/line-carry-transition.md",
+      "style_ids": [
+        "line-carry-transition"
+      ]
+    },
+    {
+      "id": "mosaic-reframe",
+      "category": "transition",
+      "summary": "12 张瓦片在规则网格、feature mosaic、对角瀑布串三种排版间连续变形，位置宽高各自插值、逐片微错峰，段间留 hold",
+      "recipe_path": "source/references/shots/transition/mosaic-reframe.md",
+      "style_ids": [
+        "mosaic-reframe"
+      ]
+    },
+    {
+      "id": "page-turn-transitions",
+      "category": "transition",
+      "summary": "整页体块转场——barn-door-split 对开门裂幕（旧页裂两半滑出、新页迎上）",
+      "recipe_path": "source/references/shots/transition/page-turn-transitions.md",
+      "style_ids": [
+        "barn-door-split"
+      ]
+    },
+    {
+      "id": "print-texture-transitions",
+      "category": "transition",
+      "summary": "印刷质感转场——ink-bleed-reveal 墨渗揭示（须状渗边洇开吃掉旧景）",
+      "recipe_path": "source/references/shots/transition/print-texture-transitions.md",
+      "style_ids": [
+        "ink-bleed-reveal"
+      ]
+    },
+    {
+      "id": "shot-transitions",
+      "category": "transition",
+      "summary": "镜头交棒三式——推进流白、whip-pan 甩镜（急刹款）、mask-wipe 穿窗（纵深款），按能量落差与接缝语义选型",
+      "recipe_path": "source/references/shots/transition/shot-transitions.md",
+      "style_ids": [
+        "flash-cut",
+        "whip-pan",
+        "mask-wipe"
+      ]
+    },
+    {
+      "id": "tear-streak-transitions",
+      "category": "transition",
+      "summary": "撕裂转场——glitch-displace 噪声撕裂（16 横条错位抖动中硬切），数字故障语义的条带级撕裂",
+      "recipe_path": "source/references/shots/transition/tear-streak-transitions.md",
+      "style_ids": [
+        "glitch-displace"
+      ]
+    },
+    {
+      "id": "transition-hidden-cut",
+      "category": "transition",
+      "summary": "藏切点转场三式——前景遮挡隐形切、对撞开屏、暖色漏光，硬切藏进遮挡/撞击/光峰的 1-3 帧里，观众看不见剪刀",
+      "recipe_path": "source/references/shots/transition/transition-hidden-cut.md",
+      "style_ids": [
+        "invisible-cut",
+        "versus-slam",
+        "light-leak-burn"
+      ]
+    },
+    {
+      "id": "transition-travel",
+      "category": "transition",
+      "summary": "穿越式转场——字腔穿越：巨型章节标题的字形就是一扇窗，镜头钻进字形笔画完成换景",
+      "recipe_path": "source/references/shots/transition/transition-travel.md",
+      "style_ids": [
+        "letterform-zoom"
+      ]
+    },
+    {
+      "id": "white-flash-logo-simplify-cut",
+      "category": "transition",
+      "summary": "液态金属质感的彩色词标静置流光，蓄力后从字心炸出一记白闪过曝，曝光回落时同一位置已是扁平版字标——一次闪白完成质感降维",
+      "recipe_path": "source/references/shots/transition/white-flash-logo-simplify-cut.md",
+      "style_ids": [
+        "white-flash-logo-simplify-cut"
+      ]
+    },
+    {
+      "id": "wipe-transitions",
+      "category": "transition",
+      "summary": "几何擦除转场——blinds-slice 百叶窗切条（12 根 3D 叶片错峰翻面成波，波扫过后整页由 A 换成 B）",
+      "recipe_path": "source/references/shots/transition/wipe-transitions.md",
+      "style_ids": [
+        "blinds-slice"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "bottom-push-stack-wipe",
+      "card_id": "bottom-push-stack-wipe",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "bottom-push-stack-wipe",
+      "description": "底边上推换章——新场景连底色整屏从底边向上推入，把旧场景物理顶出画外，连推数章各配一种饱和底色，内容钉死在各自色底坐标系里随底色走",
+      "use": "多章节产品片的换章骨架（每章一个卖点一种底色）；需要\"翻页节奏感\"贯穿全片的段落切换",
+      "duration": "demo 三连推 170f（~5.7s）；单次推入 26f + 章内 hold ~1.2s",
+      "recipe_path": "source/references/shots/transition/bottom-push-stack-wipe.md",
+      "demo_paths": [
+        "source/demos/transition/bottom-push-stack-wipe/BottomPushStackWipe.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/bottom-push-stack-wipe.mp4",
+      "upstream_preview_url": "./media/bottom-push-stack-wipe.mp4?v=1790980736775",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/bottom-push-stack-wipe.md": "070ed6e3f804786579d0d6e1a80fa5ad407824f053c1d327857ccb4a3f2626c8",
+        "source/demos/transition/bottom-push-stack-wipe/BottomPushStackWipe.tsx": "2e5502f1ea0a72674b791ce4d7478426ee502b81927b211ec9b5f92fd6d0a571",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e7602dd56425ab2e46b009f550786b678409acb30ab9935cde25c2225def07aa",
+      "preview_available": true
+    },
+    {
+      "id": "card-flip-reveal",
+      "card_id": "card-flip-reveal",
+      "category": "transition",
+      "tags": [
+        "transition",
+        "data"
+      ],
+      "label": "card-flip-reveal",
+      "description": "功能卡 3D 翻面揭示——卡片沿 Y 轴翻 180°，正面 UI 翻到侧棱最薄处掠过一道随角度移动的受光，背面揭出大号结论数字，逐张错峰扫过整排",
+      "use": "\"功能→成果\"的成对叙事：一排功能卡逐张翻出各自的指标/结论；元素级转场卡",
+      "duration": "全程 150f（~5s，含 hold）；单卡 4f 预备 + 16f 翻 + ~10f 弹簧落定，三卡错峰 12f",
+      "recipe_path": "source/references/shots/transition/card-flip-reveal.md",
+      "demo_paths": [
+        "source/demos/transition/card-flip-reveal/CardFlipReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/card-flip-reveal.mp4",
+      "upstream_preview_url": "./media/card-flip-reveal.mp4?v=1790980736781",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/card-flip-reveal.md": "34ab2b0d738881dd51f34c96f94a82d153f7176e119a3a6f0a0d1fd954df5f5f",
+        "source/demos/transition/card-flip-reveal/CardFlipReveal.tsx": "8f865de560e44f96e950340099dc240c5a351168f9b5ca861ecb88c434a5e5ed",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e5f8531f296fafd09528492c3b3a596522b41e4957205c7e505196ec0f48dfc8",
+      "preview_available": true
+    },
+    {
+      "id": "card-flock-tumble",
+      "card_id": "card-flock-tumble",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "card-flock-tumble",
+      "description": "三张 UI 页卡从侧棱薄边 3D 翻飞成阶梯站定（全程清晰、样条连续丝滑），站定后保持慢转不停，快速收束吸入中心，炸出单个湍流烟雾环扩散，巨字横贯收场",
+      "use": "能量高潮段（功能页群→品牌口号的爆点转场）；霓虹/极光暗场调性；\"多页面能力\"收束成一句话的段落",
+      "duration": "翻飞 ~1.5s + 慢转展示 ~0.3s + 收束 0.3s + 烟环+巨字 ~2s；全段 4.5s",
+      "recipe_path": "source/references/shots/transition/card-flock-tumble.md",
+      "demo_paths": [
+        "source/demos/transition/card-flock-tumble/CardFlockTumble.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/card-flock-tumble.mp4",
+      "upstream_preview_url": "./media/card-flock-tumble.mp4?v=1790980736782",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/card-flock-tumble.md": "85f7e09b5102406dbe7b395435424edaabea6193b98d5359b15360dc956fae09",
+        "source/demos/transition/card-flock-tumble/CardFlockTumble.tsx": "d5f7c6f39a24866fb05fb3011cd514449fd3906105a05b822746f0f4d09a1aeb",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "48120ee4f2702bfe51e7913dba5af4a5cf20308be97e2f21d94a76c1eede52f0",
+      "preview_available": true
+    },
+    {
+      "id": "circle-match-iris",
+      "card_id": "circle-match-iris",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "circle-match-iris",
+      "description": "圆心匹配光圈切——光圈从页面上圆形元素的圆心炸开，圈内新页的圆形图表接在同一个圆上；匹配剪辑给光圈一个语义锚点",
+      "use": "前景有圆形元素（头像/图标/圆钮）、后景有圆形主体（donut 图/圆环进度）的接缝；转场技法卡",
+      "duration": "5.5s / 165f（入场+定睛 40f + 蓄力 7f + 接圆开圈 37f + sweep 58f + 静止 47f）",
+      "recipe_path": "source/references/shots/transition/circle-match-iris.md",
+      "demo_paths": [
+        "source/demos/transition/circle-match-iris/CircleMatchIris.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/circle-match-iris.mp4",
+      "upstream_preview_url": "./media/circle-match-iris.mp4?v=1790980736789",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/circle-match-iris.md": "ca2ac559d8d0359f8067696524dff1cf216fb3d1dfa00e5668faf86943516293",
+        "source/demos/transition/circle-match-iris/CircleMatchIris.tsx": "4ea5457af4a57589edee36239824e78de7ec8cc792c9a3430af3acdb04b3d17c",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "1106cce1fb0dfc43f1d801656554217812d8dec1a233777f2a9e0cd3d1ba2ec2",
+      "preview_available": true
+    },
+    {
+      "id": "gradient-transition",
+      "card_id": "gradient-transition",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "gradient-transition",
+      "description": "背景在 linear、radial、conic 三类 CSS 渐变间平滑过渡——角度、色标、中心、半径逐参数插值，段间交叉淡化换类型",
+      "use": "氛围底/章节底色的连续变奏；给静态排版段落提供\"活着\"的背景层",
+      "duration": "约 6.7s（200f@30fps；linear 0–2.3s · radial 1.9–4.4s · conic 3.9–6.7s）",
+      "recipe_path": "source/references/shots/transition/gradient-transition.md",
+      "demo_paths": [
+        "source/demos/transition/gradient-transition/GradientTransition.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/gradient-transition.mp4",
+      "upstream_preview_url": "./media/gradient-transition.mp4?v=1790980736813",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/gradient-transition.md": "80cbaf73406e51ef49dd5bb0dabffe6df0df4824a38c23953da7684743bdcc00",
+        "source/demos/transition/gradient-transition/GradientTransition.tsx": "0481d8ef6d0e7fdcb1dd4890721b7631b7fb5b1b7ff2cf768f054861db36a6a4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "d3dc3f76236794c073da71f8c75bbb5cb2cd644ce0f9557f0ebbebfea414f923",
+      "preview_available": true
+    },
+    {
+      "id": "line-carry-transition",
+      "card_id": "line-carry-transition",
+      "category": "transition",
+      "tags": [
+        "transition",
+        "camera"
+      ],
+      "label": "line-carry-transition",
+      "description": "线条接力横移转场——场景 A 的进度条延伸出画，镜头跟线横移，线在移动中拐角围出场景 B 的卡框，全程无剪切",
+      "use": "两个有图形亲缘的场景之间（进度条→卡框、下划线→图表轴）；一支片子的招牌转场位，Catch Me If You Can 片头的图形接力",
+      "duration": "~6.3s / 190f（进度条走满 36f + 冲出 10f + 横移 56f + 收框 24f + 框内海报 30f + 静止 24f）",
+      "recipe_path": "source/references/shots/transition/line-carry-transition.md",
+      "demo_paths": [
+        "source/demos/transition/line-carry-transition/LineCarryTransition.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/line-carry-transition.mp4",
+      "upstream_preview_url": "./media/line-carry-transition.mp4?v=1790980736827",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/line-carry-transition.md": "83c7e8a7638cf4cb179a82c0b387849c9fe95981c751af017c18391cf16bbe5a",
+        "source/demos/transition/line-carry-transition/LineCarryTransition.tsx": "bc4c0135279070f08061d236cab03e7716d1c89d7d295e76ea5c848850a50640",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "cab235a911826c2ba7dd50ef0f3b36aecfc7c8e5b46f5e28633e3e15dcfb3932",
+      "preview_available": true
+    },
+    {
+      "id": "mosaic-reframe",
+      "card_id": "mosaic-reframe",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "mosaic-reframe",
+      "description": "12 张瓦片在规则网格、feature mosaic、对角瀑布串三种排版间连续变形，位置宽高各自插值、逐片微错峰，段间留 hold",
+      "use": "\"同一批内容多种看法\"的陈列转场：作品集/模板库/相册产品的布局能力展示",
+      "duration": "约 7.1s（214f@30fps；浮现 0–22f · hold A · A→B 56–92f · hold B · B→C 132–176f · hold C 至 214f）",
+      "recipe_path": "source/references/shots/transition/mosaic-reframe.md",
+      "demo_paths": [
+        "source/demos/transition/mosaic-reframe/MosaicReframe.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/mosaic-reframe.mp4",
+      "upstream_preview_url": "./media/mosaic-reframe.mp4?v=1790980736833",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/mosaic-reframe.md": "110cd5871844c173d519d3730c85757e0e13e8a31232ac15c8647c103da5826f",
+        "source/demos/transition/mosaic-reframe/MosaicReframe.tsx": "bb0bc5a847754500f5f2a7a5c4681f93f5013f017cacc8c65cb33c88385fc227",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "52ea9a41921122adeada596142b53b8e46cc38d131d172cdd58e168b685565d8",
+      "preview_available": true
+    },
+    {
+      "id": "barn-door-split",
+      "card_id": "page-turn-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "barn-door-split",
+      "description": "整页体块转场——barn-door-split 对开门裂幕（旧页裂两半滑出、新页迎上）",
+      "use": "新旧交替：改版前后、方案 A→方案 B",
+      "duration": "单式 150f（前态建立 30–40f + 转场 24–40f + 跟随与收尾 ≥70f），约 5.0s",
+      "recipe_path": "source/references/shots/transition/page-turn-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/page-turn-transitions/BarnDoorSplit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/barn-door-split.mp4",
+      "upstream_preview_url": "./media/barn-door-split.mp4?v=1790980736842",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/page-turn-transitions.md": "389653bbf110a629c5da62af52af6aec8929880765b589df3dbedfe0edd78eb4",
+        "source/demos/transition/page-turn-transitions/BarnDoorSplit.tsx": "b042f3ab98c81ff2b1067952ad4e747466caad1e2a0176b51aaa6d4b7a1e2ee9",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "1d9ec607ae7d77313a0503e491fda7f9ca34e8fad5da0e5cfa643809e58a2d5e",
+      "preview_available": true
+    },
+    {
+      "id": "ink-bleed-reveal",
+      "card_id": "print-texture-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "ink-bleed-reveal 墨渗揭示",
+      "description": "印刷质感转场——ink-bleed-reveal 墨渗揭示（须状渗边洇开吃掉旧景）",
+      "use": "旧景→新景替换；书写感、叙事调性",
+      "duration": "4–4.5s（洇开段 55–80f + 静止收尾 ≥30f）",
+      "recipe_path": "source/references/shots/transition/print-texture-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/print-texture-transitions/InkBleedReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/ink-bleed-reveal.mp4",
+      "upstream_preview_url": "./media/ink-bleed-reveal.mp4?v=1790980736849",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/print-texture-transitions.md": "a805d29ad25b142d28c4cf0041947c8f17ff4f27300c48abe9fd7bd57adf2c62",
+        "source/demos/transition/print-texture-transitions/InkBleedReveal.tsx": "a77edfadac12bbb1c02f726f056e62364d0d84c1aced13a644571490a0c4babd",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "df9749dc9d72c3be792167d2934c19e58aa7c645528c06f64a77c8d0e13976e7",
+      "preview_available": true
+    },
+    {
+      "id": "flash-cut",
+      "card_id": "shot-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "推进流白 flash-cut",
+      "description": "前镜相机推进，切点跨骑一层白闪盖住换页",
+      "use": "交互穿透、能量相近的页面→页面（库内已有，收编）",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/shot-transitions.md",
+      "demo_paths": [
+        "source/assets/lib/FlashCut.tsx",
+        "source/template/src/aifl/Main.tsx"
+      ],
+      "dependency_paths": [
+        "source/template/src/aifl/Caption.tsx",
+        "source/template/src/aifl/DigitRoll.tsx",
+        "source/template/src/aifl/FlashCut.tsx",
+        "source/template/src/aifl/PaperTitleCard.tsx",
+        "source/template/src/aifl/live-layout.json",
+        "source/template/src/aifl/live/PageCam.tsx",
+        "source/template/src/aifl/live/SceneDetail.tsx",
+        "source/template/src/aifl/live/SceneFlyIn.tsx",
+        "source/template/src/aifl/live/SceneOpen.tsx",
+        "source/template/src/aifl/live/SceneOutroLive.tsx",
+        "source/template/src/aifl/live/ScenePapers.tsx",
+        "source/template/src/aifl/live/SceneWbr.tsx",
+        "source/template/src/themes/palette-assets.json",
+        "source/template/src/themes/palette-assets.ts",
+        "source/template/src/themes/palettes.json",
+        "source/template/src/themes/visual-theme.tsx"
+      ],
+      "mapping_evidence": "recipe_explicit_A_variant",
+      "preview_path": "previews/transition/flash-cut.mp4",
+      "upstream_preview_url": "./media/flash-cut.mp4?v=1784437314733",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/shot-transitions.md": "8d5b79d8d20ab09ab76b25a75ba08c80bae41486728807d440bf5de3b765e314",
+        "source/assets/lib/FlashCut.tsx": "c21d48223ed5d99cfafca77836c7055976e83a6589e73a4b0d0bdd8f1ed29e79",
+        "source/template/src/aifl/Main.tsx": "e74e9694cd4305955725deaf342d463a96a35dcf18508fc4ce213f4bf4e28e6a",
+        "source/template/src/aifl/Caption.tsx": "116a808438f6c55be5f4001cc96b16d150b2d10368f8b199c060cf859e341209",
+        "source/template/src/aifl/DigitRoll.tsx": "38f224b78269e68b11c4780f340d300cc1ccd3cbaabdd7273a53dfa0a4c5dfc8",
+        "source/template/src/aifl/FlashCut.tsx": "3705429f1bde07e5ce1abd9580b793f6ad9590ba3660f54f4c8f28511ff9966f",
+        "source/template/src/aifl/PaperTitleCard.tsx": "1ed52c1890fdad5c2dece1b002cae2bdfdee4594307f2bd2633ec36f13368851",
+        "source/template/src/aifl/live-layout.json": "2cf16d2ead8ec9cdeef5e93cb8861998d62f8a9d3b6254a2653ffde248654aab",
+        "source/template/src/aifl/live/PageCam.tsx": "2ed16b800cefcaa3d3c709e58952345c54c0b254ca91687587f02c7ea0670ec7",
+        "source/template/src/aifl/live/SceneDetail.tsx": "240de2143a64e790a2f02640cf0c092f31d783e9789952676347c6882d6c27fa",
+        "source/template/src/aifl/live/SceneFlyIn.tsx": "33b36bbda193390751eff39a2fa740d077beddff05325181b35f48975346cc7a",
+        "source/template/src/aifl/live/SceneOpen.tsx": "1e968d32b5dac1c56ad23a84c74d1a74db7211dc1deb150a7e37a884b644c75e",
+        "source/template/src/aifl/live/SceneOutroLive.tsx": "747d732f824fde1d235091f58ce9bb62968bdc0c4e3dc7f34c2ef3d9953f5896",
+        "source/template/src/aifl/live/ScenePapers.tsx": "800255af90fad38e5cc48b839f3be4a1870f52d68701557e118adc396420a325",
+        "source/template/src/aifl/live/SceneWbr.tsx": "27d42c0b5f0c84a016be706447f806fa1d38cdf328d97e18fc14e8dadfa8aeb8",
+        "source/template/src/themes/palette-assets.json": "880e3ea5ec859bcbc0f14784efc930208af992ce8855298344ff52bcefa31169",
+        "source/template/src/themes/palette-assets.ts": "06f4608decb9c66af732b6f3b2cfc2826e8cd093c6104b4e5641f4b0cbe66a93",
+        "source/template/src/themes/palettes.json": "feaec5dd69247e833d506782131b16dab6a4249c6de1f76b25f88813fa164c66",
+        "source/template/src/themes/visual-theme.tsx": "9350fe5e6ccb1685c9de997fd5ad1342b81ed2f499c863bbe290aa46355e12c2"
+      },
+      "preview_sha256": "cbb2cab300eb42455d8035e086033fecef9065f97e7cec4da9b00c7d041f83f2",
+      "preview_available": true
+    },
+    {
+      "id": "whip-pan",
+      "card_id": "shot-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "whip-pan 甩镜",
+      "description": "机位一拍横甩到下一场景，中段运动模糊糊到不可辨，借糊帧换景",
+      "use": "快节奏功能段连打（高能量→高能量的轻快款，比 B 式省帧提速）",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/shot-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/shot-transitions/WhipBrakeReal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/whip-pan.mp4",
+      "upstream_preview_url": "./media/whip-pan.mp4?v=1790980736865",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/shot-transitions.md": "8d5b79d8d20ab09ab76b25a75ba08c80bae41486728807d440bf5de3b765e314",
+        "source/demos/transition/shot-transitions/WhipBrakeReal.tsx": "9544f3decc2402e90b7992a7f99c3ddf999bce7d9faf87a15f14d08644a33123",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "633f15b339a7c8c86e9d3680c79ea1ec42a87334259fcf18443c6175a5417a37",
+      "preview_available": true
+    },
+    {
+      "id": "mask-wipe",
+      "card_id": "shot-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "mask-wipe 穿窗",
+      "description": "页面内真实元素（卡片）放大成全屏窗口，新场景从窗内长出接管",
+      "use": "语义化接缝：功能总览→该功能详情（\"点开这张卡进入它的世界\"）",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/shot-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/shot-transitions/PortalWipeV2.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/mask-wipe.mp4",
+      "upstream_preview_url": "./media/mask-wipe.mp4?v=1790980736866",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/shot-transitions.md": "8d5b79d8d20ab09ab76b25a75ba08c80bae41486728807d440bf5de3b765e314",
+        "source/demos/transition/shot-transitions/PortalWipeV2.tsx": "cde13bd5cbb445985dbc97c537a3f81c13d4a69d400b2d8e46fa7a1f6576fdef",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "db40dd6bddef0b2dcc75816b557417e6f7f59a3d88e7c677c4ae31c39544ff8e",
+      "preview_available": true
+    },
+    {
+      "id": "glitch-displace",
+      "card_id": "tear-streak-transitions",
+      "category": "transition",
+      "tags": [
+        "transition",
+        "effects"
+      ],
+      "label": "glitch-displace",
+      "description": "撕裂转场——glitch-displace 噪声撕裂（16 横条错位抖动中硬切），数字故障语义的条带级撕裂",
+      "use": "故障/断裂语义；高潮前的暴力换页",
+      "duration": "前态 ≥40f + 撕裂 16–24f + 收尾 ≥40f，约 4.5s（135f）",
+      "recipe_path": "source/references/shots/transition/tear-streak-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/tear-streak-transitions/GlitchDisplace.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/glitch-displace.mp4",
+      "upstream_preview_url": "./media/glitch-displace.mp4?v=1790980736879",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/tear-streak-transitions.md": "bf6f373e543935fb8145936a8bbaeb928f7d795175e412d78870eb1449a831d4",
+        "source/demos/transition/tear-streak-transitions/GlitchDisplace.tsx": "b3b21babba48440ecb5b113857e3564572bb4b2130d4a8ed814c6b82d2b886c3",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4aed81aca931e95787a21cd04b7f9ad6e86db372dfb19c334ad05eedede8a89f",
+      "preview_available": true
+    },
+    {
+      "id": "invisible-cut",
+      "card_id": "transition-hidden-cut",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "invisible-cut 前景遮挡隐形切",
+      "description": "一张超画幅卡片带重运动模糊贴脸横扫，糊满全屏的遮挡帧内背景 A→B 硬切，卡片飞出观众以为还是同一镜",
+      "use": "想让换景完全无痕的页面→页面；伪\"一条 take\"的主力款",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/transition-hidden-cut.md",
+      "demo_paths": [
+        "source/demos/transition/transition-hidden-cut/InvisibleCut.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/invisible-cut.mp4",
+      "upstream_preview_url": "./media/invisible-cut.mp4?v=1790980736890",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/transition-hidden-cut.md": "5ba4e973caa1fcf657cd9b65b23960fe93d952f100511ec5f05eaa7256479249",
+        "source/demos/transition/transition-hidden-cut/InvisibleCut.tsx": "f87a3b32c1d279891a739ba24f873380947f8e63036c200230b0b308104bcb4c",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "8c681e8af30947398f84f434efaec6d4500f91e5d45ee609265a5450008c8699",
+      "preview_available": true
+    },
+    {
+      "id": "versus-slam",
+      "card_id": "transition-hidden-cut",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "versus-slam 对撞开屏",
+      "description": "左右两半屏带斜切边从画外加速对冲撞合，撞击帧白闪+震屏+VS 盖章，切点就是撞击本身",
+      "use": "对比/对阵语义的开屏或章节头（新旧方案、双产品、before/after）",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/transition-hidden-cut.md",
+      "demo_paths": [
+        "source/demos/transition/transition-hidden-cut/VersusSlam.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/versus-slam.mp4",
+      "upstream_preview_url": "./media/versus-slam.mp4?v=1790980736891",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/transition-hidden-cut.md": "5ba4e973caa1fcf657cd9b65b23960fe93d952f100511ec5f05eaa7256479249",
+        "source/demos/transition/transition-hidden-cut/VersusSlam.tsx": "70cbdded004034ab63408de5b7b70d642067fe4a7f1fe5b1151a0081d57b1249",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "6317934df2424a65e628af87f5d68c409c4920b6cb8ffeb753d4eecc2d69988e",
+      "preview_available": true
+    },
+    {
+      "id": "light-leak-burn",
+      "card_id": "transition-hidden-cut",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "light-leak-burn 琥珀漏光",
+      "description": "三团琥珀柔光沿对角线斜扫，光峰帧吞掉旧页约七成时硬切新页，光退散时新页已就位",
+      "use": "想要暖调/胶片味的章节过渡；比白闪柔、有方向、有温度",
+      "duration": "n/a（技法卡；各式占用帧数见参数表，从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/transition-hidden-cut.md",
+      "demo_paths": [
+        "source/demos/transition/transition-hidden-cut/LightLeakBurn.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/light-leak-burn.mp4",
+      "upstream_preview_url": "./media/light-leak-burn.mp4?v=1790980736892",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/transition-hidden-cut.md": "5ba4e973caa1fcf657cd9b65b23960fe93d952f100511ec5f05eaa7256479249",
+        "source/demos/transition/transition-hidden-cut/LightLeakBurn.tsx": "fe1d3dcbcf0be3dbbe2a1f7fee628219d5533dcb3da6ff7e5a16d78365297af4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "feee98f61b72fec60f0ee7f9d57870052df2ca38df8746af5122f8b575f75036",
+      "preview_available": true
+    },
+    {
+      "id": "letterform-zoom",
+      "card_id": "transition-travel",
+      "category": "transition",
+      "tags": [
+        "transition",
+        "camera"
+      ],
+      "label": "字腔穿越 letterform-zoom",
+      "description": "穿越式转场——字腔穿越：巨型章节标题的字形就是一扇窗，镜头钻进字形笔画完成换景",
+      "use": "章节标题→正文；替代 D 式黑场字卡的高能量款",
+      "duration": "n/a（技法卡；demo 150f，主推动作段 52f，前后 hold 另计，帧数从相邻镜头预算里划）",
+      "recipe_path": "source/references/shots/transition/transition-travel.md",
+      "demo_paths": [
+        "source/demos/transition/transition-travel/LetterformZoom.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/letterform-zoom.mp4",
+      "upstream_preview_url": "./media/letterform-zoom.mp4?v=1790980736893",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/transition-travel.md": "0ee4fedf950bbda436a9491bcfe581233cac333dc29e68655edaba52c6b3eabe",
+        "source/demos/transition/transition-travel/LetterformZoom.tsx": "6aeade1667107bc2ee15c77dd2d5c7bf4377dc54e1816012806ceebfc4166a19",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "5b1169368f0bb8baf7b9f3a17b672eb47a4e204c19aba0eeb3d6b1a86dc3fabd",
+      "preview_available": true
+    },
+    {
+      "id": "white-flash-logo-simplify-cut",
+      "card_id": "white-flash-logo-simplify-cut",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "white-flash-logo-simplify-cut",
+      "description": "液态金属质感的彩色词标静置流光，蓄力后从字心炸出一记白闪过曝，曝光回落时同一位置已是扁平版字标——一次闪白完成质感降维",
+      "use": "品牌段落收束（华丽演绎→干净定妆）；情绪从炫技切换到正式宣告的转场拍",
+      "duration": "约 4s（120f@30fps；演出 0–34f · 蓄力 34–46f · 冲白 44–54f · 曝光回落 54–76f · 锁定 72–96f · hold 至 120f）",
+      "recipe_path": "source/references/shots/transition/white-flash-logo-simplify-cut.md",
+      "demo_paths": [
+        "source/demos/transition/white-flash-logo-simplify-cut/WhiteFlashLogoSimplifyCut.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/transition/white-flash-logo-simplify-cut.mp4",
+      "upstream_preview_url": "./media/white-flash-logo-simplify-cut.mp4?v=1790980736910",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/white-flash-logo-simplify-cut.md": "a5f8a0aadfd16006e6109bfbff48025319f423c4c66ea5473833609d88819ba9",
+        "source/demos/transition/white-flash-logo-simplify-cut/WhiteFlashLogoSimplifyCut.tsx": "d128b08190ab8ea2cc91f8d1a8801556ca3cff5232eee7717fa54b5744be4521",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "f6dd25bb4b6edc988a2d263a5df08cc1c33fb6b9ca5afd72a825b124e5940ef0",
+      "preview_available": true
+    },
+    {
+      "id": "blinds-slice",
+      "card_id": "wipe-transitions",
+      "category": "transition",
+      "tags": [
+        "transition"
+      ],
+      "label": "blinds-slice",
+      "description": "几何擦除转场——blinds-slice 百叶窗切条（12 根 3D 叶片错峰翻面成波，波扫过后整页由 A 换成 B）",
+      "use": "翻页/推进语义；横向阅读动线页面",
+      "duration": "前态 ≥20f + 擦除 ~56f + 收尾 ≥40f，约 4.4s（132f）",
+      "recipe_path": "source/references/shots/transition/wipe-transitions.md",
+      "demo_paths": [
+        "source/demos/transition/wipe-transitions/BlindsSlice.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/transition/blinds-slice.mp4",
+      "upstream_preview_url": "./media/blinds-slice.mp4?v=1790980736911",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/transition/wipe-transitions.md": "ec0338aaff0208789495ba72b2f70e6031092b8bb47c2d3061f742cfe99e1702",
+        "source/demos/transition/wipe-transitions/BlindsSlice.tsx": "88683b602f5d149024b5231da5b8e28df33fb7b325d7409fbd5a8ad4bec2afb3",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "8ed70c8dc78b0b63a04ab172299c98787982c88b888d395100ae0ff398f48b24",
+      "preview_available": true
+    }
+  ]
+}

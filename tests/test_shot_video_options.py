@@ -71,11 +71,13 @@ class ShotVideoOptionsTests(unittest.TestCase):
         self.assertEqual(right['video_status'], 'pending')
 
     def test_bulk_confirmation_real_audit_and_atomic_failure(self):
-        self.record.update(status='image_review', references=[], shots=[{
+        self.record.update(status='image_review', references=[],
+            redraw_references=[{'id': 'img_uploaded', 'file': 'reference.png'}], shots=[{
             'id': 'a', 'kind': 'video', 'image_status': 'completed', 'image': 'a.jpg',
             'video_status': 'pending', 'intent': '表达', 'image_prompt': '核心图',
             'action': '动作', 'video_prompt': '图1展示动作', 'duration': 6,
-            'generation_duration': 6, 'design_needs_review': True}])
+            'generation_duration': 6, 'design_needs_review': True,
+            'reference_ids': ['img_uploaded']}])
         with patch.object(video.studio.scene_references, 'enabled', return_value=False):
             self.record['shots'][0]['action'] = ''
             with self.assertRaises(HTTPException):
@@ -380,7 +382,8 @@ class ShotVideoOptionsTests(unittest.TestCase):
 
     def test_all_static_images_can_confirm_and_export(self):
         from backend.app import video_export
-        self.record.update(status='image_review', shots=[{'id': 'a', 'kind': 'static', 'image_status': 'completed'}])
+        Image.new('RGB', (16, 16), 'navy').save(self.path / 'core.png')
+        self.record.update(status='image_review', shots=[{'id': 'a', 'kind': 'static', 'image_status': 'completed', 'image': 'core.png'}])
         with patch.object(video.studio.scene_references, 'enabled', return_value=False):
             video.studio.confirm_storyboard_images('test', video.studio.StoryboardConfirmation(revision=1), None)
         self.assertEqual(self.record['status'], 'video_review')

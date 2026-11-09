@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.02.2",
-  "release_order": 2026110202,
-  "display_version": "2026.11.02 集群计费与邀请奖励",
+  "release_id": "2026.11.09.1",
+  "release_order": 2026110901,
+  "display_version": "2026.11.09 Vibe 动效与制作修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.02.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.09.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "H3 集群读取云端价格，批量任务锁定费率并按档结算；同步邀请奖励积分和 ICAN 渠道提示。",
-  "content_fingerprint": "6220600e40eec890b18ffb342d7d68bf4e3b3cbe7b84be0768d0bc1bcabcb41b"
+  "notes": "新增 Vibe 三种动效制作方式、12 款模板预览与原图分层自主设计；支持测量辅助、底图证据核查和手动续接。同步独立 RMBG、分镜拆分及 H3 修复，保留云端计费与邀请奖励更新。",
+  "content_fingerprint": "c9dbaeb563e4770bb815de16146e80a034198c7110d8e84d280bc0c13cbe8dc9"
 }

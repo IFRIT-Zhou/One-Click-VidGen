@@ -1,0 +1,999 @@
+{
+  "category": "ui-entrance",
+  "zh": "界面登场与陈列",
+  "en": "UI Entrance & Showcase",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "avatar-bracket-carousel",
+      "category": "ui-entrance",
+      "summary": "\"Your ___ agent\" 填空排版，四角对焦框钉在句中不动，头像队列在框内垂直 spring 轮换三次，入框放大清晰、出框按距离缩小淡化模糊，角色标签同步更换，切换瞬间对焦框呼吸 7%",
+      "recipe_path": "source/references/shots/ui-entrance/avatar-bracket-carousel.md",
+      "style_ids": [
+        "avatar-bracket-carousel"
+      ]
+    },
+    {
+      "id": "bezier-source-converge-merge",
+      "category": "ui-entrance",
+      "summary": "左侧四个来源节点各有一条细贝塞尔曲线连向右侧同一汇聚点，曲线先错峰由左向右 draw-on，节点沿自己的曲线滑向汇聚点并三段式加速缩小到消失，强调色数据包全程沿路径滑行，吞并完成后曲线从左端反向擦除只留品牌标志（demo：白瓷圆片托 video-shotcraft 镜刻标志）",
+      "recipe_path": "source/references/shots/ui-entrance/bezier-source-converge-merge.md",
+      "style_ids": [
+        "bezier-source-converge-merge"
+      ]
+    },
+    {
+      "id": "card-stack",
+      "category": "ui-entrance",
+      "summary": "一组模板卡（demo 9 张）从屏幕下方逐张 spring 弹入、越落越快叠成一摞，全员落位后整摞一次性展成扇面——每张按序号偏转 6.5°、横移 138px，最后中心卡被抽出",
+      "recipe_path": "source/references/shots/ui-entrance/card-stack.md",
+      "style_ids": [
+        "card-stack"
+      ]
+    },
+    {
+      "id": "carousel-3d",
+      "category": "ui-entrance",
+      "summary": "8 张卡排成圆环整环自转一圈（匀速底 + 每 45° 一次停靠的分步），每卡只绕 Y 公转、自身 billboard 朝外，正反两层同向贴图配 backface-visibility:hidden 保证任何时刻都正立不倒置，正前方卡被点亮、环下字幕随之换字，相机全程钉在浅俯角",
+      "recipe_path": "source/references/shots/ui-entrance/carousel-3d.md",
+      "style_ids": [
+        "carousel-3d"
+      ]
+    },
+    {
+      "id": "cloner-depth-echo",
+      "category": "ui-entrance",
+      "summary": "克隆纵队——主卡瞬间\"复印\"出 7 个半透明分身沿斜向纵深排开成队，停一拍后全体加速吸回本体合一+弹跳",
+      "recipe_path": "source/references/shots/ui-entrance/cloner-depth-echo.md",
+      "style_ids": [
+        "cloner-depth-echo"
+      ]
+    },
+    {
+      "id": "deck-deal-flyin",
+      "category": "ui-entrance",
+      "summary": "暗色石墨桌面上的实体牌堆特写环绕开局，灯从牌堆亮到旁边的页面板，一摞卡像发牌一样硬加速甩进网格，相机追着发牌升起后仰、落在整块满板的跑道式俯瞰上定格",
+      "recipe_path": "source/references/shots/ui-entrance/deck-deal-flyin.md",
+      "style_ids": [
+        "deck-deal-flyin"
+      ]
+    },
+    {
+      "id": "doc-park-left-pill-deal",
+      "category": "ui-entrance",
+      "summary": "文档不淡出而是向左滑出只露约 35% 宽并微缩到 0.92，右侧按旁白节奏慢速发牌三张白底描边药丸（outBack 弹入），每张落定后其下方字幕逐词加深、下一张到来前整句淡出，左侧文档全程极缓慢自动滚动保持\"正在被读\"",
+      "recipe_path": "source/references/shots/ui-entrance/doc-park-left-pill-deal.md",
+      "style_ids": [
+        "doc-park-left-pill-deal"
+      ]
+    },
+    {
+      "id": "draw-svg-trace",
+      "category": "ui-entrance",
+      "summary": "描边生长圈注——一条带笔头的墨线沿元素轮廓跑一圈把它\"画\"出来，闭合瞬间闪黑交棒、内容淡入；同套路可给标题画下划线",
+      "recipe_path": "source/references/shots/ui-entrance/draw-svg-trace.md",
+      "style_ids": [
+        "draw-svg-trace"
+      ]
+    },
+    {
+      "id": "element-body-moves",
+      "category": "ui-entrance",
+      "summary": "元素身体感——contact-shadow-lift 接触阴影离面抬升：卡抬起时桌上的阴影同步放大变淡，纸片离桌被阴影证明",
+      "recipe_path": "source/references/shots/ui-entrance/element-body-moves.md",
+      "style_ids": [
+        "contact-shadow-lift"
+      ]
+    },
+    {
+      "id": "integration-hub-map",
+      "category": "ui-entrance",
+      "summary": "旧页面一次性快翻 180°（侧棱瞬间亮闪）落成新中枢页，五个集成 app 图标同帧弹现、随即五条彩虹光管同帧齐连，光管内输送脉冲持续流动——\"翻开新一页，生态一齐接入\"",
+      "recipe_path": "source/references/shots/ui-entrance/integration-hub-map.md",
+      "style_ids": [
+        "integration-hub-map"
+      ]
+    },
+    {
+      "id": "list-reveal",
+      "category": "ui-entrance",
+      "summary": "垂直菜单 6 项按 10f 的间隔依次 scale 找位、软 back 轻微过冲落定，同时整个列表容器全程匀速上移——逐项入场与整体漂移是两层不相干的运动",
+      "recipe_path": "source/references/shots/ui-entrance/list-reveal.md",
+      "style_ids": [
+        "list-reveal"
+      ]
+    },
+    {
+      "id": "list-stack-press",
+      "category": "ui-entrance",
+      "summary": "列表卡从画面底部逐张飞上摞起，每张落地压弹整摞、计数器同步跳一格",
+      "recipe_path": "source/references/shots/ui-entrance/list-stack-press.md",
+      "style_ids": [
+        "list-stack-press"
+      ]
+    },
+    {
+      "id": "neon-frame-forerun",
+      "category": "ui-entrance",
+      "summary": "强透视直角霓虹框自左缘两头奔画先行成型，页面在框内由暗转亮，同时框内组件/文字从 3D 上空带同形软影错峰贴落、随页面点亮同步完成贴合，背景霓虹群（demo 为同形框纵深回声隧道）终段熄灭让位",
+      "recipe_path": "source/references/shots/ui-entrance/neon-frame-forerun.md",
+      "style_ids": [
+        "neon-frame-forerun"
+      ]
+    },
+    {
+      "id": "neon-frame-orbit-drop",
+      "category": "ui-entrance",
+      "summary": "霓虹框先行描框后，镜头绕页面左→右弧线旋转，页面全部组件/文字**同帧**从空中往下贴合（同形软影同步收敛）——整体登场式的框内安放",
+      "recipe_path": "source/references/shots/ui-entrance/neon-frame-orbit-drop.md",
+      "style_ids": [
+        "neon-frame-orbit-drop"
+      ]
+    },
+    {
+      "id": "page-waterfall-wall",
+      "category": "ui-entrance",
+      "summary": "页面瀑布墙——真实页面截图切成 3–4 列在 3D 后仰墙面上差速反向无限滚动，视差 + 镜头缓推做\"内容多到流不完\"的一览",
+      "recipe_path": "source/references/shots/ui-entrance/page-waterfall-wall.md",
+      "style_ids": [
+        "page-waterfall-wall"
+      ]
+    },
+    {
+      "id": "product-card-progressive-assemble",
+      "category": "ui-entrance",
+      "summary": "详情卡像被逐字段抓取般自建——一枚\"填充光标\"领先跳格，图→标题→分类 pill 依次 pop→原价出现后被划线降级、强调色新价 spring 跳出→正文逐行揭示且高亮块由左向右刷过→色卡点亮→按钮填满，整卡全程极慢 scale 前推",
+      "recipe_path": "source/references/shots/ui-entrance/product-card-progressive-assemble.md",
+      "style_ids": [
+        "product-card-progressive-assemble"
+      ]
+    },
+    {
+      "id": "radial-wave",
+      "category": "ui-entrance",
+      "summary": "17×9 圆点阵列按到波源的欧氏距离错峰点亮，每点 scale 过冲到 1.5 再落回常亮，第一道波扫完后第二道亮蓝脉冲从外圈反向收拢回中心",
+      "recipe_path": "source/references/shots/ui-entrance/radial-wave.md",
+      "style_ids": [
+        "radial-wave"
+      ]
+    },
+    {
+      "id": "research-card-stack-scroll",
+      "category": "ui-entrance",
+      "summary": "深色论文卡每 12 帧一张沿右下轴线飞入中心叠压，落位带 1 帧压缩，只有最上一张全清晰渲染标题+作者+摘要，下方卡按堆积深度递增模糊变暗只露标题条，背景横向 grid 同步下移做速度参照",
+      "recipe_path": "source/references/shots/ui-entrance/research-card-stack-scroll.md",
+      "style_ids": [
+        "research-card-stack-scroll"
+      ]
+    },
+    {
+      "id": "row-embed",
+      "category": "ui-entrance",
+      "summary": "内容行像卡片一样从空中降下、rotateX 收平、嵌入瞬间底边亮一道强调色的缝",
+      "recipe_path": "source/references/shots/ui-entrance/row-embed.md",
+      "style_ids": [
+        "row-embed"
+      ]
+    },
+    {
+      "id": "value-stagger-gradient",
+      "category": "ui-entrance",
+      "summary": "16 根柱入场时 delay 是时间错峰，同时高度/色相/位移/模糊四个属性各自铺成从首到末的数值梯度；第二拍把错峰原点换成中心，脉冲幅度以中心为最大重新铺开",
+      "recipe_path": "source/references/shots/ui-entrance/value-stagger-gradient.md",
+      "style_ids": [
+        "value-stagger-gradient"
+      ]
+    },
+    {
+      "id": "wall-reveal-moves",
+      "category": "ui-entrance",
+      "summary": "整墙批量入场两式——bento 逐格点亮、蓝图描线成形，全部原位显形不位移，与 deck-deal-flyin 的飞入位移型互补成品类矩阵",
+      "recipe_path": "source/references/shots/ui-entrance/wall-reveal-moves.md",
+      "style_ids": [
+        "bento-light-up",
+        "wireframe-draw-on"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "avatar-bracket-carousel",
+      "card_id": "avatar-bracket-carousel",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "avatar-bracket-carousel",
+      "description": "\"Your ___ agent\" 填空排版，四角对焦框钉在句中不动，头像队列在框内垂直 spring 轮换三次，入框放大清晰、出框按距离缩小淡化模糊，角色标签同步更换，切换瞬间对焦框呼吸 7%",
+      "use": "\"一个位置，多种角色\"的能力枚举；团队/身份/预设/人格类产品的核心一句话镜头",
+      "duration": "约 5.2s（156f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/avatar-bracket-carousel.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/avatar-bracket-carousel/AvatarBracketCarousel.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/avatar-bracket-carousel.mp4",
+      "upstream_preview_url": "./media/avatar-bracket-carousel.mp4?v=1790980736768",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/avatar-bracket-carousel.md": "410c66547ca1a7d69f87786d241e89208e289f0d11edb34f1fec462026814a9d",
+        "source/demos/ui-entrance/avatar-bracket-carousel/AvatarBracketCarousel.tsx": "b22ce4f7d1d57f78ec367ea88a0a10780579c4e93c9f7142fbef0a01fb9eb000",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "9b5280f1be3170b8eab05dee6c3a87ae057e559e23ca1a88859e6fac579dce2d",
+      "preview_available": true
+    },
+    {
+      "id": "bezier-source-converge-merge",
+      "card_id": "bezier-source-converge-merge",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "bezier-source-converge-merge",
+      "description": "左侧四个来源节点各有一条细贝塞尔曲线连向右侧同一汇聚点，曲线先错峰由左向右 draw-on，节点沿自己的曲线滑向汇聚点并三段式加速缩小到消失，强调色数据包全程沿路径滑行，吞并完成后曲线从左端反向擦除只留品牌标志（demo：白瓷圆片托 video-shotcraft 镜刻标志）",
+      "use": "\"多源整合/统一接入/数据汇聚\"的核心机制镜头；集成、聚合、单一入口类产品的说明段落",
+      "duration": "约 5.6s（168f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/bezier-source-converge-merge.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/bezier-source-converge-merge/BezierSourceConvergeMerge.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/bezier-source-converge-merge.mp4",
+      "upstream_preview_url": "./media/bezier-source-converge-merge.mp4?v=1790980736773",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/bezier-source-converge-merge.md": "2ab3e1993b49803c3089018c0802bae413b479f26d26c11cae542a8efe252e85",
+        "source/demos/ui-entrance/bezier-source-converge-merge/BezierSourceConvergeMerge.tsx": "016d60301b2592aab161e1fbd22ee536653c1ef63bd06a12e27357226771434c",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4c2e6e4f946d806aebdc59ff63ddca0fa7ff2f4bb8151be761e8703233ff91a7",
+      "preview_available": true
+    },
+    {
+      "id": "card-stack",
+      "card_id": "card-stack",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "card-stack",
+      "description": "一组模板卡（demo 9 张）从屏幕下方逐张 spring 弹入、越落越快叠成一摞，全员落位后整摞一次性展成扇面——每张按序号偏转 6.5°、横移 138px，最后中心卡被抽出",
+      "use": "需要交代\"我们有一组东西\"的产品段落；卡片墙/模板库/方案列表的建立镜头，也能当 logo 前的一拍蓄势",
+      "duration": "约 5.0s（150f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/card-stack.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/card-stack/CardStack.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/card-stack.mp4",
+      "upstream_preview_url": "./media/card-stack.mp4?v=1790980736783",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/card-stack.md": "c656aafdd705ce2cad029e6a8a26f997837bc84a6f36dba077a304ebebf10095",
+        "source/demos/ui-entrance/card-stack/CardStack.tsx": "e3d720d6990ca04183906d78c19df7ec5f8f8284021aee50307131457c15df56",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "ca919db2fd071c17eb7e64d73e9ebf14ba5d26731c557f7cf1474d50deb454e1",
+      "preview_available": true
+    },
+    {
+      "id": "carousel-3d",
+      "card_id": "carousel-3d",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "carousel-3d",
+      "description": "8 张卡排成圆环整环自转一圈（匀速底 + 每 45° 一次停靠的分步），每卡只绕 Y 公转、自身 billboard 朝外，正反两层同向贴图配 backface-visibility:hidden 保证任何时刻都正立不倒置，正前方卡被点亮、环下字幕随之换字，相机全程钉在浅俯角",
+      "use": "作品集/模板库/集成清单的循环展示；需要无缝 loop 的背景拍或落地页 hero",
+      "duration": "约 5.6s（168f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/carousel-3d.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/carousel-3d/Carousel3D.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/carousel-3d.mp4",
+      "upstream_preview_url": "./media/carousel-3d.mp4?v=1790980736784",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/carousel-3d.md": "30346eb0d0521e64f61d7b1c8d371a61d94a6c3e7f8942bed1718748a1ed47a6",
+        "source/demos/ui-entrance/carousel-3d/Carousel3D.tsx": "64bcd4d730abd63abff1906223f2b858965c395f95f04f794a2e612021ee338e",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "660e43aa5d40b22735e8761a97966063809d7f02653001de492de3bfa71bc2d7",
+      "preview_available": true
+    },
+    {
+      "id": "cloner-depth-echo",
+      "card_id": "cloner-depth-echo",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "cloner-depth-echo",
+      "description": "克隆纵队——主卡瞬间\"复印\"出 7 个半透明分身沿斜向纵深排开成队，停一拍后全体加速吸回本体合一+弹跳",
+      "use": "\"多副本/多租户/规模感/批量处理\"卖点；一镜讲完\"一个=很多\"",
+      "duration": "138f（约 4.6s）",
+      "recipe_path": "source/references/shots/ui-entrance/cloner-depth-echo.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/cloner-depth-echo/ClonerDepthEcho.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/cloner-depth-echo.mp4",
+      "upstream_preview_url": "./media/cloner-depth-echo.mp4?v=1790980736790",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/cloner-depth-echo.md": "13f4a98c6a0816e55693c5644351616500e8b946b711332b4d4b4396238b2632",
+        "source/demos/ui-entrance/cloner-depth-echo/ClonerDepthEcho.tsx": "6ebdff4cb7174a3f0874746945c4e822665d827d37af9678dc3d34be2589b495",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "44fffe5ec84744db775b86baa72f15c39df6561fae7c48f41ffa58247ca7eb83",
+      "preview_available": true
+    },
+    {
+      "id": "deck-deal-flyin",
+      "card_id": "deck-deal-flyin",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "deck-deal-flyin",
+      "description": "暗色石墨桌面上的实体牌堆特写环绕开局，灯从牌堆亮到旁边的页面板，一摞卡像发牌一样硬加速甩进网格，相机追着发牌升起后仰、落在整块满板的跑道式俯瞰上定格",
+      "use": "展示\"内容量大/源源不断汇入\"的列表页与卡片墙；建立信息密度的第一印象",
+      "duration": "150f（约 5s：0–36 牌堆特写 + 预备，36–~101 发牌，108–150 满板 hold）",
+      "recipe_path": "source/references/shots/ui-entrance/deck-deal-flyin.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/deck-deal-flyin/DeckDealFlyin.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/deck-deal-flyin.mp4",
+      "upstream_preview_url": "./media/deck-deal-flyin.mp4?v=1790980736797",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/deck-deal-flyin.md": "eed5b9585bf80a7566b776ca16a5926ec6b35417803090e9a0756726315b039b",
+        "source/demos/ui-entrance/deck-deal-flyin/DeckDealFlyin.tsx": "162a502aa7b7ec6ad39d12c6c6574f918e95e710686289e643ca0bba84326fdd",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "4d444757b797a1c5087123137534a042600a6f5338b1395776803c361a646858",
+      "preview_available": true
+    },
+    {
+      "id": "doc-park-left-pill-deal",
+      "card_id": "doc-park-left-pill-deal",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "doc-park-left-pill-deal",
+      "description": "文档不淡出而是向左滑出只露约 35% 宽并微缩到 0.92，右侧按旁白节奏慢速发牌三张白底描边药丸（outBack 弹入），每张落定后其下方字幕逐词加深、下一张到来前整句淡出，左侧文档全程极缓慢自动滚动保持\"正在被读\"",
+      "use": "旁白驱动的\"分析结论逐条给出\"段落；文档理解、推荐理由、审阅意见类产品的核心说明镜头",
+      "duration": "约 5.8s（174f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/doc-park-left-pill-deal.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/doc-park-left-pill-deal/DocParkLeftPillDeal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/doc-park-left-pill-deal.mp4",
+      "upstream_preview_url": "./media/doc-park-left-pill-deal.mp4?v=1790980736799",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/doc-park-left-pill-deal.md": "b1cca04e44384e21d79ebb947b6bec70aa1003f7e8e53d497709348a238dd57c",
+        "source/demos/ui-entrance/doc-park-left-pill-deal/DocParkLeftPillDeal.tsx": "e1b1277d9f594c89e39af47a7482bf9e84fc9a462bd78db0c05ef79a566009b8",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "de0d747fdbf192eb0928ff0e777f32f19596fc0c14e957c8c623a00e6d89e4f8",
+      "preview_available": true
+    },
+    {
+      "id": "draw-svg-trace",
+      "card_id": "draw-svg-trace",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance",
+        "typography"
+      ],
+      "label": "draw-svg-trace",
+      "description": "描边生长圈注——一条带笔头的墨线沿元素轮廓跑一圈把它\"画\"出来，闭合瞬间闪黑交棒、内容淡入；同套路可给标题画下划线",
+      "use": "单个卡片/图表/标题的被点名入场；元素级手法（整页级蓝图描线归 wall-reveal-moves B 式）",
+      "duration": "132f（预告 10f + 描边 40f + 闪黑交棒 16f + 下划线 18f + hold 40f，约 4.4s）",
+      "recipe_path": "source/references/shots/ui-entrance/draw-svg-trace.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/draw-svg-trace/DrawSvgTrace.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/draw-svg-trace.mp4",
+      "upstream_preview_url": "./media/draw-svg-trace.mp4?v=1790980736801",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/draw-svg-trace.md": "10badc80ed577324083366142a5a6d99021b67b5b81a41e1ea29b759b2dcfd0a",
+        "source/demos/ui-entrance/draw-svg-trace/DrawSvgTrace.tsx": "c963b464b302069604e98ce2fb13d03239a6b41d6085ff764e6c48144c2121bd",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "134921a441bfd354bbffe06fa3d13bd2b08d14da53761a24fe587eee996a31b6",
+      "preview_available": true
+    },
+    {
+      "id": "contact-shadow-lift",
+      "card_id": "element-body-moves",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "contact-shadow-lift",
+      "description": "元素身体感——contact-shadow-lift 接触阴影离面抬升：卡抬起时桌上的阴影同步放大变淡，纸片离桌被阴影证明",
+      "use": "逐张点名强调；2.5D 段落的离面铺垫",
+      "duration": "A 150f 5s",
+      "recipe_path": "source/references/shots/ui-entrance/element-body-moves.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/element-body-moves/ContactShadowLift.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/ui-entrance/contact-shadow-lift.mp4",
+      "upstream_preview_url": "./media/contact-shadow-lift.mp4?v=1790980736802",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/element-body-moves.md": "940931d0f1858c7bcbc0679b68bbc56b7fde1ab324b8d7b71d9cccf0ae1a0f5a",
+        "source/demos/ui-entrance/element-body-moves/ContactShadowLift.tsx": "06e2c7e4d12915a3c0aecc55031078f428a50dc15ca92bf134ccf68cd6b52be1",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "00433438f136f62a91709a64f88f9e7c3bcb235d72f0dec76163fe9b91c400d0",
+      "preview_available": true
+    },
+    {
+      "id": "integration-hub-map",
+      "card_id": "integration-hub-map",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance",
+        "effects"
+      ],
+      "label": "integration-hub-map",
+      "description": "旧页面一次性快翻 180°（侧棱瞬间亮闪）落成新中枢页，五个集成 app 图标同帧弹现、随即五条彩虹光管同帧齐连，光管内输送脉冲持续流动——\"翻开新一页，生态一齐接入\"",
+      "use": "集成/生态能力段（一个产品连一切）；版本翻新叙事（旧页翻成新页）；暗场霓虹调性的功能高潮",
+      "duration": "前摇 ~0.5s + 快翻 ~1.2s + 图标齐现 → 光管齐连两拍 ~0.7s + 输送呼吸 ≥1.5s；全段 4.5–5s",
+      "recipe_path": "source/references/shots/ui-entrance/integration-hub-map.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/integration-hub-map/IntegrationHubMap.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/integration-hub-map.mp4",
+      "upstream_preview_url": "./media/integration-hub-map.mp4?v=1790980736822",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/integration-hub-map.md": "a1474661f0e4158fd2223868742473cee903d9a33bdb51557638204c47522a09",
+        "source/demos/ui-entrance/integration-hub-map/IntegrationHubMap.tsx": "ccc7c43fafae77e2edf9ab21aef5abfd0b860f71f6587ac57fdb5472a3ca001b",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "f6405a32676c71acd7239dc1435f740c8b84d78ee87a4d9ffd5e2e8ebcff156d",
+      "preview_available": true
+    },
+    {
+      "id": "list-reveal",
+      "card_id": "list-reveal",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "list-reveal",
+      "description": "垂直菜单 6 项按 10f 的间隔依次 scale 找位、软 back 轻微过冲落定，同时整个列表容器全程匀速上移——逐项入场与整体漂移是两层不相干的运动",
+      "use": "导航/侧边栏/设置面板的入场；任何\"界面自己长出来\"的 UI 段落，也适合做旁白铺垫时的低能量底",
+      "duration": "约 4s（120f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/list-reveal.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/list-reveal/ListReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/list-reveal.mp4",
+      "upstream_preview_url": "./media/list-reveal.mp4?v=1790980736828",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/list-reveal.md": "68b655b516fe96b714b5c798d7c50068741ceea570bc11c80db8513def83f4e9",
+        "source/demos/ui-entrance/list-reveal/ListReveal.tsx": "5efe5fa7fc9332f573b56cf7c2946a4fc4644ad3513653205e982ff4b0ef66a9",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "6122e85da86f63bd9d87170cedca54baf067869350dcf2d613012f77294baf05",
+      "preview_available": true
+    },
+    {
+      "id": "list-stack-press",
+      "card_id": "list-stack-press",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "list-stack-press",
+      "description": "列表卡从画面底部逐张飞上摞起，每张落地压弹整摞、计数器同步跳一格",
+      "use": "feed/雷达/收件箱类\"每天有新东西\"的镜头；强调持续积累的资产列表",
+      "duration": "约 3s（18–88f）",
+      "recipe_path": "source/references/shots/ui-entrance/list-stack-press.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/list-stack-press/ListStackPress.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/PageCam2D.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/list-stack-press.mp4",
+      "upstream_preview_url": "./media/list-stack-press.mp4?v=1790980736829",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/list-stack-press.md": "079565fe5134b2ff97eb472203b49e8a4e21749afae6d8329fa41b5eee8c4732",
+        "source/demos/ui-entrance/list-stack-press/ListStackPress.tsx": "20fa86e51a1a47354dd43e6a2b6b5217a5aa818805e9ffcd50d6588be6566d25",
+        "source/demos/_fixtures/PageCam2D.tsx": "97e687ac30adc8e96bd1f71107de9d0e417cc35f405b72c7c6db98a8687cf154",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "ab6d8b9e6badca73cfe9c468527006cadb0f2390c38c99c675c62d7cbc2c47bf",
+      "preview_available": true
+    },
+    {
+      "id": "neon-frame-forerun",
+      "card_id": "neon-frame-forerun",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance",
+        "effects"
+      ],
+      "label": "neon-frame-forerun",
+      "description": "强透视直角霓虹框自左缘两头奔画先行成型，页面在框内由暗转亮，同时框内组件/文字从 3D 上空带同形软影错峰贴落、随页面点亮同步完成贴合，背景霓虹群（demo 为同形框纵深回声隧道）终段熄灭让位",
+      "use": "暗场品牌片里给 UI 面板做\"登场仪式\"（框先到、内容后落）；功能区首次亮相；霓虹/赛博调性的段落开场",
+      "duration": "框奔画 ~0.7s + 点亮&贴落 ~2.7s + 背景熄灭收束 ~1s；全段 4–4.7s（demo 140f）",
+      "recipe_path": "source/references/shots/ui-entrance/neon-frame-forerun.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/neon-frame-forerun/NeonFrameForerun.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/neon-frame-forerun.mp4",
+      "upstream_preview_url": "./media/neon-frame-forerun.mp4?v=1790980736834",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/neon-frame-forerun.md": "ee53fd6e931383bc51ccdc4c710379df0867c97fc5b98e217e55c74f47d7dfd2",
+        "source/demos/ui-entrance/neon-frame-forerun/NeonFrameForerun.tsx": "d4f3e76bcba8dc7c7d0a50bef96db92018728fc56684d41e11d9c3653957a4c3",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "751f8f040569df81f04bc3105b54151e74e355984e3e227544eac876cf056d71",
+      "preview_available": true
+    },
+    {
+      "id": "neon-frame-orbit-drop",
+      "card_id": "neon-frame-orbit-drop",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance",
+        "effects",
+        "camera"
+      ],
+      "label": "neon-frame-orbit-drop",
+      "description": "霓虹框先行描框后，镜头绕页面左→右弧线旋转，页面全部组件/文字**同帧**从空中往下贴合（同形软影同步收敛）——整体登场式的框内安放",
+      "use": "单页 UI 的一次性隆重登场（与巡礼/逐区亮相相对）；暗场霓虹调性段落的主视觉揭幕；neon-frame-forerun 的姊妹镜",
+      "duration": "描框 ~0.5s + 旋转&同时贴落 ~2.5s + 落定 ~1s；全段 ~4.7s（140f，旋转到 128f 收住后留落定）",
+      "recipe_path": "source/references/shots/ui-entrance/neon-frame-orbit-drop.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/neon-frame-orbit-drop/NeonFrameForerunOrbit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/neon-frame-orbit-drop.mp4",
+      "upstream_preview_url": "./media/neon-frame-orbit-drop.mp4?v=1790980736835",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/neon-frame-orbit-drop.md": "6f5ecdaabd2700a7aee4feebacdd4dd5415f0d82cd09fe52e80211b8ddb959d2",
+        "source/demos/ui-entrance/neon-frame-orbit-drop/NeonFrameForerunOrbit.tsx": "11e9a6225e98be88011dcd9cd6d42748e97da7fa010d9dbd05a9cc4f9613d9c1",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "a4001f7eca5981c30e315c7e528c02b5cd0cca8f1818f10ae26c8219c828ec0e",
+      "preview_available": true
+    },
+    {
+      "id": "page-waterfall-wall",
+      "card_id": "page-waterfall-wall",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "page-waterfall-wall",
+      "description": "页面瀑布墙——真实页面截图切成 3–4 列在 3D 后仰墙面上差速反向无限滚动，视差 + 镜头缓推做\"内容多到流不完\"的一览",
+      "use": "\"多页面/多功能/多模板\"体量感段落；montage 中段铺陈或 intro 后的产品广度镜头",
+      "duration": "4–6s（无限循环体，时长由段落需要裁）",
+      "recipe_path": "source/references/shots/ui-entrance/page-waterfall-wall.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/page-waterfall-wall/PageWaterfallWall.tsx",
+        "source/demos/ui-entrance/page-waterfall-wall/VerticalTicker.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/page-waterfall-wall.mp4",
+      "upstream_preview_url": "./media/page-waterfall-wall.mp4?v=1790980736843",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/page-waterfall-wall.md": "fc4cd282ef0f7d2c5c36b2f192ddc9d5e318ff60b6c3007305e439161db06cef",
+        "source/demos/ui-entrance/page-waterfall-wall/PageWaterfallWall.tsx": "c1cc793244dd55c3746ce67e60080e61970426f5ec8845809255d89a443cf989",
+        "source/demos/ui-entrance/page-waterfall-wall/VerticalTicker.tsx": "1de3a6ee447eb5afc5cd7339bf32aa82b78a6e0b8e6850f0cf7d4efa3bad7791",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "3046adbfc66ecee2147d892595b7cd8211c224c25bfa64e8bb01a7f81490b232",
+      "preview_available": true
+    },
+    {
+      "id": "product-card-progressive-assemble",
+      "card_id": "product-card-progressive-assemble",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "product-card-progressive-assemble",
+      "description": "详情卡像被逐字段抓取般自建——一枚\"填充光标\"领先跳格，图→标题→分类 pill 依次 pop→原价出现后被划线降级、强调色新价 spring 跳出→正文逐行揭示且高亮块由左向右刷过→色卡点亮→按钮填满，整卡全程极慢 scale 前推",
+      "use": "商品/条目详情页的能力展示；\"结构化抽取\"\"自动填充\"\"数据自己长出来\"类叙事的主镜头",
+      "duration": "约 5.7s（172f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/product-card-progressive-assemble.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/product-card-progressive-assemble/ProductCardProgressiveAssemble.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/product-card-progressive-assemble.mp4",
+      "upstream_preview_url": "./media/product-card-progressive-assemble.mp4?v=1790980736850",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/product-card-progressive-assemble.md": "b33c0702e9a5fcd66fad7b26b890ea5f5c5a8e389466e597b19752e7f1397839",
+        "source/demos/ui-entrance/product-card-progressive-assemble/ProductCardProgressiveAssemble.tsx": "f72cab79cf90e6efd1ef46c3713839302970371eb6852ad38089c4d3238d7e6e",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "19bd4b17fa6163298939b896443ac220ae92b4df7de76d1a3d611afbd5c1f5fa",
+      "preview_available": true
+    },
+    {
+      "id": "radial-wave",
+      "card_id": "radial-wave",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "radial-wave",
+      "description": "17×9 圆点阵列按到波源的欧氏距离错峰点亮，每点 scale 过冲到 1.5 再落回常亮，第一道波扫完后第二道亮蓝脉冲从外圈反向收拢回中心",
+      "use": "产品/品牌开场的\"系统上电\"一拍；也用作数据网格、节点地图、覆盖范围类叙事的建立镜头",
+      "duration": "约 3.8s（114f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/radial-wave.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/radial-wave/RadialWave.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Motion.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/radial-wave.mp4",
+      "upstream_preview_url": "./media/radial-wave.mp4?v=1790980736853",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/radial-wave.md": "587f58625f5815e0376101b35ac552e977e5a57622959bed594d1decb9b53dc0",
+        "source/demos/ui-entrance/radial-wave/RadialWave.tsx": "c4d372a60355be61148d9a84cd8bfa125f59163bbfe00856639ff172c24a0a64",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e"
+      },
+      "preview_sha256": "5cc245108fef4e1dad9348b36c8f8bfe7b9689e5ac342ade678bd1004719f5fc",
+      "preview_available": true
+    },
+    {
+      "id": "research-card-stack-scroll",
+      "card_id": "research-card-stack-scroll",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "research-card-stack-scroll",
+      "description": "深色论文卡每 12 帧一张沿右下轴线飞入中心叠压，落位带 1 帧压缩，只有最上一张全清晰渲染标题+作者+摘要，下方卡按堆积深度递增模糊变暗只露标题条，背景横向 grid 同步下移做速度参照",
+      "use": "\"读了大量资料/处理了海量文档\"的量级交代；研究类、检索类、批处理类产品的能力镜头",
+      "duration": "约 4.8s（144f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/research-card-stack-scroll.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/research-card-stack-scroll/ResearchCardStackScroll.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Motion.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/research-card-stack-scroll.mp4",
+      "upstream_preview_url": "./media/research-card-stack-scroll.mp4?v=1790980736854",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/research-card-stack-scroll.md": "afb2c4d35007fde738bbf2a0c7a3e337de19b4b9254790878c1577eca6f904bb",
+        "source/demos/ui-entrance/research-card-stack-scroll/ResearchCardStackScroll.tsx": "7fb916c96b9fc759d97797e6eba15328ceb5bffa08e5af103f8a3ae9c9343c50",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e"
+      },
+      "preview_sha256": "cc24f1b2d94c4373e896546c551ed7a2bec47467b22b762e5c3d371e0a906be0",
+      "preview_available": true
+    },
+    {
+      "id": "row-embed",
+      "card_id": "row-embed",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "row-embed",
+      "description": "内容行像卡片一样从空中降下、rotateX 收平、嵌入瞬间底边亮一道强调色的缝",
+      "use": "\"结构化数据长进页面\"的详情页/列表镜头；行级内容的批量入场",
+      "duration": "约 2s（12–68f）",
+      "recipe_path": "source/references/shots/ui-entrance/row-embed.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/row-embed/RowEmbed.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/PageCam2D.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/row-embed.mp4",
+      "upstream_preview_url": "./media/row-embed.mp4?v=1790980736857",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/row-embed.md": "c6e6026bc4e2c74b77e76c636752a6b5afe9cfb9740c0ffca2c39e091bf999f8",
+        "source/demos/ui-entrance/row-embed/RowEmbed.tsx": "bf075225041ee750b9859215b4aa13f3b700da923a94bbd8fb7780b8a5d7fd6f",
+        "source/demos/_fixtures/PageCam2D.tsx": "97e687ac30adc8e96bd1f71107de9d0e417cc35f405b72c7c6db98a8687cf154",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "77c2d2eb7d666c8fac0e1809c3c8fae2692ab88d09f762437e9dbcb50f193f45",
+      "preview_available": true
+    },
+    {
+      "id": "value-stagger-gradient",
+      "card_id": "value-stagger-gradient",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "value-stagger-gradient",
+      "description": "16 根柱入场时 delay 是时间错峰，同时高度/色相/位移/模糊四个属性各自铺成从首到末的数值梯度；第二拍把错峰原点换成中心，脉冲幅度以中心为最大重新铺开",
+      "use": "技法演示与参数化能力的展示镜头；也可直接当数据/频谱/均衡器类界面的入场",
+      "duration": "约 5.0s（150f@30fps）",
+      "recipe_path": "source/references/shots/ui-entrance/value-stagger-gradient.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/value-stagger-gradient/ValueStaggerGradient.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/ui-entrance/value-stagger-gradient.mp4",
+      "upstream_preview_url": "./media/value-stagger-gradient.mp4?v=1790980736905",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/value-stagger-gradient.md": "59cff036d152a0f4448b7faee355f197e41c60226f726389f122dd3253e9e9fc",
+        "source/demos/ui-entrance/value-stagger-gradient/ValueStaggerGradient.tsx": "e8aaa1aadbe9ac05712baf3965f9b95281c5149ee86e3576d69b5d6c787ae4cb",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "12af94a990d7d34bb95be776b678d8091a87ce220d6ea6a55f81551f7f46c2c1",
+      "preview_available": true
+    },
+    {
+      "id": "bento-light-up",
+      "card_id": "wall-reveal-moves",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "bento-light-up 逐格点亮",
+      "description": "暗场 3×2 bento 墙压暗待命，琥珀流光逐格描边一圈、内容随即提亮上浮，全亮后镜头缓推收住",
+      "use": "内容庄重/暗场品牌段；节奏沉稳的功能总览",
+      "duration": "单式约 5s（A 150f / B 150f @30fps，含建立 hold 与静止收尾）",
+      "recipe_path": "source/references/shots/ui-entrance/wall-reveal-moves.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/wall-reveal-moves/BentoLightUp.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/ui-entrance/bento-light-up.mp4",
+      "upstream_preview_url": "./media/bento-light-up.mp4?v=1790980736908",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/wall-reveal-moves.md": "8cf1a3f63d45f507ac9fe4db580079a0ed0ae48c4db5d641e36010055debaa15",
+        "source/demos/ui-entrance/wall-reveal-moves/BentoLightUp.tsx": "088ca4e82490e88206f4595dec9274a354e1d1da2b1ad925aa287e0561d63cf5",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "9163127a0d3ea7123e54b12f777424511ea8c083a6581b0125a282f53a8e78f2",
+      "preview_available": true
+    },
+    {
+      "id": "wireframe-draw-on",
+      "card_id": "wall-reveal-moves",
+      "category": "ui-entrance",
+      "tags": [
+        "ui-entrance"
+      ],
+      "label": "wireframe-draw-on 蓝图描线成形",
+      "description": "界面先以 SVG 细线蓝图分组描画，再一条琥珀发光竖线左→右扫过，扫过处线框实体化成真实界面",
+      "use": "\"从设计到实物/从想法到产品\"叙事；产品首次整体亮相",
+      "duration": "单式约 5s（A 150f / B 150f @30fps，含建立 hold 与静止收尾）",
+      "recipe_path": "source/references/shots/ui-entrance/wall-reveal-moves.md",
+      "demo_paths": [
+        "source/demos/ui-entrance/wall-reveal-moves/WireframeDrawOn.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/ui-entrance/wireframe-draw-on.mp4",
+      "upstream_preview_url": "./media/wireframe-draw-on.mp4?v=1790980736909",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/ui-entrance/wall-reveal-moves.md": "8cf1a3f63d45f507ac9fe4db580079a0ed0ae48c4db5d641e36010055debaa15",
+        "source/demos/ui-entrance/wall-reveal-moves/WireframeDrawOn.tsx": "d8e6607d0fe5629fb3130d34804595b4335039cc8ceb0e9f47f905a1b9a26f31",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "b5a841ad15e11f4c11d93796a87d4ff99b0229c48725a408bfcd336a4c817245",
+      "preview_available": true
+    }
+  ]
+}

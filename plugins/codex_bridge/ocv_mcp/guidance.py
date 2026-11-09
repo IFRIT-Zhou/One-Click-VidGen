@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-GUIDE_VERSION = '2026-10-30'
+GUIDE_VERSION = '2026-11-03'
 GUIDE_PATH = Path(__file__).resolve().parents[1] / 'AI_GUIDE.md'
 TOPICS = ('start', 'capabilities', 'protocol', 'workflows', 'audio', 'references', 'recovery', 'bridge')
 BOOTSTRAP = '''OCV 是文案→配音与字幕→图文/动态分镜→生成→导出的制作工作台。

@@ -1,0 +1,325 @@
+{
+  "category": "outro",
+  "zh": "收尾",
+  "en": "Outro",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "grain-dissolve",
+      "category": "outro",
+      "summary": "整行字爆裂成沸腾颗粒噪点并浮现斜纹选区框，噪点云急速凝聚成更大号发光短字标，位移衰减归零定格",
+      "recipe_path": "source/references/shots/outro/grain-dissolve.md",
+      "style_ids": [
+        "grain-dissolve"
+      ]
+    },
+    {
+      "id": "logo-shrink-wordmark-lockup",
+      "category": "outro",
+      "summary": "霓虹切口大环快速收束成中央实心小白 O、过冲刹车时换成 video-shotcraft 标志，图标左移让位，字标字母逐个滑入完成 lockup，强调色标语收尾",
+      "recipe_path": "source/references/shots/outro/logo-shrink-wordmark-lockup.md",
+      "style_ids": [
+        "logo-shrink-wordmark-lockup"
+      ]
+    },
+    {
+      "id": "neon-triple-marquee",
+      "category": "outro",
+      "summary": "三行对向霓虹跑马灯 recap——三连词空心霓虹灯管巨字上中下排满一面斜拍的砖墙，奇偶行反向匀速无限横滚，三行按 1/3 相位轮流点亮，结尾逐行断电",
+      "recipe_path": "source/references/shots/outro/neon-triple-marquee.md",
+      "style_ids": [
+        "neon-triple-marquee"
+      ]
+    },
+    {
+      "id": "outro-group-photo-launch",
+      "category": "outro",
+      "summary": "全片元素从四面八方飞来围住字标合影，crane 落机位+舞台光+金尘做成发布会收场",
+      "recipe_path": "source/references/shots/outro/outro-group-photo-launch.md",
+      "style_ids": [
+        "outro-group-photo-launch"
+      ]
+    },
+    {
+      "id": "ui-strip-away-outro",
+      "category": "outro",
+      "summary": "减法式收尾——点击 Publish 后整个编辑器 UI 从外围到中心层层错峰蒸发，黑场上只剩那颗按钮滑到屏心放大，按钮再淡出交棒字标定版",
+      "recipe_path": "source/references/shots/outro/ui-strip-away-outro.md",
+      "style_ids": [
+        "ui-strip-away-outro"
+      ]
+    },
+    {
+      "id": "ui-to-brand-morph",
+      "category": "outro",
+      "summary": "UI 变品牌两式——icon-flip-bloom 图标 Y 轴翻扁成竖线、从竖线撑开成品牌标志（琥珀斜切随后划入）+ wordmark 逐字落定，与 input-morph-assemble 输入框收缩成取景框竖笔、三块图元落进构造槽位拼成完整标志",
+      "recipe_path": "source/references/shots/outro/ui-to-brand-morph.md",
+      "style_ids": [
+        "icon-flip-bloom",
+        "input-morph-assemble"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "grain-dissolve",
+      "card_id": "grain-dissolve",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "grain-dissolve",
+      "description": "整行字爆裂成沸腾颗粒噪点并浮现斜纹选区框，噪点云急速凝聚成更大号发光短字标，位移衰减归零定格",
+      "use": "收尾\"XX. Now Live\"式上线宣告；长句信息压缩成品牌短标的能量聚合拍",
+      "duration": "约 2.0s（60f@30fps；砂化 0.26–0.56s · 凝聚 1.2–1.42s · 凝固回落收尾）",
+      "recipe_path": "source/references/shots/outro/grain-dissolve.md",
+      "demo_paths": [
+        "source/demos/outro/grain-dissolve/GrainDissolve.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/outro/grain-dissolve.mp4",
+      "upstream_preview_url": "./media/grain-dissolve.mp4?v=1790980736815",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/grain-dissolve.md": "67e66e904e1ee5b6e848fe66aba1d4919a75cf947988e4f817080107d3c3c1a7",
+        "source/demos/outro/grain-dissolve/GrainDissolve.tsx": "7e06c6de29f7c860b884a2befe4f905541e1446d784ece6539a108fb287092e6",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "195de0b4e329be45774a7fb45a0724c334c81a6bd2b9a5b9b67df7dde1cc222d",
+      "preview_available": true
+    },
+    {
+      "id": "logo-shrink-wordmark-lockup",
+      "card_id": "logo-shrink-wordmark-lockup",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "logo-shrink-wordmark-lockup",
+      "description": "霓虹切口大环快速收束成中央实心小白 O、过冲刹车时换成 video-shotcraft 标志，图标左移让位，字标字母逐个滑入完成 lockup，强调色标语收尾",
+      "use": "片尾品牌定妆：从满屏图形能量收束到\"图标+字标+标语\"的标准 lockup",
+      "duration": "约 4.4s（132f@30fps；收束 0.1–1.2s · 让位 1.5–2.1s · 字母 2–2.7s · 标语 3.2–3.7s）",
+      "recipe_path": "source/references/shots/outro/logo-shrink-wordmark-lockup.md",
+      "demo_paths": [
+        "source/demos/outro/logo-shrink-wordmark-lockup/LogoShrinkWordmarkLockup.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/outro/logo-shrink-wordmark-lockup.mp4",
+      "upstream_preview_url": "./media/logo-shrink-wordmark-lockup.mp4?v=1790980736830",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/logo-shrink-wordmark-lockup.md": "c0909921a97b4db59145161dfad725875a0137aa7d38835ce94774c8cbf8953f",
+        "source/demos/outro/logo-shrink-wordmark-lockup/LogoShrinkWordmarkLockup.tsx": "f32087814fa84d1d51b53a82840cf35a6d25e055445c9a615691ba68903eff85",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "5757b8420af03df14b09e617d12e0c87f3181f9d2ee750404f84a23be6f0eabe",
+      "preview_available": true
+    },
+    {
+      "id": "neon-triple-marquee",
+      "card_id": "neon-triple-marquee",
+      "category": "outro",
+      "tags": [
+        "outro",
+        "typography"
+      ],
+      "label": "neon-triple-marquee",
+      "description": "三行对向霓虹跑马灯 recap——三连词空心霓虹灯管巨字上中下排满一面斜拍的砖墙，奇偶行反向匀速无限横滚，三行按 1/3 相位轮流点亮，结尾逐行断电",
+      "use": "片尾主题词复读机段落；三连词口号的\"余韵\"拍法；音乐段无旁白铺陈",
+      "duration": "4–5s（demo 150f：18f 逐行点火上电 + 循环体 + 18f 逐行断电 + 8f 熄灯 hold）",
+      "recipe_path": "source/references/shots/outro/neon-triple-marquee.md",
+      "demo_paths": [
+        "source/demos/outro/neon-triple-marquee/NeonTripleMarquee.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/outro/neon-triple-marquee.mp4",
+      "upstream_preview_url": "./media/neon-triple-marquee.mp4?v=1790980736836",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/neon-triple-marquee.md": "435d95881b7d0b54119153f08efe7c9f05f33a46606db97501a37a49d555f21f",
+        "source/demos/outro/neon-triple-marquee/NeonTripleMarquee.tsx": "da5df96cdbd6e13f7789a44525ea9215ee7c8f03549c5efe0c08c94cb9bfe561",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "e63cc88c6a452e1fdd4c2a67f184c6e6f3e64d42c1275bd132746cab60a035f2",
+      "preview_available": true
+    },
+    {
+      "id": "outro-group-photo-launch",
+      "card_id": "outro-group-photo-launch",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "outro-group-photo-launch",
+      "description": "全片元素从四面八方飞来围住字标合影，crane 落机位+舞台光+金尘做成发布会收场",
+      "use": "outro/品牌收尾；多功能产品的\"全家福\"式终镜",
+      "duration": "约 4.8s（145f）",
+      "recipe_path": "source/references/shots/outro/outro-group-photo-launch.md",
+      "demo_paths": [
+        "source/demos/outro/outro-group-photo-launch/OutroGroupPhotoLaunch.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/PageCam2D.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/outro/outro-group-photo-launch.mp4",
+      "upstream_preview_url": "./media/outro-group-photo-launch.mp4?v=1790980736839",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/outro-group-photo-launch.md": "99a1f4231965a01dc653e7fe869d778f87a9210028230d76743cd16d599e5146",
+        "source/demos/outro/outro-group-photo-launch/OutroGroupPhotoLaunch.tsx": "bdfa8d1a3262b3e7d1fda66627cd4eba386c04258d47bb7eb16bfbe79480a527",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/PageCam2D.tsx": "97e687ac30adc8e96bd1f71107de9d0e417cc35f405b72c7c6db98a8687cf154",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "1298ab842fe8cf55323960e0fa5609290f6bd4a67e7814b91e00d4ea4d10f80e",
+      "preview_available": true
+    },
+    {
+      "id": "ui-strip-away-outro",
+      "card_id": "ui-strip-away-outro",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "ui-strip-away-outro",
+      "description": "减法式收尾——点击 Publish 后整个编辑器 UI 从外围到中心层层错峰蒸发，黑场上只剩那颗按钮滑到屏心放大，按钮再淡出交棒字标定版",
+      "use": "\"发布/完成\"语义的 outro；想讲\"一键之后一切复杂性消失\"的产品收尾",
+      "duration": "~4.8s（144f：光标就位 34f → 蒸发 ~40f → 按钮独占 → 字标接棒 → 字标 hold ≥1s）",
+      "recipe_path": "source/references/shots/outro/ui-strip-away-outro.md",
+      "demo_paths": [
+        "source/demos/outro/ui-strip-away-outro/UiStripAwayOutro.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/outro/ui-strip-away-outro.mp4",
+      "upstream_preview_url": "./media/ui-strip-away-outro.mp4?v=1790980736902",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/ui-strip-away-outro.md": "ce7471ee2db9baa32b90754ad470cc04f4ec5e3e59bb9594b435d815a7f9762f",
+        "source/demos/outro/ui-strip-away-outro/UiStripAwayOutro.tsx": "dccfd1580a18c5fa126830f47f22e10f2d7f97f59ac607812edbbf59512a18ee",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "051b33cdf5d794f5ff8e9db1f1e8f9eb7900cf3bbee841b056f0b0909ff2e5db",
+      "preview_available": true
+    },
+    {
+      "id": "icon-flip-bloom",
+      "card_id": "ui-to-brand-morph",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "icon-flip-bloom",
+      "description": "图标 anticipation 晃两下→Y 轴 scaleX 压扁成竖线（双层拖影+blur）→最薄处实体交换、spring 展开成 video-shotcraft「镜刻」标志、琥珀斜切第二拍划入→标志左移让位、字标逐字落定",
+      "use": "单图标产品；图标与 logo 形态差异大、需要\"翻过去变身\"的魔术感",
+      "duration": "A ~4.3s（130f）/ B ~5.6s（168f）",
+      "recipe_path": "source/references/shots/outro/ui-to-brand-morph.md",
+      "demo_paths": [
+        "source/demos/outro/ui-to-brand-morph/IconFlipBloomLogo.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/outro/icon-flip-bloom.mp4",
+      "upstream_preview_url": "./media/icon-flip-bloom.mp4?v=1790980736903",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/ui-to-brand-morph.md": "365d75cdc0f2ca564fa599580825eeec5c454222986fec65f037dc5897e96bb4",
+        "source/demos/outro/ui-to-brand-morph/IconFlipBloomLogo.tsx": "29cfa27f8663cc6eb32e80d37529771c05d5d146f11b91ce1e31cd6244ee933a",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "aa7cfde5eda9a0248bb74a57baed86465f5093a5b02fa04b8104cc5d00e04813",
+      "preview_available": true
+    },
+    {
+      "id": "input-morph-assemble",
+      "card_id": "ui-to-brand-morph",
+      "category": "outro",
+      "tags": [
+        "outro"
+      ],
+      "label": "input-morph-assemble",
+      "description": "光标点发送→文字飞走→输入框 x/y/w/h/r 五量 spring 插值成标志的竖框→上下横条与琥珀斜切从虚线构造框里依次落位拼成「镜刻」标志→左移让位、字标逐字落定",
+      "use": "输入框/卡片等矩形 UI 是全片主角的片子；logo 可拆解为几何图元组合",
+      "duration": "A ~4.3s（130f）/ B ~5.6s（168f）",
+      "recipe_path": "source/references/shots/outro/ui-to-brand-morph.md",
+      "demo_paths": [
+        "source/demos/outro/ui-to-brand-morph/InputMorphsIntoLogo.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/outro/input-morph-assemble.mp4",
+      "upstream_preview_url": "./media/input-morph-assemble.mp4?v=1790980736904",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/outro/ui-to-brand-morph.md": "365d75cdc0f2ca564fa599580825eeec5c454222986fec65f037dc5897e96bb4",
+        "source/demos/outro/ui-to-brand-morph/InputMorphsIntoLogo.tsx": "024131a8cfb5ed46f3096767727708714da4fa500593a9257d10ca0d64befd23",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "f02dc027dab54c0051a633f93a0e20a17829f3125bbe08cb0d1ee388cc65040d",
+      "preview_available": true
+    }
+  ]
+}

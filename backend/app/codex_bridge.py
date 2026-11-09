@@ -454,8 +454,11 @@ def compile_plan(record, path, data, user_id=None):
     rows = [s.model_dump(exclude={'evidence'}) for s in data.shots]
     validate_group_structure(rows, record['scenes'])
     scenes = {s['slide_id']: s for s in record['scenes']}
+    reserved = {s['id'] for s in record.get('shots',[]) if s.get('vibe_reserved')}
     for index, row in enumerate(rows):
         row['visual_description'] = row['motion_plan'].get('reference_visual') or row['image_prompt']
+        if row['id'] in reserved:
+            row.update(kind='static',action='',video_prompt='',motion_plan={})
         start, end = float(scenes[row['slide_ids'][0]]['start']), float(scenes[row['slide_ids'][-1]]['end'])
         if index == 0 and start > 0.03:
             raise ValueError('首条字幕前存在空白时间，请先在 OCV 核对配音时间轴')
@@ -481,8 +484,10 @@ def compile_plan(record, path, data, user_id=None):
     if record.get('manual_groups') and [(r['id'], r['slide_ids']) for r in rows] != [(r['id'], r['slide_ids']) for r in record['shots']]:
         raise ValueError('当前项目有手动分组，整体方案必须保留镜头ID与字幕范围')
     refs = [r['id'] for r in studio._material_references(record)]
-    result = audit_storyboard(normalize_shots(rows, record['scenes'], refs), set(refs))
-    return result
+    normalized = normalize_shots(rows, record['scenes'], refs)
+    if reserved:
+        return studio._audit_studio_shots(studio._preserve_vibe(record,normalized), set(refs))
+    return audit_storyboard(normalized, set(refs))
 
 
 def review_plan(identity, data, request, commit):
@@ -620,7 +625,12 @@ def compile_patches(record, path, data):
                 raise ValueError(f'{patch.id} 静态镜头不应包含动态阶段/视频提示词')
             # image_upload_id is a transport field, never a storyboard field.
             if changed - {'image_upload_id', 'intent', 'evidence'}:
-                audit_storyboard([row], set(refs))
+                # Saving a draft is not confirmation. Validate its actual design
+                # without letting the pending-review gate prevent its repair.
+                # Keep the real flag until the explicit design/confirm action.
+                candidate = copy.deepcopy(row)
+                candidate['design_needs_review'] = False
+                audit_storyboard([candidate], set(refs))
         if 'image_prompt' in values:
             # Repair uses the same local reference numbering as the native editor.
             row['image_material_numbers_bound'] = True
@@ -693,6 +703,8 @@ def review_patches(identity, data, request, commit):
             return {'ok': False, 'errors': [str(exc)], 'written': False, 'generation_started': False}
         summary = {'ok': True, 'project_id': identity, 'revision': record['revision'], 'changed': [r['id'] for r in impacts],
                    'impacts': impacts, 'written': False, 'generation_started': False,
+                   'design_review_required': [s['id'] for s in updated['shots']
+                                              if s['id'] in {p.id for p in data.shots} and s.get('design_needs_review')],
                    'preserved': ['audio', 'subtitles', 'timing', 'shot_order', 'shot_kind', 'generation_settings', 'asset_files']}
         if not commit:
             summary['reference_checks'] = [reference_preview(path, updated, s) for s in updated['shots'] if s['id'] in summary['changed']]

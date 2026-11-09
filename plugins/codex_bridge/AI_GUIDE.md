@@ -1,6 +1,6 @@
 # OCV：给 AI 助手的制作操作说明书
 
-文档版本：2026-10-30。读者是接手 OCV 的 AI，不是操作软件的人。
+文档版本：2026-11-03。读者是接手 OCV 的 AI，不是操作软件的人。
 这是能力导航，不是执行授权，也不是固定 API 契约。以用户当前请求、运行时权限、实时 Schema 和实际任务状态为准。
 首次只读 start；再按任务读取相应章节。不要每次把全文、所有操作和整期项目一起装入上下文。
 
@@ -32,6 +32,8 @@ MCP 首次接手的最短流程：
 | 做图文视频 | visual_ | 读图审图、重绘替换、字幕与画面时序调整、合成下载 |
 | 规划或返修动态分镜 | video_、bridge_ | 全片或单镜规划、沿字幕拆合、超长镜头 1C 拆分、局部提示词和参考图原子修改 |
 | 换出图渠道／补一张图 | video_、bridge_、image_studio_ | 读取实际渠道、项目内切换、首次生图预检、单张/批量重绘、图片工作室任务 |
+| 抠图／把图标或卡片逐项弹出 | video_layer_pack_、image_studio_ | 先让 OCV 提取透明图层和去除旧图的底板；复杂轮廓可另行授权 OCV Image 2.5。详见 references |
+| 单镜图表／流程图做成 Vibe 动效 | video_vibe_、ocv_vibe_model | 本地规则兜底或云端多模态设计；独立 API 与单镜费用授权，按最终字幕设计并渲染，预览后明确采用或撤回。查看建议不预留，生成预览不替换正式镜头 |
 | 让某个人物对口型 | video_ | 单镜讲解员设置、核对核心图、准备动态提示词与项目配音；不等于已经生成视频 |
 | 跑动态／停止排队 | video_ | 单镜/批量参数、生成、排队、停止、历史采用与视频替换；上游停止需查真实结果 |
 | 先做静帧分镜预览 | video_ | 核心图加最终配音导出，显示动静标记和动作说明；不必先生成动态片段 |
@@ -142,6 +144,41 @@ MCP 首次接手的最短流程：
 
 上传成功不等于绑定成功。保存 OCV 返回的素材身份，并回读绑定与实际附图。`ocv_preview_asset` 的缓存 ID、上传 asset ID、reference_id、shot_id 不可互换。
 
+### 要把一张分镜图拆成可动画的元素
+
+先复用 OCV 素材，不扫描本机目录、不把用户图片交给外部助手自带的生图模型。对矩形卡片或带圆框的小图，默认用本地确定性提取，不为简单裁切付费：
+
+1. 读 `ocv_bridge_shot`，记录 `current_image.sha256`；用 `ocv_bridge_shot_image` 下载同一版本（query.v 传这个 SHA）并检查画面。按实际查看的画布给每个元素定框，不从文字猜坐标。
+2. Describe `ocv_video_layer_pack_create`。path 是项目 identity 和稳定 shot_id；body 的 source_sha256 固定原图，canvas 是坐标画布宽高。elements 的 name/shape/box 分别指定名称、rect 或 ellipse、左上右下坐标（右下不包含）。需要一同擦掉的旧箭头/连线可放 cleanup。审核选区后 prepare/commit。只生成本地图层包，不更改镜头、配音或字幕；409 时重新查看最新原图再定框。
+3. 从清单读取 pack_id、clean_plate 和每个元素的 asset_id、原画布位置。用 `ocv_video_layer_pack_file` 逐项读 PNG；下载回执里的缓存 asset_id 才能用于 `ocv_preview_asset`。先看底板是否还留旧图、箭头、接缝，再检查图层边缘。以底板为背景、按原位和最终字幕时间加入图层；不要把它们再叠在未清理原图上。补底不是找回原来被挡住的真实内容。
+4. 如果用户需要**去掉框内背景，只保留不规则主体**，先检查是否可用 `ocv_image_studio_layer_matte`。与本地提取分开授权：明确上传哪一块裁图、可能收费，之后才传 confirm_reference_upload=true 并确认提交。OCV 图片工作室的 ICAN Image 2.5 仅辅助判断轮廓；核查透明度与细节，不能把推测的轮廓当作论文证据。
+5. 只有本地补底不够且用户同意**上传整张已清理底板**时，才另外准备 `ocv_image_studio_layer_plate_refine`（confirm_plate_upload=true，可能收费）。同意上传单块裁图不等于允许上传整张底板。这两类工作室任务用 `ocv_image_studio_list` 查原任务状态，成功后通过 `ocv_image_studio_file` 下载、核查独立产物；不自动覆盖、付费重试或改渠道。未获外发授权、ICAN 不可用、结果失真时保留本地图层，明确限制。
+
+### 单镜 Vibe：云端智能设计或本地兜底
+
+用户只需在**本地**和**云端**两条路线中选择，不把旧版“版式／视觉图层规划”误称为完整云端动效。云端由多模态模型阅读本镜海报、已绑定参考素材和最终字幕时间戳，设计可重新排版的文字、图表、卡片、线条及图片场景，再在本机渲染；不是仅对整张海报机械分块。本地是无模型费用的规则兜底，较适合纯色、分区清楚的版面，复杂海报可能效果有限。二者均保留原始配音、字幕、镜头，产物先预览，不自动采用。
+
+**云端路线：**
+
+**原图分层的主体策略：** 先按实时 `ocv_describe("ocv_video_vibe_cloud_create")` 区分模式。`template_mode="layered"` 的新任务默认 `advanced_subject_separation=false`：将复杂主体稳定保留在底板中，重建文字、文本框和装饰后编排动效；不是默认把所有主体抠出。只有用户明确选用高级主体分离时才传 `true`，让模型按需使用独立取材、RMBG 等工具；`semantic` 和 `shotcraft` 不接受 `true`。分层的背景编辑预算仍须按实时契约显式授权，沿用本项目图像模型，不借用设置中的旧默认额度。用 `reuse_task_id` 新建任务只复用核验过的素材，本次策略由新请求决定，不能继承旧代码、旧预览或旧验收通过结论。继续同一个原素材任务不允许顺便切换策略：保留其持久化值；旧任务没有该字段时保持原来的高级分离行为。以下纯代码/模板的零出图说明不替代分层任务的独立授权。
+
+1. 用 `ocv_vibe_model` 只读检查独立 Vibe API 的 configured、model、base_url 和 generation_policy；此调用不测试模型、不计费、不返回密钥。当前 `source_style_code_only` 策略的 `effective_max_image_requests=0`，保留的旧 max_image_requests 设置不是本轮授权预算。未配置时请用户在“接口与服务”的 Vibe 设置中配置，不继承项目语言号池、不接受或代写密钥。先读 `ocv_bridge_shot` 与本镜实际素材，确认稳定 identity、shot_id，避免用显示序号代替 ID。
+2. 明确本次仅针对哪一镜、将外发哪些资料及可能费用。云端会发送本镜核心图、生成该图时实际使用的参考图（含适用的场景图）、最终字幕文字与时间戳；原始配音用于本地合成，不需要外发音频。模型从核心图提取背景、文字及强调色，再以此约束代码动效，可重新排版，但不能擅自改成另一种主题。core只作风格与内容参考，不冒充已抠出的独立主体贴进新画面。本轮不自动抠图、不调用图像模型；已提供的独立原文切片、期刊、人物及科学证据可以直接显示，不生成式重画、不臆测数据。必要证据只在海报中、没有独立素材时应提示补充，不能擅自丢掉或绕过限制调用其他作图接口。
+3. Describe `ocv_video_vibe_cloud_create`，body 传 `confirm_cloud=true`、具体 `instruction`、`pace`（normal／slow／brisk）和 `max_image_requests=0`。MCP 必须显式填0，不能借用旧配置里的图像预算。任务允许最多两轮有界方案修正，期间设计与视觉核查均可能产生模型费用；这不等于无限重跑。prepare 后核对目标和费用说明，经用户授权再 commit(confirmed=true)。
+4. 保存返回 task_id。MCP 回执 submitted 只说明提交，使用 `ocv_video_vibe_cloud_latest` 轮询同一镜任务，核对 task_id、stage、message、usage；不要重复 create 催进度。completed 且含有效 preview 才是可检查的结果；needs_input、needs_budget 或 failed 时说明原因，不自行增加预算、换模型或再次付费提交。停止用 `ocv_video_vibe_cloud_stop`，path 包含同镜 task_id；只停止本任务继续发起新调用，远端已提交任务可能仍运行和计费，不承诺退款。
+5. 成功后的 preview_id 沿用下方 `ocv_video_vibe_preview_file` 读取 proof／preview／silent；必须检查关键帧及需要时试听完整片段。通过检查不等于已经采用；用户明确要求进入成片后才另行调用 `ocv_video_vibe_adopt`。失败或停止保留现有正式镜头、素材与任务记录；不把旧预览误当作本次完成结果。
+
+**本地路线及图层包预览：**
+
+1. 可先用 `ocv_video_vibe_recommendations` 查看各镜建议：原始切片可以保持静态，真实动作继续用视频模型，不强制混用。用 `ocv_video_vibe_preview_latest` 只读查询当前有效预览；已有合适结果就直接下载，available=false 不授权重跑。
+   **预留与采用是两件事。** 如果用户指定“这镜留给 Vibe，不要让普通批量生视频跑它”，用 `ocv_video_vibe_intent`，path 取 identity、shot_id，body 提交最新 revision 和 enabled=true；要取消预留提交 enabled=false。两种变更均需 prepare、明确授权后 commit(confirmed=true)，然后核对返回项目的 revision 和该镜的 vibe_reserved。预留会暂存原动静类型及动作配置，取消后恢复；已有导出不再代表新项目版本。预留本身不调用模型或渲染，不采用预览，不把未完成的动效标成已完成，也不自动发起视频任务。用户只要求试做预览时不要替他预留或采用；撤回正式采用请用 undo，而不是 enabled=false。
+   **无需自写图层方案：**用户选择本地试做时，调用 `ocv_video_vibe_design`（engine=local），直接把返回的 preview_request 原样交给下一步创建预览（保留 input_stamp）。已有预览的节奏修改可附加 previous_preview_id、instruction 和 pace，复用原图层。旧版 engine=model 只是项目语言渠道的图层规划兼容入口，不是上述独立 API 云端动效路线；不要自动把云端请求改走该入口。任何外发及收费都须另行明确授权，不能静默换渠道或重试计费模型。
+2. 用实际 pack_id、source_sha256 和包内元素 asset_id 填写 `ocv_video_vibe_preview_create` 的 body。plan.sequence 中包内每个元素恰好出现一次；cue 填本镜已保存的字幕 slide_id，用 delay 与 seconds 安排相对入场时刻和时长。例如单层动作的写法为 `{"asset_id":"layer_01","cue":"scene_062","delay":0.35,"seconds":0.6,"scale_from":0.96}`，其中两个 ID 仅示意，必须用本镜真实 ID。不要把字幕文字、手估绝对时间、MCP 下载缓存 ID、本机文件路径、代码或远程图片 URL 填进方案。只改动效时复用图层包，不重做配音或抠图。
+3. 用户同意做本镜预览后 prepare、核对目标、commit（confirmed=true），再查同一 plan_id 的 receipt。这是本机渲染，需要生成权限但不调用付费模型。仅采用内层返回的成功产物信息；如提交状态未知，先核对 latest 中是否是本次方案，不要把旧预览当成新结果。
+4. 用产物的 preview_id 调 `ocv_video_vibe_preview_file`：先取 asset_id=proof（JPEG 关键帧拼图，时间点见 metrics.proof_times）核对入场、遮挡与终态；抽帧不能证明节奏或音画同步，需要试听时取 asset_id=preview（带原配音 MP4），交付时可取 asset_id=silent（无声 MP4）。三者只读，取截图不重新渲染。预览不改变正式镜头或导出状态，用户未要求时不要替换。
+
+5. **采用属于另一项写操作。** 只有用户确认此预览要进成片，才用最新 revision 和 preview_id 调 `ocv_video_vibe_adopt`，核对 plan 后 commit(confirmed=true)。正常导出将使用无声片段及项目最终配音。要恢复旧镜头，使用 `ocv_video_vibe_undo` 并单独确认；无需重跑图像或视频模型。
+
 单镜返修先 `ocv_bridge_shot`，再 `ocv_bridge_references` 并实际查看图片；不要为一镜拉整期日志与所有历史图片。按素材身份而不是显示图号思考：
 
 - 完整导入、局部 patch、实际生图、动态视频输入有不同编号上下文，不能直接复用“图3、图4”。
@@ -150,6 +187,8 @@ MCP 首次接手的最短流程：
 - 提示词承接上一镜时核对其实际参考图是否已注入、上一镜核心图是否存在；不要仅凭一句“延续上一镜”认定模型看到了上一张图。
 
 授权范围内使用 `ocv_bridge_patch_validate` / `ocv_bridge_patch_apply`，仅提交指定镜头的稳定 ID 与要改的字段。省略字段保持不变；不要以空值清掉未要求修改的内容。核对 revision、timeline_token、配音确认及 readback_verified / verification。
+
+拆分或调整字幕归属后，重新读取资料包及 revision、timeline_token，再逐镜保存局部设计；已有核心图阶段不要使用 `ocv_video_edit` 覆盖全量方案。`ocv_video_motion` 和局部 patch 只是保存修改，不代表完整设计已经确认。若返回 `design_review_required` 或镜头仍有 `design_needs_review`，检查画面提示词、动作及字幕范围是否一致，然后使用最新 revision 调用 `ocv_video_design_confirm`，每次确认后刷新 revision。确认支持项目初始素材和后续上传素材的真实 ID，不需要删掉合法的 `img_*` 引用；不会自动重绘或生成视频。
 
 只改方案不等于重绘成功；旧图可能保留并待核查，相关旧视频可能退出当前合成但保存在历史。后续出图和视频生成分开提交，不自动用全片重做作为补救。
 

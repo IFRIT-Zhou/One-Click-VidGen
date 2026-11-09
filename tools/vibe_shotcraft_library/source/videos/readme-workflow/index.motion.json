@@ -1,0 +1,15 @@
+{
+  "duration": 8,
+  "assertions": [
+    {"kind":"appearsBy","selector":"#step-0","bySec":0.4},
+    {"kind":"appearsBy","selector":"#step-6","bySec":0.8},
+    {"kind":"staysInFrame","selector":"#step-0"},
+    {"kind":"staysInFrame","selector":"#step-1"},
+    {"kind":"staysInFrame","selector":"#step-2"},
+    {"kind":"staysInFrame","selector":"#step-3"},
+    {"kind":"staysInFrame","selector":"#step-4"},
+    {"kind":"staysInFrame","selector":"#step-5"},
+    {"kind":"staysInFrame","selector":"#step-6"},
+    {"kind":"keepsMoving","withinSelector":"#pipeline","maxStaticSec":2}
+  ]
+}

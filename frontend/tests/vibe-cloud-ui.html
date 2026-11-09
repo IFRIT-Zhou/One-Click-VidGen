@@ -1,0 +1,71 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vibe 云端隔离测试</title><div id="app"></div>
+<script type="module">
+import {createApp,reactive,nextTick,h} from 'vue'
+import ShotVibePreview from '../src/components/ShotVibePreview.vue'
+import VibeModelSettings from '../src/components/VibeModelSettings.vue'
+import '../src/style.css'
+import '../src/prototype/prototype.css'
+import '../src/studio.css'
+const state=reactive({shot:'shot1',view:'shot',visible:true})
+const fixture=window.fixture={state,calls:[],confirmations:[],answer:true,tasks:{},previews:{},hold:{},pending:{},
+  config:{base_url:'https://api.deepseek.com',model:'deepseek-flash',max_image_requests:4,configured:true,has_api_key:true}}
+fixture.catalog={items:[
+  {id:'spotlight-hero-card',name:'聚光主卡',available:true,capabilities:{content_tags:['person_institution'],hard_constraints:{min_stage_seconds:4}}},
+  {id:'card-flip-reveal',name:'翻牌揭示',available:true,capabilities:{content_tags:['parallel_points'],hard_constraints:{min_stage_seconds:5}}},
+  {id:'outro-group-photo-launch',name:'聚合收束',available:true,capabilities:{hard_constraints:{min_stage_seconds:2.5,max_stage_seconds:6}}},
+]}
+fixture.remount=async()=>{state.visible=false;await nextTick();state.visible=true}
+fixture.restore=async({preview,task})=>{fixture.previews[state.shot]=preview;fixture.tasks[state.shot]=task;await fixture.remount()}
+window.confirm=text=>{fixture.confirmations.push(text);return fixture.answer}
+const respond=data=>Promise.resolve(new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json'}}))
+window.fetch=(url,options={})=>{
+  const path=String(url),method=options.method||'GET',body=options.body?JSON.parse(options.body):null
+  fixture.calls.push({url:path,method,body})
+  if(path==='/api/vibe-templates')return respond(fixture.catalog)
+  if(path==='/api/vibe-model'){
+    if(method==='PUT')Object.assign(fixture.config,{base_url:body.base_url,model:body.model,max_image_requests:body.max_image_requests,configured:body.clear_key?false:!!body.api_key||fixture.config.configured})
+    return respond(fixture.config)
+  }
+  if(path==='/api/vibe-model/test')return respond({connected:true,vision:true,message:'连接与看图测试通过；未发送任何项目素材。'})
+  const match=path.match(/\/shots\/([^/]+)\/(.+)$/)
+  if(!match)return respond({})
+  const [,shot,action]=match
+  if(action==='vibe-image-route')return respond({key:'b'.repeat(64),label:'个人 API · test-image · 2K · 16:9',provider:'custom',same_pending_route:!!fixture.tasks[shot]?.can_resume_materials,pending_image_task:!!fixture.tasks[shot]?.can_resume_materials,...fixture.imageRoute})
+  if(action==='vibe-preview/latest')return respond(fixture.previews[shot]||{available:false})
+  if(action==='vibe-cloud-job/latest'){
+    if(fixture.hold[shot])return new Promise(resolve=>fixture.pending[shot]=value=>resolve(new Response(JSON.stringify(value))))
+    return respond(fixture.tasks[shot]||{available:false})
+  }
+  if(action==='vibe-cloud-jobs'){
+    fixture.tasks[shot]={task_id:'a'.repeat(32),status:'queued',stage:'queued',message:'已排队',template_mode:body.template_mode,...(body.template_mode==='layered'?{advanced_subject_separation:body.advanced_subject_separation}:{}),requested_template_ids:body.template_ids||[],usage:{image_requests:0}}
+    return respond(fixture.tasks[shot])
+  }
+  if(action.endsWith('/resume-materials')){fixture.tasks[shot]={...fixture.tasks[shot],status:'queued',stage:'materials',can_resume_materials:false,message:'继续原素材任务'};return respond(fixture.tasks[shot])}
+  if(action.endsWith('/continue-review')){
+    fixture.continuations??={}
+    if(!fixture.continuations[body.request_id]){
+      fixture.continuations[body.request_id]=true
+      fixture.tasks[shot]={...fixture.tasks[shot],status:'queued',stage:'agent_resume',can_continue_review:false,
+        review_continuations:[...(fixture.tasks[shot].review_continuations||[]),{request_id:body.request_id,previous_limit:body.expected_model_limit,additional_model_calls:body.additional_model_calls}],
+        max_model_calls:fixture.tasks[shot].max_model_calls+body.additional_model_calls,new_images_allowed:false,message:'复核已有预览'}
+    }
+    if(fixture.continueLostResponse){fixture.continueLostResponse=false;return Promise.reject(new TypeError('simulated lost response'))}
+    return respond(fixture.tasks[shot])
+  }
+  if(action.endsWith('/continue-steps')){
+    fixture.stepContinuations??={}
+    const replayed=!!fixture.stepContinuations[body.request_id]
+    if(!replayed){
+      fixture.stepContinuations[body.request_id]=true
+      fixture.tasks[shot]={...fixture.tasks[shot],status:'queued',stage:'agent_resume_steps',can_continue_steps:false,
+        steps_continuations:[...(fixture.tasks[shot].steps_continuations||[]),{request_id:body.request_id,confirm_remaining_images:body.confirm_remaining_images}],
+        new_images_allowed:body.confirm_remaining_images,message:'从保存步骤继续，未追加预算'}
+    }
+    if(fixture.stepsLostResponse){fixture.stepsLostResponse=false;return Promise.reject(new TypeError('simulated lost steps response'))}
+    return respond({...fixture.tasks[shot],steps_continuation_replayed:replayed})
+  }
+  if(action.endsWith('/stop')){fixture.tasks[shot]={...fixture.tasks[shot],status:fixture.stopStatus||'stopped',message:'已请求停止'};return respond(fixture.tasks[shot])}
+  return new Promise(resolve=>resolve(new Response(JSON.stringify({detail:'Unexpected request'}),{status:404})))
+}
+createApp({setup:()=>()=>h('div',{class:'studio live-studio'},[h('main',{style:'width:100%;max-width:1080px;margin:20px auto;padding:20px'},[state.view==='shot'&&state.visible?h(ShotVibePreview,{projectId:'cloud-fixture',shotId:state.shot,number:1,revision:1,duration:13}):state.view==='settings'?h(VibeModelSettings):null])])}).mount('#app')
+</script></html>

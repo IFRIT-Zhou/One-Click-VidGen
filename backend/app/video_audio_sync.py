@@ -14,6 +14,10 @@ def _signature(file, start, end):
                 stream.readframes(round(max(0, end-start)*rate)))
 
 
+def _relative_cues(rows, ids, origin):
+    return [(round(rows[sid]['start']-origin,3),round(rows[sid]['end']-origin,3)) for sid in ids]
+
+
 def sync_shot_timings(record, scenes, old_audio, new_audio, *, new_duration=None):
     old_scenes = record['scenes']
     old_by_id = {s['slide_id']: s for s in old_scenes}
@@ -26,6 +30,18 @@ def sync_shot_timings(record, scenes, old_audio, new_audio, *, new_duration=None
         shot.update(start=by_id[shot['slide_ids'][0]]['start'], end=by_id[shot['slide_ids'][-1]]['end'])
     for index, shot in enumerate(shots):
         original = previous.get(shot['id']) or previous.get(shot.get('narration_parent_visual_id'))
+        if (original and shot['id'] not in previous and shot.get('narration_parent_visual_id') and
+                (original.get('vibe_reserved') or (original.get('video_request') or {}).get('backend') == 'vibe')):
+            # Inserting narration in the middle can split one visual into two
+            # runs with distinct IDs. The suffix may reuse the source image, not
+            # the parent clip's immutable attempt/undo receipt or paid identity.
+            for key in tuple(shot):
+                if key == 'video' or (key.startswith('video_') and key != 'video_generation_options'):
+                    shot.pop(key)
+            shot.pop('motion_plan',None)
+            shot.update(kind='static',action='',video_prompt='',video_status='pending',design_needs_review=True,
+                        kind_adjustment='部分字幕进入新镜头，请重新预览并采用本机 Vibe 动效',
+                        vibe_reserved={'original_kind':'static','original_motion':{}})
         if original is None:
             start, end = by_id[shot['slide_ids'][0]]['start'], by_id[shot['slide_ids'][-1]]['end']
             shot.update(start=start, end=end, duration=round(end-start, 3),
@@ -59,7 +75,13 @@ def sync_shot_timings(record, scenes, old_audio, new_audio, *, new_duration=None
             if any(s.get('narration_structure') for s in scenes):
                 shot['design_needs_review'] = True
                 shot['design_review_confirmed'] = False
-        if text_changed or changed or timing_changed:
+        # A Vibe animation may trigger on individual subtitle entrances even
+        # when the complete narration, total duration and text are unchanged.
+        # Only relative cue changes matter; shifts of the entire shot do not.
+        vibe_cue_changed = ((shot.get('video_request') or {}).get('backend') == 'vibe' and
+                            _relative_cues(old_by_id,original['slide_ids'],original['start']) !=
+                            _relative_cues(by_id,shot['slide_ids'],start))
+        if text_changed or changed or timing_changed or vibe_cue_changed:
             from .presenter_mode import presenter_requested
             if (changed or timing_changed) and presenter_requested(record.get('creation_parameters', {}), shot, record.get('references', [])):
                 shot['presenter_plan_status'] = 'audio_changed'

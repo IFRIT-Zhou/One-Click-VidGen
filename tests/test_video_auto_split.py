@@ -109,6 +109,14 @@ class AutoSplitTests(unittest.TestCase):
                 self.assertEqual(merged[-1],record['shots'][-1])
                 self.assertEqual(record,before)
 
+    def test_adjacent_vibe_and_reserved_shots_never_enter_regroup(self):
+        record=fixture()
+        record['shots'][0]['video_request']={'backend':'vibe'}
+        record['shots'][2]['vibe_reserved']={'original_kind':'video'}
+        self.assertEqual(split_window(record,'target',True)[:2],(1,2))
+        with self.assertRaisesRegex(ValueError,'请选择'):
+            split_window(record,record['shots'][0]['id'])
+
     def test_static_neighbors_and_single_caption_are_not_silently_converted(self):
         record=fixture();record['shots'][0]['kind']='static'
         self.assertEqual(split_window(record,'target',True)[:2],(1,3))

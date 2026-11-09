@@ -1,0 +1,533 @@
+{
+  "sourceRevision": "5ddbf521038b0a7accfb6dc1e0a9eb29c67277ab",
+  "cards": [
+    {
+      "stem": "DollyZoomReal",
+      "path": "camera/depth-layer-moves/DollyZoomReal",
+      "duration": 135,
+      "name": "分层深度运镜 · DollyZoomReal",
+      "nameEn": "depth-layer-moves · DollyZoomReal",
+      "category": "运镜与空间"
+    },
+    {
+      "stem": "DutchRollToLevel",
+      "path": "camera/tension-camera-moves/DutchRollToLevel",
+      "duration": 150,
+      "name": "斜角滚正",
+      "nameEn": "dutch-roll-to-level",
+      "category": "运镜与空间"
+    },
+    {
+      "stem": "SlowPushIn",
+      "path": "camera/tension-camera-moves/SlowPushIn",
+      "duration": 150,
+      "name": "慢推压迫",
+      "nameEn": "slow-push-in",
+      "category": "运镜与空间"
+    },
+    {
+      "stem": "AvatarGridRadialBuildColorize",
+      "path": "data/avatar-grid-radial-build-colorize/AvatarGridRadialBuildColorize",
+      "duration": 168,
+      "name": "分环生长染色",
+      "nameEn": "avatar-grid-radial-build-colorize",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "CounterConfetti",
+      "path": "data/counter-confetti/CounterConfetti",
+      "duration": 138,
+      "name": "数字冲刺纸屑",
+      "nameEn": "counter-confetti",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "CycleGlassNodeMorph",
+      "path": "data/cycle-glass-node-morph/CycleGlassNodeMorph",
+      "duration": 257,
+      "name": "循环玻璃节点接管",
+      "nameEn": "cycle-glass-node-morph",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "HatchDepth",
+      "path": "data/hatch-depth/HatchDepth",
+      "duration": 132,
+      "name": "斜纹变实柱",
+      "nameEn": "hatch-depth",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "OdometerDigitRoll",
+      "path": "data/odometer-digit-roll/OdometerDigitRoll",
+      "duration": 63,
+      "name": "里程表数字滚动",
+      "nameEn": "odometer-digit-roll",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "ConfettiCrossfire",
+      "path": "data/particle-celebrate-hits/ConfettiCrossfire",
+      "duration": 150,
+      "name": "双侧礼炮",
+      "nameEn": "confetti-crossfire",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "CounterTickSparks",
+      "path": "data/particle-celebrate-hits/CounterTickSparks",
+      "duration": 78,
+      "name": "数字跳动溅火",
+      "nameEn": "counter-tick-sparks",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "ParticleSandFill",
+      "path": "data/particle-sand-fill/ParticleSandFill",
+      "duration": 150,
+      "name": "粒子落砂成柱",
+      "nameEn": "particle-sand-fill",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "RingDiagramAnnotationReveal",
+      "path": "data/ring-diagram-annotation-reveal/RingDiagramAnnotationReveal",
+      "duration": 190,
+      "name": "环图收束标注",
+      "nameEn": "ring-diagram-annotation-reveal",
+      "category": "数据与指标"
+    },
+    {
+      "stem": "DashboardGlowHighlightPill",
+      "path": "effects/dashboard-glow-highlight-pill/DashboardGlowHighlightPill",
+      "duration": 60,
+      "name": "金色胶囊指引",
+      "nameEn": "dashboard-glow-highlight-pill",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "LineUnfoldPanel",
+      "path": "effects/fui-hud-moves/LineUnfoldPanel",
+      "duration": 150,
+      "name": "线条展开面板",
+      "nameEn": "line-unfold-panel",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "PopBurstConfirm",
+      "path": "effects/icon-performance-moves/PopBurstConfirm",
+      "duration": 150,
+      "name": "弹跳爆点确认",
+      "nameEn": "pop-burst-confirm",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "HalationBloom",
+      "path": "effects/light-play-moves/HalationBloom",
+      "duration": 17,
+      "name": "光晕绽放",
+      "nameEn": "halation-bloom",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "LineBoil",
+      "path": "effects/line-boil/LineBoil",
+      "duration": 105,
+      "name": "线条沸腾",
+      "nameEn": "line-boil",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "RisoBeatPump",
+      "path": "effects/riso-print-hits/RisoBeatPump",
+      "duration": 150,
+      "name": "孔版印刷冲击 · RisoBeatPump",
+      "nameEn": "riso-print-hits · RisoBeatPump",
+      "category": "光效与强调"
+    },
+    {
+      "stem": "StreamResponse",
+      "path": "interaction/ai-stream-response/StreamResponse",
+      "duration": 150,
+      "name": "AI 响应汇入",
+      "nameEn": "ai-stream-response",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "ChipLiftToUserPill",
+      "path": "interaction/chip-lift-to-user-pill/ChipLiftToUserPill",
+      "duration": 150,
+      "name": "选中长成药丸",
+      "nameEn": "chip-lift-to-user-pill",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "CursorDialogueDuet",
+      "path": "interaction/collab-cursor-moves/CursorDialogueDuet",
+      "duration": 140,
+      "name": "协作光标演出 · CursorDialogueDuet",
+      "nameEn": "collab-cursor-moves · CursorDialogueDuet",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "CommandPaletteSummon",
+      "path": "interaction/command-palette-summon/CommandPaletteSummon",
+      "duration": 104,
+      "name": "命令面板召唤",
+      "nameEn": "command-palette-summon",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "CursorPerformancePunchIn",
+      "path": "interaction/input-trigger-moves/CursorPerformancePunchIn",
+      "duration": 150,
+      "name": "输入触发动效 · CursorPerformancePunchIn",
+      "nameEn": "input-trigger-moves · CursorPerformancePunchIn",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "KeycapSmashCut",
+      "path": "interaction/input-trigger-moves/KeycapSmashCut",
+      "duration": 150,
+      "name": "键帽砸屏硬切",
+      "nameEn": "keycap-smash-cut",
+      "category": "交互与功能演示"
+    },
+    {
+      "stem": "LogoStingButton",
+      "path": "outro/edit-hook-moves/LogoStingButton",
+      "duration": 150,
+      "name": "字标彩蛋收尾",
+      "nameEn": "logo-sting-button",
+      "category": "收尾"
+    },
+    {
+      "stem": "BeatCutAccelerando",
+      "path": "rhythm/beat-cut-moves/BeatCutAccelerando",
+      "duration": 49,
+      "name": "递进硬切串",
+      "nameEn": "beat-cut-accelerando",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "DominoCascade",
+      "path": "rhythm/montage-rhythm-moves/DominoCascade",
+      "duration": 12,
+      "name": "多米诺连锁入场",
+      "nameEn": "domino-cascade",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "DropBlackoutSlam",
+      "path": "rhythm/montage-rhythm-moves/DropBlackoutSlam",
+      "duration": 150,
+      "name": "黑场蓄爆",
+      "nameEn": "drop-blackout-slam",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "WrightTripleCut",
+      "path": "rhythm/montage-rhythm-moves/WrightTripleCut",
+      "duration": 25,
+      "name": "三连特写",
+      "nameEn": "wright-triple-cut",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "FlipGridReflow",
+      "path": "rhythm/panel-grid-moves/FlipGridReflow",
+      "duration": 150,
+      "name": "翻转网格重排",
+      "nameEn": "flip-grid-reflow",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "GridFlashMosaic",
+      "path": "rhythm/panel-grid-moves/GridFlashMosaic",
+      "duration": 14,
+      "name": "网格闪切马赛克",
+      "nameEn": "grid-flash-mosaic",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "StrobeBlackFrames",
+      "path": "rhythm/rhythm-interrupt-moves/StrobeBlackFrames",
+      "duration": 150,
+      "name": "黑帧频闪倒数",
+      "nameEn": "strobe-black-frames",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "SmearMultiples",
+      "path": "rhythm/smear-multiples/SmearMultiples",
+      "duration": 12,
+      "name": "拖影分身",
+      "nameEn": "smear-multiples",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "SpectrumMorphUi",
+      "path": "rhythm/spectrum-morph-ui/SpectrumMorphUi",
+      "duration": 64,
+      "name": "频谱变形界面",
+      "nameEn": "spectrum-morph-ui",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "SpeedRampReal",
+      "path": "rhythm/speed-ramp-freeze/SpeedRampReal",
+      "duration": 135,
+      "name": "变速与定格 · SpeedRampReal",
+      "nameEn": "speed-ramp-freeze · SpeedRampReal",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "CardFootageCadence",
+      "path": "rhythm/trailer-grammar-moves/CardFootageCadence",
+      "duration": 150,
+      "name": "卡片与画面节奏交替",
+      "nameEn": "card-footage-cadence",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "SmashCut",
+      "path": "rhythm/trailer-grammar-moves/SmashCut",
+      "duration": 150,
+      "name": "冲脸硬切",
+      "nameEn": "smash-cut",
+      "category": "节奏与蒙太奇"
+    },
+    {
+      "stem": "BubbleSwarmTakeover",
+      "path": "transition/bubble-swarm-takeover/BubbleSwarmTakeover",
+      "duration": 130,
+      "name": "气泡群幕布",
+      "nameEn": "bubble-swarm-takeover",
+      "category": "转场"
+    },
+    {
+      "stem": "ColorBlockStepWipe",
+      "path": "transition/color-block-step-wipe/ColorBlockStepWipe",
+      "duration": 44,
+      "name": "色块阶跃吞屏",
+      "nameEn": "color-block-step-wipe",
+      "category": "转场"
+    },
+    {
+      "stem": "CubeNavigation",
+      "path": "transition/cube-navigation/CubeNavigation",
+      "duration": 180,
+      "name": "立方体逐面导航",
+      "nameEn": "cube-navigation",
+      "category": "转场"
+    },
+    {
+      "stem": "CubeRotate",
+      "path": "transition/page-turn-transitions/CubeRotate",
+      "duration": 30,
+      "name": "立方体旋页",
+      "nameEn": "cube-rotate",
+      "category": "转场"
+    },
+    {
+      "stem": "PaperPlaneMessenger",
+      "path": "transition/paper-plane-messenger/PaperPlaneMessenger",
+      "duration": 150,
+      "name": "纸飞机信使",
+      "nameEn": "paper-plane-messenger",
+      "category": "转场"
+    },
+    {
+      "stem": "BlackCardTransition",
+      "path": "transition/shot-transitions/BlackCardTransition",
+      "duration": 120,
+      "name": "镜头交棒转场 · BlackCardTransition",
+      "nameEn": "shot-transitions · BlackCardTransition",
+      "category": "转场"
+    },
+    {
+      "stem": "DarkTunnelTransition",
+      "path": "transition/shot-transitions/DarkTunnelTransition",
+      "duration": 120,
+      "name": "镜头交棒转场 · DarkTunnelTransition",
+      "nameEn": "shot-transitions · DarkTunnelTransition",
+      "category": "转场"
+    },
+    {
+      "stem": "FocusHandoffTransition",
+      "path": "transition/shot-transitions/FocusHandoffTransition",
+      "duration": 120,
+      "name": "镜头交棒转场 · FocusHandoffTransition",
+      "nameEn": "shot-transitions · FocusHandoffTransition",
+      "category": "转场"
+    },
+    {
+      "stem": "MaskWipeReal",
+      "path": "transition/shot-transitions/MaskWipeReal",
+      "duration": 120,
+      "name": "镜头交棒转场 · MaskWipeReal",
+      "nameEn": "shot-transitions · MaskWipeReal",
+      "category": "转场"
+    },
+    {
+      "stem": "WhipPanReal",
+      "path": "transition/shot-transitions/WhipPanReal",
+      "duration": 120,
+      "name": "镜头交棒转场 · WhipPanReal",
+      "nameEn": "shot-transitions · WhipPanReal",
+      "category": "转场"
+    },
+    {
+      "stem": "SharedElementMorph",
+      "path": "transition/transition-travel/SharedElementMorph",
+      "duration": 60,
+      "name": "共享元素归位",
+      "nameEn": "shared-element-morph",
+      "category": "转场"
+    },
+    {
+      "stem": "ClockWipe",
+      "path": "transition/wipe-transitions/ClockWipe",
+      "duration": 20,
+      "name": "时钟扫描擦除",
+      "nameEn": "clock-wipe",
+      "category": "转场"
+    },
+    {
+      "stem": "CelFlashStomp",
+      "path": "typography/cel-flash-stomp/CelFlashStomp",
+      "duration": 30,
+      "name": "底色闪砸字",
+      "nameEn": "cel-flash-stomp",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "Scramble",
+      "path": "typography/scramble/Scramble",
+      "duration": 96,
+      "name": "乱码锁定",
+      "nameEn": "scramble",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "SplitFlapFlip",
+      "path": "typography/split-flap-title/SplitFlapFlip",
+      "duration": 140,
+      "name": "翻牌屏标题",
+      "nameEn": "split-flap-title",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "TrackingExpandReveal",
+      "path": "typography/type-assembly-moves/TrackingExpandReveal",
+      "duration": 56,
+      "name": "文字集结 · TrackingExpandReveal",
+      "nameEn": "type-assembly-moves · TrackingExpandReveal",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "ScrambleDecode",
+      "path": "typography/type-entrance-moves/ScrambleDecode",
+      "duration": 66,
+      "name": "乱码解码",
+      "nameEn": "scramble-decode",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "TerminalTypewriter",
+      "path": "typography/typewriter-moves/TerminalTypewriter",
+      "duration": 150,
+      "name": "终端打字引爆",
+      "nameEn": "terminal-typewriter",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "TypingCodeBlock",
+      "path": "typography/typing-code-block/TypingCodeBlock",
+      "duration": 138,
+      "name": "代码块揭示",
+      "nameEn": "typing-code-block",
+      "category": "文字与字卡"
+    },
+    {
+      "stem": "AxialStretch",
+      "path": "ui-entrance/element-body-moves/AxialStretch",
+      "duration": 150,
+      "name": "轴向拉伸",
+      "nameEn": "axial-stretch",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "FloatingGlossyLabelPills",
+      "path": "ui-entrance/floating-glossy-label-pills/FloatingGlossyLabelPills",
+      "duration": 120,
+      "name": "高光胶囊横滑",
+      "nameEn": "floating-glossy-label-pills",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "MorphFromPrimitive",
+      "path": "ui-entrance/morph-from-primitive/MorphFromPrimitive",
+      "duration": 20,
+      "name": "原型变形",
+      "nameEn": "morph-from-primitive",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "MaskingTapeSlap",
+      "path": "ui-entrance/paper-craft-moves/MaskingTapeSlap",
+      "duration": 38,
+      "name": "胶带拍贴",
+      "nameEn": "masking-tape-slap",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "PopupBookRise",
+      "path": "ui-entrance/paper-craft-moves/PopupBookRise",
+      "duration": 34,
+      "name": "立体书升起",
+      "nameEn": "popup-book-rise",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "PlatformHingeRise",
+      "path": "ui-entrance/platform-hinge-rise/PlatformHingeRise",
+      "duration": 104,
+      "name": "平台铰接升起",
+      "nameEn": "platform-hinge-rise",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "RunwayGroundSkim",
+      "path": "ui-entrance/runway-ground-skim/RunwayGroundSkim",
+      "duration": 150,
+      "name": "跑道掠地贴落",
+      "nameEn": "runway-ground-skim",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "SkeletonReveal",
+      "path": "ui-entrance/skeleton-reveal/SkeletonReveal",
+      "duration": 172,
+      "name": "骨架显影",
+      "nameEn": "skeleton-reveal",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "SvgShapeMorph",
+      "path": "ui-entrance/svg-shape-morph/SvgShapeMorph",
+      "duration": 156,
+      "name": "轮廓变形",
+      "nameEn": "svg-shape-morph",
+      "category": "界面登场与陈列"
+    },
+    {
+      "stem": "GridWaveFlip",
+      "path": "ui-entrance/wall-reveal-moves/GridWaveFlip",
+      "duration": 150,
+      "name": "波浪翻面",
+      "nameEn": "grid-wave-flip",
+      "category": "界面登场与陈列"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ preset_save|PUT|/parameter-presets|edit|保存参数预设。
 preset_delete|DELETE|/parameter-presets/{name}|delete|删除指定参数预设。
 image_profiles|GET|/image-profiles|read|读取已配置的图片模型，密钥不输出。
 video_model|GET|/video-model|read|读取视频 API 模型能力和参数，不输出密钥。
+vibe_model|GET|/vibe-model|read|只读查看 Vibe 专用 API 模型、就绪状态与实际生成策略；模板和代码动效图像预算为0，原图分层背景预算以vibe_cloud_create的实时契约和单次授权为准，旧默认预算不自动启用。不输出密钥、不调用模型；配置请在 OCV 设置中修改。
 comfyui_profiles|GET|/comfyui|read|读取可用 ComfyUI 工作流及连接概要，不启动或停止引擎。
 language_presets|GET|/language-presets|read|读取语言模型预设，不输出密钥。
 agent_presets|GET|/agent-prompt-presets|read|读取 Agent 提示词预设。
@@ -145,12 +146,28 @@ audio|GET|/{identity}/audio|read|下载当前项目完整配音。|download
 structure|POST|/{identity}/structure|edit|沿字幕边界拆合、插入或调整分镜。
 auto_split|POST|/{identity}/shots/{shot_id}/auto-split|generate|用 Agent 1C 自动拆分，可包含相邻镜头；不出图/视频，可能调用付费语言模型。
 structure_undo|POST|/{identity}/structure/undo|edit|恢复拆分前结构与保留素材。
-design_confirm|POST|/{identity}/design/confirm|edit|确认分镜设计修改。
+design_confirm|POST|/{identity}/design/confirm|edit|检查并确认指定镜头的完整设计，清除拆分或字幕变更后的待确认状态；使用最新 revision，保留已有素材，不启动生成。
 review|POST|/{identity}/review|generate|审核提交分镜方案，可能开始核心图生成；先核对方案。
 images_generate|POST|/{identity}/images/generate|generate|生成核心分镜图，可能收费。
 images_stop|POST|/{identity}/images/stop|edit|请求停止核心图生成，上游任务可能仍运行。
 scene_generate|POST|/{identity}/scene-references/generate|generate|生成所需场景参考图，可能收费。
 image|GET|/{identity}/images/{shot_id}|read|读取核心分镜图。|download
+layer_pack_create|POST|/{identity}/shots/{shot_id}/layer-packs|edit|把当前图的矩形或椭圆选区按原像素裁成透明图层，同时生成已去除选区的底板，返回 pack_id 和各 asset_id。只产生本地衍生素材，无模型调用，不覆盖镜头。
+layer_pack_file|GET|/{identity}/layer-packs/{pack_id}/{asset_id}|read|按提取清单下载指定透明 PNG 图层或干净底板到 MCP 缓存；不传磁盘路径。|download
+vibe_preview_latest|GET|/{identity}/shots/{shot_id}/vibe-preview/latest|read|查本镜当前仍有效的最近一次 Vibe 动效预览及方案，不自动生成。
+vibe_recommendations|GET|/{identity}/vibe-recommendations|read|按镜头意图和最终字幕给出静态、图层动效、视频模型三种本地建议。不改动项目，不调用模型。
+vibe_intent|POST|/{identity}/shots/{shot_id}/vibe-intent|edit|明确授权后设置或取消本镜的 Vibe 预留：enabled=true 避免普通视频批量生成重复提交本镜；false 取消预留。只写制作意图，不设计、不出片、不收费。返回更新后的项目。
+vibe_design|POST|/{identity}/shots/{shot_id}/vibe-design|generate|根据现有画面和字幕自动设计图层及入场。本地模式无模型费用；模型模式必须另行同意相应内容外发及可能收费。产出 preview_request，不替换镜头。
+vibe_cloud_create|POST|/{identity}/shots/{shot_id}/vibe-cloud-jobs|generate|明确授权本镜资料外发及费用后，使用独立 Vibe API 设计并在本机渲染。template_mode 默认 shotcraft（已验证模板），semantic 保留旧代码动效，二者max_image_requests必须为0；layered为原图分层，图像请求预算须显式指定0–4次，背景编辑沿用本项目图像模型。默认 advanced_subject_separation=false，稳定保留主体于底板；仅用户明确选择进阶主体分离时传true，允许本地RMBG等独立取材。复用旧任务素材仍使用本次新策略，不继承旧代码或验收；继续原任务保持原策略。实际可用模式与字段以实时契约为准。可先读取vibe_image_route核对渠道，将image_route_key绑定到确认；confirm_new_image_task仅在明确同意旧任务可能仍计费时使用。只产生预览，不自动采用、重试或切换渠道。
+vibe_image_route|GET|/{identity}/shots/{shot_id}/vibe-image-route|read|只读核对本镜Vibe背景提取将使用的本项目图像模型渠道、模型、清晰度及配置指纹；不出图、不调用DS、不修改项目。准备layered且授权1次背景提取前，使用返回的key作为image_route_key绑定确认，并核对旧任务提示；不自动重发旧任务。
+vibe_cloud_latest|GET|/{identity}/shots/{shot_id}/vibe-cloud-job/latest|read|只读查询本镜最近一次云端动效任务、调用用量与有效预览；submitted 不等于完成，查询不重试或自动采用。
+vibe_cloud_continue_review|POST|/{identity}/shots/{shot_id}/vibe-cloud-jobs/{task_id}/continue-review|generate|用户明确授权后，从同一未完成任务已保存的素材、代码和预览继续由模型检查与返工，不从头制作、不新增出图、不自动采用。先读latest确认can_continue_review、已用调用数与预算；expected_model_calls填写该已用数量，expected_model_limit填写当时max_model_calls，additional_model_calls为明确追加授权（0表示仅用原剩余次数，累计上限50），同一意图始终复用request_id。预览先用当前校验器本地复核，独立交付审核不能继承旧结论。
+vibe_cloud_continue_steps|POST|/{identity}/shots/{shot_id}/vibe-cloud-jobs/{task_id}/continue-steps|generate|仅在用户明确要求继续且latest.can_continue_steps=true时，从空响应前保存的同一任务步骤继续由DS决定下一步；尚无清单、底图或预览也可使用。不从头制作、不重放旧工具、不自动采用或重试。先读latest，将expected_model_calls/expected_model_limit与expected_image_requests/expected_image_limit绑定当时用量和原授权；additional_model_calls默认意图为0，只有用户明确追加才增加，累计上限50。同一次提交或网络重发复用request_id。confirm_remaining_images默认明确填false，禁止新增图片且本任务后续不能恢复图片授权；仅latest.continue_steps_images_allowed=true且用户单独确认时填true，最多使用原剩余图片额度、保持原渠道，不增加额度。不覆盖正式镜头。
+vibe_cloud_stop|POST|/{identity}/shots/{shot_id}/vibe-cloud-jobs/{task_id}/stop|edit|仅请求停止指定镜头指定云端动效任务，不再发起新调用；已提交的远端请求可能仍运行或计费，保留已有素材，不停止其他任务。
+vibe_adopt|POST|/{identity}/shots/{shot_id}/vibe-adopt|edit|得到用户明确确认后，采用当前核对过的无声 Vibe 片段参与正式导出；保留项目配音与原镜头历史。
+vibe_undo|POST|/{identity}/shots/{shot_id}/vibe-undo|edit|用户明确确认后撤回指定的当前 Vibe 采用，恢复前一个正式镜头。
+vibe_preview_create|POST|/{identity}/shots/{shot_id}/vibe-previews|generate|把本镜的 OCV 图层包按已保存字幕和动作方案在本机渲染为单镜预览；返回带配音和无声版。不外发、不调用计费模型、不替换正式镜头。
+vibe_preview_file|GET|/{identity}/vibe-previews/{preview_id}/{asset_id}|read|用生成时返回的 preview_id 下载本机产物。asset_id 选 proof（关键帧拼图 JPEG）、preview（带原配音 MP4）或 silent（无声 MP4）。|download
 reference_upload|POST|/{identity}/redraw-references|edit|上传额外分镜参考图。|upload
 reference_image|GET|/{identity}/redraw-references/{reference_id}|read|读取新增的动态分镜参考图。|download
 reference_remove|DELETE|/{identity}/redraw-references/{reference_id}|delete|移除指定参考图，不绕过真实引用校验。
@@ -206,7 +223,7 @@ upload|POST|/projects/{identity}/uploads|edit|上传局部返修图片，返回�
 validate|POST|/projects/{identity}/validate|read|预检完整分镜导入，不写入。
 apply|POST|/projects/{identity}/apply|edit|导入完整分镜方案，不生成素材。
 patch_validate|POST|/projects/{identity}/patch-validate|read|预检局部返修及素材映射。
-patch_apply|POST|/projects/{identity}/patch-apply|edit|原子提交局部提示词、参考绑定与图片替换，备份并回读验证。
+patch_apply|POST|/projects/{identity}/patch-apply|edit|原子提交局部提示词、参考绑定与图片替换，备份并回读验证。保存不等于确认；若返回 design_review_required，检查新字幕对应的整镜设计后调用 ocv_video_design_confirm。
 scenes|GET|/projects/{identity}/scene-assets|read|读取场景参考资产。
 scene_validate|POST|/projects/{identity}/scene-validate|read|预检场景替换/解绑/恢复影响，取得确认令牌。
 scene_apply|POST|/projects/{identity}/scene-apply|edit|提交已确认场景修改，不绕过原生确认令牌。
@@ -224,6 +241,8 @@ image_status|GET|/projects/{identity}/image-status|read|读取图片批次与单
 group('image_studio_', '/api/image-studio', '''
 list|GET||read|读取图片工作室任务。
 create|POST||generate|创建图片工作室生成任务，可能收费。
+layer_matte|POST|/layer-matte|generate|按指定主体用 OCV ICAN Image 2.5 辅助分割；会上传指定图层的裁图，可能收费，需同意外发。用模型提供的蒙版保留源图颜色，不改正式镜头。
+layer_plate_refine|POST|/layer-plate-refine|generate|用 OCV ICAN Image 2.5 修补本地图层包的底板；会上传整张去除选区后的底板，可能收费，需单独同意外发。不替换正式镜头。
 resume|POST|/{identity}/resume|generate|恢复图片工作室任务，可能收费。
 cancel|POST|/{identity}/cancel-queue|edit|取消图片工作室排队任务。
 file|GET|/{identity}/files/{name}|read|下载工作室生成图片。|download

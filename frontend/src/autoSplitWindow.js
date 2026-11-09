@@ -1,8 +1,9 @@
+const modelShot=shot=>shot?.kind==='video'&&!shot.vibe_reserved&&shot.video_request?.backend!=='vibe'
 export function autoSplitWindow(shots, selected, neighbors=false){
- if(selected<0||!shots[selected]||shots[selected].kind!=='video')return []
+ if(selected<0||!modelShot(shots[selected]))return []
  let first=selected,last=selected+1
- if(neighbors&&first>0&&shots[first-1].kind==='video')first--
- if(neighbors&&last<shots.length&&shots[last].kind==='video')last++
+ if(neighbors&&first>0&&modelShot(shots[first-1]))first--
+ if(neighbors&&last<shots.length&&modelShot(shots[last]))last++
  return shots.slice(first,last).map((shot,offset)=>({shot,index:first+offset}))
 }
-export function needsAutoSplit(shot, maximum=14){return shot?.kind==='video'&&Math.ceil(Number(shot.duration)||0)>maximum}
+export function needsAutoSplit(shot, maximum=14){return modelShot(shot)&&Math.ceil(Number(shot.duration)||0)>maximum}

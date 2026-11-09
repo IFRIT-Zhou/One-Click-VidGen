@@ -145,6 +145,9 @@ function Test-ProtectedRelativePath {
         'saved_agent_prompts', 'node_modules', 'models'
     )
     if ($protectedRoots -contains $first) { return $true }
+    # Only the RMBG implementation is updateable. Weights/private model files
+    # and any legacy in-place interpreter must never be backed up or overlaid.
+    if ($normalized -match '^tools\\rmbg\\(?:models|python)(?:\\|$)') { return $true }
     if ($first -in @('comfyui', 'tts')) {
         return -not (@('comfyui\README.md', 'tts\README.md') -contains $normalized)
     }
@@ -330,4 +333,3 @@ catch {
     Restart-Launcher
     exit 1
 }
-

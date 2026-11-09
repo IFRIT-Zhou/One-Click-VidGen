@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1440, height=540">
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    :root { --bg:#111317; --panel:#1c2026; --edge:#333942; --ink:#f7f4ee; --muted:#adb3bf; --accent:#eab15e; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html,body { width:1440px; height:540px; overflow:hidden; background:var(--bg); }
+    #stage { position:relative; width:1440px; height:540px; color:var(--ink); font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    #pipeline { width:100%; height:100%; padding:38px 50px 32px; display:flex; flex-direction:column; gap:24px; background:var(--bg); }
+    header { display:flex; justify-content:space-between; align-items:flex-start; }
+    .eyebrow { color:var(--accent); font:600 15px/1.2 ui-monospace,monospace; letter-spacing:2px; margin-bottom:14px; }
+    h1 { font-size:48px; font-weight:650; letter-spacing:-2px; line-height:1.1; }
+    h1 span { color:var(--accent); }
+    .brand { color:var(--muted); font:500 17px/1.4 ui-monospace,monospace; padding-top:5px; text-align:right; }
+    .brand strong { display:block; color:var(--ink); font-size:19px; margin-bottom:6px; }
+    .hf-ui-onboarding-flow { display:flex; flex-direction:column; gap:22px; flex:1; justify-content:center; }
+    .hf-ui-onboarding-steps { display:flex; align-items:center; }
+    .hf-ui-onboarding-card { position:relative; width:176px; height:210px; flex-shrink:0; border:1px solid var(--edge); border-radius:16px; background:var(--panel); padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
+    .active-surface { position:absolute; inset:-1px; border:1.5px solid var(--accent); border-radius:16px; background:linear-gradient(140deg,#eab15e18,transparent 75%); box-shadow:0 0 28px #eab15e17; pointer-events:none; opacity:0; }
+    .step-top { display:flex; align-items:center; justify-content:space-between; }
+    .number { color:var(--muted); font:600 15px/1 ui-monospace,monospace; }
+    .milestone { width:6px; height:6px; border-radius:50%; background:var(--accent); opacity:0; }
+    .icon { width:46px; height:46px; color:var(--muted); display:block; overflow:visible; }
+    .icon path,.icon rect,.icon line,.icon polyline,.icon circle { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .card-title { font-size:25px; line-height:1.15; font-weight:620; letter-spacing:-.6px; }
+    .card-detail { color:var(--muted); font-size:17px; line-height:1.25; }
+    .connector { width:18px; height:20px; flex-shrink:0; color:var(--edge); overflow:visible; }
+    .connector .base { fill:none; stroke:currentColor; stroke-width:1.7; }
+    .connector .travel { fill:none; stroke:var(--accent); stroke-width:2; stroke-linecap:round; }
+    footer { display:flex; align-items:center; justify-content:space-between; height:50px; gap:30px; }
+    .principle { color:var(--muted); font:500 15px/1.3 ui-monospace,monospace; letter-spacing:.6px; }
+    .output { display:flex; gap:10px; align-items:center; }
+    .output-label { font:600 14px/1 ui-monospace,monospace; color:var(--accent); margin-right:2px; }
+    .chip { border:1px solid var(--edge); border-radius:8px; padding:9px 13px; font-size:16px; color:var(--ink); background:var(--panel); }
+    .rail { height:3px; width:100%; background:var(--edge); border-radius:3px; overflow:hidden; }
+    .rail-fill { width:100%; height:100%; background:var(--accent); transform-origin:left center; }
+  </style>
+</head>
+<body>
+  <div data-hf-id="hf-w4fg" id="stage" data-composition-id="readme-workflow" data-start="0" data-duration="8" data-width="1440" data-height="540" data-fps="30">
+    <div data-hf-id="hf-yj9m" id="pipeline" class="clip" data-start="0" data-duration="8" data-track-index="0">
+      <header data-hf-id="hf-0drs">
+        <div data-hf-id="hf-yeow"><p data-hf-id="hf-y5ko" class="eyebrow">HOW IT WORKS / 01 — 07</p><h1 data-hf-id="hf-9ndk">Your product. <span data-hf-id="hf-itwe">A finished film.</span></h1></div>
+        <div data-hf-id="hf-8evu" class="brand"><strong data-hf-id="hf-k17y">video-shotcraft</strong>CODE → MOTION → FILM</div>
+      </header>
+      <main data-hf-id="hf-3n2u" class="hf-ui-onboarding-flow">
+        <div data-hf-id="hf-sujm" class="hf-ui-onboarding-steps" id="steps"></div>
+        <div data-hf-id="hf-2ytx" class="rail" data-layout-ignore="true"><div data-hf-id="hf-qhu2" class="rail-fill"></div></div>
+      </main>
+      <footer data-hf-id="hf-d3ia">
+        <p data-hf-id="hf-65o8" class="principle">REAL PRODUCT / CODE-DRIVEN / FULLY EDITABLE</p>
+        <div data-hf-id="hf-z71j" class="output"><span data-hf-id="hf-7cql" class="output-label">EXPORT</span><span data-hf-id="hf-aq7e" class="chip">MP4</span><span data-hf-id="hf-qdjs" class="chip">Motion Workbench</span><span data-hf-id="hf-kh9z" class="chip">JianYing draft</span></div>
+      </footer>
+    </div>
+  </div>
+  <script>
+    const icons = [
+      '<rect x="5" y="7" width="38" height="30" rx="4"/><line x1="5" y1="15" x2="43" y2="15"/><circle cx="10" cy="11" r=".5"/><circle cx="14" cy="11" r=".5"/><rect x="11" y="21" width="10" height="10" rx="1"/><line x1="26" y1="22" x2="37" y2="22"/><line x1="26" y1="28" x2="34" y2="28"/>',
+      '<path d="M7 17V8h9 M32 8h9v9 M41 31v9h-9 M16 40H7v-9"/><rect x="14" y="16" width="20" height="16" rx="2"/><rect class="scan" x="11" y="18" width="26" height="1" rx=".5"/>',
+      '<rect x="4" y="10" width="11" height="25" rx="2"/><rect x="19" y="10" width="11" height="25" rx="2"/><rect x="34" y="10" width="10" height="25" rx="2"/><line x1="7" y1="17" x2="12" y2="17"/><line x1="22" y1="24" x2="27" y2="24"/><line x1="37" y1="29" x2="41" y2="29"/>',
+      '<path d="M18 9L7 24l11 15 M30 9l11 15-11 15"/><line class="code-slash" x1="27" y1="12" x2="21" y2="36"/>',
+      '<line class="beat-bar" x1="8" y1="17" x2="8" y2="31"/><line class="beat-bar" x1="16" y1="10" x2="16" y2="38"/><line class="beat-bar" x1="24" y1="5" x2="24" y2="43"/><line class="beat-bar" x1="32" y1="12" x2="32" y2="36"/><line class="beat-bar" x1="40" y1="18" x2="40" y2="30"/>',
+      '<rect x="7" y="6" width="34" height="36" rx="4"/><path class="check" d="M15 24l6 6 13-14"/>',
+      '<rect x="5" y="7" width="38" height="30" rx="4"/><path d="M20 16l11 7-11 7z"/><line x1="16" y1="42" x2="32" y2="42"/><line x1="24" y1="37" x2="24" y2="42"/>'
+    ];
+    const stages = [['Product','Your web page'],['Capture','Real page assets'],['Storyboard','Shot recipe cards'],['Animate','Remotion code'],['Beat sync','Sound design'],['Frame QA','Render + inspect'],['Deliver','Editable outputs']];
+    const steps = document.querySelector('#steps');
+    stages.forEach(([title,detail],i) => {
+      if(i) steps.insertAdjacentHTML('beforeend', `<svg class="connector" viewBox="0 0 18 20" aria-hidden="true"><path class="base" d="M0 10H17M12 6l5 4-5 4"/><path id="route-${i}" class="travel" d="M0 10H17M12 6l5 4-5 4"/></svg>`);
+      steps.insertAdjacentHTML('beforeend', `<section class="hf-ui-onboarding-card" id="step-${i}"><div class="active-surface" data-layout-ignore="true"></div><div class="step-top"><span class="number">0${i+1}</span><span class="milestone" data-layout-ignore="true"></span></div><svg class="icon" viewBox="0 0 48 48" aria-hidden="true">${icons[i]}</svg><h2 class="card-title">${title}</h2><p class="card-detail">${detail}</p></section>`);
+    });
+    const colors=getComputedStyle(document.documentElement);
+    const accent=colors.getPropertyValue('--accent').trim(), muted=colors.getPropertyValue('--muted').trim(), edge=colors.getPropertyValue('--edge').trim();
+    const tl = gsap.timeline({paused:true});
+    document.querySelectorAll('.travel').forEach(path => {
+      const length = path.getTotalLength();
+      path.style.strokeDasharray = `${length}`;
+      tl.fromTo(path,{strokeDashoffset:length},{strokeDashoffset:0,duration:.42,ease:'power2.out'},.85+(Number(path.id.split('-')[1])-1)*.78);
+    });
+    stages.forEach((_,i) => {
+      const at=.42+i*.78;
+      tl.fromTo(`#step-${i} .active-surface,#step-${i} .milestone`,{opacity:0},{opacity:1,duration:.18,ease:'power2.out'},at);
+      tl.to(`#step-${i} .icon,#step-${i} .number`,{color:accent,duration:.18},at);
+      if(i<6) tl.to(`#step-${i} .active-surface`,{opacity:.4,duration:.28},at+.64);
+    });
+    tl.fromTo('.rail-fill',{scaleX:0},{scaleX:1,duration:5.08,ease:'none'},.42);
+    tl.fromTo('.scan',{y:0},{y:11,duration:.34,yoyo:true,repeat:1,ease:'power1.inOut'},1.22);
+    tl.fromTo('.code-slash',{rotation:0},{rotation:12,transformOrigin:'center center',duration:.22,yoyo:true,repeat:1,ease:'sine.inOut'},2.82);
+    tl.fromTo('.beat-bar',{scaleY:1},{scaleY:.4,transformOrigin:'center center',duration:.17,yoyo:true,repeat:3,stagger:.025,ease:'sine.inOut'},3.54);
+    const check=document.querySelector('.check'), checkLength=check.getTotalLength();
+    check.style.strokeDasharray=`${checkLength}`;
+    tl.fromTo(check,{strokeDashoffset:checkLength},{strokeDashoffset:0,duration:.38,ease:'power2.out'},4.4);
+    tl.to('.chip',{borderColor:accent,duration:.25,stagger:.1},5.35);
+    tl.to('.active-surface,.milestone',{opacity:0,duration:.55},7.28);
+    tl.to('.icon,.number',{color:muted,duration:.55},7.28);
+    tl.to('.rail-fill',{scaleX:0,duration:.55,ease:'power3.inOut'},7.28);
+    tl.to('.travel',{opacity:0,duration:.55},7.28);
+    tl.to('.chip',{borderColor:edge,duration:.55},7.28);
+    tl.to(check,{strokeDashoffset:checkLength,duration:.55,ease:'power2.inOut'},7.28);
+    window.__timelines['readme-workflow']=tl;
+    tl.seek(0);
+  </script>
+</body>
+</html>

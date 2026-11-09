@@ -2,24 +2,26 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {test} from 'node:test'
 import {createRequire} from 'node:module'
-import {h3MaximumDimensions,fitsH3Dimensions} from '../frontend/src/cloudH3Limits.js'
+import {h3MaximumDimensions,fitsH3Dimensions,fitsH3Size} from '../frontend/src/cloudH3Limits.js'
 import {planningMaximum,planningPreferences,splitMaximum} from '../frontend/src/shotPlanningLimit.js'
 const require=createRequire(new URL('../frontend/package.json',import.meta.url))
 const {parse,compileScript}=require('@vue/compiler-sfc')
 const {ref,computed,watch,reactive}=require('vue')
+const studioSource=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
+const vibeHelpers=['isVibe','usesVideoModel'].map(name=>studioSource.split('\n').find(line=>line.startsWith('const '+name+'='))).join('\n')+'\n'
 function setup(name,props,requestJSON=async()=>({}),emit=()=>{}){
  const source=readFileSync(new URL('../frontend/src/components/'+name,import.meta.url),'utf8')
  const {descriptor}=parse(source)
  const code=compileScript(descriptor,{id:'h3-test'}).content.replace(/^import .*$/gm,'').replace('export default','return')
- const create=new Function('ref','computed','watch','onMounted','onUnmounted','requestJSON','ModelInstallGuide','CloudH3Options','h3MaximumDimensions','fitsH3Dimensions',code)
- const component=create(ref,computed,watch,()=>{},()=>{},requestJSON,{}, {},h3MaximumDimensions,fitsH3Dimensions)
+ const create=new Function('ref','computed','watch','onMounted','onUnmounted','requestJSON','ModelInstallGuide','CloudH3Options','h3MaximumDimensions','fitsH3Size',code)
+ const component=create(ref,computed,watch,()=>{},()=>{},requestJSON,{}, {},h3MaximumDimensions,fitsH3Size)
  return component.setup(props,{expose(){},emit})
 }
 
 test('unknown or failed task never displays stale running progress from an interrupted session',()=>{
  const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
  const code=source.slice(source.indexOf('const videoStatusLabel='),source.indexOf('const videoBatchSummary='))
- const {videoTask}=new Function('videoRunning',code+'\nreturn {videoTask}')({value:false})
+ const {videoTask}=new Function('videoRunning',vibeHelpers+code+'\nreturn {videoTask}')({value:false})
  for(const [status,expected] of [['unknown','状态待核实，请继续查询原任务'],['failed','生成失败'],['stopped','已停止']]){
   const task=videoTask({kind:'video',video_status:status,video_progress_message:'running',video_error:'集群任务身份已保留'})
   assert.equal(task.status,status);assert.equal(task.message,expected)
@@ -29,12 +31,12 @@ test('unknown or failed task never displays stale running progress from an inter
 test('pre-submit failure shows its preparation error and offers generation, not a remote query',()=>{
  const source=readFileSync(new URL('../frontend/src/components/VideoStudio.vue',import.meta.url),'utf8')
  const code=source.slice(source.indexOf('const videoStatusLabel='),source.indexOf('const videoBatchSummary='))
- const {videoTask}=new Function('videoRunning',code+'\nreturn {videoTask}')({value:false})
+ const {videoTask}=new Function('videoRunning',vibeHelpers+code+'\nreturn {videoTask}')({value:false})
  const shot={kind:'video',video_status:'pending',video_not_submitted:true,video_resume_available:false,
   video_terminal:false,video_progress_message:'H3 提示词转换失败，视频任务尚未提交',video_error:'HTTP 500'}
  assert.equal(videoTask(shot).message,shot.video_progress_message)
  const canProcess=source.match(/const canProcessVideo=([^\r\n]+)/)[1]
- assert.equal(new Function('shotRenderLocked','return ('+canProcess+')')(()=>false)(shot),true)
+ assert.equal(new Function('shotRenderLocked',vibeHelpers+'return ('+canProcess+')')(()=>false)(shot),true)
  const button=source.match(/<button v-else-if="canProcessVideo\(selectedShot\)"[^>]*>([^<]+)<\/button>/)[1]
  const label=button.slice(2,-2)
  assert.equal(new Function('selectedShot','videoRunning','selectedLocalVideo','return '+label)(shot,false,false),'重新准备并生成本镜')
@@ -47,7 +49,7 @@ test('unsubmitted H3 failure stays available to Start and generate-unfinished co
   assert.ok(line,name+' exists')
   return line
  }).join('\n')
- const {canProcessVideo,shotRenderLocked}=new Function('videoRunning',lines+'\nreturn {canProcessVideo,shotRenderLocked}')({value:false})
+ const {canProcessVideo,shotRenderLocked}=new Function('videoRunning',vibeHelpers+lines+'\nreturn {canProcessVideo,shotRenderLocked}')({value:false})
  for(const backend of ['comfyui','cloud_h3']){
   const shot={kind:'video',video_backend:backend,video_status:'pending',
    video_terminal:false,video_resume_available:false,video_not_submitted:true,
@@ -106,20 +108,24 @@ test('cloud default uses declared safe orientation without overwriting explicit 
  }
 })
 
-test('15-second saved clips are blocked without overwriting their dimensions',async()=>{
+test('15-second request can edit dimensions; changing size never clears the duration warning',async()=>{
  const resolutions=[{width:1664,height:936},{width:1532,height:832},{width:832,height:1532},{width:2000,height:500}]
  const props=reactive({modelValue:{backend:'cloud_h3',resolution:'custom',width:1664,height:936},ratio:'16:9',seconds:14})
  const events=[]
- const state=setup('CloudH3Options.vue',props,async()=>({resolutions}),(name,data)=>events.push(data))
+ const state=setup('CloudH3Options.vue',props,async()=>({resolutions,default_resolutions:{landscape:resolutions[0]}}),(name,data)=>events.push(data))
  await state.refresh()
  assert.equal(state.unavailableSelected.value,false)
  props.seconds=15
  assert.equal(state.durationInvalid.value,true)
- assert.deepEqual(state.sizes.value,[])
- assert.equal(state.unavailableSelected.value,true)
+ assert.deepEqual(state.sizes.value,resolutions.slice(0,3))
+ assert.equal(state.unavailableSelected.value,false)
+ assert.equal(state.invalidDefault.value,false)
+ assert.equal(state.sizeDisabled.value,false)
  assert.equal(state.selected.value,'1664x936')
  state.choose({target:{value:'1532x832'}})
- assert.equal(events.length,0)
+ assert.equal(events.length,1)
+ assert.deepEqual([events[0].width,events[0].height],[1532,832])
+ assert.equal(state.durationInvalid.value,true)
  props.seconds=14
  assert.equal(state.durationInvalid.value,false)
  assert.equal(state.unavailableSelected.value,false)
@@ -143,6 +149,22 @@ test('new clips default to 14-second limits and retain portrait frame alignment'
  assert.equal(fitsH3Dimensions(640,384,15),false)
  assert.equal(fitsH3Dimensions(1664,937,14),false)
  assert.equal(fitsH3Dimensions(2000,500,14),false)
+})
+
+test('overlong shot with no explicit size gets the advertised default, not a capability mismatch',async()=>{
+ const hd={width:1664,height:936}
+ const props=reactive({modelValue:{resolution:''},seconds:15,ratio:'16:9',disabled:false})
+ const state=setup('CloudH3Options.vue',props,async()=>({resolutions:[hd],default_resolutions:{landscape:hd}}))
+ assert.equal(state.sizeDisabled.value,true)
+ await state.refresh()
+ assert.equal(state.sizeDisabled.value,false)
+ assert.equal(state.selected.value,'1664x936')
+ assert.equal(state.invalidDefault.value,false)
+ assert.equal(state.durationInvalid.value,true)
+ props.disabled=true
+ assert.equal(state.sizeDisabled.value,true)
+ const source=readFileSync(new URL('../frontend/src/components/CloudH3Options.vue',import.meta.url),'utf8')
+ assert.match(source,/<select :value="selected" :disabled="sizeDisabled"/)
 })
 
 test('older cloud capabilities choose largest supported orientation, invalid advertised defaults never fall back',async()=>{

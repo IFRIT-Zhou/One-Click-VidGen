@@ -141,6 +141,15 @@ Follow the official h3-prompt-writing skill contract:
    hold, in their approved order. Never replace them with placeholders such as "the approved action
    unfolds continuously" or "follow the source prompt". The video generator receives this conversion,
    not the original source prompt. A subject list, safety policy, or reference label is not an action.
+18. Separate physical movement from explanatory layers. A semi-transparent observation window,
+   cutaway, X-ray reveal, target outline or diagram label is a fixed explanatory layer unless the
+   source explicitly animates it. Preserve its boundary, opacity, underlying texture and attachment
+   to the depicted object. Do not turn it into a liquid surface, moving scan beam, travelling white
+   bands, ripples, pulsating opacity or tissue deformation merely because a nearby probe moves.
+   "Emphasize/highlight the contour" alone means a restrained, steady contour contrast, NOT emitted
+   light. Never translate that into "highlighted with a subtle glow" unless glow is explicitly
+   requested. Keep unrelated tissue, background and labels unchanged while the specified tool moves;
+   preserve tool rigidity and fixed insertion points. Do not freeze any movement explicitly requested.
 
 Return only a JSON object: {"h3_prompt":"..."}. The h3_prompt value contains the six sections.
 """
@@ -453,9 +462,31 @@ def source_fingerprint(shot: dict[str, Any], duration: int, *, reference_audio: 
         "audio_digest": shot.get('reference_audio_digest', '') if reference_audio else '',
         "audio_interval": [shot.get('start'), shot.get('duration')] if reference_audio else [],
         "skill": H3_SKILL_SOURCE,
-        "contract": 14,
+        "contract": 15,
     }
     return hashlib.sha256(json.dumps(source, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _unapproved_emphasis_issues(prompt: str, source: str) -> list[str]:
+    """Catch a narrow, observed mistranslation; not a general scene classifier.
+
+    A diagram contour's emphasis is not authorization for luminous animation.
+    Do not reject ordinary light/metal reflections, or explicit glow directions.
+    """
+    glow = r'(?:\bglow\w*\b|\bhalo\b|发光|光晕|辉光)'
+    negative = r'(?:\b(?:no|not|never|without|avoid|do not)\b|不要|不得|禁止|不出现|无光|不发光)'
+    source_clauses = re.split(r'[。；;\n.!?]', source)
+    if any(re.search(glow, clause, re.I) and not re.search(negative, clause, re.I)
+           for clause in source_clauses):
+        return []
+    body = _section_body(prompt, 'detailed_description')
+    for clause in re.split(r'[。；;\n.!?]', body):
+        if re.search(negative, clause, re.I):
+            continue
+        if re.search(r'\b(?:highlight\w*|emphasiz\w*|accentuat\w*)\b[^.!?;\n]{0,100}' + glow,
+                     clause, re.I):
+            return ['将轮廓强调擅自改成了发光效果；应保持稳定轮廓，不添加光晕或波纹']
+    return []
 
 
 def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool = False,
@@ -467,7 +498,9 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
     cached = str(shot.get("h3_prompt") or "").strip()
     if cached and shot.get("h3_prompt_source") == fingerprint:
         try:
-            return _validate(cached, duration, reference_audio=reference_audio, lipsync=lipsync), fingerprint
+            validated = _validate(cached, duration, reference_audio=reference_audio, lipsync=lipsync)
+            if not _unapproved_emphasis_issues(validated, str(shot.get('video_prompt') or '')):
+                return validated, fingerprint
         except H3PromptIncomplete:
             # Do not reuse old padded prompts or rewrite the user's stored shot.
             pass
@@ -533,6 +566,18 @@ def convert_for_h3(shot: dict[str, Any], duration: int, *, reference_audio: bool
                     'Do not substitute a subject list, safety policy, or generic instruction such as '
                     '"the approved action unfolds continuously". Do not invent movement for a hold '
                     'or add unapproved text. Return the complete h3_prompt JSON object.')
+                continue
+            emphasis_issues = _unapproved_emphasis_issues(prompt, generic)
+            if emphasis_issues:
+                if attempt == 2:
+                    raise ValueError('H3 转换结果添加了未授权光效：' + '；'.join(emphasis_issues)
+                                     + '；已自动纠正重试仍未通过，尚未提交视频生成。请重试或修改提示词。')
+                retry_feedback = (
+                    '\nThe previous conversion turned contour emphasis into an unapproved glow. '
+                    'Regenerate from the SAME approved source. Use steady contour contrast instead '
+                    'of emitted light; keep any transparent explanatory window fixed in shape, '
+                    'opacity and texture unless the source explicitly animates it. Preserve all '
+                    'approved physical actions. Return the full h3_prompt JSON object.')
                 continue
             issues = visual_first_prompt_issues(
                 _section_body(prompt, 'detailed_description'), shot.get('motion_plan'))

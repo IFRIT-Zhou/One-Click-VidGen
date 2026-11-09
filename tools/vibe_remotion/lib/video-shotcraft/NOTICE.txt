@@ -1,0 +1,36 @@
+OCV Shotcraft renderer attribution
+
+This runtime contains modified motion implementations derived from:
+video-shotcraft by Vincent Wei and contributors
+Copyright 2026 Wei Yihao
+https://github.com/Vincentwei1021/video-shotcraft
+License: Apache License 2.0 (the full license is included alongside this notice).
+
+Upstream sources:
+demos/opening/spotlight-hero-card/SpotlightHeroCard.tsx
+demos/typography/word-relay-filmstrip/WordRelayFilmstrip.tsx
+demos/outro/outro-group-photo-launch/OutroGroupPhotoLaunch.tsx
+demos/transition/card-flip-reveal/CardFlipReveal.tsx
+demos/ui-entrance/carousel-3d/Carousel3D.tsx
+demos/ui-entrance/card-stack/CardStack.tsx
+demos/data/timeline-travel/TimelineTravel.tsx
+demos/ui-entrance/document-typewriter-reveal/DocumentTypewriterReveal.tsx
+demos/typography/marker-underline-title/MarkerUnderlineTitle.tsx
+demos/rhythm/quad-split-parallel-scenes/QuadSplitParallelScenes.tsx
+demos/effects/scanline-annotate-focus/ScanlineAnnotateFocus.tsx
+demos/typography/title-demote-to-label/TitleDemoteToLabel.tsx
+demos/_fixtures/Polish.tsx
+
+Adaptation baseline: OCV's verified private ShotcraftFilm.tsx trial (2026-11-04).
+Modified files: src/ShotcraftScene.tsx and src/lib/ShotcraftMotion.tsx.
+Additional adaptations: src/ShotcraftExpanded.tsx (2026-11-04), with bounded
+item counts, source-image containment, non-diagnostic full-image focus,
+Chinese typography, deterministic spring choreography, and review frames.
+Changes: trusted JSON-only recipe selection; source-derived palette, typography
+and background tokens; full-image contain; conceptual symbols without fabricated
+data; content fitting and overflow rejection; duration adaptation and reading
+holds; existing OCV renderer contract, proof-frame metadata and assets boundary.
+
+Upstream brands, demonstration UI/data, audio and sample image assets are not
+included. The Apache license applies to the derived code, not to Remotion itself
+or user-provided assets, which remain subject to their respective licenses.

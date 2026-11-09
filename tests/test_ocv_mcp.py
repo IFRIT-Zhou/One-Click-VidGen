@@ -131,10 +131,11 @@ class McpAdapterTests(unittest.TestCase):
         args = arguments or {'path': {'identity': 'a'*32}, 'body': {'revision': 3}}
         return self.adapter.prepare(operation, args, request_id)
 
-    def completed(self, plan):
+    def completed(self, plan, adapter=None):
+        adapter = adapter or self.adapter
         deadline = time.time() + 5
         while time.time() < deadline:
-            receipt = self.adapter.receipt(plan)
+            receipt = adapter.receipt(plan)
             if receipt['status'] != 'submitting':
                 return receipt
             time.sleep(.01)
@@ -506,6 +507,229 @@ class McpAdapterTests(unittest.TestCase):
             self.adapter.commit(plan['plan_id'],True)
             self.assertEqual(self.completed(plan['plan_id'])['status'],'submitted')
             self.assertEqual(self.backend.calls[-1][2]['json'],args['body'])
+
+    def test_extract_layers_prepare_no_cloud_or_generation_grant(self):
+        adapter = Adapter('http://127.0.0.1:8010', self.folder / 'cutouts',
+                          transport_factory=lambda: self.backend, allow_generation=False)
+        op = 'ocv_video_layer_pack_create'
+        args = {'path': {'identity': 'a'*32, 'shot_id': 'shot_19'}, 'body': {
+            'source_sha256': 'd'*64, 'canvas': [960, 540],
+            'elements': [{'name': '标本', 'shape': 'ellipse', 'box': [30, 40, 200, 210]}],
+            'cleanup': [{'shape': 'rect', 'box': [5, 100, 22, 107]}]}}
+        self.assertTrue(adapter.describe(op)['enabled'])
+        plan = adapter.prepare(op, args, 'cutout_only_19')
+        self.assertFalse(plan['requires_confirmation'])
+        self.assertIn('不上传', plan['cost'])
+        self.assertFalse(self.backend.calls)
+        adapter.commit(plan['plan_id'])
+        self.assertEqual(self.completed(plan['plan_id'], adapter)['status'], 'submitted')
+        self.assertEqual(self.backend.calls, [('POST', '/api/video-studio/'+'a'*32+'/shots/shot_19/layer-packs',
+                                              {'params': {}, 'json': args['body']})])
+        media = adapter.operations('video_layer_pack_')['items']
+        self.assertTrue(any(i['name'] == 'ocv_video_layer_pack_file' and i['transfer'] == 'download'
+                            and i['access'] == 'read' for i in media))
+        def serve_layer(method, path, folder, **kwargs):
+            asset_id = path.rsplit('/', 1)[1]
+            self.assertEqual((method, path), ('GET', '/api/video-studio/'+'a'*32+'/layer-packs/'+'c'*32+'/'+asset_id))
+            file = folder / (asset_id + '.png')
+            file.write_bytes(b'test PNG payload')
+            return file, 'image/png'
+        with patch.object(self.backend, 'download', serve_layer, create=True):
+            for asset_id in ('plate', 'layer_01'):
+                result = adapter.read('ocv_video_layer_pack_file', {'path': {
+                    'identity':'a'*32, 'pack_id':'c'*32, 'asset_id':asset_id}})['asset']
+                self.assertNotEqual(result['asset_id'], asset_id)
+                self.assertEqual(adapter.asset(result['asset_id'])[0].name, asset_id + '.png')
+
+    def test_vibe_preview_requires_render_grant_and_stays_on_local_shot(self):
+        op = 'ocv_video_vibe_preview_create'
+        path = {'identity': 'a'*32, 'shot_id': 's1'}
+        body = {'source_sha256': 'd'*64, 'pack_id': 'c'*32,
+                'plan': {'sequence': [{'asset_id': 'layer_01', 'cue': 'scene_001'}]}}
+        args = {'path': path, 'body': body}
+        adapter = Adapter('http://127.0.0.1:8010', self.folder/'vibe', allow_generation=False,
+                          transport_factory=lambda: self.backend)
+        with self.assertRaisesRegex(ValueError, '授权'):
+            adapter.prepare(op, args, 'no_render_grant')
+        with self.assertRaisesRegex(ValueError, '契约'):
+            self.prep(op, {'path': path, 'body': {**body, 'shell': 'arbitrary'}}, 'no_shell_allowed')
+        prep = self.prep(op, args, 'single_shot_vibe')
+        self.assertTrue(prep['requires_confirmation'])
+        self.assertIn('不调用计费模型', prep['cost'])
+        with self.assertRaisesRegex(ValueError, '明确授权'):
+            self.adapter.commit(prep['plan_id'])
+        self.assertFalse(self.backend.calls)
+        self.adapter.commit(prep['plan_id'], confirmed=True)
+        self.assertEqual(self.completed(prep['plan_id'])['status'], 'submitted')
+        self.assertEqual(self.backend.calls, [('POST', '/api/video-studio/'+'a'*32+'/shots/s1/vibe-previews',
+                                               {'params': {}, 'json': body})])
+
+    def test_vibe_design_modes_have_distinct_cost_and_explicit_formal_consent(self):
+        path = {'identity':'a'*32,'shot_id':'s1'}
+        def design(body, key):
+            return self.prep('ocv_video_vibe_design',{'path':path,'body':body}, key)
+        self.assertIn('不外发', design({},'local_budget')['cost'])
+        with self.assertRaisesRegex(ValueError, '同意'):
+            design({'engine':'model'}, 'vision_without_consent')
+        for mode, phrase in [('layout','不发送图片'),('vision','缩略图')]:
+            preview = design({'engine':'model','confirm_model':True,'model_input':mode}, 'vibe_'+mode)
+            self.assertIn(phrase,preview['cost'])
+        for action in ['adopt','undo']:
+            pending=self.prep('ocv_video_vibe_'+action,{'path':path,'body':{'revision':3,'preview_id':'a'*32}},'vibe_'+action)
+            self.assertTrue(pending['requires_confirmation'])
+            self.assertIn('不调用计费模型',pending['cost'])
+            with self.assertRaisesRegex(ValueError,'明确授权'):
+                self.adapter.commit(pending['plan_id'])
+        self.assertFalse(self.backend.calls)
+
+    def test_vibe_reservation_is_confirmed_nonbilled_formal_edit(self):
+        op='ocv_video_vibe_intent'
+        path={'identity':'a'*32,'shot_id':'some-shot'}
+        # An edit grant is enough; this must not require a generation grant nor
+        # accidentally turn setting the intent into a render/adoption/paid call.
+        adapter=Adapter('http://127.0.0.1:8010', self.folder/'vibe-intent-no-generation',
+                        transport_factory=lambda:self.backend, allow_generation=False)
+        for index,enabled in enumerate((True,False)):
+            args={'path':path,'body':{'revision':3,'enabled':enabled}}
+            plan=adapter.prepare(op,args,'vibe_intent_'+str(index))
+            self.assertTrue(plan['requires_confirmation'])
+            self.assertIn('不调用计费模型',plan['cost'])
+            with self.assertRaisesRegex(ValueError,'明确授权'):adapter.commit(plan['plan_id'])
+            self.assertEqual(len(self.backend.calls),index)
+            adapter.commit(plan['plan_id'],confirmed=True)
+            self.assertEqual(self.completed(plan['plan_id'],adapter)['status'],'submitted')
+            self.assertEqual(self.backend.calls[-1],('POST','/api/video-studio/'+'a'*32+'/shots/some-shot/vibe-intent',{'params':{},'json':args['body']}))
+        readonly=self.new_adapter(read_only=True)
+        with self.assertRaisesRegex(ValueError,'授权'):readonly.prepare(op,args,'vibe_intent_readonly')
+        self.assertEqual(len(self.backend.calls),2)
+
+    def test_vibe_preview_latest_and_all_review_assets_are_read_only(self):
+        adapter = Adapter('http://127.0.0.1:8010', self.folder/'read-vibe', read_only=True,
+                          transport_factory=lambda: self.backend)
+        project_path = '/api/video-studio/'+'a'*32
+        items = {i['name']:i for i in adapter.operations('video_vibe_preview_')['items']}
+        self.assertFalse(items['ocv_video_vibe_preview_create']['enabled'])
+        self.assertEqual(items['ocv_video_vibe_preview_file']['transfer'], 'download')
+        adapter.read('ocv_video_vibe_preview_latest', {'path': {'identity': 'a'*32, 'shot_id': 's1'}})
+        self.assertEqual(self.backend.calls[-1][:2], ('GET', project_path+'/shots/s1/vibe-preview/latest'))
+        seen = []
+        def serve_clip(method, url, folder, **kwargs):
+            seen.append((method, url))
+            proof = url.endswith('/proof')
+            file = folder/(url.rsplit('/',1)[1]+('.jpg' if proof else '.mp4'))
+            file.write_bytes(b'fake media')
+            return file,'image/jpeg' if proof else 'video/mp4'
+        with patch.object(self.backend, 'download', serve_clip, create=True):
+            for kind in ('preview','silent','proof'):
+                receipt = adapter.read('ocv_video_vibe_preview_file', {'path': {
+                    'identity':'a'*32, 'preview_id':'e'*32, 'asset_id':kind}})
+                self.assertEqual(adapter.asset(receipt['asset']['asset_id'])[0].name, kind+('.jpg' if kind=='proof' else '.mp4'))
+        self.assertEqual(seen,[('GET',project_path+'/vibe-previews/'+'e'*32+'/'+kind) for kind in ('preview','silent','proof')])
+
+    def test_vibe_cloud_start_requires_explicit_upload_budget_and_generation_consent(self):
+        op = 'ocv_video_vibe_cloud_create'
+        path = {'identity': 'a'*32, 'shot_id': 's1'}
+        body = {'confirm_cloud': True, 'instruction': '按最终字幕逐项呈现',
+                'pace': 'normal', 'max_image_requests': 0}
+        for bad in ({}, {'confirm_cloud': True}, {**body, 'confirm_cloud': False},
+                    {**body, 'confirm_cloud': 1}, {**body, 'max_image_requests': None},
+                    {**body, 'max_image_requests': 13}, {**body, 'max_image_requests': 4},
+                    {**body, 'max_image_requests': True}, {**body, 'pace': 'instant'},
+                    {**body, 'api_key': 'forbidden'}, {**body, 'auto_adopt': True}):
+            with self.subTest(body=bad), self.assertRaises(ValueError):
+                self.prep(op, {'path': path, 'body': bad}, 'invalid_cloud_request')
+        args = {'path': path, 'body': body}
+        no_generation = Adapter('http://127.0.0.1:8010', self.folder/'cloud-no-gen',
+                                transport_factory=lambda: self.backend, allow_generation=False)
+        with self.assertRaisesRegex(ValueError, '授权'):
+            no_generation.prepare(op, args, 'cloud_without_generation')
+        pending = self.prep(op, args, 'cloud_single_shot')
+        self.assertTrue(pending['requires_confirmation'])
+        for phrase in ('独立 Vibe API', '最终字幕时间戳', '图像请求上限为 0', '不自动抠图', '最多两轮修正', '不自动采用'):
+            self.assertIn(phrase, pending['cost'])
+        with self.assertRaisesRegex(ValueError, '明确授权'):
+            self.adapter.commit(pending['plan_id'])
+        self.assertFalse(self.backend.calls)
+        self.adapter.commit(pending['plan_id'], confirmed=True)
+        self.assertEqual(self.completed(pending['plan_id'])['status'], 'submitted')
+        # Re-reading or repeating this receipt is not authorization for another
+        # paid job, nor for automatic adoption of the resulting preview.
+        self.adapter.commit(pending['plan_id'], confirmed=True)
+        self.assertEqual(self.backend.calls, [('POST', '/api/video-studio/'+'a'*32+'/shots/s1/vibe-cloud-jobs',
+                                               {'params': {}, 'json': {**body, 'template_mode': 'shotcraft'}})])
+
+    def test_vibe_cloud_new_adapter_does_not_offer_zero_budget_to_old_server(self):
+        schema=copy.deepcopy(self.schema)
+        budget=schema['components']['schemas']['CloudRequest']['properties']['max_image_requests']
+        for variant in budget.get('anyOf',[budget]):
+            if variant.get('type')=='integer':variant['minimum']=1
+        bound,unavailable=bind(schema)
+        self.assertIn('ocv_video_vibe_cloud_create',unavailable)
+        self.assertNotIn('ocv_video_vibe_cloud_create',bound)
+
+    def test_vibe_cloud_readiness_and_job_polling_are_read_only_and_secret_free(self):
+        adapter = self.new_adapter(read_only=True)
+        original = self.backend.call
+        def call(method, path, **kwargs):
+            result = original(method, path, **kwargs)
+            if path == '/api/vibe-model':
+                result = {'base_url': 'https://example.invalid', 'model': 'multimodal-test',
+                          'configured': True, 'max_image_requests': 4, 'source': 'vibe_dedicated',
+                          'generation_policy':'source_style_code_only','image_generation_enabled':False,'effective_max_image_requests':0,
+                          'api_key': 'must-not-return', 'private_configuration': 'not-public'}
+            return result
+        self.backend.call = call
+        config = adapter.read('ocv_vibe_model', {})['data']
+        self.assertTrue(config['configured'])
+        self.assertEqual(config['max_image_requests'], 4)
+        self.assertEqual(config['effective_max_image_requests'], 0)
+        self.assertFalse(config['image_generation_enabled'])
+        self.assertNotIn('api_key', config)
+        self.assertNotIn('private_configuration', config)
+        adapter.read('ocv_video_vibe_cloud_latest', {'path': {'identity': 'a'*32, 'shot_id': 's1'}})
+        self.assertEqual(self.backend.calls[-1][:2], ('GET', '/api/video-studio/'+'a'*32+'/shots/s1/vibe-cloud-job/latest'))
+        entries = {entry['name']: entry for entry in adapter.operations('video_vibe_cloud_')['items']}
+        self.assertTrue(entries['ocv_video_vibe_cloud_latest']['enabled'])
+        self.assertFalse(entries['ocv_video_vibe_cloud_create']['enabled'])
+        self.assertFalse(entries['ocv_video_vibe_cloud_stop']['enabled'])
+        self.assertEqual([op.method for op in OPERATIONS if op.path.startswith('/api/vibe-model')], ['GET'])
+
+    def test_vibe_cloud_stop_targets_exact_task_despite_project_progress(self):
+        adapter = Adapter('http://127.0.0.1:8010', self.folder/'cloud-stop-no-gen',
+                          transport_factory=lambda: self.backend, allow_generation=False)
+        op = 'ocv_video_vibe_cloud_stop'
+        args = {'path': {'identity': 'a'*32, 'shot_id': 's1', 'task_id': 'b'*32}}
+        pending = adapter.prepare(op, args, 'stop_exact_cloud_job')
+        self.assertFalse(pending['requires_confirmation'])
+        self.assertIn('可能仍运行或计费', pending['cost'])
+        self.backend.revision += 1
+        adapter.commit(pending['plan_id'])
+        self.assertEqual(self.completed(pending['plan_id'], adapter)['status'], 'submitted')
+        self.assertEqual(self.backend.calls, [('POST', '/api/video-studio/'+'a'*32+'/shots/s1/vibe-cloud-jobs/'+'b'*32+'/stop',
+                                               {'params': {}})])
+        with self.assertRaisesRegex(ValueError, '授权'):
+            self.new_adapter(read_only=True).prepare(op, args, 'readonly_cannot_stop')
+
+    def test_layer_cloud_operations_require_separate_upload_and_generation_consent(self):
+        common = {'project_id': 'a'*32, 'pack_id': 'c'*32}
+        no_gen = Adapter('http://127.0.0.1:8010', self.folder / 'nogeneration',
+                         transport_factory=lambda: self.backend, allow_generation=False)
+        for op, body, flag in [
+            ('ocv_image_studio_layer_matte', dict(common, asset_id='layer_01', subject='保留主体'), 'confirm_reference_upload'),
+            ('ocv_image_studio_layer_plate_refine', dict(common), 'confirm_plate_upload'),
+        ]:
+            with self.subTest(op=op):
+                for invalid in (body, {**body, flag: False}):
+                    with self.assertRaisesRegex(ValueError, '契约'):
+                        self.prep(op, {'body': invalid}, op + '_no_consent')
+                args = {'body': {**body, flag: True}}
+                with self.assertRaisesRegex(ValueError, '授权'):
+                    no_gen.prepare(op, args, op + '_blocked')
+                plan = self.prep(op, args, op + '_ok')
+                self.assertTrue(plan['requires_confirmation'])
+                with self.assertRaisesRegex(ValueError, '明确授权'):
+                    self.adapter.commit(plan['plan_id'])
+        self.assertFalse(self.backend.calls)
 
     def test_asset_scope_and_path_guard(self):
         owner=self.adapter.authenticate(self.backend)

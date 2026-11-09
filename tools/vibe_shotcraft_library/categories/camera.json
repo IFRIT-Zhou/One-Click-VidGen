@@ -1,0 +1,589 @@
+{
+  "category": "camera",
+  "zh": "运镜与空间",
+  "en": "Camera & Space",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "basic-3d-scene",
+      "category": "camera",
+      "summary": "impress.js 式空间演示：卡片以不同位置/旋转/缩放散布 3D 空间，相机取各步姿态之逆依次飞行对齐，末步拉到 OVERVIEW 总览",
+      "recipe_path": "source/references/shots/camera/basic-3d-scene.md",
+      "style_ids": [
+        "basic-3d-scene"
+      ]
+    },
+    {
+      "id": "crash-zoom-punch",
+      "category": "camera",
+      "summary": "全景一拍急推到目标特写（6f），落位二选一——过冲回弹（弹性）或撞停震屏（重量）",
+      "recipe_path": "source/references/shots/camera/crash-zoom-punch.md",
+      "style_ids": [
+        "crash-zoom-punch"
+      ]
+    },
+    {
+      "id": "cursor-flyover",
+      "category": "camera",
+      "summary": "整页俯瞰后，相机依次飞到四个功能区 zoom-in 特写，SVG 光标先一步到位指点、点击留下涟漪并触发界面响应，最后拉回俯瞰",
+      "recipe_path": "source/references/shots/camera/cursor-flyover.md",
+      "style_ids": [
+        "cursor-flyover"
+      ]
+    },
+    {
+      "id": "depth-layer-moves",
+      "category": "camera",
+      "summary": "分层深度运镜——多层视差滑轨：3 层速度梯度横移出纵深，滑轨落定时主角浮起",
+      "recipe_path": "source/references/shots/camera/depth-layer-moves.md",
+      "style_ids": [
+        "multiplane"
+      ]
+    },
+    {
+      "id": "graze-face-tour",
+      "category": "camera",
+      "summary": "大倾角贴面游走特写——镜头贴着 UI 表面低飞掠过（侧栏树/顶栏/列表当地形），页面文字初始悬浮在界面上空带同形软影，随镜头行进先后加速贴落回界面",
+      "recipe_path": "source/references/shots/camera/graze-face-tour.md",
+      "style_ids": [
+        "graze-face-tour"
+      ]
+    },
+    {
+      "id": "overhead-camera-moves",
+      "category": "camera",
+      "summary": "俯拍揭示两式——tilt-reveal 俯仰抬正揭示、overhead-tabletop-drop 桌面卡阵横滑骤降扎入",
+      "recipe_path": "source/references/shots/camera/overhead-camera-moves.md",
+      "style_ids": [
+        "tilt-reveal",
+        "overhead-tabletop-drop"
+      ]
+    },
+    {
+      "id": "space-camera-moves",
+      "category": "camera",
+      "summary": "3D 空间化运镜两式——exploded-view 爆炸分解（构件沿 Z 炸开再合体）、drone-dive-landing 无人机俯冲降落",
+      "recipe_path": "source/references/shots/camera/space-camera-moves.md",
+      "style_ids": [
+        "exploded-view",
+        "drone-dive-landing"
+      ]
+    },
+    {
+      "id": "steep-tilt-glide",
+      "category": "camera",
+      "summary": "固定镜头下直立页面以 60° 强透视侧立（右近左远），页面自身沿其 3D 横面方向滑移掠过镜头（物动镜不动），滑移带速度重影、文字组件悬空贴落、由暗揭亮",
+      "recipe_path": "source/references/shots/camera/steep-tilt-glide.md",
+      "style_ids": [
+        "steep-tilt-glide"
+      ]
+    },
+    {
+      "id": "tension-camera-moves",
+      "category": "camera",
+      "summary": "情绪运镜两式——bullet-time 冻结环绕、pull-back 拉远孤立，相机替观众\"感受\"而非\"看\"",
+      "recipe_path": "source/references/shots/camera/tension-camera-moves.md",
+      "style_ids": [
+        "bullet-time-freeze-orbit",
+        "pull-back-isolation"
+      ]
+    },
+    {
+      "id": "terminal-3d",
+      "category": "camera",
+      "summary": "三个终端窗散布 3D 空间，相机窗间飞行、途中正弦拉远，每到一窗打字机敲命令、结果逐行滑出——命令执行的空间叙事流",
+      "recipe_path": "source/references/shots/camera/terminal-3d.md",
+      "style_ids": [
+        "terminal-3d"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "basic-3d-scene",
+      "card_id": "basic-3d-scene",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "basic-3d-scene",
+      "description": "impress.js 式空间演示：卡片以不同位置/旋转/缩放散布 3D 空间，相机取各步姿态之逆依次飞行对齐，末步拉到 OVERVIEW 总览",
+      "use": "概念/路线图/三步法的空间化讲述；替代平面 slides 的\"每一步都换个空间视角\"",
+      "duration": "约 7.5s（225f@30fps；四站，三段飞行 28/32/32f，每站停留 ≥30f）",
+      "recipe_path": "source/references/shots/camera/basic-3d-scene.md",
+      "demo_paths": [
+        "source/demos/camera/basic-3d-scene/Basic3DScene.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/basic-3d-scene.mp4",
+      "upstream_preview_url": "./media/basic-3d-scene.mp4?v=1790980736769",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/basic-3d-scene.md": "83c7cacdac78b4db949ccf0c0f842a8676016aeeea9f5d2c67c25b8f4475be13",
+        "source/demos/camera/basic-3d-scene/Basic3DScene.tsx": "5c06728fca57abb7d6416ce6dd7ff92642ebedbe590e5459e63d5a0082691016",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "971ed30038b8ad64cd91c5f0a9ef9281ddefb8ea32a9ac3bf6cedbc65e66546a",
+      "preview_available": true
+    },
+    {
+      "id": "crash-zoom-punch",
+      "card_id": "crash-zoom-punch",
+      "category": "camera",
+      "tags": [
+        "camera",
+        "effects"
+      ],
+      "label": "crash-zoom-punch",
+      "description": "全景一拍急推到目标特写（6f），落位二选一——过冲回弹（弹性）或撞停震屏（重量）",
+      "use": "功能段\"点名\"镜头——把观众视线一拍按到目标卡/模块上；强调级用撞停",
+      "duration": "约 0.5s 动作 + 前后 hold（动作 6–11f，前 hold ≥30f 建立全景、后 hold ≥45f 读特写）",
+      "recipe_path": "source/references/shots/camera/crash-zoom-punch.md",
+      "demo_paths": [
+        "source/demos/camera/crash-zoom-punch/CrashImpactReal.tsx",
+        "source/demos/camera/crash-zoom-punch/CrashZoomReal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/crash-zoom-punch.mp4",
+      "upstream_preview_url": "./media/crash-zoom-punch.mp4?v=1790980736794",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/crash-zoom-punch.md": "b683d6bb83546680b0381e999adfd0c38d39a167b9bad8b28a19f9652454344b",
+        "source/demos/camera/crash-zoom-punch/CrashImpactReal.tsx": "e44839c7d1e43a25978bededa58573478aeb95e94f2b1b830542fd55f693bc49",
+        "source/demos/camera/crash-zoom-punch/CrashZoomReal.tsx": "f226b81b8f970b7d0a38ae3fb0d86cefc27a2ab1aa0334cf3cbf30b172563f45",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "8b0712fb4db34fa999370851aac206bca2934a99ef655fe88661282d35d44105",
+      "preview_available": true
+    },
+    {
+      "id": "cursor-flyover",
+      "card_id": "cursor-flyover",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "cursor-flyover",
+      "description": "整页俯瞰后，相机依次飞到四个功能区 zoom-in 特写，SVG 光标先一步到位指点、点击留下涟漪并触发界面响应，最后拉回俯瞰",
+      "use": "单页产品的功能巡览：一镜带观众看完四个功能区，光标当\"导游手指\"",
+      "duration": "约 8.0s（240f@30fps；俯瞰 22f · 四站各 44f（飞行 20f + 停留 24f）· 拉回 24f · hold 18f）",
+      "recipe_path": "source/references/shots/camera/cursor-flyover.md",
+      "demo_paths": [
+        "source/demos/camera/cursor-flyover/CursorFlyover.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/cursor-flyover.mp4",
+      "upstream_preview_url": "./media/cursor-flyover.mp4?v=1790980736795",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/cursor-flyover.md": "dbda78e0054ca4ca9e83c09bea4e23fbbb68c2331ab40da765eb77ca8c73d1cb",
+        "source/demos/camera/cursor-flyover/CursorFlyover.tsx": "f234775365ecb93f9576db4715c66bb21513bfb158e71112c1efa63b121ab826",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "0ef5e8e40ce5a4933741c9ec38b576a731b1dfc1014730b98adadf61a519fd29",
+      "preview_available": true
+    },
+    {
+      "id": "multiplane",
+      "card_id": "depth-layer-moves",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "multiplane",
+      "description": "分层深度运镜——多层视差滑轨：3 层速度梯度横移出纵深，滑轨落定时主角浮起",
+      "use": "平面截图要\"有厚度\"的段落：卡组 / 列表 / 整页的横向巡览",
+      "duration": "4–5.5s 持续（demo 165f）",
+      "recipe_path": "source/references/shots/camera/depth-layer-moves.md",
+      "demo_paths": [
+        "source/demos/camera/depth-layer-moves/MultiplaneReal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/multiplane.mp4",
+      "upstream_preview_url": "./media/multiplane.mp4?v=1790980736798",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/depth-layer-moves.md": "54cfc27b32b008c121e4bb2f26d626f503547c6c1fb91f1d286446feee7998d1",
+        "source/demos/camera/depth-layer-moves/MultiplaneReal.tsx": "4566d05a98022ce52d09b2292bf0d81e04f0ea5d40f5cfe71455e3266fb19bd7",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "ffe35459fc7072c5fc8feab6c7dedd14930feff524a3332f25c1cd9003051fbf",
+      "preview_available": true
+    },
+    {
+      "id": "graze-face-tour",
+      "card_id": "graze-face-tour",
+      "category": "camera",
+      "tags": [
+        "camera",
+        "ui-entrance"
+      ],
+      "label": "graze-face-tour",
+      "description": "大倾角贴面游走特写——镜头贴着 UI 表面低飞掠过（侧栏树/顶栏/列表当地形），页面文字初始悬浮在界面上空带同形软影，随镜头行进先后加速贴落回界面",
+      "use": "功能区巡礼（把 UI 当地景飞掠）；配合暗场+霓虹缘光做产品\"内部世界\"段落；界面内容逐区登场",
+      "duration": "单段 4–5s；可多段接力延长",
+      "recipe_path": "source/references/shots/camera/graze-face-tour.md",
+      "demo_paths": [
+        "source/demos/camera/graze-face-tour/GrazeFaceTour.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/graze-face-tour.mp4",
+      "upstream_preview_url": "./media/graze-face-tour.mp4?v=1790980736816",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/graze-face-tour.md": "7247d4c1f19ab50204536a98af2e42b39da8023e2881c58d75ec8d8e774559c7",
+        "source/demos/camera/graze-face-tour/GrazeFaceTour.tsx": "27e816d7b33051f677e5472276fcdcf9fe8832aeef8780cb16644724c4377db4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4c9fea524f3dca51f799fd8dfbe2248f49a5f90147bc27030265abd455e86b8f",
+      "preview_available": true
+    },
+    {
+      "id": "tilt-reveal",
+      "card_id": "overhead-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera",
+        "opening",
+        "transition"
+      ],
+      "label": "tilt-reveal",
+      "description": "perspective 容器内整页 rotateX -80° 平躺，~43f 抬正，rotateX/scale/translateY 共用 out-cubic，末端轻过冲",
+      "use": "开场 establishing；单主体",
+      "duration": "A 120f（4s）/ B 140f（4.7s）",
+      "recipe_path": "source/references/shots/camera/overhead-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/overhead-camera-moves/TiltReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/tilt-reveal.mp4",
+      "upstream_preview_url": "./media/tilt-reveal.mp4?v=1790980736840",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/overhead-camera-moves.md": "ad56813514c854f0289ba5a7e6f8c68ead34de190bc7ebd594c42c6a6dd58d5b",
+        "source/demos/camera/overhead-camera-moves/TiltReveal.tsx": "2621fbf6a60d2c89175156c9e6b6c28c2c741b011f9c6dffcd4d267714ae5568",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "7b65874a5caab6efffeb384104be3db32b012007eb3a7f3e59c5bbb337349231",
+      "preview_available": true
+    },
+    {
+      "id": "overhead-tabletop-drop",
+      "card_id": "overhead-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera",
+        "opening",
+        "transition"
+      ],
+      "label": "overhead-tabletop-drop",
+      "description": "卡阵平躺 rotateX 62°，pan 段只动 translateX 横滑掠过，drop 段角度/缩放/位移三通道同跑扎入落版",
+      "use": "多页巡视后择一；转场/开场两用",
+      "duration": "A 120f（4s）/ B 140f（4.7s）",
+      "recipe_path": "source/references/shots/camera/overhead-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/overhead-camera-moves/OverheadTabletopDrop.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/overhead-tabletop-drop.mp4",
+      "upstream_preview_url": "./media/overhead-tabletop-drop.mp4?v=1790980736841",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/overhead-camera-moves.md": "ad56813514c854f0289ba5a7e6f8c68ead34de190bc7ebd594c42c6a6dd58d5b",
+        "source/demos/camera/overhead-camera-moves/OverheadTabletopDrop.tsx": "2a8e3d5241d68d2a4b77eb2bc51d69cfe644baf51d673564871600eeaac872e7",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "1a06c382b3fc0b38a05f76ff7e6bc6fee3d995686c263863e9b7de7b653bd2f8",
+      "preview_available": true
+    },
+    {
+      "id": "exploded-view",
+      "card_id": "space-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "exploded-view",
+      "description": "整页 3D 倾斜后构件沿 Z 轴错峰炸开悬停，一拍后逆序合体震屏收口",
+      "use": "架构/组成展示：\"这个产品里有什么\"；模块总览段",
+      "duration": "A 170f（5.7s，炸开-悬停-合体-收尾标题全程）；C 105f（3.5s，俯冲 69f + 落定 hold 36f）单向俯冲",
+      "recipe_path": "source/references/shots/camera/space-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/space-camera-moves/ExplodedView.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/exploded-view.mp4",
+      "upstream_preview_url": "./media/exploded-view.mp4?v=1790980736870",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/space-camera-moves.md": "41225e87d157bb11e89c4cfea8cebded3258ef0a208ba940573df3be369ac04d",
+        "source/demos/camera/space-camera-moves/ExplodedView.tsx": "5127dc596bd5557b3cd093ed5fb983f6d00ff3a05bae9344702a69215783aec4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "83cb69796d43209a2a99c42c2793fd2b22c30502b81b8ee34efb85eeea2b5f4b",
+      "preview_available": true
+    },
+    {
+      "id": "drone-dive-landing",
+      "card_id": "space-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "drone-dive-landing",
+      "description": "近垂直俯角悬停 → 猛扎俯冲 → 气垫减速停在 hero 卡特写",
+      "use": "开场定场→入题；全局地图砸进单点的章节启动",
+      "duration": "A 170f（5.7s，炸开-悬停-合体-收尾标题全程）；C 105f（3.5s，俯冲 69f + 落定 hold 36f）单向俯冲",
+      "recipe_path": "source/references/shots/camera/space-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/space-camera-moves/DroneDiveLanding.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/drone-dive-landing.mp4",
+      "upstream_preview_url": "./media/drone-dive-landing.mp4?v=1790980736871",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/space-camera-moves.md": "41225e87d157bb11e89c4cfea8cebded3258ef0a208ba940573df3be369ac04d",
+        "source/demos/camera/space-camera-moves/DroneDiveLanding.tsx": "8cafe8fc6011a5ced57765916e4f1be7bbfffbf83973a94f2eda34292ccc91af",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "ff81ae976de9599422c572ed9c5760b7c7d7fb99793f589c40f4c2f1d35ec616",
+      "preview_available": true
+    },
+    {
+      "id": "steep-tilt-glide",
+      "card_id": "steep-tilt-glide",
+      "category": "camera",
+      "tags": [
+        "camera",
+        "ui-entrance"
+      ],
+      "label": "steep-tilt-glide",
+      "description": "固定镜头下直立页面以 60° 强透视侧立（右近左远），页面自身沿其 3D 横面方向滑移掠过镜头（物动镜不动），滑移带速度重影、文字组件悬空贴落、由暗揭亮",
+      "use": "长页面/多区块 UI 的炫技巡览（内容依次滑过固定机位）；暗场霓虹调性；与贴面运镜卡互补的\"侧掠\"机位",
+      "duration": "4s（120f）单镜；页面越宽越可拉长",
+      "recipe_path": "source/references/shots/camera/steep-tilt-glide.md",
+      "demo_paths": [
+        "source/demos/camera/steep-tilt-glide/SteepTiltGlide.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/steep-tilt-glide.mp4",
+      "upstream_preview_url": "./media/steep-tilt-glide.mp4?v=1790980736877",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/steep-tilt-glide.md": "c0e8f5efd8658042b1722d408fa79e664c141c129cb3053120597acdef907a2c",
+        "source/demos/camera/steep-tilt-glide/SteepTiltGlide.tsx": "a99a4f838a0f33bb963e5de0845597973b4712ccb7f4ffab955be3bcd141f67d",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "32df49fb3b5d28e108a4402388231f09601004ed39d5a34a38297f7e9bece9ce",
+      "preview_available": true
+    },
+    {
+      "id": "bullet-time-freeze-orbit",
+      "card_id": "tension-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "bullet-time-freeze-orbit 冻结环绕",
+      "description": "图表生长到一半全冻住，相机绕悬停的 UI 平面 rotateY 扫 55° 再回，时间恢复接着长完",
+      "use": "核心数据/图表的加冕时刻；\"值得停表看\"的一格",
+      "duration": "单式 5–6s（150–170f）；全片合计 ≤2 式（各 ≤1 次）",
+      "recipe_path": "source/references/shots/camera/tension-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/tension-camera-moves/BulletTimeFreezeOrbit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/bullet-time-freeze-orbit.mp4",
+      "upstream_preview_url": "./media/bullet-time-freeze-orbit.mp4?v=1790980736880",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/tension-camera-moves.md": "a9058e6c280eae8d567b18259fc375346376a058a24bd83d3545d44b27eeb3c3",
+        "source/demos/camera/tension-camera-moves/BulletTimeFreezeOrbit.tsx": "87e2ae1248a724cebbc6642bbea013fb000a1bd9841a51221129af7b9026d273",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "6929925b1811302e725444cc6d4bfd5b2bbfa7796f845653f4d3b2c36f2e989c",
+      "preview_available": true
+    },
+    {
+      "id": "pull-back-isolation",
+      "card_id": "tension-camera-moves",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "pull-back-isolation 拉远孤立",
+      "description": "从发光主卡特写后拉，兄弟卡按距离错峰熄灭、背景沉黑，孤卡悬在暗场中央",
+      "use": "结尾收束；\"全片只为这一个数字\"的谢幕",
+      "duration": "单式 5–6s（150–170f）；全片合计 ≤2 式（各 ≤1 次）",
+      "recipe_path": "source/references/shots/camera/tension-camera-moves.md",
+      "demo_paths": [
+        "source/demos/camera/tension-camera-moves/PullBackIsolation.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/camera/pull-back-isolation.mp4",
+      "upstream_preview_url": "./media/pull-back-isolation.mp4?v=1790980736881",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/tension-camera-moves.md": "a9058e6c280eae8d567b18259fc375346376a058a24bd83d3545d44b27eeb3c3",
+        "source/demos/camera/tension-camera-moves/PullBackIsolation.tsx": "f6e909d64453b9da0b484bd34d3c7d03cee0fabd407286aad6b4ff0681c9de39",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "ca6ffc85da4f73f27511fcaac6df482ab3393c25760f3dbbd627b98e291edc87",
+      "preview_available": true
+    },
+    {
+      "id": "terminal-3d",
+      "card_id": "terminal-3d",
+      "category": "camera",
+      "tags": [
+        "camera"
+      ],
+      "label": "terminal-3d",
+      "description": "三个终端窗散布 3D 空间，相机窗间飞行、途中正弦拉远，每到一窗打字机敲命令、结果逐行滑出——命令执行的空间叙事流",
+      "use": "开发者产品的 CLI/工作流演示：把\"三步命令\"拍成三站空间旅程",
+      "duration": "约 8.2s（246f@30fps；三站各约 2–3s 停留 + 两段 30f 飞行）",
+      "recipe_path": "source/references/shots/camera/terminal-3d.md",
+      "demo_paths": [
+        "source/demos/camera/terminal-3d/Terminal3D.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/camera/terminal-3d.mp4",
+      "upstream_preview_url": "./media/terminal-3d.mp4?v=1790980736882",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/camera/terminal-3d.md": "57812e6bf786498afbe4c3771dd3b70208b6bd4182d26423fd67e233e06e63c1",
+        "source/demos/camera/terminal-3d/Terminal3D.tsx": "74a96bcb19e4e65a9822703f5907b3e7357f39ee15e69d5867a23ef86f220300",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "d7d88629682076fae5fdd896cf56ec435ec7f405c5468052e445321f1c94dad1",
+      "preview_available": true
+    }
+  ]
+}

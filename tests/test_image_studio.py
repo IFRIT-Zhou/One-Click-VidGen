@@ -9,6 +9,39 @@ from backend.app import image_studio as studio
 
 
 class ImageStudioTests(unittest.TestCase):
+    def test_remote_queue_timeout_remains_recoverable_without_resubmission(self):
+        with patch.object(studio.image_control,'wait',side_effect=studio.image_control.ImageWaitTimeout('300 秒等待超时')):
+            session,record=self.run_case(results=[{'taskId':'remote1'},{'status':'QUEUED'}])
+        self.assertEqual(record['status'],'awaiting_result')
+        self.assertEqual(record['remote_status'],'QUEUED')
+        self.assertEqual(record['remote_task_id'],'remote1')
+        self.assertIn('继续查询原任务',record['message'])
+        self.assertEqual(session.request.call_count,2)
+
+    def test_recovery_transport_only_queries_original_id_and_downloads(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)
+            record=dict(id='abc123',prompt='原提示词',references=['missing-reference.png'],ratio='16:9',
+                        resolution='2k',status='running',remote_task_id='original-task')
+            buffer=io.BytesIO();Image.new('RGB',(32,16)).save(buffer,format='PNG')
+            query=MagicMock();query.json.return_value={'status':'SUCCESS','imageUrl':'https://example.com/image.png'}
+            download=MagicMock();download.content=buffer.getvalue()
+            session=MagicMock();session.__enter__.return_value=session;session.request.side_effect=[query,download]
+            with patch.object(studio.requests,'Session',return_value=session):
+                studio.execute(1,path,record,dict(endpoint='https://example.com/generate',query_url='https://example.com/query',api_key='test'))
+            self.assertEqual(record['status'],'completed',record)
+            self.assertEqual(session.request.call_count,2)
+            self.assertEqual(session.request.call_args_list[0].kwargs['json'],{'taskId':'original-task'})
+            self.assertFalse(any('prompt' in c.kwargs.get('json',{}) for c in session.request.call_args_list))
+
+    def test_query_only_recovery_rejects_missing_remote_id_before_config(self):
+        with tempfile.TemporaryDirectory() as directory,patch.object(studio,'ROOT',Path(directory)),patch.object(studio,'config_for') as config:
+            path=studio.folder(1,'abc123');path.mkdir(parents=True)
+            studio.save(path,{'id':'abc123','status':'failed'})
+            with self.assertRaises(studio.HTTPException):studio.resume_existing(1,'abc123',query_only=True)
+            config.assert_not_called()
+
     def test_additional_aspect_ratios_are_accepted(self):
         for ratio in ('3:4', '3:2', '21:9'):
             with self.subTest(ratio=ratio):

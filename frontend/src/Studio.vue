@@ -72,7 +72,7 @@
     <TaskConsole :lines="studioTaskLogs" :diagnostic-available="!!studioJob" :diagnostic-exporting="diagnosticExporting" @export-diagnostic="exportDiagnosticPackage(studioJob)"/>
     <div class="log-help" role="status"><span>{{diagnosticMessage}}</span><button :disabled="!studioJob" @click="studioDrawer='参数回顾'">参数回顾 · 只读</button></div>
    </section>
-   <section v-else-if="studioPage==='services'" class="content services-page"><div class="page-heading"><div><h1>接口与服务</h1><p class="muted">每类服务独立配置与保存，先测试单张或单镜，再批量运行。</p></div><div class="service-header-actions"><button @click="apiGuideOpen=true">API 设置说明 ↗</button><button @click="closeServices">返回工作页面</button></div></div><nav class="services-nav" aria-label="接口分类"><button v-for="tab in [{id:'overview',label:'服务概览'},{id:'language',label:'语言模型'},{id:'images',label:'图像接口'},{id:'video',label:'视频接口'},{id:'concurrency',label:'出图并发'},{id:'tts',label:'TTS 状态'}]" :key="tab.id" :class="{active:serviceTab===tab.id}" :aria-pressed="serviceTab===tab.id" @click="serviceTab=tab.id">{{tab.label}}</button></nav><div class="studio-service-settings">
+   <section v-else-if="studioPage==='services'" class="content services-page"><div class="page-heading"><div><h1>接口与服务</h1><p class="muted">每类服务独立配置与保存，先测试单张或单镜，再批量运行。</p></div><div class="service-header-actions"><button @click="apiGuideOpen=true">API 设置说明 ↗</button><button @click="closeServices">返回工作页面</button></div></div><nav class="services-nav" aria-label="接口分类"><button v-for="tab in [{id:'overview',label:'服务概览'},{id:'language',label:'语言模型'},{id:'images',label:'图像接口'},{id:'video',label:'视频接口'},{id:'vibe',label:'Vibe 动效'},{id:'concurrency',label:'出图并发'},{id:'tts',label:'TTS 状态'}]" :key="tab.id" :class="{active:serviceTab===tab.id}" :aria-pressed="serviceTab===tab.id" @click="serviceTab=tab.id">{{tab.label}}</button></nav><div class="studio-service-settings">
       <div class="brand">
         <img class="brand-mark brand-logo" src="/one-click-vidgen-logo.png" alt="One-Click VidGen Logo" />
         <div>
@@ -250,6 +250,7 @@
         <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
       </div>
 
+      <div v-if="session.user" v-show="serviceTab==='vibe'" id="service-vibe" class="sidebar-card"><VibeModelSettings /></div>
       <div v-show="serviceTab==='tts'" id="service-tts" class="sidebar-card">
         <div class="sidebar-label">TTS 引擎</div>
         <div class="sidebar-value">{{ ttsStatusText }}</div>
@@ -1996,6 +1997,7 @@ import ComfyUIWorkbench from './components/ComfyUIWorkbench.vue'
 import ComfyUIVideoSelector from './components/ComfyUIVideoSelector.vue'
 import VideoStudio from './components/VideoStudio.vue'
 import VideoModelSettings from './components/VideoModelSettings.vue'
+import VibeModelSettings from './components/VibeModelSettings.vue'
 import ImageProfileSelector from './components/ImageProfileSelector.vue'
 import TtsBoundaryEditor from './components/TtsBoundaryEditor.vue'
 import SubtitleStyleEditor from './components/SubtitleStyleEditor.vue'
@@ -2008,7 +2010,7 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { IcanChannelHint, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { IcanChannelHint, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, VibeModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
 </script>
 <style scoped>
 .service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}

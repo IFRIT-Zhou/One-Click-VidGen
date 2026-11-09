@@ -16,6 +16,8 @@ test('all overlimit ordinals are reported, including fractional requests',()=>{
 test('static, personal routes, and exact limits are not falsely marked',()=>{
  assert.equal(shotDurationIssue({...shot('a',60),kind:'static'},cloud),null)
  assert.equal(shotDurationIssue({...shot('a',20),video_generation_options:{backend:'api'}},cloud),null)
+ assert.equal(shotDurationIssue({...shot('a',20),video_request:{backend:'vibe'}},cloud),null)
+ assert.equal(shotDurationIssue({...shot('a',20),vibe_reserved:{original_kind:'video'}},cloud),null)
  assert.equal(shotDurationIssue(shot('a',15),{}),null)
  assert.equal(shotDurationIssue(shot('a',15.01),{}),null)
  assert.equal(shotDurationIssue(shot('a',10.01),{dynamic_max_shot_duration:10}),null)

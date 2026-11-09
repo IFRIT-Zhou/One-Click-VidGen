@@ -21,6 +21,57 @@ UPLOAD_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.wav', '.mp3', '.m4a', '
                      '.flac', '.ogg', '.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v',
                      '.srt', '.ass', '.vtt'}
 MAX_BYTES = 256 * 1024 * 1024
+CONFIRM_FORMAL_EDITS = {'ocv_video_vibe_intent','ocv_video_vibe_adopt','ocv_video_vibe_undo'}
+LOCAL_COMPUTE_COST = {
+    'ocv_video_layer_pack_create': '本机确定性裁切与补底；不上传图片，不调用计费模型',
+    'ocv_video_vibe_preview_create': '使用本机算力渲染单镜预览；不上传素材，不调用计费模型，不替换正式镜头',
+    'ocv_video_vibe_intent': '本地修改生成意图，不渲染、不调用计费模型，也不采用预览',
+    'ocv_video_vibe_adopt': '本地采用已核对的无声片段进入正式时间轴，不重新生成，不调用计费模型',
+    'ocv_video_vibe_undo': '本地恢复采用前的镜头，不重新生成，不调用计费模型',
+    'ocv_video_vibe_cloud_stop': '仅停止指定任务，不发起新生成；已提交远端请求可能仍运行或计费，不保证退款',
+}
+
+
+def operation_cost(op, arguments, schema=None):
+    body = arguments.get('body', {})
+    if op.name == 'ocv_video_vibe_cloud_continue_steps':
+        image_notice='不新增图片请求；本任务后续续接也不能重新开启图片授权'
+        if body.get('confirm_remaining_images') is True:
+            used,limit=body.get('expected_image_requests'),body.get('expected_image_limit')
+            remaining=max(0,limit-used) if type(used) is int and type(limit) is int else '以校验后的原记录为准'
+            image_notice=(f'已单独确认沿用原图片权限：最多使用原剩余 {remaining} 次图片请求，可能计费；'
+                '原权限已关闭、用量已变或渠道不一致则拒绝，不增加图片额度、不切换渠道')
+        return (f'手动从空响应前保存步骤继续调用 Vibe 专用模型，可能计费；明确追加 {body.get("additional_model_calls",0)} 次模型调用，'
+                '原用量保留，原剩余预算仍有效，累计授权不超过50次，失败请求和交付核查均计入。'
+                +image_notice+'；只制作预览，不覆盖正式镜头，不自动重试、不重放旧工具；'
+                '同一request_id不会重复增加预算或重启任务')
+    if op.name == 'ocv_video_vibe_cloud_continue_review':
+        return (f'从已有预览继续调用 Vibe 专用模型检查与返工，可能计费；明确追加 {body.get("additional_model_calls",0)} 次模型调用，'
+                '原有剩余预算仍有效，累计授权不超过50次；失败请求和独立交付审核均计入预算。'
+                '复用现有素材与代码，本机重新校验和渲染，不新增图片请求、不覆盖正式镜头；同一request_id不会重复增加预算或重启任务')
+    if op.name == 'ocv_video_vibe_cloud_create':
+        if body.get('template_mode') == 'layered':
+            budget = body['max_image_requests']
+            policy_supported = 'advanced_subject_separation' in (schema or {}).get('properties', {}).get('body', {}).get('properties', {})
+            return ('本镜核心图、已绑定参考图和最终字幕时间戳将发送到独立 Vibe API，设计及视觉核查可能计费；'
+                    + ('已启用高级主体分离：可在本机使用 RMBG 提取主体，不启动 ComfyUI；'
+                       if body.get('advanced_subject_separation') is True else
+                       '默认稳定保留主体于底板，重建文字与装饰动效；本轮未启用高级主体分离，不调用 RMBG 把主体拆出；' if policy_supported else
+                       '当前服务未提供主体策略开关，沿用旧原图分层行为，可在本机使用 RMBG 提取主体；')
+                    + (f'背景提取沿用“本项目图像模型”的已保存渠道、模型和清晰度，图像请求上限为 {budget}，最多计费生成 1 张背景；'
+                       if budget else '图像请求上限为 0，未授权背景出图；缺少可用背景时停止提示，不擅自加预算；')
+                    + '对照原分镜图检查合成画面，最多一次视觉返工；视频在本机渲染，只预览、不自动采用，不自动切换渠道'
+                    + ('；旧渠道任务可能仍在运行或计费，本计划明确授权用当前项目渠道另建任务，不会取消旧任务'
+                       if body.get('confirm_new_image_task') else ''))
+        return ('本镜核心图、已绑定参考图和最终字幕时间戳将发送到独立 Vibe API，设计及视觉核查可能计费；'
+                '继承原分镜配色与背景风格，最多两轮修正；本轮不自动抠图、不调用图像模型，图像请求上限为 0；'
+                '视频在本机渲染，不自动采用，不自动切换渠道')
+    if op.name == 'ocv_video_vibe_design':
+        if body.get('engine', 'local') == 'local':
+            return '仅本机提取和编排，不外发、不调用计费模型'
+        return '使用本项目语言渠道，可能计费；' + ('发送版式文字和字幕，不发送图片'
+            if body.get('model_input') == 'layout' else '发送缩略图和字幕')
+    return LOCAL_COMPUTE_COST.get(op.name, '未报价；生成前可使用原生 quote/validate 操作核对，不能据此视为免费')
 
 
 def digest(value):
@@ -252,6 +303,8 @@ class Adapter:
                 raise ValueError('路径参数包含非法字符')
         if not self.allowed(op):
             raise ValueError('此操作未获 MCP 启动配置授权；请由用户开启写入/生成/删除权限')
+        if op.name=='ocv_video_vibe_design' and arguments.get('body',{}).get('engine')=='model' and arguments['body'].get('confirm_model') is not True:
+            raise ValueError('模型设计将向项目语言渠道发送本镜资料，可能计费。必须先取得用户同意并传 confirm_model=true，或使用 local。')
         return op
 
     def route(self, op, args):
@@ -277,7 +330,11 @@ class Adapter:
 
     def guard(self, client, op, arguments):
         path = arguments.get('path', {})
-        if 'identity' in path and ('/video-studio/' in op.path or '/codex-bridge/projects/' in op.path):
+        if op.name == 'ocv_video_vibe_cloud_stop':
+            # This endpoint targets an immutable task ID and checks ownership.
+            # Unrelated project edits must not prevent stopping that old task.
+            result = {k: path[k] for k in ('identity', 'shot_id', 'task_id')}
+        elif 'identity' in path and ('/video-studio/' in op.path or '/codex-bridge/projects/' in op.path):
             record = client.call('GET', '/api/codex-bridge/projects/' + quote(str(path['identity']), safe='') + '/pack')
             result = {k: record.get(k) for k in ('id', 'revision', 'status', 'timeline_token')}
         elif 'job_id' in path:
@@ -339,6 +396,9 @@ class Adapter:
             # local script names: expose only public creation choices.
             payload = {'tts': payload.get('tts', {}), 'model_options': payload.get('model_options', []),
                        'visual_modes': payload.get('visual_prompt', {}).get('modes', {})}
+        elif op.name == 'ocv_vibe_model':
+            payload = {k: payload[k] for k in ('base_url', 'model', 'max_image_requests', 'configured', 'source',
+                'generation_policy','image_generation_enabled','effective_max_image_requests') if k in payload}
         return self.compact(owner, payload)
 
     def read(self, operation, arguments):
@@ -358,6 +418,15 @@ class Adapter:
             raise ValueError('request_id 必须为 8～100 位字母、数字、下划线或连字符')
         client, owner = self.connect()
         try:
+            cost_schema = None
+            if operation == 'ocv_video_vibe_cloud_create' and isinstance(arguments.get('body'), dict):
+                _, schema = self.operation_contract(operation)
+                cost_schema = schema
+                mode = schema.get('properties', {}).get('body', {}).get('properties', {}).get('template_mode', {})
+                if mode.get('default') == 'shotcraft' and 'template_mode' not in arguments['body']:
+                    # Apply only while preparing a new approval. commit() must
+                    # execute saved plans exactly as originally approved.
+                    arguments = {**arguments, 'body': {**arguments['body'], 'template_mode': 'shotcraft'}}
             op = self.validate(operation, arguments)
             if op.access == 'read':
                 raise ValueError('读取操作直接使用 ocv_read')
@@ -366,8 +435,8 @@ class Adapter:
             return {**self.receipt_data(owner, plan), 'description': op.description, 'arguments': clean(arguments),
                     'guard': json.loads(plan['guard']),
                     'state_changed_since_prepare': guard != json.loads(plan['guard']),
-                    'requires_confirmation': op.access in {'generate', 'delete'},
-                    'cost': '未报价；生成前可使用原生 quote/validate 操作核对，不能据此视为免费',
+                    'requires_confirmation': op.access in {'generate', 'delete'} or op.name in CONFIRM_FORMAL_EDITS,
+                    'cost': operation_cost(op, arguments, cost_schema),
                     'native_validation': '尚未提交原生接口；业务条件仍以提交时的 OCV 校验为准',
                     'expires_at': plan['created'] + 600}
         finally:
@@ -397,8 +466,8 @@ class Adapter:
             op = self.validate(plan['operation'], args)
             if time.time() > plan['created'] + 600:
                 raise ValueError('预览已过期，请核对当前状态后使用新的 request_id 准备')
-            if op.access in {'generate', 'delete'} and not confirmed:
-                raise ValueError('生成或删除必须取得用户对本计划的明确授权后 confirmed=true')
+            if (op.access in {'generate', 'delete'} or op.name in CONFIRM_FORMAL_EDITS) and not confirmed:
+                raise ValueError('此操作必须取得用户对本计划的明确授权后 confirmed=true')
             guard = self.guard(client, op, args)
             with self.dispatch_lock:
                 latest = self.state.get(owner, plan_id)

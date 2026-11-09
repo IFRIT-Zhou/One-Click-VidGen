@@ -25,7 +25,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from release_integrity import fingerprint, validate_launcher_integrity_files
+from release_integrity import fingerprint, unmanaged_rmbg_file, validate_launcher_integrity_files
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +120,13 @@ def verify_archive(archive: Path, expected_fingerprint: str) -> None:
     with tempfile.TemporaryDirectory(prefix="ocv-release-verify-") as directory:
         target = Path(directory)
         with zipfile.ZipFile(archive) as package:
+            for entry in package.infolist():
+                member = entry.filename.replace('\\', '/')
+                parts = member.rstrip('/').split('/')
+                if any(not p or p in ('.', '..') or p.endswith(('.', ' ')) or ':' in p for p in parts):
+                    raise RuntimeError(f'拒绝更新包：非法文件路径：{member}')
+                if not entry.is_dir() and unmanaged_rmbg_file('/'.join(parts[1:])):
+                    raise RuntimeError(f'拒绝更新包：RMBG 目录含非程序文件：{member}')
             package.extractall(target)
         roots = [path for path in target.iterdir() if path.is_dir()]
         if len(roots) != 1:
@@ -185,7 +192,7 @@ def assert_no_private_plugins(head: str) -> None:
     forbidden = []
     for path in paths:
         lower = path.lower()
-        if (lower.startswith(('runtime/', 'models/', 'workspace/', 'output/', 'archives/', '.codex/'))
+        if (unmanaged_rmbg_file(path) or lower.startswith(('runtime/', 'models/', 'workspace/', 'output/', 'archives/', '.codex/'))
                 or lower.startswith(('comfyui/', 'tts/')) and lower not in ('comfyui/readme.md', 'tts/readme.md')
                 or 'selflift' in lower
                 or lower == '.env'

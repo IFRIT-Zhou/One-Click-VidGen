@@ -8,13 +8,17 @@ from .video_plan import normalize_shots
 MAX_REQUEST_SECONDS = 14
 
 
+def _model_shot(row):
+    return row.get('kind') == 'video' and not row.get('vibe_reserved') and (row.get('video_request') or {}).get('backend') != 'vibe'
+
+
 def split_limit(record, shot_id, neighbors=False):
     rows = record['shots']
     index = next((i for i, row in enumerate(rows) if row['id'] == shot_id), -1)
     if index < 0:
         raise ValueError('镜头不存在')
-    first = index - 1 if neighbors and index and rows[index-1]['kind'] == 'video' else index
-    last = index + 2 if neighbors and index+1 < len(rows) and rows[index+1]['kind'] == 'video' else index+1
+    first = index - 1 if neighbors and index and _model_shot(rows[index-1]) else index
+    last = index + 2 if neighbors and index+1 < len(rows) and _model_shot(rows[index+1]) else index+1
     parameters = record.get('creation_parameters') or {}
     limits = []
     for row in rows[first:last]:
@@ -27,13 +31,13 @@ def split_window(record, shot_id, neighbors=False):
     maximum = split_limit(record, shot_id, neighbors)
     rows = record['shots']
     index = next((i for i, row in enumerate(rows) if row['id'] == shot_id), -1)
-    if index < 0 or rows[index]['kind'] != 'video':
+    if index < 0 or not _model_shot(rows[index]):
         raise ValueError('请选择需要拆分的动态镜头')
     first, last = index, index + 1
     if neighbors:
-        if index and rows[index-1]['kind'] == 'video':
+        if index and _model_shot(rows[index-1]):
             first -= 1
-        if last < len(rows) and rows[last]['kind'] == 'video':
+        if last < len(rows) and _model_shot(rows[last]):
             last += 1
     window = rows[first:last]
     if any(row.get('manual_locked') for row in window) or any(row.get('boundary_locked') for row in window[:-1]):

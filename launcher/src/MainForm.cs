@@ -42,6 +42,8 @@ namespace OcvLauncher
         private Button stopButton;
         private Button restartButton;
         private Button checkButton;
+        private Button rmbgButton;
+        private bool rmbgMaintenance;
         private Button checkUpdateButton;
         private Button applyUpdateButton;
         private Label updateStateValue;
@@ -330,7 +332,20 @@ namespace OcvLauncher
             checkButton = AccentButton("运行环境体检", PanelSoft, TextMain);
             checkButton.Click += CheckButtonClick;
             checkButton.Margin = new Padding(0, 6, 0, 6);
-            layout.Controls.Add(checkButton, 0, 4);
+            var componentActions = new TableLayoutPanel();
+            componentActions.Dock = DockStyle.Fill;
+            componentActions.Margin = Padding.Empty;
+            componentActions.ColumnCount = 2;
+            componentActions.RowCount = 1;
+            componentActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            componentActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            checkButton.Margin = new Padding(0, 6, 3, 6);
+            componentActions.Controls.Add(checkButton, 0, 0);
+            rmbgButton = AccentButton("RMBG 抠图组件", PanelSoft, TextMain);
+            rmbgButton.Margin = new Padding(3, 6, 0, 6);
+            rmbgButton.Click += RmbgButtonClick;
+            componentActions.Controls.Add(rmbgButton, 1, 0);
+            layout.Controls.Add(componentActions, 0, 4);
 
             checkResults = new FlowLayoutPanel();
             checkResults.Dock = DockStyle.Fill;
@@ -574,6 +589,65 @@ namespace OcvLauncher
             await RefreshRuntimeStatus();
         }
 
+        private Task<int> RunRmbgSetup(bool install)
+        {
+            return Task.Run(delegate
+            {
+                string python = Path.Combine(runtime.Root, "runtime", "python", "python.exe");
+                string setup = Path.Combine(runtime.Root, "tools", "rmbg", "setup_runtime.py");
+                if (!File.Exists(python) || !File.Exists(setup))
+                    throw new FileNotFoundException("本地抠图组件或便携 Python 不完整，请先安全更新或修复整合包。");
+                var info = new ProcessStartInfo(python, "-I -B -X utf8 -u \"" + setup + "\" " + (install ? "--install" : "--check"));
+                info.WorkingDirectory = runtime.Root;
+                info.UseShellExecute = false;
+                info.CreateNoWindow = true;
+                info.RedirectStandardOutput = true;
+                info.RedirectStandardError = true;
+                info.StandardOutputEncoding = Encoding.UTF8;
+                info.StandardErrorEncoding = Encoding.UTF8;
+                using (var p = new Process())
+                {
+                    p.StartInfo = info;
+                    p.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) AppendLog(e.Data); };
+                    p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) AppendLog(e.Data); };
+                    p.Start();
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    p.WaitForExit();
+                    return p.ExitCode;
+                }
+            });
+        }
+
+        private async void RmbgButtonClick(object sender, EventArgs e)
+        {
+            if (busy) return;
+            rmbgMaintenance = true;
+            SetBusy(true, "正在检查抠图依赖");
+            AppendLog("正在本机检查 RMBG 推理环境；不联网、不检查或下载模型权重。");
+            try
+            {
+                int code = await RunRmbgSetup(false);
+                if (code == 0)
+                {
+                    MessageBox.Show(this, "当前抠图依赖已就绪，无需下载。模型权重需另行准备。", "RMBG 抠图组件", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                if (code != 3) throw new InvalidOperationException("本机检查失败，详见启动日志。");
+                if (MessageBox.Show(this, "要安装或更新独立推理依赖吗？\n\n将从 PyTorch 官方源和 PyPI 下载程序包；如无法复用已有显卡库，下载量可能达数 GB。不会下载模型权重，不会修改现有 ComfyUI 或主程序 Python。", "RMBG 抠图组件",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+                SetBusy(true, "正在安装抠图依赖");
+                if (await RunRmbgSetup(true) != 0) throw new InvalidOperationException("安装未完成。保留原环境，请查看启动日志后重试。");
+                MessageBox.Show(this, "独立抠图依赖已更新，无需启动 ComfyUI。", "RMBG 抠图组件", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) { AppendLog("抠图组件：" + ex.Message); }
+            finally
+            {
+                rmbgMaintenance = false;
+                SetBusy(false, null);
+            }
+        }
+
         private async void CheckButtonClick(object sender, EventArgs e)
         {
             if (busy) return;
@@ -756,6 +830,7 @@ namespace OcvLauncher
             busy = value;
             busyProgress.Visible = value;
             checkButton.Enabled = !value;
+            rmbgButton.Enabled = !value;
             startButton.Enabled = !value;
             if (checkUpdateButton != null) checkUpdateButton.Enabled = !value;
             if (applyUpdateButton != null) applyUpdateButton.Enabled = !value && lastUpdateCheck != null && lastUpdateCheck.CanUpdate;
@@ -869,6 +944,12 @@ namespace OcvLauncher
 
         private async void MainFormClosing(object sender, FormClosingEventArgs e)
         {
+            if (rmbgMaintenance)
+            {
+                e.Cancel = true;
+                AppendLog("正在检查或安装 RMBG 组件，请等待完成后再关闭启动器。");
+                return;
+            }
             if (closingAfterPrompt) return;
             e.Cancel = true;
             RuntimeStatus status = await runtime.GetStatusAsync();

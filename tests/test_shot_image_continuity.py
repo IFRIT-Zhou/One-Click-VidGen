@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import tempfile
 import threading
 import unittest
@@ -193,7 +194,11 @@ class PreviousShotTests(unittest.TestCase):
         prompt, refs, _ = studio._image_inputs(self.path, self.record, self.shot, self.shot['image_prompt'])
         def render(macro, pool):
             self.assertIn('自动承接参考', macro['image_prompt'])
-            self.assertEqual(macro['reference_image_paths'], refs)
+            self.assertEqual(len(macro['reference_image_paths']), len(refs))
+            for sent, original in zip(macro['reference_image_paths'], refs):
+                self.assertIn('storyboard_reference_snapshots', Path(sent).parts)
+                self.assertEqual(Path(sent).read_bytes(), Path(original).read_bytes())
+                self.assertEqual(Path(sent).stem, hashlib.sha256(Path(original).read_bytes()).hexdigest())
             target = Path(macro['_output_path'])
             Image.new('RGB', (8, 8), 'red').save(target)
             return target
@@ -214,6 +219,8 @@ class PreviousShotTests(unittest.TestCase):
         self.assertEqual(self.shot['image_task']['status'], 'completed')
         self.assertNotIn('自动承接参考', self.shot['image_prompt'])
         self.assertEqual(self.shot['image_applied_prompt'], self.shot['image_prompt'])
+        self.assertEqual([(r['kind'], r['id'], r['local_image_number']) for r in self.shot['image_reference_snapshot']['references']],
+                         [('previous_shot', self.source['id'], 1)])
 
 
 if __name__ == '__main__':

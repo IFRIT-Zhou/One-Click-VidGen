@@ -48,6 +48,8 @@ tools/*
 !tools/build_comfyui_component.py
 !tools/validate_comfyui_component.py
 !tools/prepare_model_library.py
+!tools/sync_video_shotcraft.py
+!tools/vibe_shotcraft_library/
 Sound Material/
 测试文案/
 venv_audio_vedio/
@@ -79,6 +81,7 @@ launcher/ui-preview.png
 /*.zip
 
 # Private project notes kept only on the maintainer's local machine.
+/docs/vibe/
 /Codex项目记忆备份_*.md
 /技术架构与实现总览_*.md
 /默认模式完整技术路线_*.md
@@ -98,3 +101,37 @@ launcher/ui-preview.png
 /tts/*
 !/tts/README.md
 !tools/migrate_optional_components.ps1
+
+# First-party optional Vibe renderer source, never its installed runtime/cache.
+!tools/vibe_remotion/
+tools/vibe_remotion/node_modules/
+tools/vibe_remotion/.cache/
+tools/vibe_remotion/dist/
+tools/vibe_remotion/out/
+
+# Standalone RMBG is Launcher-managed source. Learned weights, private inputs and
+# interpreter environments are local and never part of a git/Launcher update.
+!tools/rmbg/
+tools/rmbg/*
+!tools/rmbg/README.md
+!tools/rmbg/worker.py
+!tools/rmbg/setup_runtime.py
+!tools/rmbg/runtime-spec.json
+!tools/rmbg/vendor/
+tools/rmbg/vendor/*
+!tools/rmbg/vendor/birefnet/
+tools/rmbg/vendor/birefnet/*
+!tools/rmbg/vendor/birefnet/BiRefNet_config.py
+!tools/rmbg/vendor/birefnet/birefnet.py
+!tools/rmbg/vendor/birefnet/config.json
+!tools/rmbg/vendor/birefnet/LICENSE
+!tools/rmbg/vendor/birefnet/NOTICE.md
+
+# Local OCR helper source can be updated; its environment and weights live under
+# the already ignored runtime/ and models/ roots.
+!tools/vibe_ocr/
+tools/vibe_ocr/*
+!tools/vibe_ocr/README.txt
+!tools/vibe_ocr/worker.py
+!tools/vibe_ocr/setup_runtime.py
+!tools/vibe_ocr/runtime-spec.json

@@ -1,0 +1,9 @@
+# Optional third-party source and preview payloads are installed separately.
+/previews/
+/.downloads/
+/release-assets.json
+__pycache__/
+# Upstream sample music/media are not required by OCV's runtime adapters.
+/source/**/*.mp3
+/source/**/*.wav
+/source/**/*.mp4

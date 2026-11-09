@@ -19,6 +19,7 @@ from .auth import require_user
 from .editor import upload_path
 from .cloud_image_channel import ImageSize
 from . import image_request_control as image_control
+from . import layer_image_studio
 
 router = APIRouter(prefix='/api/image-studio')
 ROOT = Path(__file__).resolve().parents[2] / 'workspace' / 'image_studio'
@@ -114,19 +115,10 @@ def config_for(user: int, data: ImageRequest):
         config = configure_channel(config, data.method, data.size)
     else:
         if data.profile_id:
-            from .image_profiles import profile_environment, profile_snapshot
+            from .image_profiles import profile_provider_configs, profile_snapshot
             snapshot = profile_snapshot(data.profile_id, data.resolution)
-            environment = profile_environment(snapshot)
-            config = {
-                'endpoint': environment['RUNNINGHUB_ENDPOINT'],
-                'query_url': environment['OCV_IMAGE_QUERY_URL'],
-                'reference_endpoint': environment['RUNNINGHUB_IMAGE_TO_IMAGE_ENDPOINT'],
-                'api_key': environment['RUNNINGHUB_API_KEY'],
-                'model': environment['IMAGE_MODEL_ID'],
-                'resolution': environment['IMAGE_RESOLUTION'],
-                'profile_name': snapshot.get('name') or '',
-                'reference_images': snapshot.get('reference_images', True),
-            }
+            config = dict(profile_provider_configs(snapshot)[0])
+            config['profile_name'] = snapshot.get('name') or ''
         else:
             configs = visual._provider_configs()
             if not configs:
@@ -136,8 +128,9 @@ def config_for(user: int, data: ImageRequest):
     from .config import _parse_env_lines
     saved = _parse_env_lines(Path(__file__).resolve().parents[2] / '.env')
     config['resolution'] = data.resolution or config.get('resolution') or saved.get('IMAGE_RESOLUTION') or saved.get('RUNNINGHUB_RESOLUTION') or '1k'
-    config['endpoint'] = visual._runninghub_generate_url(config)
-    config['query_url'] = config.get('query_url') or visual._runninghub_url('/openapi/v2/query')
+    if config.get('protocol') != 'openai_sync':
+        config['endpoint'] = visual._runninghub_generate_url(config)
+        config['query_url'] = config.get('query_url') or visual._runninghub_url('/openapi/v2/query')
     return config, client
 
 
@@ -179,6 +172,22 @@ def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_clien
         if config.get('cloud_pool') == '1':
             payload['clientJobId'] = 'image-studio-' + record['id']
         with requests.Session() as session:
+            if config.get('protocol') == 'openai_sync':
+                from .openai_image_adapter import render
+                from PIL import Image
+                generation_attempted = True
+                result = render({'image_prompt':record['prompt'],
+                    'reference_image_paths':[path/name for name in record['references']]},
+                    config, session, path/'sync-result.jpg')
+                with Image.open(result) as picture:
+                    picture.load()
+                    image_control.check()
+                    output = (layer_image_studio.process_proposal(path, record, picture)
+                              if 'layer_matte' in record or 'layer_plate' in record else picture)
+                    record['width'], record['height'] = output.size
+                    output.save(path/'result.png', format='PNG')
+                record.update(status='completed', message='生成完成')
+                return
             if record['references'] and not record.get('remote_task_id'):
                 if config.get('reference_images') is False:
                     raise ValueError('所选图像模型配置未启用参考图能力')
@@ -196,6 +205,7 @@ def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_clien
                         for name in record['references']
                     ]
                 endpoint = config.get('reference_endpoint') or endpoint.replace('/text-to-image', '/image-to-image')
+            endpoint = visual._runninghub_generate_url(config, endpoint)
             from .cloud_image_channel import generation_payload
             payload = generation_payload(payload, config)
             headers = {'Authorization': 'Bearer '+config['api_key']}
@@ -228,6 +238,9 @@ def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_clien
                 response.raise_for_status()
                 result = response.json()
                 status = str(visual._find_first_key(result, {'status', 'state', 'taskStatus'}) or '').upper()
+                record.update(remote_status=status, remote_checked_at=time.time())
+                record['message'] = ('云端排队中，尚未返回图片' if status == 'QUEUED' else '云端正在生成，等待原任务结果')
+                save(path, record)
                 url = visual._find_image_url(result, base_url=config.get('cloud_base_url'))
                 if status in {'FAILED','FAILURE','ERROR','CANCELLED','CANCELED','REJECTED','BLOCKED','ABORTED','TERMINATED','TIMEOUT','TIMED_OUT','EXPIRED'}:
                     raise RuntimeError(f"{status} / {visual._runninghub_result_error_code(result)}: " + (visual._runninghub_error_message(result) or '服务端未提供详细原因'))
@@ -239,10 +252,15 @@ def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_clien
                     from PIL import Image
                     import io
                     with Image.open(io.BytesIO(downloaded.content)) as picture:
+                        if ('layer_matte' in record or 'layer_plate' in record) and (
+                                picture.width != picture.height or not 256 <= picture.width <= 4096):
+                            raise ValueError('模型输出画幅与蒙版参考不符，未使用结果')
                         picture.load()
                         image_control.check()
-                        record['width'], record['height'] = picture.size
-                        picture.save(path/'result.png', format='PNG')
+                        output = (layer_image_studio.process_proposal(path, record, picture)
+                                  if 'layer_matte' in record or 'layer_plate' in record else picture)
+                        record['width'], record['height'] = output.size
+                        output.save(path/'result.png', format='PNG')
                     record.update(status='completed', message='生成完成')
                     break
                 image_control.wait(3)
@@ -267,7 +285,10 @@ def _execute(user: int, path: Path, record: dict, config: dict, cloud_pool_clien
                 except ValueError:
                     pass
             message = f'网络或接口错误：{type(exc).__name__}；{detail or message}。结果尚未确认，请核对扣费后再生成。'
-        record.update(status='paused' if isinstance(exc, visual.CloudImageLoginRequired) else 'failed', message=message)
+        awaiting = bool(record.get('remote_task_id')) and isinstance(exc, (image_control.ImageWaitTimeout, requests.RequestException, TimeoutError))
+        if awaiting:
+            message += ' 可点击“继续查询原任务”，只获取原结果，不重新提交出图。'
+        record.update(status='paused' if isinstance(exc, visual.CloudImageLoginRequired) else 'awaiting_result' if awaiting else 'failed', message=message)
     finally:
         try:
             save(path, record)
@@ -331,24 +352,52 @@ def create(data: ImageRequest, request: Request):
         raise HTTPException(400, str(exc)) from exc
 
 
+@router.post('/layer-matte')
+def layer_matte(data: layer_image_studio.MatteInput, request: Request):
+    """付费：通过 OCV ICAN Image 2.5 建议蒙版，只上传此裁片；原像素合成，需审图。"""
+    return layer_image_studio.submit(data, request)
+
+
+@router.post('/layer-plate-refine')
+def layer_plate_refine(data: layer_image_studio.PlateInput, request: Request):
+    """付费：向 OCV ICAN 上传整张已清理底板，修补结果只采用选区内像素。"""
+    return layer_image_studio.submit(data, request)
+
+
 @router.post('/{identity}/resume')
 def resume_image(identity: str, request: Request):
     user = int(require_user(request)['id'])
+    return resume_existing(user, identity)
+
+
+def resume_existing(user: int, identity: str, *, query_only=False):
+    """Resume an owned job. Query-only recovery can never create an image."""
     path = folder(user, identity)
     with LOCK:
         if not (path / 'record.json').is_file():
             raise HTTPException(404, '图片记录不存在')
         record = json.loads((path / 'record.json').read_text(encoding='utf-8'))
-        if record.get('status') != 'paused':
-            raise HTTPException(409, '只有等待重新登录的图片可以继续')
+        if query_only and not record.get('remote_task_id'):
+            raise HTTPException(409, '原任务没有云端编号，不能确认是否已提交；不会重新出图')
+        if record.get('status') == 'completed':
+            return record
+        if (user, identity) in ACTIVE:
+            return record
+        if record.get('status') != 'paused' and not record.get('remote_task_id'):
+            raise HTTPException(409, '原任务没有云端编号，无法继续查询；请先核对提交结果')
         try:
             config, client = config_for(user, ImageRequest(**{
-                key: record[key] for key in ('prompt', 'provider', 'method', 'size', 'profile_id', 'ratio', 'references') if key in record
-            }, resolution=record['resolution'] if record['resolution'] in ('1k', '2k', '4k') else ''))
+                key: record[key] for key in ('prompt', 'provider', 'method', 'profile_id', 'ratio', 'references') if key in record
+            }, size=record.get('size','2560x1440') if record.get('provider')=='pool' and record.get('method')=='ican' else '2560x1440',
+                resolution=record['resolution'] if record['resolution'] in ('1k', '2k', '4k') else ''))
         except Exception as exc:
             if getattr(exc, 'code', '') == 'CLOUD_LOGIN_REQUIRED':
                 raise HTTPException(401, '[CLOUD_LOGIN_REQUIRED] 登录已过期，请重新登录') from exc
             raise
+        if record.get('image_route'):
+            from .vibe_image_route import fingerprint
+            if fingerprint(config) != record['image_route'].get('key'):
+                raise HTTPException(409,'原图片任务的接口配置已变更，不能换渠道查询原任务；请恢复原配置后继续，不会重新出图')
         record.update(status='running', message='继续获取原任务结果')
         save(path, record)
         enqueue(user, path, record, config, client)
@@ -387,7 +436,13 @@ def cancel_queued(identity: str, request: Request):
 def image_file(identity: str, name: str, request: Request):
     path = folder(int(require_user(request)['id']), identity)
     record = json.loads((path/'record.json').read_text(encoding='utf-8')) if (path/'record.json').is_file() else {}
-    if name not in ['result.png', *record.get('references', [])] or not (path/name).is_file():
+    allowed = list(record.get('references', []))
+    derivative = 'layer_matte' in record or 'layer_plate' in record
+    if not derivative or record.get('status') == 'completed':
+        allowed.append('result.png')
+        if 'layer_matte' in record:
+            allowed.append('mask.png')
+    if name not in allowed or not (path/name).is_file():
         raise HTTPException(404, '图片不存在')
     return FileResponse(path/name)
 

@@ -23,6 +23,9 @@ PROJECT = Path(__file__).resolve().parents[2]
 RUNTIME = PROJECT / "comfyui" / "engine"
 DATA = PROJECT / "workspace" / "managed_comfyui"
 LOCK = threading.RLock()
+_GPU_CONDITION = threading.Condition(LOCK)
+_STANDALONE_ACTIVE = False
+_ENGINE_STARTERS = 0
 START_LOCK = threading.Lock()
 PROCESS = None
 LOG_HANDLE = None
@@ -186,9 +189,88 @@ def verify_core_overrides(release, manifest):
             raise RuntimeError("内置 H3 兼容补丁被修改或覆盖，请修复引擎组件后再运行。")
 
 
+@contextmanager
+def _managed_gpu_claim(*, startup=False):
+    """Reserve before waiting: new standalone jobs yield to managed jobs already queued."""
+    global LEASES, _ENGINE_STARTERS
+    with _GPU_CONDITION:
+        if startup:
+            _ENGINE_STARTERS += 1
+        else:
+            LEASES += 1
+    try:
+        with _GPU_CONDITION:
+            _GPU_CONDITION.wait_for(lambda: not _STANDALONE_ACTIVE)
+        yield
+    finally:
+        with _GPU_CONDITION:
+            if startup:
+                _ENGINE_STARTERS -= 1
+            else:
+                LEASES -= 1
+            _GPU_CONDITION.notify_all()
+
+
+def _managed_queue_idle(process, port, timeout):
+    """Read only the currently owned engine. A still-running orphan prompt can outlive its OCV lease."""
+    if process is None or process.poll() is not None:
+        return True
+    if not port:
+        return False
+    with requests.Session() as session:
+        session.trust_env = False
+        try:
+            response = session.get(f'http://127.0.0.1:{port}/queue', timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
+            return (isinstance(data, dict) and
+                    all(isinstance(data.get(k), list) and not data[k]
+                        for k in ('queue_running', 'queue_pending')))
+        except (requests.RequestException, ValueError):
+            return False
+
+
+@contextmanager
+def standalone_gpu_lease(*, cancelled=None, timeout=120):
+    """Exclusive access versus this backend's managed ComfyUI jobs (not external applications).
+
+    Never starts, unloads, or stops an engine. The caller must reap its GPU child
+    before leaving this context, including on cancellation.
+    """
+    global _STANDALONE_ACTIVE
+    deadline = time.monotonic() + timeout
+
+    def remaining():
+        if cancelled and cancelled():
+            raise InterruptedError('已停止等待独立抠图')
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise TimeoutError('本机显卡仍在执行任务，或无法确认内置引擎队列空闲；未开始独立抠图')
+        return value
+
+    while True:
+        with _GPU_CONDITION:
+            while _STANDALONE_ACTIVE or LEASES or _ENGINE_STARTERS:
+                _GPU_CONDITION.wait(timeout=min(.25, remaining()))
+            wait = remaining()
+            _STANDALONE_ACTIVE = True
+            process, port = PROCESS, PORT
+        try:
+            if _managed_queue_idle(process, port, min(1., wait)):
+                remaining()
+                yield
+                return
+        finally:
+            with _GPU_CONDITION:
+                _STANDALONE_ACTIVE = False
+                _GPU_CONDITION.notify_all()
+        with _GPU_CONDITION:
+            _GPU_CONDITION.wait(timeout=min(.5, remaining()))
+
+
 def ensure_ready(timeout=180, required_models=None):
     global PROCESS, LOG_HANDLE, STATE, ERROR, PORT, LOADED_NODES
-    with START_LOCK:
+    with _managed_gpu_claim(startup=True), START_LOCK:
         release, manifest = runtime_info()
         if release is None:
             raise RuntimeError("尚未安装 OCV 内置视频引擎组件；仍可使用外部 ComfyUI 或视频 API。")
@@ -310,20 +392,14 @@ def stop(*, shutdown=False):
 
 @contextmanager
 def execution_lease(required_models=None, required_nodes=None):
-    global LEASES
     # Register before startup/upload so an empty ComfyUI queue does not mean idle.
-    with LOCK:
-        LEASES += 1
-    try:
+    with _managed_gpu_claim():
         url = ensure_ready(required_models=required_models)
         missing = sorted(set(required_nodes or []) - (LOADED_NODES or set()))
         if missing:
             raise RuntimeError('此工作流缺少已加载节点：' + '、'.join(missing)
                                + '。请在 ComfyUI 工作台的「用户节点」查看安装指引，将插件放入 OCV/comfyui/custom_nodes，关闭并重新启动内置引擎后检查。')
         yield url
-    finally:
-        with LOCK:
-            LEASES -= 1
 
 
 def _local_user(request):

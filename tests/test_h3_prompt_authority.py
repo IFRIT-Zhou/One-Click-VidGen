@@ -88,6 +88,50 @@ class H3PromptAuthorityTests(unittest.TestCase):
         shot['video_prompt'] = 'Clouds only.'
         self.assertNotEqual(before, agent.source_fingerprint(shot, 10))
 
+    def test_contour_emphasis_must_not_become_glow(self):
+        bad = INLINE.replace('The white-robed man stays still',
+            'The target is highlighted with a subtle glow. The white-robed man stays still')
+        shot = {'video_prompt': '固定半透明观察窗，靶点轮廓轻强调，器械沿轴推进。'}
+        before = dict(shot)
+        with patch.object(agent, 'generate_gemini_text', side_effect=[
+                json.dumps({'h3_prompt': bad}), json.dumps({'h3_prompt': INLINE})]) as generate:
+            prompt, _ = agent.convert_for_h3(shot, 10)
+        self.assertEqual(generate.call_count, 2)
+        self.assertNotIn('subtle glow', prompt)
+        self.assertIn('steady contour contrast', generate.call_args.kwargs['system_prompt'])
+        self.assertEqual(shot, before)
+
+    def test_unapproved_glow_failure_is_bounded_and_retryable(self):
+        bad = INLINE.replace('The white-robed man stays still',
+            'The target is highlighted with a subtle glow. The white-robed man stays still')
+        shot = {'video_prompt': '固定透明窗口，轮廓强调。'}
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({'h3_prompt': bad})) as generate:
+            with self.assertRaisesRegex(ValueError, '未授权光效.*尚未提交视频生成'):
+                agent.convert_for_h3(shot, 10)
+        self.assertEqual(generate.call_count, 3)
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({'h3_prompt': INLINE})):
+            self.assertIn('white-robed man', agent.convert_for_h3(shot, 10)[0])
+
+    def test_explicit_glow_and_negative_constraints_are_not_rejected(self):
+        positive = INLINE.replace('The white-robed man stays still',
+            'The target is highlighted with a subtle glow. The white-robed man stays still')
+        positive = agent._validate(positive, 10)
+        self.assertEqual(agent._unapproved_emphasis_issues(positive, '让靶点发光，亮起柔和光晕。'), [])
+        negative = positive.replace('The target is highlighted', 'Do not highlight the target')
+        self.assertEqual(agent._unapproved_emphasis_issues(negative, '强调轮廓。'), [])
+        self.assertTrue(agent._unapproved_emphasis_issues(positive, '强调轮廓，不要发光。'))
+        self.assertEqual(agent._unapproved_emphasis_issues(INLINE, '强调轮廓。'), [])
+
+    def test_invalid_glow_cache_is_reconverted(self):
+        bad = INLINE.replace('The white-robed man stays still',
+            'The target is highlighted with a subtle glow. The white-robed man stays still')
+        shot = {'video_prompt': '固定透明观察窗，轮廓强调。', 'h3_prompt': bad}
+        shot['h3_prompt_source'] = agent.source_fingerprint(shot, 10)
+        with patch.object(agent, 'generate_gemini_text', return_value=json.dumps({'h3_prompt': INLINE})) as generate:
+            prompt, _ = agent.convert_for_h3(shot, 10)
+        generate.assert_called_once()
+        self.assertNotIn('subtle glow', prompt)
+
 
 if __name__ == '__main__':
     unittest.main()

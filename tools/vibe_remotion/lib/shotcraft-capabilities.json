@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "version": "shotcraft-capabilities-20261104.1",
+  "tag_labels": {
+    "content": {
+      "person_institution": "人物／机构介绍",
+      "single_finding": "单一观点／结论",
+      "subject_intro": "对象／照片介绍",
+      "parallel_points": "并列要点",
+      "source_document": "文献／条目说明",
+      "summary": "总结收束",
+      "explanation": "问题与解释",
+      "numeric_comparison": "数字文字对比",
+      "ordered_process": "有序流程",
+      "chronology": "事件时间线",
+      "methods": "方法清单",
+      "numeric_emphasis": "关键数字强调",
+      "original_evidence": "原始证据图",
+      "photo_detail": "原图说明",
+      "topic_intro": "主题引入"
+    },
+    "motion_family": {
+      "focus_push": "聚焦推近",
+      "sequential_gallery": "逐项画廊",
+      "gather": "聚合收束",
+      "flip_reveal": "翻牌揭示",
+      "fan_out": "叠卡展开",
+      "timeline_travel": "时间线运镜",
+      "document_reveal": "文档揭示",
+      "typography_emphasis": "文字强调",
+      "parallel_grid": "多格并行",
+      "image_focus": "原图聚焦",
+      "title_transition": "标题转场"
+    },
+    "material": {
+      "text_only": "纯文字",
+      "single_image": "单图入画",
+      "multiple_images": "多图入画",
+      "mixed_text_images": "文字配图"
+    },
+    "evidence": {
+      "conditional": "有条件支持：需检查可读性",
+      "not_recommended": "不推荐密集证据图",
+      "unsupported": "不支持图片入画"
+    }
+  },
+  "styles": {
+    "spotlight-hero-card": {
+      "content_tags": [
+        "person_institution",
+        "single_finding",
+        "subject_intro"
+      ],
+      "motion_families": [
+        "focus_push"
+      ],
+      "primary_images_at_once": 1,
+      "image_presentation": "single_hero",
+      "evidence_support": "not_recommended",
+      "recommended_use": "照片、人物或一个关键事实；单卡与侧边标题形成重点。",
+      "avoid_for": [
+        "密集原始图表",
+        "多对象同屏对照"
+      ],
+      "notes": "图片有透视推近；卡内文字会挤占图像区域。"
+    },
+    "word-relay-filmstrip": {
+      "content_tags": [
+        "parallel_points",
+        "person_institution",
+        "source_document"
+      ],
+      "motion_families": [
+        "sequential_gallery"
+      ],
+      "primary_images_at_once": 1,
+      "image_presentation": "one_at_a_time",
+      "evidence_support": "not_recommended",
+      "recommended_use": "依次讲清多个观点或介绍多个对象。",
+      "avoid_for": [
+        "需要同时对照的数值",
+        "需持续看清的细图"
+      ],
+      "notes": "相邻卡片有裁切和虚化；一次只有焦点卡可供阅读。"
+    },
+    "outro-group-photo-launch": {
+      "content_tags": [
+        "summary"
+      ],
+      "motion_families": [
+        "gather"
+      ],
+      "primary_images_at_once": 4,
+      "image_presentation": "small_group",
+      "evidence_support": "not_recommended",
+      "recommended_use": "回顾已讲过的内容，聚合收束。",
+      "avoid_for": [
+        "首次出现的重要证据",
+        "长文字",
+        "细小数字图表"
+      ],
+      "notes": "周围为小卡，不能把需要阅读的新信息塞进结束合影。"
+    },
+    "card-flip-reveal": {
+      "content_tags": [
+        "explanation",
+        "single_finding"
+      ],
+      "motion_families": [
+        "flip_reveal"
+      ],
+      "primary_images_at_once": 3,
+      "image_presentation": "front_only",
+      "evidence_support": "not_recommended",
+      "recommended_use": "对象或问题在正面出现，背面揭示对应解释。",
+      "avoid_for": [
+        "正反两张照片对比",
+        "持续显示原始证据"
+      ],
+      "notes": "每项只有一个图片槽位且仅在正面显示；翻后展示item.body。"
+    },
+    "carousel-3d": {
+      "content_tags": [
+        "person_institution",
+        "subject_intro",
+        "parallel_points"
+      ],
+      "motion_families": [
+        "sequential_gallery"
+      ],
+      "primary_images_at_once": 1,
+      "image_presentation": "one_at_a_time",
+      "evidence_support": "not_recommended",
+      "recommended_use": "照片画廊、人物或机构逐项介绍。",
+      "avoid_for": [
+        "并排精确数值对比",
+        "精细证据图"
+      ],
+      "notes": "其他卡片位于透视侧面；并非四图同时可读。"
+    },
+    "card-stack": {
+      "content_tags": [
+        "parallel_points",
+        "numeric_comparison",
+        "summary"
+      ],
+      "motion_families": [
+        "fan_out"
+      ],
+      "primary_images_at_once": 3,
+      "image_presentation": "fan_group",
+      "evidence_support": "not_recommended",
+      "recommended_use": "三项真实并列观点、照片或简短数字文字对比。",
+      "avoid_for": [
+        "只有两项却补造第三项",
+        "密集图表"
+      ],
+      "notes": "固定三项，展开后卡片有倾斜，适合短文案。"
+    },
+    "timeline-travel": {
+      "content_tags": [
+        "ordered_process",
+        "chronology"
+      ],
+      "motion_families": [
+        "timeline_travel"
+      ],
+      "primary_images_at_once": 1,
+      "image_presentation": "one_at_a_time",
+      "evidence_support": "not_recommended",
+      "recommended_use": "沿真实存在的顺序讲述流程、事件或阶段。",
+      "avoid_for": [
+        "无序对比",
+        "按时间跨度比例绘图"
+      ],
+      "notes": "等距刻度只表示推进，不代表真实时间比例；未提供日期不得补造日期。"
+    },
+    "document-typewriter-reveal": {
+      "content_tags": [
+        "source_document",
+        "methods",
+        "parallel_points"
+      ],
+      "motion_families": [
+        "document_reveal"
+      ],
+      "primary_images_at_once": 3,
+      "image_presentation": "supporting_thumbnails",
+      "evidence_support": "not_recommended",
+      "recommended_use": "方法清单、定义、引文和条目说明逐行显露。",
+      "avoid_for": [
+        "组织切片细节",
+        "坐标图或表格精读"
+      ],
+      "notes": "图片只作缩略辅助；三项时每图约240×150逻辑像素。"
+    },
+    "marker-underline-title": {
+      "content_tags": [
+        "single_finding",
+        "numeric_emphasis"
+      ],
+      "motion_families": [
+        "typography_emphasis"
+      ],
+      "primary_images_at_once": 0,
+      "image_presentation": "none",
+      "evidence_support": "unsupported",
+      "recommended_use": "一个短结论或关键数字落定后划线强调。",
+      "avoid_for": [
+        "必须入画的照片或原图",
+        "多项复杂比较"
+      ],
+      "notes": "纯文字展示，但模型仍可阅读多张参考图获取事实与风格。"
+    },
+    "quad-split-parallel-scenes": {
+      "content_tags": [
+        "parallel_points",
+        "numeric_comparison"
+      ],
+      "motion_families": [
+        "parallel_grid"
+      ],
+      "primary_images_at_once": 4,
+      "image_presentation": "small_group",
+      "evidence_support": "not_recommended",
+      "recommended_use": "四项真实并列内容、照片或简短数字文字对比。",
+      "avoid_for": [
+        "不足四项却凑数",
+        "小字密集统计图"
+      ],
+      "notes": "固定四项；照片区约300×198逻辑像素，适合辨认对象而非读取证据细节。"
+    },
+    "scanline-annotate-focus": {
+      "content_tags": [
+        "original_evidence",
+        "photo_detail",
+        "person_institution"
+      ],
+      "motion_families": [
+        "image_focus"
+      ],
+      "primary_images_at_once": 1,
+      "image_presentation": "single_evidence",
+      "evidence_support": "conditional",
+      "recommended_use": "单张完整原图展示，扫描后引出解释。",
+      "avoid_for": [
+        "自动病灶定位",
+        "需要局部放大才看清的复杂原图"
+      ],
+      "notes": "约1000×500逻辑像素，不是全屏；仅整图扫描与容器框，不具备识别或医学诊断能力。"
+    },
+    "title-demote-to-label": {
+      "content_tags": [
+        "topic_intro",
+        "parallel_points",
+        "person_institution"
+      ],
+      "motion_families": [
+        "title_transition"
+      ],
+      "primary_images_at_once": 3,
+      "image_presentation": "content_group",
+      "evidence_support": "conditional",
+      "recommended_use": "主题先出现，再移为标签，让出空间展示事实或照片。",
+      "avoid_for": [
+        "多卡展示精细证据",
+        "超长主标题"
+      ],
+      "notes": "证据图仅建议单卡且不加卡内文字；多卡不适合精细图表。"
+    }
+  }
+}

@@ -18,6 +18,21 @@ from .config import load_project_env
 load_project_env()
 
 _LANGUAGE_ENV = ContextVar('ocv_language_environment', default=None)
+_SINGLE_ATTEMPT = ContextVar('ocv_language_single_attempt', default=False)
+
+
+@contextmanager
+def single_model_attempt():
+    """Bound this explicitly priced action to its configured model and one POST.
+
+    Context-local so a preview never alters retry or fallback policy of a
+    concurrently running planning or TTS task.
+    """
+    token = _SINGLE_ATTEMPT.set(True)
+    try:
+        yield
+    finally:
+        _SINGLE_ATTEMPT.reset(token)
 
 
 @contextmanager
@@ -448,6 +463,8 @@ def language_provider_status() -> dict[str, Any]:
 def _gemini_models(provider: str | None = None) -> list[str]:
     config = language_provider_config(provider)
     primary = language_model(provider)
+    if _SINGLE_ATTEMPT.get():
+        return [primary]
     fallback_raw = _language_getenv("GEMINI_FALLBACK_MODELS", "").strip()
     models = [primary]
     if fallback_raw and (provider or _provider()) in {"gemini", "runninghub"}:
@@ -461,6 +478,8 @@ def _gemini_models(provider: str | None = None) -> list[str]:
 
 
 def _gemini_retry_count() -> int:
+    if _SINGLE_ATTEMPT.get():
+        return 1
     raw_value = os.getenv("GEMINI_RETRY_COUNT", "3").strip()
     try:
         return max(1, int(raw_value))
@@ -486,7 +505,7 @@ def _gemini_timeout() -> tuple[float, float]:
         read = max(connect, float(os.getenv("GEMINI_READ_TIMEOUT_SECONDS", "120")))
     except ValueError:
         read = 120.0
-    return connect, read
+    return (min(connect, 8.0), min(read, 75.0)) if _SINGLE_ATTEMPT.get() else (connect, read)
 
 
 def _extract_error_message(response: requests.Response) -> str:

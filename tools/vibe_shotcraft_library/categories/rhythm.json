@@ -1,0 +1,386 @@
+{
+  "category": "rhythm",
+  "zh": "节奏与蒙太奇",
+  "en": "Rhythm & Montage",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "beat-cut-moves",
+      "category": "rhythm",
+      "summary": "硬切当节拍乐器——连闪定格：三次白闪各硬切同一画面的一个裁切（全景→卡片→特写），快门余韵沉降后停在特写收束",
+      "recipe_path": "source/references/shots/rhythm/beat-cut-moves.md",
+      "style_ids": [
+        "paparazzi-flash"
+      ]
+    },
+    {
+      "id": "beat-step-list-theme-cycle",
+      "category": "rhythm",
+      "summary": "三通道节拍器——深色场形容词列表逐拍上移一行，视口中央固定胶囊\"接住\"下一个词并换色，整场底色同拍跟换；行、色、场三通道锁死同一拍点",
+      "recipe_path": "source/references/shots/rhythm/beat-step-list-theme-cycle.md",
+      "style_ids": [
+        "beat-step-list-theme-cycle"
+      ]
+    },
+    {
+      "id": "panel-grid-moves",
+      "category": "rhythm",
+      "summary": "分格节奏——comic-panel-split 漫画斜格劈出同一主体的三个机位，咔咔咔三格定格后末格斜边吃屏成海报",
+      "recipe_path": "source/references/shots/rhythm/panel-grid-moves.md",
+      "style_ids": [
+        "comic-panel-split"
+      ]
+    },
+    {
+      "id": "quad-split-parallel-scenes",
+      "category": "rhythm",
+      "summary": "画面硬切 2×2 四宫格，四个象限并行跑各自的微场景（打字、急推、逐词、交互链），关键节拍错开 3–6 帧制造信息轰炸",
+      "recipe_path": "source/references/shots/rhythm/quad-split-parallel-scenes.md",
+      "style_ids": [
+        "quad-split-parallel-scenes"
+      ]
+    },
+    {
+      "id": "rhythm-interrupt-moves",
+      "category": "rhythm",
+      "summary": "打断节奏——jump-cut-punch-in 三级跳切推近：同构图三次无补间硬跳放大，逐级逼近目标",
+      "recipe_path": "source/references/shots/rhythm/rhythm-interrupt-moves.md",
+      "style_ids": [
+        "jump-cut-punch-in"
+      ]
+    },
+    {
+      "id": "sakuga-timing-shift",
+      "category": "rhythm",
+      "summary": "一拍三转一拍一——元素先以每 3 帧一步的手翻书顿挫移动，高潮瞬间切成逐帧丝滑冲刺，帧率量化的突变本身就是看点",
+      "recipe_path": "source/references/shots/rhythm/sakuga-timing-shift.md",
+      "style_ids": [
+        "sakuga-timing-shift"
+      ]
+    },
+    {
+      "id": "speed-ramp-freeze",
+      "category": "rhythm",
+      "summary": "帧号非线性 remap 的节奏手法——定格标注（流动→定格圈注→解冻）",
+      "recipe_path": "source/references/shots/rhythm/speed-ramp-freeze.md",
+      "style_ids": [
+        "freeze-annotate"
+      ]
+    },
+    {
+      "id": "trailer-grammar-moves",
+      "category": "rhythm",
+      "summary": "预告片语法一式——trailer-bumper 前置速剪钩子：三镜 9f 速剪 + 黑场静默一拍，再开场标题",
+      "recipe_path": "source/references/shots/rhythm/trailer-grammar-moves.md",
+      "style_ids": [
+        "trailer-bumper"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "paparazzi-flash",
+      "card_id": "beat-cut-moves",
+      "category": "rhythm",
+      "tags": [
+        "rhythm",
+        "transition"
+      ],
+      "label": "paparazzi-flash 连闪定格",
+      "description": "硬切当节拍乐器——连闪定格：三次白闪各硬切同一画面的一个裁切（全景→卡片→特写），快门余韵沉降后停在特写收束",
+      "use": "高光时刻仪式感：颁奖连拍、关键数字的加冕",
+      "duration": "全程 140f ≈4.7s（活素材 30f + 三闪 + hold 70f）",
+      "recipe_path": "source/references/shots/rhythm/beat-cut-moves.md",
+      "demo_paths": [
+        "source/demos/rhythm/beat-cut-moves/PaparazziFlash.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/rhythm/paparazzi-flash.mp4",
+      "upstream_preview_url": "./media/paparazzi-flash.mp4?v=1790980736770",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/beat-cut-moves.md": "76a8ab1be31d4aeb7c4456a7c069f9a5fe697a6c6fc08fe0eff49bcc7a8ed0cd",
+        "source/demos/rhythm/beat-cut-moves/PaparazziFlash.tsx": "a3a8b637ad57f1815dc77c725dc64349b09627c7b6be24b61a5f4ba04a7610e4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "13cb0ce1e072a949165c4ee6d190a2b940d4a97c152accf231e2c32fb969c851",
+      "preview_available": true
+    },
+    {
+      "id": "beat-step-list-theme-cycle",
+      "card_id": "beat-step-list-theme-cycle",
+      "category": "rhythm",
+      "tags": [
+        "rhythm",
+        "typography"
+      ],
+      "label": "beat-step-list-theme-cycle",
+      "description": "三通道节拍器——深色场形容词列表逐拍上移一行，视口中央固定胶囊\"接住\"下一个词并换色，整场底色同拍跟换；行、色、场三通道锁死同一拍点",
+      "use": "\"同一产品多种气质/多主题展示\"段落（modern/playful/expressive 式形容词连打）；全片节奏最密的一段；音乐段对拍",
+      "duration": "铺垫 30f + 每拍 18f × 拍数 + 收尾 hold；4 拍约 4.7s（demo 140f）",
+      "recipe_path": "source/references/shots/rhythm/beat-step-list-theme-cycle.md",
+      "demo_paths": [
+        "source/demos/rhythm/beat-step-list-theme-cycle/BeatStepListThemeCycle.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/rhythm/beat-step-list-theme-cycle.mp4",
+      "upstream_preview_url": "./media/beat-step-list-theme-cycle.mp4?v=1790980736771",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/beat-step-list-theme-cycle.md": "2c6d48ddeafd6514a2809be9c94dadb9823df97913df9d3ceee3c3d19ac538e6",
+        "source/demos/rhythm/beat-step-list-theme-cycle/BeatStepListThemeCycle.tsx": "191ac2d5081ac0ba3d04da19cc9af00ce5caf82178c2fddc56f9576f38348b18",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "5b12fd23d321ad8a5531c33eb9b9358756332e8313efda5730b421bffe482a55",
+      "preview_available": true
+    },
+    {
+      "id": "comic-panel-split",
+      "card_id": "panel-grid-moves",
+      "category": "rhythm",
+      "tags": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "label": "comic-panel-split",
+      "description": "分格节奏——comic-panel-split 漫画斜格劈出同一主体的三个机位，咔咔咔三格定格后末格斜边吃屏成海报",
+      "use": "同一主体多视角并列；漫画感段落",
+      "duration": "156f ≈5.2s（全屏侧拍 20f + 三刀分格定格 + 吃屏 + 海报 hold）",
+      "recipe_path": "source/references/shots/rhythm/panel-grid-moves.md",
+      "demo_paths": [
+        "source/demos/rhythm/panel-grid-moves/ComicPanelSplit.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/rhythm/comic-panel-split.mp4",
+      "upstream_preview_url": "./media/comic-panel-split.mp4?v=1790980736844",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/panel-grid-moves.md": "230ceb38ca2c4c157b28c5fbc129cd5e68b03e24f9ce8534f6e980f6f6886d7e",
+        "source/demos/rhythm/panel-grid-moves/ComicPanelSplit.tsx": "ebca2dde478a1a0e2b80cf0105c1c33ee97eaf673e6ace9dfb687d8d255e7c53",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "aee00da164217fc70d616e0a9907619dfc18e1104a0d57e014faefc76bf47386",
+      "preview_available": true
+    },
+    {
+      "id": "quad-split-parallel-scenes",
+      "card_id": "quad-split-parallel-scenes",
+      "category": "rhythm",
+      "tags": [
+        "rhythm"
+      ],
+      "label": "quad-split-parallel-scenes",
+      "description": "画面硬切 2×2 四宫格，四个象限并行跑各自的微场景（打字、急推、逐词、交互链），关键节拍错开 3–6 帧制造信息轰炸",
+      "use": "节奏段\"功能很多、同时发生\"的蒙太奇拍；预告片中段的密度峰值",
+      "duration": "90f（3s@30fps：0–62f 并行轰炸 + 28f 终态 hold，全程无转场）",
+      "recipe_path": "source/references/shots/rhythm/quad-split-parallel-scenes.md",
+      "demo_paths": [
+        "source/demos/rhythm/quad-split-parallel-scenes/QuadSplitParallelScenes.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/rhythm/quad-split-parallel-scenes.mp4",
+      "upstream_preview_url": "./media/quad-split-parallel-scenes.mp4?v=1790980736851",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/quad-split-parallel-scenes.md": "1424d5692906ceaee7bc9626b92c1f6c0a0203346c1103745fdba3fcaf7c3606",
+        "source/demos/rhythm/quad-split-parallel-scenes/QuadSplitParallelScenes.tsx": "e16fd0689c64625264ec1faa10edd10a18efec3fa2cb822c6ac4c08c1a50c025",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4fd0ec316a63099439795bc0ff79243fe98c68bc35456c7215ca8c4193ed7478",
+      "preview_available": true
+    },
+    {
+      "id": "jump-cut-punch-in",
+      "card_id": "rhythm-interrupt-moves",
+      "category": "rhythm",
+      "tags": [
+        "rhythm"
+      ],
+      "label": "jump-cut-punch-in",
+      "description": "打断节奏——jump-cut-punch-in 三级跳切推近：同构图三次无补间硬跳放大，逐级逼近目标",
+      "use": "逐级逼近核心指标；纪录片式盯住",
+      "duration": "A 135f ≈4.5s",
+      "recipe_path": "source/references/shots/rhythm/rhythm-interrupt-moves.md",
+      "demo_paths": [
+        "source/demos/rhythm/rhythm-interrupt-moves/JumpCutPunchIn.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/rhythm/jump-cut-punch-in.mp4",
+      "upstream_preview_url": "./media/jump-cut-punch-in.mp4?v=1790980736855",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/rhythm-interrupt-moves.md": "b16bb150d0d4ec69c513dc783b787ed42cf17aa2460bf0a5d6585c387ab087ff",
+        "source/demos/rhythm/rhythm-interrupt-moves/JumpCutPunchIn.tsx": "861708d44cc69d06ea57d93302ea6e24a15a67f518b83dae66658382c8f1fb25",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "a2f40df73694ca476d0f775420ee5da4d899f0c1c7e70d5b74454c4c3083d1d5",
+      "preview_available": true
+    },
+    {
+      "id": "sakuga-timing-shift",
+      "card_id": "sakuga-timing-shift",
+      "category": "rhythm",
+      "tags": [
+        "rhythm",
+        "ui-entrance"
+      ],
+      "label": "sakuga-timing-shift",
+      "description": "一拍三转一拍一——元素先以每 3 帧一步的手翻书顿挫移动，高潮瞬间切成逐帧丝滑冲刺，帧率量化的突变本身就是看点",
+      "use": "单元素的强调性位移（卡片入场、指标冲线）；需要\"手工感→高潮爆发\"反差的段落",
+      "duration": "150f（5s）",
+      "recipe_path": "source/references/shots/rhythm/sakuga-timing-shift.md",
+      "demo_paths": [
+        "source/demos/rhythm/sakuga-timing-shift/SakugaTimingShift.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/rhythm/sakuga-timing-shift.mp4",
+      "upstream_preview_url": "./media/sakuga-timing-shift.mp4?v=1790980736858",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/sakuga-timing-shift.md": "a35518f88b06db937d87529a1906be2d224a314c4cc8ba4d3a90edbe3e00a935",
+        "source/demos/rhythm/sakuga-timing-shift/SakugaTimingShift.tsx": "d7137c703e302b42ac9e6fd4c11f4f894110b6a67d4c889aab0d94051c70ca4e",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "0ba249ff06b158523311f2873419c860d9ae918f355d5370f6930c4de41b5731",
+      "preview_available": true
+    },
+    {
+      "id": "freeze-annotate",
+      "card_id": "speed-ramp-freeze",
+      "category": "rhythm",
+      "tags": [
+        "rhythm"
+      ],
+      "label": "freeze-annotate",
+      "description": "帧号非线性 remap 的节奏手法——定格标注（流动→定格圈注→解冻）",
+      "use": "卡片流/长横移中把一个重点\"停下给人看\"；教学解说、评审语境",
+      "duration": "定格标注全程 158f（≈5.3s，定格段 67f ≥45f）",
+      "recipe_path": "source/references/shots/rhythm/speed-ramp-freeze.md",
+      "demo_paths": [
+        "source/demos/rhythm/speed-ramp-freeze/FreezeAnnotateReal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/rhythm/freeze-annotate.mp4",
+      "upstream_preview_url": "./media/freeze-annotate.mp4?v=1790980736872",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/speed-ramp-freeze.md": "e0256a63e0f96b798a60171ac53a319ba87eacc552925fd117d4578ee9b69b7b",
+        "source/demos/rhythm/speed-ramp-freeze/FreezeAnnotateReal.tsx": "2998edc6c8009cb329e9e66dad1a26d26d55b11baea1212029f0912014b2a282",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "f44fc79f68da7c64940a52aed73154eb83346317980868a252105e2d6563d627",
+      "preview_available": true
+    },
+    {
+      "id": "trailer-bumper",
+      "card_id": "trailer-grammar-moves",
+      "category": "rhythm",
+      "tags": [
+        "rhythm",
+        "opening",
+        "transition"
+      ],
+      "label": "trailer-bumper",
+      "description": "预告片语法一式——trailer-bumper 前置速剪钩子：三镜 9f 速剪 + 黑场静默一拍，再开场标题",
+      "use": "正片开场前的钩子；cold open",
+      "duration": "A ~4.7s（140f）",
+      "recipe_path": "source/references/shots/rhythm/trailer-grammar-moves.md",
+      "demo_paths": [
+        "source/demos/rhythm/trailer-grammar-moves/TrailerBumper.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/rhythm/trailer-bumper.mp4",
+      "upstream_preview_url": "./media/trailer-bumper.mp4?v=1790980736889",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/rhythm/trailer-grammar-moves.md": "92a1be277b568298708c7a0c0d09c7f5c405038db48b78995cf023f0fffae67a",
+        "source/demos/rhythm/trailer-grammar-moves/TrailerBumper.tsx": "7fc3f3e622830076d80f3b5d271b292ce145428d7dc79e4b0d552ca04d5ca267",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "a5743a06c385c3d2bd19e050e1af8f4597aac30d1e1c9b571755a0cede880003",
+      "preview_available": true
+    }
+  ]
+}

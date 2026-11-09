@@ -40,10 +40,11 @@ class DynamicExportLayoutTests(unittest.TestCase):
 
     def test_export_saves_layout_without_changing_shots(self):
         record = {'id': 'layout', 'status': 'video_review', 'revision': 3, 'logs': [], 'creation_parameters': {},
-                  'shots': [{'id': 's', 'kind': 'video', 'video_status': 'completed'}]}
+                  'shots': [{'id': 's', 'kind': 'video', 'video_status': 'completed', 'video':'clip.mp4'}]}
         shots = copy.deepcopy(record['shots'])
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             path = Path(tmp)
+            (path/'clip.mp4').write_bytes(b'stub for source existence check; worker is mocked')
             for name, result in [('require_user', {'id': 1}), ('directory', path), ('read', record), ('editable', None), ('save', None)]:
                 stack.enter_context(patch.object(export.studio, name, return_value=result))
             stack.enter_context(patch.object(export.threading, 'Thread'))

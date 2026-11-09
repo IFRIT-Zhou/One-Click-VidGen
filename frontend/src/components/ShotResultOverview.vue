@@ -53,7 +53,8 @@ async function moveTab(direction) {
       <p v-if="shot.image_prompt_out_of_sync||shot.video_prompt_out_of_sync" class="shot-prompt-note">设计已修改，当前效果可能仍为上一版，请核对后再生成。</p>
       <slot name="presenter" />
     </section>
-    <div class="shot-review-auxiliary"><slot name="auxiliary" /></div>
+    <slot name="motion" />
+    <div v-if="$slots.auxiliary" class="shot-review-auxiliary"><slot name="auxiliary" /></div>
   </div>
 </template>
 

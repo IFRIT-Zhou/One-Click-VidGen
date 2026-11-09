@@ -226,6 +226,39 @@ class H3ReviewRoutingTests(unittest.TestCase):
         self.assertIn('14 秒上限', failure.exception.detail)
         self.assertEqual(self.record, before)
 
+    def test_split_confirm_accepts_redraw_library_and_preserves_other_pending_child(self):
+        self.record.update(status='image_review', redraw_references=[
+            {'id': 'img_uploaded', 'file': 'uploaded.png'}])
+        self.record['shots'][0].update(reference_ids=['img_uploaded'],
+            scene_reference_id='scene_reference', image='original.png', image_status='completed')
+        (self.path / 'original.png').write_bytes(b'original image')
+        studio.structure(self.record['id'], studio.Structure(revision=1,
+            action='split', index=0, boundary=1), None)
+        first, second = self.record['shots']
+        second_before = copy.deepcopy(second)
+        scenes_before = copy.deepcopy(self.record['scenes'])
+        studio.confirm_adjusted_design(self.record['id'], studio.DesignConfirmation(
+            revision=self.record['revision'], shot_id=first['id']), None)
+        self.assertFalse(first['design_needs_review'])
+        self.assertTrue(first['design_review_confirmed'])
+        self.assertEqual(first['reference_ids'], ['img_uploaded'])
+        self.assertEqual(second, second_before)
+        self.assertTrue(second['design_needs_review'])
+        self.assertEqual(self.record['scenes'], scenes_before)
+        studio.confirm_adjusted_design(self.record['id'], studio.DesignConfirmation(
+            revision=self.record['revision'], shot_id=second['id']), None)
+        self.assertFalse(second['design_needs_review'])
+
+    def test_confirmation_still_rejects_unknown_reference_atomically(self):
+        self.record['shots'][0].update(reference_ids=['img_missing'], design_needs_review=True)
+        before = copy.deepcopy(self.record)
+        with self.assertRaises(HTTPException) as failure:
+            studio.confirm_adjusted_design(self.record['id'], studio.DesignConfirmation(
+                revision=1, shot_id='shot'), None)
+        self.assertEqual(failure.exception.status_code, 400)
+        self.assertEqual(self.record, before)
+        self.assertFalse(self.saved)
+
 
 class H3StepWorkflowRoutingTests(unittest.TestCase):
     def test_start_visual_preserves_route_and_overrides_legacy_ten_second_limit(self):

@@ -88,12 +88,21 @@ class LauncherArchiveTests(unittest.TestCase):
                 (root / 'start_windows.bat').write_text('old startup')
                 (root / 'workspace').mkdir()
                 (root / 'workspace/keep.txt').write_text('KEEP_PROJECT')
+                rmbg = root / 'tools/rmbg'
+                (rmbg / 'models/BiRefNet').mkdir(parents=True)
+                weight = rmbg / 'models/BiRefNet/BiRefNet-general.safetensors'
+                weight.write_bytes(b'EXISTING WEIGHT')
+                (rmbg / 'worker.py').write_text('old worker')
                 channel = dict(release_id='test', release_order=1, portable_overlay_safe=True)
                 with zipfile.ZipFile(temp / 'update.zip', 'w') as z:
                     z.writestr('OCV/start_windows.bat', 'new startup')
                     z.writestr('OCV/launcher/update-channel.json', json.dumps(channel))
                     z.writestr('OCV/.env', 'DO_NOT_COPY')
                     z.writestr('OCV/workspace/keep.txt', 'DO_NOT_COPY')
+                    z.writestr('OCV/tools/rmbg/worker.py', 'new worker')
+                    z.writestr('OCV/tools/rmbg/vendor/birefnet/config.json', '{}')
+                    z.writestr('OCV/tools/rmbg/models/BiRefNet/BiRefNet-general.safetensors', 'DO_NOT_COPY')
+                    z.writestr('OCV/TOOLS/RMBG/MODELS/private.txt', 'DO_NOT_COPY')
                     if not missing_template:
                         z.writestr('OCV/.env.example', 'example')
                 # Only this isolated test copy checks port 0 instead of real OCV ports.
@@ -108,6 +117,10 @@ class LauncherArchiveTests(unittest.TestCase):
                 self.assertEqual((root / '.env').read_text(), 'KEEP_KEY')
                 self.assertEqual((root / 'workspace/keep.txt').read_text(), 'KEEP_PROJECT')
                 self.assertEqual((root / 'start_windows.bat').read_text(), 'old startup' if missing_template else 'new startup')
+                self.assertEqual(weight.read_bytes(), b'EXISTING WEIGHT')
+                self.assertFalse((rmbg / 'models/private.txt').exists())
+                self.assertEqual((rmbg / 'worker.py').read_text(), 'old worker' if missing_template else 'new worker')
+                self.assertEqual((rmbg / 'vendor/birefnet/config.json').is_file(), not missing_template)
                 if missing_template:
                     self.assertIn('Phase=validate-package', log)
                     self.assertIn('Location:', log)

@@ -6,3 +6,10 @@ tools/publish_launcher_release.py export-ignore
 tools/release_integrity.py export-ignore
 tools/portable_release_audit.py export-ignore
 tools/create_portable_archive.py export-ignore
+# The pinned upstream architecture hashes must survive a Windows git checkout.
+tools/rmbg/vendor/birefnet/*.py text eol=lf
+tools/rmbg/vendor/birefnet/*.json text eol=lf
+tools/rmbg/vendor/birefnet/LICENSE text eol=lf
+tools/rmbg/models/** export-ignore
+tools/vibe_shotcraft_library/source/** -text
+tools/rmbg/python/** export-ignore

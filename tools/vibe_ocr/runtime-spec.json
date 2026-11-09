@@ -1,0 +1,43 @@
+{
+  "version": "ocv-rapidocr-cpu-v1",
+  "python": "3.10",
+  "packages": {
+    "rapidocr": "3.10.0",
+    "onnxruntime": "1.23.2",
+    "numpy": "2.2.6",
+    "opencv-python-headless": "4.12.0.88",
+    "Pillow": "11.3.0",
+    "omegaconf": "2.3.0",
+    "antlr4-python3-runtime": "4.9.3",
+    "pyclipper": "1.4.0",
+    "six": "1.17.0",
+    "Shapely": "2.1.2",
+    "PyYAML": "6.0.3",
+    "tqdm": "4.70.1",
+    "requests": "2.34.2",
+    "colorlog": "6.12.0",
+    "coloredlogs": "15.0.1",
+    "flatbuffers": "25.12.19",
+    "packaging": "26.3",
+    "protobuf": "7.36.2",
+    "sympy": "1.14.0",
+    "humanfriendly": "10.0",
+    "colorama": "0.4.6",
+    "charset-normalizer": "3.5.2",
+    "idna": "3.20",
+    "urllib3": "2.8.0",
+    "certifi": "2026.10.23",
+    "mpmath": "1.3.0",
+    "pyreadline3": "3.5.6"
+  },
+  "rapidocr_wheel_url": "https://files.pythonhosted.org/packages/59/07/203065283bba0c5e9c10af3602dc25ab3e59ee54dc2d1d22c8faeabf5ed8/rapidocr-3.10.0-py3-none-any.whl",
+  "rapidocr_wheel_sha256": "2fc34e26cd0f48514804a94f8832283039c7334076bff60768b1fed9ad068050",
+  "models": {
+    "det": {"file": "PP-OCRv6_det_small.onnx", "bytes": 9929594, "sha256": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f"},
+    "rec": {"file": "PP-OCRv6_rec_small.onnx", "bytes": 21234383, "sha256": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884"},
+    "cls": {"file": "ch_ppocr_mobile_v2.0_cls_mobile.onnx", "bytes": 585532, "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"}
+  },
+  "model_source": "Models bundled in the official RapidAI rapidocr 3.10.0 PyPI wheel; copied and SHA-256 verified during explicit setup, never downloaded at inference time.",
+  "cpu_threads": 4,
+  "timeout_seconds": 90
+}

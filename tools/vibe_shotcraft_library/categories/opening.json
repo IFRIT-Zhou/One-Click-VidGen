@@ -1,0 +1,526 @@
+{
+  "category": "opening",
+  "zh": "开场与品牌",
+  "en": "Opening & Brand",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "brand-ink-open",
+      "category": "opening",
+      "summary": "墨线十字准星描画→字标逐字压印→打字机副标→满一秒静止再上浮消散",
+      "recipe_path": "source/references/shots/opening/brand-ink-open.md",
+      "style_ids": [
+        "brand-ink-open"
+      ]
+    },
+    {
+      "id": "crane-rise-reveal",
+      "category": "opening",
+      "summary": "升降臂拉升揭示——开场怼在一行数据特写，相机沿 Y 轴减速升起后拉，行行涌入直到整面 dashboard 铺满全幅",
+      "recipe_path": "source/references/shots/opening/crane-rise-reveal.md",
+      "style_ids": [
+        "crane-rise-reveal"
+      ]
+    },
+    {
+      "id": "dataviz-landscape-open",
+      "category": "opening",
+      "summary": "暗场支流线束地景开场——多条流线汇入主干、虚构 ID 标签浮在线上、相机重景深低速飞越",
+      "recipe_path": "source/references/shots/opening/dataviz-landscape-open.md",
+      "style_ids": [
+        "dataviz-landscape-open"
+      ]
+    },
+    {
+      "id": "fracture",
+      "category": "opening",
+      "summary": "5×5 瓦片从 3D 碎片态按中心波纹逐圈聚合成整面海报，停一拍亮字，随后全部碎片背离中心加速旋转飞出画面",
+      "recipe_path": "source/references/shots/opening/fracture.md",
+      "style_ids": [
+        "fracture"
+      ]
+    },
+    {
+      "id": "icon-field-colorize",
+      "category": "opening",
+      "summary": "灰阶小图标点阵错峰浮现铺满全屏，停一拍后多道品牌色横带波纹极快向下扫翻全场——\"功能全景先摆满，品牌一瞬间点亮\"的开场/收束卡",
+      "recipe_path": "source/references/shots/opening/icon-field-colorize.md",
+      "style_ids": [
+        "icon-field-colorize"
+      ]
+    },
+    {
+      "id": "letterspace-materialize",
+      "category": "opening",
+      "summary": "大字距字标全字符并行连续描画结晶——所有字母同帧起笔、笔画像手写一样连续生长、同帧齐收成词；氛围底景上的品牌字标显影",
+      "recipe_path": "source/references/shots/opening/letterspace-materialize.md",
+      "style_ids": [
+        "letterspace-materialize"
+      ]
+    },
+    {
+      "id": "magician-card-flourish",
+      "category": "opening",
+      "summary": "午夜蓝暗场上蓝色星芒闪现 0.3s（X 形针状光束旋转 90°+中心辉光放射小光芒），卡片从闪光点弹射而出——极速自旋弧线飞向镜头、自旋随靠近衰减、瞬间硬定格（卡高 86% 画高）、光脉冲 + sheen 扫光，右侧文案随后逐行揭示",
+      "recipe_path": "source/references/shots/opening/magician-card-flourish.md",
+      "style_ids": [
+        "magician-card-flourish"
+      ]
+    },
+    {
+      "id": "orbit-ring-title-open",
+      "category": "opening",
+      "summary": "石墨暗场上八张 16:9 暗色内容卡按 45° 均布在 720×380 椭圆上匀速公转（卡身永不倾斜，纵深只由 sin θ 给出 ±12% 缩放、z 序与远处压暗失焦），环撑开期间卡内容冻结首帧、f24 之后八张一起开播；居中两级标题逐字解糊下沉落定，关键词到位那一刻荧光马克块自左横扫铺满、扫过处字反白为墨，mono 副行随后浮出；可选末段整行失焦淡出、环继续转着交棒下一镜",
+      "recipe_path": "source/references/shots/opening/orbit-ring-title-open.md",
+      "style_ids": [
+        "orbit-ring-title-open"
+      ]
+    },
+    {
+      "id": "spotlight-hero-card",
+      "category": "opening",
+      "summary": "关灯的剧场里一束钨丝聚光（带体积光柱）扫过页面锁定一张卡，斜侧推进后卡片弹起悬浮、香槟色光束沿轮廓两圈、连同 3D 注记一起贴回原位",
+      "recipe_path": "source/references/shots/opening/spotlight-hero-card.md",
+      "style_ids": [
+        "spotlight-hero-card"
+      ]
+    },
+    {
+      "id": "stroke-segment-build",
+      "category": "opening",
+      "summary": "断笔成字——标题拆成十几段互不相连的笔画乱序逐段点亮，前 70% 不可读，末段落位瞬间语义\"啪\"地成立",
+      "recipe_path": "source/references/shots/opening/stroke-segment-build.md",
+      "style_ids": [
+        "stroke-segment-build"
+      ]
+    },
+    {
+      "id": "text-as-mask",
+      "category": "opening",
+      "summary": "文字视频遮罩——瓷白舞台上切出超粗大标题字，字内部透出缓慢平移的暗色实时产品面板，结尾吸一口气后字形指数冲入放大 46 倍溢出、内部画面接管全屏",
+      "recipe_path": "source/references/shots/opening/text-as-mask.md",
+      "style_ids": [
+        "text-as-mask"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "brand-ink-open",
+      "card_id": "brand-ink-open",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "typography"
+      ],
+      "label": "brand-ink-open",
+      "description": "墨线十字准星描画→字标逐字压印→打字机副标→满一秒静止再上浮消散",
+      "use": "品牌开场；任何\"先立名号再进产品\"的片头",
+      "duration": "约 2.8s（83f）",
+      "recipe_path": "source/references/shots/opening/brand-ink-open.md",
+      "demo_paths": [
+        "source/demos/typography/brand-ink-open/BrandInkOpen.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/brand-ink-open.mp4",
+      "upstream_preview_url": "./media/brand-ink-open.mp4?v=1790980736778",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/brand-ink-open.md": "b9f5402c5afb47607fcd6324835d95215a901b2adfb0293c828c2eae6104e2cf",
+        "source/demos/typography/brand-ink-open/BrandInkOpen.tsx": "9a1b82feadfdf20b1c4b7b59ec9b1ca34d5d8d190eb4669209a5de0b4dadcb4d",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2"
+      },
+      "preview_sha256": "cd8dec89eea6853e5609bfb4b1c8ce1e6f14750b0b48e396fca5a203653f238a",
+      "preview_available": true
+    },
+    {
+      "id": "crane-rise-reveal",
+      "card_id": "crane-rise-reveal",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "camera",
+        "data"
+      ],
+      "label": "crane-rise-reveal",
+      "description": "升降臂拉升揭示——开场怼在一行数据特写，相机沿 Y 轴减速升起后拉，行行涌入直到整面 dashboard 铺满全幅",
+      "use": "\"从细节到全局\"的开场定场；与 drone-dive-landing（全局→单点俯冲）互为反向",
+      "duration": "5.5s（165f：特写 hold 24f + 拉升 102f + 落定/余波/静止 39f）",
+      "recipe_path": "source/references/shots/opening/crane-rise-reveal.md",
+      "demo_paths": [
+        "source/demos/opening/crane-rise-reveal/CraneRiseReveal.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/crane-rise-reveal.mp4",
+      "upstream_preview_url": "./media/crane-rise-reveal.mp4?v=1790980736793",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/crane-rise-reveal.md": "081a20d3cee54456108185a1b3aa3fcf718fbf60d1a97f25165ce76fee1d46ec",
+        "source/demos/opening/crane-rise-reveal/CraneRiseReveal.tsx": "53b084c01bc32f70a570396b8fad6babb637128527dbb53829ecbf9269441baa",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "d5883c3d2ef3323753e6354948d3c4843847e8a4ce32fd63392c6e82e4b8e90b",
+      "preview_available": true
+    },
+    {
+      "id": "dataviz-landscape-open",
+      "card_id": "dataviz-landscape-open",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "data",
+        "camera"
+      ],
+      "label": "dataviz-landscape-open",
+      "description": "暗场支流线束地景开场——多条流线汇入主干、虚构 ID 标签浮在线上、相机重景深低速飞越",
+      "use": "品牌级抽象开场（\"数据宇宙\"隐喻），接亮场产品段或字标；与 glow-flyline-moves 分工：那卡是段落内卡片之间的连线叙事，本卡是开场专用的全画幅地景",
+      "duration": "5–8s（开场氛围段，一支片 ≤1 次；demo 180f）",
+      "recipe_path": "source/references/shots/opening/dataviz-landscape-open.md",
+      "demo_paths": [
+        "source/demos/opening/dataviz-landscape-open/DatavizLandscapeOpen.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/dataviz-landscape-open.mp4",
+      "upstream_preview_url": "./media/dataviz-landscape-open.mp4?v=1790980736796",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/dataviz-landscape-open.md": "55d6a9ffc368801d1d30b3aee964a26270657a733a4c61f93c062662028f9aea",
+        "source/demos/opening/dataviz-landscape-open/DatavizLandscapeOpen.tsx": "fb8105f2f0772193bb5a051409070a6693ee433a38f3ef15efc7b6d22da1c724",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "426bd29350c4bd309eb19e45dcb951c25ef4a72e7ce35910e1b76221e8f4a193",
+      "preview_available": true
+    },
+    {
+      "id": "fracture",
+      "card_id": "fracture",
+      "category": "opening",
+      "tags": [
+        "opening"
+      ],
+      "label": "fracture",
+      "description": "5×5 瓦片从 3D 碎片态按中心波纹逐圈聚合成整面海报，停一拍亮字，随后全部碎片背离中心加速旋转飞出画面",
+      "use": "开场第一镜\"从混沌到成形\"的品牌/海报揭示；倒放或只取后半可作硬转场",
+      "duration": "约 5.2s（156f@30fps；聚合 0–2.6s · hold 1s · 飞散 1.5s）",
+      "recipe_path": "source/references/shots/opening/fracture.md",
+      "demo_paths": [
+        "source/demos/opening/fracture/Fracture.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/fracture.mp4",
+      "upstream_preview_url": "./media/fracture.mp4?v=1790980736804",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/fracture.md": "62de428e8d982569ab095ab0b3289bab4c6773fb85065676118b9f10b124ee09",
+        "source/demos/opening/fracture/Fracture.tsx": "4c97ecb444364c4ece38747d3677662eed906c14d2914c6c3cfcd510b59b0084",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "fa2fcdf5e613954dc1f284f87392f261462b0fcdeadcd2f2b26d54b5085532a9",
+      "preview_available": true
+    },
+    {
+      "id": "icon-field-colorize",
+      "card_id": "icon-field-colorize",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "ui-entrance",
+        "outro"
+      ],
+      "label": "icon-field-colorize",
+      "description": "灰阶小图标点阵错峰浮现铺满全屏，停一拍后多道品牌色横带波纹极快向下扫翻全场——\"功能全景先摆满，品牌一瞬间点亮\"的开场/收束卡",
+      "use": "开场铺陈产品能力面（图标=功能宇宙）再一举打上品牌色；功能集合页、生态/集成规模展示、片头 logo 前垫场",
+      "duration": "浮现 ~45f 错峰 + 静置 ~10f + 翻色 12–45f + 终态静置；全段 3–6s（demo 170f：翻色走 30f 档 + 标题落版 + 终态 hold 1s）",
+      "recipe_path": "source/references/shots/opening/icon-field-colorize.md",
+      "demo_paths": [
+        "source/demos/opening/icon-field-colorize/IconFieldColorize.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/icon-field-colorize.mp4",
+      "upstream_preview_url": "./media/icon-field-colorize.mp4?v=1790980736818",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/icon-field-colorize.md": "cfd3373a3014b029281838e906ae75cf8d9bb4706bd8e6d3ec42637afb0816c3",
+        "source/demos/opening/icon-field-colorize/IconFieldColorize.tsx": "5df1ee5bb62e58ec64cfb9a44d398ecb88ae45c5ad03677a84296ac4398bd452",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "efad07b59259d3378e00271fee562b053d22294a783df9e076d5de5a2b395b19",
+      "preview_available": true
+    },
+    {
+      "id": "letterspace-materialize",
+      "card_id": "letterspace-materialize",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "typography",
+        "outro"
+      ],
+      "label": "letterspace-materialize",
+      "description": "大字距字标全字符并行连续描画结晶——所有字母同帧起笔、笔画像手写一样连续生长、同帧齐收成词；氛围底景上的品牌字标显影",
+      "use": "片尾/片头品牌字标登场（大字距细骨架字标；demo 为 video-shotcraft 全小写）；章节题字；needs 静谧/高级感的收束帧",
+      "duration": "静置 ~15f + 描画 ~50f + 终态静置 ≥30f；全段 3–4s",
+      "recipe_path": "source/references/shots/opening/letterspace-materialize.md",
+      "demo_paths": [
+        "source/demos/opening/letterspace-materialize/LetterspaceMaterialize.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/letterspace-materialize.mp4",
+      "upstream_preview_url": "./media/letterspace-materialize.mp4?v=1790980736824",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/letterspace-materialize.md": "910d848c6e925a7287f17905e94c109962353bbc4120d752b8fb327d431d59b8",
+        "source/demos/opening/letterspace-materialize/LetterspaceMaterialize.tsx": "f78ad285592bc7f641c80a701ad3c1dc4afe34a66ce8eec576d91b304fb338b4",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "1b363bc2014e16beb623413ce61755e99ee0280aae86c4e8dbc19fbb124394ec",
+      "preview_available": true
+    },
+    {
+      "id": "magician-card-flourish",
+      "card_id": "magician-card-flourish",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "ui-entrance",
+        "effects"
+      ],
+      "label": "magician-card-flourish",
+      "description": "午夜蓝暗场上蓝色星芒闪现 0.3s（X 形针状光束旋转 90°+中心辉光放射小光芒），卡片从闪光点弹射而出——极速自旋弧线飞向镜头、自旋随靠近衰减、瞬间硬定格（卡高 86% 画高）、光脉冲 + sheen 扫光，右侧文案随后逐行揭示",
+      "use": "单张卡片/海报/封面的魔术性登场（片头主视觉、产品卡揭晓）；纯黑暗场；需要\"变出来\"仪式感的爆点",
+      "duration": "156f（闪光 0.3s + 飞行 1.6s + 定格/扫光/文案揭示 + hold 3.3s；全段 5.2s）",
+      "recipe_path": "source/references/shots/opening/magician-card-flourish.md",
+      "demo_paths": [
+        "source/demos/opening/magician-card-flourish/MagicianCardFlourish.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/magician-card-flourish.mp4",
+      "upstream_preview_url": "./media/magician-card-flourish.mp4?v=1790980736831",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/magician-card-flourish.md": "92def0c771f360b4feaa9bb08c954df2a6fa9102b4273f5a60af20d23f45925f",
+        "source/demos/opening/magician-card-flourish/MagicianCardFlourish.tsx": "a4747bd1b2d851cc6e13f0aeffe701175948dca499fc5880200062166d6ad769",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "bb3bbef0f57f2bd1146e3d779d4d76ab273e75fb7c6a95481f1c3b9a5c9857d9",
+      "preview_available": true
+    },
+    {
+      "id": "orbit-ring-title-open",
+      "card_id": "orbit-ring-title-open",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "ui-entrance"
+      ],
+      "label": "orbit-ring-title-open",
+      "description": "石墨暗场上八张 16:9 暗色内容卡按 45° 均布在 720×380 椭圆上匀速公转（卡身永不倾斜，纵深只由 sin θ 给出 ±12% 缩放、z 序与远处压暗失焦），环撑开期间卡内容冻结首帧、f24 之后八张一起开播；居中两级标题逐字解糊下沉落定，关键词到位那一刻荧光马克块自左横扫铺满、扫过处字反白为墨，mono 副行随后浮出；可选末段整行失焦淡出、环继续转着交棒下一镜",
+      "use": "开场第一镜 = 「这个产品有一整套东西」；素材库/模板库/功能矩阵/案例集的门面拍；需要用真实运动的产品画面托住一句主张，而不是把截图摆成静态九宫格",
+      "duration": "150f（5s@30fps；马克块 f64 落定后 2.9s 稳态巡回 + 极缓推近；开 HANDOFF_EXIT 时 f118 起退场交棒）",
+      "recipe_path": "source/references/shots/opening/orbit-ring-title-open.md",
+      "demo_paths": [
+        "source/demos/opening/orbit-ring-title-open/OrbitRingTitleOpen.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/orbit-ring-title-open.mp4",
+      "upstream_preview_url": "./media/orbit-ring-title-open.mp4?v=1790980736837",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/orbit-ring-title-open.md": "54025976b3e66d500591af9b1f7e3dfb512f3622ce99ca6aeddff482c0e4cf64",
+        "source/demos/opening/orbit-ring-title-open/OrbitRingTitleOpen.tsx": "03ddc9b013139a35cb147242f4c9398aab860bc5faf0b97aa476109bc364908d",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "4be6565ff77f4e03e5f554ca611be4a6608bea0d3c83f41aab30a0c9f2d264ea",
+      "preview_available": true
+    },
+    {
+      "id": "spotlight-hero-card",
+      "card_id": "spotlight-hero-card",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "effects",
+        "camera"
+      ],
+      "label": "spotlight-hero-card",
+      "description": "关灯的剧场里一束钨丝聚光（带体积光柱）扫过页面锁定一张卡，斜侧推进后卡片弹起悬浮、香槟色光束沿轮廓两圈、连同 3D 注记一起贴回原位",
+      "use": "\"单一主角\"式产品开场；把一个核心对象（卡片/条目/模块）立成全片主角",
+      "duration": "172f（约 5.7s；锁定 f34 → 触地 f142 → 30f 真静止 hold）",
+      "recipe_path": "source/references/shots/opening/spotlight-hero-card.md",
+      "demo_paths": [
+        "source/demos/opening/spotlight-hero-card/SpotlightHeroCard.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/PageCam2D.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/spotlight-hero-card.mp4",
+      "upstream_preview_url": "./media/spotlight-hero-card.mp4?v=1790980736873",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/spotlight-hero-card.md": "85e698e973dea676b529ce627842c0b3715a82ae68deff4a774fc48db113e4b6",
+        "source/demos/opening/spotlight-hero-card/SpotlightHeroCard.tsx": "84191de88c8ed3518ab1605fd4773d19446bf1fd07c912f93a0cfa3424e8490c",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/PageCam2D.tsx": "97e687ac30adc8e96bd1f71107de9d0e417cc35f405b72c7c6db98a8687cf154",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "89a89be9e03aa7e54dbd34a625b2257adbbee910b765de655ebc8bbd9bf1ebf3",
+      "preview_available": true
+    },
+    {
+      "id": "stroke-segment-build",
+      "card_id": "stroke-segment-build",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "typography"
+      ],
+      "label": "stroke-segment-build",
+      "description": "断笔成字——标题拆成十几段互不相连的笔画乱序逐段点亮，前 70% 不可读，末段落位瞬间语义\"啪\"地成立",
+      "use": "开场吊悬念的产品名/大数字揭晓；一支片 ≤1 次；与 type-assembly/draw-svg-trace 分工：那些是\"看着字被组装/描画\"，本卡是\"意义延迟揭晓\"",
+      "duration": "165f（5.5s；揭晓 f105 后 hold 2s）",
+      "recipe_path": "source/references/shots/opening/stroke-segment-build.md",
+      "demo_paths": [
+        "source/demos/opening/stroke-segment-build/StrokeSegmentBuild.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/stroke-segment-build.mp4",
+      "upstream_preview_url": "./media/stroke-segment-build.mp4?v=1790980736878",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/stroke-segment-build.md": "82575a4e988a95503539a05ecc1e681d763fbda1f7a8dff1099ac60c878824f3",
+        "source/demos/opening/stroke-segment-build/StrokeSegmentBuild.tsx": "22b98c0579012cb90ad36d2e9eef9f229b84bce11573bb45e3956e57e8d37499",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "abcf30359056fca475bfa8ce71510a019c67bad675941d8e7e521345c033bdcf",
+      "preview_available": true
+    },
+    {
+      "id": "text-as-mask",
+      "card_id": "text-as-mask",
+      "category": "opening",
+      "tags": [
+        "opening",
+        "typography"
+      ],
+      "label": "text-as-mask",
+      "description": "文字视频遮罩——瓷白舞台上切出超粗大标题字，字内部透出缓慢平移的暗色实时产品面板，结尾吸一口气后字形指数冲入放大 46 倍溢出、内部画面接管全屏",
+      "use": "品牌词/口号与产品画面二合一的开场或章节卡；字是门、产品在门里",
+      "duration": "165f（入场 18f + 字内漂移 78f + 吸气 8f + 冲入接管 24f + 落定/hold 37f）",
+      "recipe_path": "source/references/shots/opening/text-as-mask.md",
+      "demo_paths": [
+        "source/demos/opening/text-as-mask/TextAsMask.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/opening/text-as-mask.mp4",
+      "upstream_preview_url": "./media/text-as-mask.mp4?v=1790980736883",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/opening/text-as-mask.md": "fc5b2fe1b703667e7267352493a9992a953b9058676c6ee3168efadc7b05d33e",
+        "source/demos/opening/text-as-mask/TextAsMask.tsx": "6f743450fce0437d2aa2f7797d7d62dbb6e0d4b63fac94e05bb6bb0660ab63f2",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "67a8f9781d2c3577de91c061b3c4feafa38b1689cc952b8f20a9bc1c10c88a76",
+      "preview_available": true
+    }
+  ]
+}

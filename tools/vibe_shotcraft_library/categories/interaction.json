@@ -1,0 +1,587 @@
+{
+  "category": "interaction",
+  "zh": "交互与功能演示",
+  "en": "Interaction & Feature Demo",
+  "source_commit": "1266a3ec4831289c4d893d42dd5102723658039a",
+  "cards": [
+    {
+      "id": "autolayout-gap-dial",
+      "category": "interaction",
+      "summary": "间距拨盘驱动布局——一排链接块带框选描边+缝隙间距标注，徽章数字逐格跳动、块被参数实时推开再弹簧回弹归位；\"参数驱动布局\"的可视化",
+      "recipe_path": "source/references/shots/interaction/autolayout-gap-dial.md",
+      "style_ids": [
+        "autolayout-gap-dial"
+      ]
+    },
+    {
+      "id": "canvas-materialize-moves",
+      "category": "interaction",
+      "summary": "内容\"物化上画布\"两式——panel-to-canvas 行倒卡（面板表格行沿弧线飞出、跨容器变形成画布卡片）与 diagram-cascade 级联生成树（prompt 打字后节点逐层弹出、连线先于节点生长）",
+      "recipe_path": "source/references/shots/interaction/canvas-materialize-moves.md",
+      "style_ids": [
+        "panel-to-canvas",
+        "diagram-cascade"
+      ]
+    },
+    {
+      "id": "chip-grid-single-select-blackout",
+      "category": "interaction",
+      "summary": "五个选项 chip 以 3+2 居中排布逐个淡入；选中帧先插一帧灰色按压块，紧接数帧内底色变墨黑、文字变白并做 1→1.04→1 极轻回弹，其余 chip 淡到 18% 但位置锁死；随后余项归零，黑 chip 上移收窄，下方升起结算价格",
+      "recipe_path": "source/references/shots/interaction/chip-grid-single-select-blackout.md",
+      "style_ids": [
+        "chip-grid-single-select-blackout"
+      ]
+    },
+    {
+      "id": "collab-cursor-moves",
+      "category": "interaction",
+      "summary": "协作光标当演员——cast-ensemble 五光标群演氛围层（错峰飞入+正弦漂移+打字 cameo+聚拢围观）",
+      "recipe_path": "source/references/shots/interaction/collab-cursor-moves.md",
+      "style_ids": [
+        "cast-ensemble"
+      ]
+    },
+    {
+      "id": "glass-pill-dictation-typing",
+      "category": "interaction",
+      "summary": "一条定宽玻璃胶囊以约 1.25 倍略大弹出后缓落到位，内部自左淡到右浓铺一层强调色暖光；光标先行、随后匀速打出听写句，光（连同胶囊背后的环境光）随打字进度渐渐退去，收尾成一条中性的磨砂玻璃条",
+      "recipe_path": "source/references/shots/interaction/glass-pill-dictation-typing.md",
+      "style_ids": [
+        "glass-pill-dictation-typing"
+      ]
+    },
+    {
+      "id": "hashtag-to-pill-materialize",
+      "category": "interaction",
+      "summary": "话题词打字实体化——居中打出 \"#word\"（红实心光标恒亮），1 帧硬切变成宽大胶囊标签，hold 后缩小左移落到页面标签位，再 1 帧硬切揭示成品页；\"两次硬切一次滑动\"的节奏骨架",
+      "recipe_path": "source/references/shots/interaction/hashtag-to-pill-materialize.md",
+      "style_ids": [
+        "hashtag-to-pill-materialize"
+      ]
+    },
+    {
+      "id": "picker-carousel-feature-cycle",
+      "category": "interaction",
+      "summary": "移动端风竖向选择器——焦点药丸不动、内容穿过它，每项带明显 outQuint 减速吸附后完全静止，按到中心距离分层控制透明度/字号/灰度，落定时药丸做 scaleY 极轻呼吸",
+      "recipe_path": "source/references/shots/interaction/picker-carousel-feature-cycle.md",
+      "style_ids": [
+        "picker-carousel-feature-cycle"
+      ]
+    },
+    {
+      "id": "segmented-thumb-hero",
+      "category": "interaction",
+      "summary": "分段控件 thumb 位移当主角特写——超大胶囊 segmented control 弹簧浮入，描边箭头光标画外滑入按下，白 thumb 8f ease-out 滑到另一段，到位瞬间新图标 spring 弹出、旧图标收起",
+      "recipe_path": "source/references/shots/interaction/segmented-thumb-hero.md",
+      "style_ids": [
+        "segmented-thumb-hero"
+      ]
+    },
+    {
+      "id": "theme-switch-moves",
+      "category": "interaction",
+      "summary": "主题切换两式——theme-sweep 斜向扫场（边界扫过处就地换肤）与 palette-ripple 组合款（⌘K 面板收缩成点、涟漪从点荡开换肤）",
+      "recipe_path": "source/references/shots/interaction/theme-switch-moves.md",
+      "style_ids": [
+        "theme-sweep-toggle",
+        "palette-theme-ripple"
+      ]
+    },
+    {
+      "id": "type-and-filter",
+      "category": "interaction",
+      "summary": "真实 UI 上打字搜索、网格自己收敛成一张卡、点击穿透进详情页",
+      "recipe_path": "source/references/shots/interaction/type-and-filter.md",
+      "style_ids": [
+        "type-and-filter"
+      ]
+    },
+    {
+      "id": "voice-waveform-live",
+      "category": "interaction",
+      "summary": "录音胶囊实时声纹——64 根细竖条随\"说话\"起伏，说话时中部高耸、停顿缩成点线，波形从右往左滚动；说→停→说→提交塌缩的完整表演",
+      "recipe_path": "source/references/shots/interaction/voice-waveform-live.md",
+      "style_ids": [
+        "voice-waveform-live"
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "id": "autolayout-gap-dial",
+      "card_id": "autolayout-gap-dial",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "autolayout-gap-dial",
+      "description": "间距拨盘驱动布局——一排链接块带框选描边+缝隙间距标注，徽章数字逐格跳动、块被参数实时推开再弹簧回弹归位；\"参数驱动布局\"的可视化",
+      "use": "设计工具/低代码产品的\"改一个数、界面跟着动\"卖点镜头；\"用设计工具语义做包装\"的品类语言",
+      "duration": "~5s（150f：框选入场 + 预备回收 10f + 拉松 34f + 屏息 hold 20f + 弹簧回弹 + 落定 hold）",
+      "recipe_path": "source/references/shots/interaction/autolayout-gap-dial.md",
+      "demo_paths": [
+        "source/demos/interaction/autolayout-gap-dial/AutolayoutGapDial.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/autolayout-gap-dial.mp4",
+      "upstream_preview_url": "./media/autolayout-gap-dial.mp4?v=1790980736767",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/autolayout-gap-dial.md": "3d7488afd21ccc6a73013ecc1ea9d31e1b189905808e3f0fa2a0086ae60ea233",
+        "source/demos/interaction/autolayout-gap-dial/AutolayoutGapDial.tsx": "72378447c389fa250361344a29c4fc74ba62002e962b9b05a8466477c7273d89",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "0fbd42a6cee56371dd626b2ff8286ca64e491af22b69fc3acc59ff99636061e8",
+      "preview_available": true
+    },
+    {
+      "id": "panel-to-canvas",
+      "card_id": "canvas-materialize-moves",
+      "category": "interaction",
+      "tags": [
+        "interaction",
+        "ui-entrance"
+      ],
+      "label": "panel-to-canvas 行倒卡",
+      "description": "复选框逐个自动打勾→按钮按下→三行沿上抛弧线错峰飞出，途中行形态与卡形态交叉淡化，落位带随机倾角；面板行槽塌陷成虚线留白",
+      "use": "批量导入/一键上板：内容从列表态迁移为空间态",
+      "duration": "A ~5s（150f）/ B ~6s（180f）",
+      "recipe_path": "source/references/shots/interaction/canvas-materialize-moves.md",
+      "demo_paths": [
+        "source/demos/interaction/canvas-materialize-moves/PanelToCanvasMaterialize.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/interaction/panel-to-canvas.mp4",
+      "upstream_preview_url": "./media/panel-to-canvas.mp4?v=1790980736779",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/canvas-materialize-moves.md": "075d26cb0c4d5b9413a1b63dabc8a42699ba6e63e23529e3a66962a6a4f21770",
+        "source/demos/interaction/canvas-materialize-moves/PanelToCanvasMaterialize.tsx": "3013fedfaaa05cd540235a1d7ca11d19b391959c7d6d3d519b6c8abab8d62aa4",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "18ed032ba137c12d26da0bc9b7237ed4d6437ba3b110595afb985823ab21a50b",
+      "preview_available": true
+    },
+    {
+      "id": "diagram-cascade",
+      "card_id": "canvas-materialize-moves",
+      "category": "interaction",
+      "tags": [
+        "interaction",
+        "ui-entrance"
+      ],
+      "label": "diagram-cascade 级联生成树",
+      "description": "prompt 逐字敲出（敲完描边变深确认）→根（深色）→2 子→4 孙逐层弹出，折角连线描线先行 8f，成树后整棵呼吸一拍",
+      "use": "AI 生成结构图/脑图/ER 图：一句话长出一棵树",
+      "duration": "A ~5s（150f）/ B ~6s（180f）",
+      "recipe_path": "source/references/shots/interaction/canvas-materialize-moves.md",
+      "demo_paths": [
+        "source/demos/interaction/canvas-materialize-moves/DiagramCascadeBuild.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/interaction/diagram-cascade.mp4",
+      "upstream_preview_url": "./media/diagram-cascade.mp4?v=1790980736780",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/canvas-materialize-moves.md": "075d26cb0c4d5b9413a1b63dabc8a42699ba6e63e23529e3a66962a6a4f21770",
+        "source/demos/interaction/canvas-materialize-moves/DiagramCascadeBuild.tsx": "ffe489f7c357aec64769da9944452479e4f9b5014a9bab6d487d981a878e3a8e",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "79d48d7ac29ecf01a28594421a91ae3b66f0059d095e0f39be418f179657f501",
+      "preview_available": true
+    },
+    {
+      "id": "chip-grid-single-select-blackout",
+      "card_id": "chip-grid-single-select-blackout",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "chip-grid-single-select-blackout",
+      "description": "五个选项 chip 以 3+2 居中排布逐个淡入；选中帧先插一帧灰色按压块，紧接数帧内底色变墨黑、文字变白并做 1→1.04→1 极轻回弹，其余 chip 淡到 18% 但位置锁死；随后余项归零，黑 chip 上移收窄，下方升起结算价格",
+      "use": "单选/套餐/档位选择的交互演示；\"选了它之后会怎样\"的因果镜头；价格/参数结算类链路",
+      "duration": "约5.5s（165f@30fps）",
+      "recipe_path": "source/references/shots/interaction/chip-grid-single-select-blackout.md",
+      "demo_paths": [
+        "source/demos/interaction/chip-grid-single-select-blackout/ChipGridSingleSelectBlackout.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/chip-grid-single-select-blackout.mp4",
+      "upstream_preview_url": "./media/chip-grid-single-select-blackout.mp4?v=1790980736788",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/chip-grid-single-select-blackout.md": "3a72dccb3c29a3c39a32cfeb4078cfba6023e1d3975e677bb200307aff8dc90a",
+        "source/demos/interaction/chip-grid-single-select-blackout/ChipGridSingleSelectBlackout.tsx": "b3333477dce8f7b0541b96e8783b0ac74b6fdfd269f866b312a2015cffcb80d3",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "2e5ad27615ce9f6613bde4560109522de3938b22eba449969b20635a7deed6ae",
+      "preview_available": true
+    },
+    {
+      "id": "cast-ensemble",
+      "card_id": "collab-cursor-moves",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "cast-ensemble",
+      "description": "协作光标当演员——cast-ensemble 五光标群演氛围层（错峰飞入+正弦漂移+打字 cameo+聚拢围观）",
+      "use": "画布/白板类产品全片氛围层；主内容之外需要\"别人也在\"的背景活性",
+      "duration": "A ~5.2s（156f）",
+      "recipe_path": "source/references/shots/interaction/collab-cursor-moves.md",
+      "demo_paths": [
+        "source/demos/interaction/collab-cursor-moves/CursorCastEnsemble.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/interaction/cast-ensemble.mp4",
+      "upstream_preview_url": "./media/cast-ensemble.mp4?v=1790980736791",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/collab-cursor-moves.md": "76854683f4888afc309317833b837a43b4fce0963598f20d2c999369b6fa2628",
+        "source/demos/interaction/collab-cursor-moves/CursorCastEnsemble.tsx": "292d966103221e31fecaaffc53777807970546e1d36f5931167147eee84c4103",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "bc1d14dcba9fc84eba4869e7c4c7bccde3b3140bd706fd15ca28467b4a1f605f",
+      "preview_available": true
+    },
+    {
+      "id": "glass-pill-dictation-typing",
+      "card_id": "glass-pill-dictation-typing",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "glass-pill-dictation-typing",
+      "description": "一条定宽玻璃胶囊以约 1.25 倍略大弹出后缓落到位，内部自左淡到右浓铺一层强调色暖光；光标先行、随后匀速打出听写句，光（连同胶囊背后的环境光）随打字进度渐渐退去，收尾成一条中性的磨砂玻璃条",
+      "use": "语音/AI 输入框的登场；\"跟它说话\"的交互提示镜头；高能段之间的一个安静过渡拍",
+      "duration": "约3.3s（100f@30fps）",
+      "recipe_path": "source/references/shots/interaction/glass-pill-dictation-typing.md",
+      "demo_paths": [
+        "source/demos/interaction/glass-pill-dictation-typing/GlassPillDictationTyping.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/glass-pill-dictation-typing.mp4",
+      "upstream_preview_url": "./media/glass-pill-dictation-typing.mp4?v=1790980736808",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/glass-pill-dictation-typing.md": "27b85011e4c19df5f5dc96ae382fd5fb1be7f9b12a1eed7279f06869ff04cc5d",
+        "source/demos/interaction/glass-pill-dictation-typing/GlassPillDictationTyping.tsx": "a9690f5bd857ceafad5146ae61a3d8ca9c03f2ae32e9db620e29c057ff050284",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "c2a0341d6db7e5d815d8af0ac9bbfa8a61f0a586b9dea58f987881525766737e",
+      "preview_available": true
+    },
+    {
+      "id": "hashtag-to-pill-materialize",
+      "card_id": "hashtag-to-pill-materialize",
+      "category": "interaction",
+      "tags": [
+        "interaction",
+        "typography"
+      ],
+      "label": "hashtag-to-pill-materialize",
+      "description": "话题词打字实体化——居中打出 \"#word\"（红实心光标恒亮），1 帧硬切变成宽大胶囊标签，hold 后缩小左移落到页面标签位，再 1 帧硬切揭示成品页；\"两次硬切一次滑动\"的节奏骨架",
+      "use": "标签/分类/关键词功能的演示段（笔记 app 打 tag、话题聚合）；\"输入 → 变成 UI 实体 → 归位到成品\"的三段式叙事",
+      "duration": "120f（4s）——打字 ~40f + 硬切胶囊 hold ~18f + 缩移 ~14f + 硬切揭示后静置 ~1.2s（原片 18–21.5s）",
+      "recipe_path": "source/references/shots/interaction/hashtag-to-pill-materialize.md",
+      "demo_paths": [
+        "source/demos/interaction/hashtag-to-pill-materialize/HashtagToPillMaterialize.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/hashtag-to-pill-materialize.mp4",
+      "upstream_preview_url": "./media/hashtag-to-pill-materialize.mp4?v=1790980736817",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/hashtag-to-pill-materialize.md": "1d770cd02ca835027d14099140239efe037963a7d0528845cae787e5b486d7ed",
+        "source/demos/interaction/hashtag-to-pill-materialize/HashtagToPillMaterialize.tsx": "80185c9ce559fe2b2f99064e56b7d2c84f5e6f58619523ab70f9d7cb8f7e2e0f",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "be418c7c13b3bbd7b8ef602afad90d6984ef27e8635486a68d4d562d1156bbda",
+      "preview_available": true
+    },
+    {
+      "id": "picker-carousel-feature-cycle",
+      "card_id": "picker-carousel-feature-cycle",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "picker-carousel-feature-cycle",
+      "description": "移动端风竖向选择器——焦点药丸不动、内容穿过它，每项带明显 outQuint 减速吸附后完全静止，按到中心距离分层控制透明度/字号/灰度，落定时药丸做 scaleY 极轻呼吸",
+      "use": "逐个念出功能名/场景名的列表镜头；\"选一个\"的交互演示；移动端产品的 picker 类控件展示",
+      "duration": "约3.6s（108f@30fps）",
+      "recipe_path": "source/references/shots/interaction/picker-carousel-feature-cycle.md",
+      "demo_paths": [
+        "source/demos/interaction/picker-carousel-feature-cycle/PickerCarouselFeatureCycle.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Motion.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/picker-carousel-feature-cycle.mp4",
+      "upstream_preview_url": "./media/picker-carousel-feature-cycle.mp4?v=1790980736846",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/picker-carousel-feature-cycle.md": "e21ed5876c49e23f2bbeb5ff5caff53efd82070fb184c9cd60c61baa2db37a86",
+        "source/demos/interaction/picker-carousel-feature-cycle/PickerCarouselFeatureCycle.tsx": "2106dfe5f69329e5580825db5f3bd41f46cfd6b455667bc5632556886a3a71fa",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Motion.tsx": "81daa150aded61c21f4e8fe4b80a7efb87f9a767d28b69b274bc50705f07485e",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "f47af6296921669ad5494069185ed007fa1a4689c7e294311192e4a7006a7e58",
+      "preview_available": true
+    },
+    {
+      "id": "segmented-thumb-hero",
+      "card_id": "segmented-thumb-hero",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "segmented-thumb-hero",
+      "description": "分段控件 thumb 位移当主角特写——超大胶囊 segmented control 弹簧浮入，描边箭头光标画外滑入按下，白 thumb 8f ease-out 滑到另一段，到位瞬间新图标 spring 弹出、旧图标收起",
+      "use": "\"模式切换/二选一\"功能的宣告镜头（demo 的 video-shotcraft Prompt→Film、Chat→Agent 式）；一个 UI 微交互撑一整镜的特写拍法",
+      "duration": "~3.5s（demo 110f：浮入 18f + 光标 24f + 点击 + 滑动 8f + 图标弹出 + hold）",
+      "recipe_path": "source/references/shots/interaction/segmented-thumb-hero.md",
+      "demo_paths": [
+        "source/demos/interaction/segmented-thumb-hero/SegmentedThumbHero.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Fixtures.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/segmented-thumb-hero.mp4",
+      "upstream_preview_url": "./media/segmented-thumb-hero.mp4?v=1790980736864",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/segmented-thumb-hero.md": "5ac8152358e7dc151473f4881b05497cc5aeea821343e369fedd5b640b84598e",
+        "source/demos/interaction/segmented-thumb-hero/SegmentedThumbHero.tsx": "8426ee1879c2e30105579668f8cbbd9421da902fce6ecb391a8b04a24590aa5a",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Fixtures.tsx": "bd45fa10c22d6c4645e74fe5e106f2a91841716962b9be198c545e9ab34cd987",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "53d98cb97b520d57769edece9eb23802bb47d46ddb8588d7d9c1b0976599447e",
+      "preview_available": true
+    },
+    {
+      "id": "theme-sweep-toggle",
+      "card_id": "theme-switch-moves",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "theme-sweep-toggle",
+      "description": "深色版 clip-path polygon 15° 斜边扫场（out poly3 先快后缓 ~38f），边界 4px 白亮线+18px 辉光，扫完 2f 淡出；深版 scale 1→0.995→1 坐实",
+      "use": "主题功能直接展示",
+      "duration": "A 140f（4.7s）/ B 156f（5.2s）",
+      "recipe_path": "source/references/shots/interaction/theme-switch-moves.md",
+      "demo_paths": [
+        "source/demos/interaction/theme-switch-moves/ThemeSweepToggle.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/interaction/theme-sweep-toggle.mp4",
+      "upstream_preview_url": "./media/theme-sweep-toggle.mp4?v=1790980736885",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/theme-switch-moves.md": "982c7d1127e3db56b518eff645662c195c84d983881d11fa11f932e5e0054618",
+        "source/demos/interaction/theme-switch-moves/ThemeSweepToggle.tsx": "44898999ea91bb2be4e27ea12514d0ad055e37336ddd002c0b9ad1f63bc073f5",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "532541e2e919d2e336d3ee6f61481d5f0fcffb9b9152817041b6f45b791d8856",
+      "preview_available": true
+    },
+    {
+      "id": "palette-theme-ripple",
+      "card_id": "theme-switch-moves",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "palette-theme-ripple",
+      "description": "面板 back(1.9) 弹落→逐字输入→回车面板 ease-in 收缩到 0 + 白色高光核钉住位置→圆形 clip 半径 12→1250px cubic-out 荡开，边缘 5px 白环双向辉光",
+      "use": "命令面板+主题联动的高光段",
+      "duration": "A 140f（4.7s）/ B 156f（5.2s）",
+      "recipe_path": "source/references/shots/interaction/theme-switch-moves.md",
+      "demo_paths": [
+        "source/demos/interaction/theme-switch-moves/PaletteThemeRipple.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "author_final_notes_styleKey_and_recipe",
+      "preview_path": "previews/interaction/palette-theme-ripple.mp4",
+      "upstream_preview_url": "./media/palette-theme-ripple.mp4?v=1790980736886",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/theme-switch-moves.md": "982c7d1127e3db56b518eff645662c195c84d983881d11fa11f932e5e0054618",
+        "source/demos/interaction/theme-switch-moves/PaletteThemeRipple.tsx": "5999463f193470d83f0d89c3ffe96efeabb0c624b0b984e58ede7ab61ce5963c",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "28b7a1983571e4c4a87d08bdecd9704f08b0554286131fb72f82e96b998858c1",
+      "preview_available": true
+    },
+    {
+      "id": "type-and-filter",
+      "card_id": "type-and-filter",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "type-and-filter",
+      "description": "真实 UI 上打字搜索、网格自己收敛成一张卡、点击穿透进详情页",
+      "use": "功能演示的\"操作叙事\"段；搜索/筛选/进入详情的任何交互链路",
+      "duration": "约 2.5s（118–190f）",
+      "recipe_path": "source/references/shots/interaction/type-and-filter.md",
+      "demo_paths": [
+        "source/demos/interaction/type-and-filter/TypeAndFilter.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/PageCam2D.tsx",
+        "source/demos/_fixtures/Polish.tsx",
+        "source/demos/_textures/live-layout.json"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/type-and-filter.mp4",
+      "upstream_preview_url": "./media/type-and-filter.mp4?v=1790980736894",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/type-and-filter.md": "a3dcc73f8cf96271e971bad2377295a7856d1903885bbcc6c47401311aa193de",
+        "source/demos/interaction/type-and-filter/TypeAndFilter.tsx": "6669feb5a5b71d6dd11b194c385bbf7c0ef78c5f89c05e14aae94b8f84ac5e11",
+        "source/demos/_fixtures/PageCam2D.tsx": "97e687ac30adc8e96bd1f71107de9d0e417cc35f405b72c7c6db98a8687cf154",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54",
+        "source/demos/_textures/live-layout.json": "e8d2e6a76fbc1e1fa0cd56a9acc341279683cd2452a1a667d420c31931b520fd"
+      },
+      "preview_sha256": "ca1950670303f64f2fade5788cbcc306bf0d427a2c1ba03026c7f6efa7ba545c",
+      "preview_available": true
+    },
+    {
+      "id": "voice-waveform-live",
+      "card_id": "voice-waveform-live",
+      "category": "interaction",
+      "tags": [
+        "interaction"
+      ],
+      "label": "voice-waveform-live",
+      "description": "录音胶囊实时声纹——64 根细竖条随\"说话\"起伏，说话时中部高耸、停顿缩成点线，波形从右往左滚动；说→停→说→提交塌缩的完整表演",
+      "use": "语音输入/AI 助手\"正在听你说\"的功能镜头；无 UI 内容可展示但需要持续活性撑画面的段落",
+      "duration": "172f（~5.7s：入场 14f + 说 1.4s + 停 0.8s + 说 1.4s + 提交塌缩 / 收进气泡 0.8s + hold 0.7s）",
+      "recipe_path": "source/references/shots/interaction/voice-waveform-live.md",
+      "demo_paths": [
+        "source/demos/interaction/voice-waveform-live/VoiceWaveformLive.tsx"
+      ],
+      "dependency_paths": [
+        "source/demos/_fixtures/Brand.tsx",
+        "source/demos/_fixtures/Look.tsx",
+        "source/demos/_fixtures/Polish.tsx"
+      ],
+      "mapping_evidence": "recipe_single_gallery_style",
+      "preview_path": "previews/interaction/voice-waveform-live.mp4",
+      "upstream_preview_url": "./media/voice-waveform-live.mp4?v=1790980736907",
+      "runtime_readiness": {
+        "status": "archived_not_ready",
+        "all_styles_rendered": false
+      },
+      "source_sha256": {
+        "source/references/shots/interaction/voice-waveform-live.md": "062a71b8e70b65a5b41084de65a56b8c572cef8a67bb3ff250c6925c83b7f8eb",
+        "source/demos/interaction/voice-waveform-live/VoiceWaveformLive.tsx": "57167645eb3846e6c9055c901261911c03ef75207fff3212b9ebb57463b8891f",
+        "source/demos/_fixtures/Brand.tsx": "8034fa987c0f8ed37fd6422a0b8a2fcf1f6e2c73abe373aba5fb83007af250e2",
+        "source/demos/_fixtures/Look.tsx": "d3dba47b91841648a9ee7d827f86fbb1224f11acce2036fa5b2270fbe4e19bf6",
+        "source/demos/_fixtures/Polish.tsx": "85d26e13593f38b403bb66945c05dbc2631c23437ac5b0242f9d96b53cc54e54"
+      },
+      "preview_sha256": "49123323fdf5a6f21c7c1608d7f0dd9ae813caabe78191de0390bf015e29cc20",
+      "preview_available": true
+    }
+  ]
+}

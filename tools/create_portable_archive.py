@@ -7,6 +7,11 @@ import json
 import zipfile
 from pathlib import Path
 
+if __package__:
+    from .release_integrity import unmanaged_rmbg_file
+else:
+    from release_integrity import unmanaged_rmbg_file
+
 
 ROOT_EXCLUDES = {
     ".agents",
@@ -29,6 +34,19 @@ ROOT_EXCLUDES = {
 
 def is_excluded(relative: Path, *, without_local_tts: bool = False, without_local_video: bool = False, without_models: bool = False) -> bool:
     parts = relative.parts
+    # Include the independent RMBG worker/vendor/setup sources in *every*
+    # edition. Its optional weights and locally provisioned interpreter are
+    # never application files; in particular they are not an ordinary upgrade.
+    lower = tuple(p.lower() for p in parts)
+    if unmanaged_rmbg_file(relative.as_posix()) or lower[:2] in {
+        ("runtime", "rmbg"), ("runtime", "vibe_ocr"),
+    }:
+        return True
+    if parts[:3] in {
+        ("tools", "vibe_remotion", ".cache"),
+        ("tools", "vibe_shotcraft_library", ".downloads"),
+    }:
+        return True
     if parts and (parts[0].startswith('local_integration_bundle_') or parts[0] == 'optional_packages'):
         return True
     if without_local_video and parts[:1] == ('comfyui',):
