@@ -12,6 +12,7 @@
           <div class="brand-sub">One-Click VidGen</div>
         </div>
       </div>
+      <Announcements :enabled="!!session.user" />
       <button class="sidebar-preflight-button" type="button" :disabled="preflightRunning || !session.user" @click="runManualPreflight">
         <span class="sidebar-preflight-icon" aria-hidden="true">⚡</span>
         <span>
@@ -2689,6 +2690,7 @@
 </template>
 
 <script>
+import Announcements from './components/Announcements.vue'
 import IcanChannelHint from './components/IcanChannelHint.vue'
 import TtsStructureControls from './components/TtsStructureControls.vue'
 import TtsEditorFeedback from './components/TtsEditorFeedback.vue'
@@ -2705,5 +2707,5 @@ import ModelInstallGuide from './components/ModelInstallGuide.vue'
 import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ShotPlanningLimit from './components/ShotPlanningLimit.vue'
 import GuidedServiceRoutes from './components/GuidedServiceRoutes.vue'
-export default { components: { IcanChannelHint, GuidedServiceRoutes, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
+export default { components: { Announcements, IcanChannelHint, GuidedServiceRoutes, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, DynamicTextModeSelector, ReferenceMaterials }, setup: useWorkspace }
 </script>

@@ -89,3 +89,18 @@
   refresh();
   if (root.location.hash === "#login" && !auth.read()?.access_token) openLogin();
 })(globalThis);
+
+// Shared announcement feed, independent of account/login state.
+(function () {
+  if (typeof document === "undefined" || location.pathname.startsWith("/admin/")) return;
+  if (!document.querySelector('link[data-ocvg-announcements]')) {
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = "/assets/announcements.css?v=20261110.1";
+    css.dataset.ocvgAnnouncements = "true"; document.head.append(css);
+  }
+  if (!document.querySelector('script[data-ocvg-announcements]')) {
+    const script = document.createElement("script");
+    script.src = "/assets/announcements.js?v=20261110.1";
+    script.dataset.ocvgAnnouncements = "true"; document.head.append(script);
+  }
+}());

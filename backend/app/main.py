@@ -506,6 +506,8 @@ class EditRequest(BaseModel):
 
 
 app = FastAPI(title="Voice Over Video API")
+from .announcements import router as announcements_router
+app.include_router(announcements_router)
 from .image_studio import router as image_studio_router
 app.include_router(image_studio_router)
 from .comfyui_bridge import router as comfyui_bridge_router
