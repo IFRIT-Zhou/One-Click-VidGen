@@ -75,8 +75,9 @@ function dismissBanner() {
   try { localStorage.setItem(storageKey, JSON.stringify(dismissed.value)) } catch { /* Storage may be disabled. */ }
 }
 
-async function fetchPage(nextOffset = 0) {
-  if (!props.enabled || loading.value || disposed) return
+async function fetchPage(nextOffset = 0, force = false) {
+  if (!props.enabled || disposed || (loading.value && !force)) return
+  if (force) controller?.abort()
   loading.value = true
   error.value = ''
   lastAttempt = Date.now()
@@ -103,7 +104,8 @@ async function openDialog() {
   dialogOpen.value = true
   await nextTick()
   dialog.value?.showModal()
-  if (offset.value !== 0 || error.value || !lastAttempt || Date.now() - lastAttempt >= 60000) void fetchPage(0)
+  // An explicit click always reads the current Cloud API feed, even during a background refresh.
+  void fetchPage(0, true)
 }
 
 function closeFromBackdrop(event) {
