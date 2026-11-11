@@ -1153,6 +1153,7 @@ def image_pool_generate(
             raise ServiceError("IDEMPOTENCY_CONFLICT", "幂等键对应的请求内容不一致", 409)
         return {"code": 0, "data": {"taskId": existing.id}, "reserved_credits": _credit(existing.reserved_credits)}
     reserve = image_pool_reserve_credits()
+    request_json["runninghub_fixed_credits"] = str(reserve)
     job = ImagePoolJob(
         id=new_id("img"), user_id=user.id, idempotency_key=key,
         status="queued", request_json=request_json, request_hash=request_hash,

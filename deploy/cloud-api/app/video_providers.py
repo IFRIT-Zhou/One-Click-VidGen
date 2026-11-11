@@ -404,6 +404,8 @@ class VideoImageProvider:
                 request_json["billing"] = {"credits": self.billing_credits or
                     ican_images.price_quote("gpt-image-2.5", self.size)["credits"]}
                 request_json.pop("imageUrls")
+            if self.method != "ican" and self.billing_credits is not None:
+                request_json["runninghub_fixed_credits"] = str(self.billing_credits)
             child = ImagePoolJob(
                 provider="ican" if self.method == "ican" else "runninghub",
                 id=new_id("img"), user_id=self.user_id, idempotency_key=key,
@@ -427,7 +429,7 @@ class VideoImageProvider:
                     "status": "completed",
                     "result": {"image_url": child.result_url},
                     "actual_credits": (float(child.request_json["billing"]["credits"]) if child.provider == "ican"
-                                       else float(image_pool_actual_credits(child.actual_cost_credits))),
+                                       else float(image_pool_actual_credits(child.actual_cost_credits, fixed_credits=child.request_json.get("runninghub_fixed_credits")))),
                 }
             if child.status == "failed":
                 return _failed(child.error_code, child.error_message)

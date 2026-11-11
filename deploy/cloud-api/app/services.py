@@ -526,7 +526,7 @@ def create_video_job(
         raise ServiceError("VIDEO_QUEUE_LIMIT", "视频任务队列已达上限", 429)
 
     quote = video_job_quote(request_json)
-    if request_json["video"].get("method") == "ican":
+    if request_json["video"].get("method") in (None, "running", "runninghub", "ican"):
         request_json = {**request_json, "image_billing_credits": str(
             quote["breakdown"]["images"] / int(request_json["video"]["scene_count"]))}
     job = VideoJob(
@@ -840,13 +840,17 @@ def model_pool_reserve_credits(prompt_tokens: int, completion_tokens: int) -> De
 
 
 def image_pool_reserve_credits() -> Decimal:
-    return usd_to_credits(
-        settings.image_pool_max_upstream_cost_usd,
-        markup_percent=settings.image_pool_markup_percent,
-    )
+    # Fixed retail price; one wallet credit is one CNY.
+    return settings.runninghub_image_price_cny.quantize(CREDIT_QUANTUM, rounding=ROUND_CEILING)
 
 
-def image_pool_actual_credits(actual_cost_credits: str | int | Decimal | None) -> Decimal:
+def image_pool_actual_credits(actual_cost_credits: str | int | Decimal | None, *, fixed_credits=None) -> Decimal:
+    if fixed_credits is not None:
+        price = Decimal(str(fixed_credits))
+        if not price.is_finite() or price <= 0:
+            raise ValueError("fixed image price must be finite and positive")
+        return price.quantize(CREDIT_QUANTUM, rounding=ROUND_CEILING)
+    # Jobs submitted before fixed pricing retain their original cost-plus rule.
     if actual_cost_credits is None:
         return usd_to_credits(
             settings.image_pool_default_upstream_cost_usd,

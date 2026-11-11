@@ -215,6 +215,7 @@ class Settings:
     image_pool_max_upstream_cost_usd: Decimal = Decimal(
         os.getenv("IMAGE_POOL_MAX_UPSTREAM_COST_USD", "0.030")
     )
+    runninghub_image_price_cny: Decimal = Decimal(os.getenv("RUNNINGHUB_IMAGE_PRICE_CNY", "0.12"))
     image_pool_markup_percent: int = int(os.getenv("IMAGE_POOL_MARKUP_PERCENT", "5"))
     pool_worker_lease_seconds: int = int(os.getenv("POOL_WORKER_LEASE_SECONDS", "180"))
     pool_poll_max_retries: int = int(os.getenv("POOL_POLL_MAX_RETRIES", "8"))
@@ -260,6 +261,8 @@ class Settings:
             raise RuntimeError("PRESET_VOICE_IDS must not contain duplicate values")
         if self.billing_usd_to_cny_rate <= 0:
             raise RuntimeError("BILLING_USD_TO_CNY_RATE must be positive")
+        if not self.runninghub_image_price_cny.is_finite() or self.runninghub_image_price_cny <= 0:
+            raise RuntimeError("RUNNINGHUB_IMAGE_PRICE_CNY must be finite and positive")
         if not 0 <= self.image_pool_markup_percent <= 100:
             raise RuntimeError("IMAGE_POOL_MARKUP_PERCENT must be between 0 and 100")
         if not 0 <= self.model_pool_markup_percent <= 100:

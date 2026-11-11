@@ -637,13 +637,13 @@ def poll_images() -> None:
                         release_image_pool_job(db, job=job)
             continue
         base_cost = remote.get("actual_cost_credits")
-        charged = image_pool_actual_credits(base_cost)
         with SessionLocal.begin() as db:
             job = db.get(ImagePoolJob, job_id, with_for_update=True)
             if not job or job.status != "running":
                 continue
             job.status = "completed"
             job.result_url = remote["image_url"]
+            charged = image_pool_actual_credits(base_cost, fixed_credits=job.request_json.get("runninghub_fixed_credits"))
             job.actual_cost_credits = base_cost
             job.finished_at = utcnow()
             job.poll_attempts = 0
