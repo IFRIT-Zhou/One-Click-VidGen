@@ -40,6 +40,13 @@ def restricted_optional_file(path: str) -> bool:
 
 
 INTEGRITY_FILES = (
+    "backend/app/illustrated_transitions.py",
+    "backend/app/vibe_agent_diagnostics.py",
+    "backend/app/vibe_transition_source.py",
+    "backend/app/vibe_transitions.py",
+    "backend/app/video_bookends.py",
+    "frontend/src/components/VideoBookends.vue",
+    "frontend/src/narrationFollow.js",
     "OCV_Launcher.exe",
     "start_windows.bat",
     "frontend/src/App.vue",

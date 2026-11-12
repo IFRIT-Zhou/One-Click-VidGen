@@ -4,9 +4,11 @@ import { requestJSON } from '../api'
 import ShotcraftTemplatePicker from './ShotcraftTemplatePicker.vue'
 import { MAX_PLAN_BYTES, parsePreviewPlan, previewFileUrl, previewRoute, vibeBrief, layeredRequestOptions, layeredStrategyDescription, layeredTaskStrategy, freshCloudStartNotice, stepContinuationBudget, stepContinuationNotice, vibeCloudSubmissionError } from '../vibePreview'
 
-const props = defineProps({projectId:String, shotId:String, number:Number, revision:Number, duration:Number, active:{type:Boolean,default:true}, unsaved:Boolean, editLocked:Boolean, designLocked:Boolean, adopted:String, recommendation:Object,ready:{type:Boolean,default:true},reserved:Boolean,reserveLocked:Boolean})
+const props = defineProps({projectId:String, shotId:String, imageSrc:String, number:Number, revision:Number, duration:Number, active:{type:Boolean,default:true}, unsaved:Boolean, editLocked:Boolean, designLocked:Boolean, adopted:String, recommendation:Object,ready:{type:Boolean,default:true},reserved:Boolean,reserveLocked:Boolean})
 const emit=defineEmits(['update'])
 const panel=ref(null), engine=ref('local'), pace=ref('normal'), instruction=ref(''), design=ref(null)
+const transition=ref('layered'), transitionSeconds=ref(.8)
+watch(()=>props.shotId,()=>{transition.value='layered';transitionSeconds.value=.8})
 const receipt=ref(null), stale=ref(false), busy=ref(''), error=ref(''), hint=ref(''), manualCopy=ref(false)
 const file=ref(null), plan=ref(null), planName=ref(''), opened=ref(false)
 const cloudTask=ref(null),cloudConfig=ref(null),cloudReadError=ref('')
@@ -19,7 +21,8 @@ const continuationCalls=ref(10)
 let continuationRequest=null
 const continueStepsImages=ref(false),stepsContinuationRequest=ref(null)
 const stepsBudget=computed(()=>stepContinuationBudget(cloudTask.value))
-const stepsContinuationInvalid=computed(()=>!stepsBudget.value.valid||stepsBudget.value.modelRemaining<1)
+const stepsAdditionalCalls=ref(0)
+const stepsContinuationInvalid=computed(()=>!stepsBudget.value.valid||!Number.isInteger(stepsAdditionalCalls.value)||stepsAdditionalCalls.value<0||stepsBudget.value.modelLimit+stepsAdditionalCalls.value>50||stepsBudget.value.modelRemaining+stepsAdditionalCalls.value<1)
 watch(()=>cloudTask.value?.task_id,()=>{continueStepsImages.value=false;if(stepsContinuationRequest.value?.taskId!==cloudTask.value?.task_id)stepsContinuationRequest.value=null})
 watch(()=>stepsBudget.value.imagesAllowed,value=>{if(!value)continueStepsImages.value=false})
 const continuationMaximum=computed(()=>Math.max(0,Number(cloudTask.value?.continuation_additional_limit??(50-(cloudTask.value?.max_model_calls??30)))))
@@ -33,7 +36,11 @@ const taskStrategy=computed(()=>layeredTaskStrategy(cloudTask.value))
 const layeredBudgetInvalid=computed(()=>!Number.isInteger(modelCallBudget.value)||modelCallBudget.value<6||modelCallBudget.value>50||!Number.isInteger(imageRequestBudget.value)||imageRequestBudget.value<0||imageRequestBudget.value>4)
 function selectEngine(value){engine.value=value;engineTouched=true}
 function templateNames(ids){return (ids||[]).map(id=>templateMeta.value.catalog?.find(item=>item.id===id)?.name||id).join(' / ')}
-watch(()=>props.active,value=>{if(!value)panel.value?.querySelectorAll('video').forEach(video=>video.pause())})
+watch(()=>props.active,async value=>{
+  await nextTick()
+  if(value&&panel.value)panel.value.open=true
+  else panel.value?.querySelectorAll('video').forEach(video=>video.pause())
+},{immediate:true})
 const cloudRunning=computed(()=>['queued','running','stopping'].includes(cloudTask.value?.status))
 const retainedPreview=computed(()=>!!receipt.value&&['queued','running','stopping','failed','stopped'].includes(cloudTask.value?.status)&&receipt.value.cloud_task_id!==cloudTask.value.task_id&&!isNewerLocalPreview(receipt.value,cloudTask.value))
 const stageLabels={queued:'等待执行',preparing:'整理本镜素材',planning:'设计动画方案',designing:'设计动画方案',design:'设计动画方案',materials:'准备图层素材',assembly:'复原完整海报',poster_render:'渲染海报对照图',poster_review:'对照原图检查海报',visual_repair:'视觉返工（最多 1 次）',poster_recheck:'返工后复查海报',motion:'按配音编排动效',motion_review:'核查动效关键帧',render:'渲染预览',rendering:'渲染预览',review:'检查关键帧',reviewing:'检查关键帧',repairing:'修正动效',agent_resume:'复核已有预览',agent_plan:'自主设计与工具选择',agent_review:'对照预览验收与返工',agent_tool:'执行制作工具',completed:'预览已完成',failed:'未完成',stopping:'正在停止',stopped:'已停止',needs_input:'需要补充资料',needs_budget:'素材预算已用完'}
@@ -157,8 +164,8 @@ async function autoDesign(){
   if(engine.value!=='local'){await startCloud();return}
   const s=scope()
   error.value='';hint.value='';busy.value='design'
-  const body={engine:'local',confirm_model:false,pace:pace.value,instruction:instruction.value.trim()}
-  if(receipt.value?.preview_id&&(body.instruction||pace.value!=='normal'))body.previous_preview_id=receipt.value.preview_id
+  const body={engine:'local',confirm_model:false,pace:pace.value,instruction:instruction.value.trim(),transition:transition.value,transition_seconds:Number(transitionSeconds.value)}
+  if(transition.value==='layered'&&(!receipt.value?.plan?.entrance||receipt.value.plan.entrance.kind==='layered')&&receipt.value?.preview_id&&(body.instruction||pace.value!=='normal'))body.previous_preview_id=receipt.value.preview_id
   try{
     const result=await post('vibe-design',body)
     if(!current(s))return
@@ -184,7 +191,7 @@ async function startCloud(){
   if(!config)return
   if(!config.configured){error.value='请先在「接口与服务 → Vibe 动效」保存专用 API Key。不会改用项目号池或本地模式。';return}
   let imageRoute=null
-  if(layered&&imageRequestBudget.value>0){
+  if(!layered||imageRequestBudget.value>0){
     busy.value='config'
     try{imageRoute=await requestJSON(s.base+'/vibe-image-route')}
     catch(e){if(current(s))error.value=e.message;return}
@@ -195,10 +202,11 @@ async function startCloud(){
   const freshNotice=freshCloudStartNotice(cloudTask.value,receipt.value)
   const pendingNotice=pendingImage?'\n注意：旧渠道任务可能仍在运行或计费；重新开始不会转移、查询或取消旧任务。若希望取得原背景结果，请取消并使用“继续原素材任务”。'+(imageRequestBudget.value>0?'确认后本次按当前预算独立执行，可能新增图片费用。':'本次不授权新增出图，但旧图任务仍可能计费。'):''
   const selectionNote=selectedTemplates.length?`手选模板：${templateNames(selectedTemplates)}。仅使用这些模板，由 AI 按文案安排顺序；不会擅自换款。`:'模板：让 AI 自动选择，参考内容、时长与相邻镜头。'
-  if(!window.confirm(layered?`${freshNotice}\n\n把本镜核心图、已绑定参考图和最终字幕时间戳交给 ${config.model}，由专用模型（如 DS）自主使用工具取材、写代码、测量排版、查看预览截图并返工，复原海报与编排动效。\n${layeredStrategyDescription(separationOptions.advanced_subject_separation)}\n本次最多 ${modelCallBudget.value} 次模型调用，可能计费；预算上限不代表必定用满。连接失败不自动重试。需要分离主体时在本机按需运行 RMBG，Remotion 在本机渲染，无需启动 ComfyUI。\n${imageRequestBudget.value>0?`授权模型按需发起最多 ${imageRequestBudget.value} 次图像生成或编辑请求，可能计费；使用本项目图像模型：${imageRoute.label}，不会切换渠道。`:'本次图像请求预算为 0：不授权新增出图，仅使用原图、绑定参考素材及本地工具；确需出图时会提示。'}${pendingNotice}\n只生成预览，不覆盖正式镜头；核查仍有问题时仅供检查，调整后重试，通过后才可采用。确认开始吗？`:`${freshNotice}\n\n将当前分镜图、生成本图时实际使用的参考图和最终字幕时间戳发送给 Vibe 专用接口（${config.model}）。\n${selectionNote}\n专用 API 选择已验证镜头模板，继承原图配色与背景风格编排，本机渲染。可从原图保真裁取最多 4 个矩形素材；本轮不自动抠图、不调用图像模型。\n最多修正 2 轮，专用模型调用可能计费。只生成预览，通过后仍需确认采用。确认开始吗？`))return
+  if(!layered&&!window.confirm(`模板背景将先通过本项目图像模型（${imageRoute.label}）提取一次，可能产生图片费用。保留背景纹理和装饰，移除文字、文本框和复杂主体；不自动重试、不切换渠道。继续吗？`))return
+  if(!window.confirm(layered?`${freshNotice}\n\n把本镜核心图、已绑定参考图和最终字幕时间戳交给 ${config.model}，由专用模型（如 DS）自主使用工具取材、写代码、测量排版、查看预览截图并返工，复原海报与编排动效。\n${layeredStrategyDescription(separationOptions.advanced_subject_separation)}\n本次最多 ${modelCallBudget.value} 次模型调用，可能计费；预算上限不代表必定用满。连接失败不自动重试。需要分离主体时在本机按需运行 RMBG，Remotion 在本机渲染，无需启动 ComfyUI。\n${imageRequestBudget.value>0?`授权模型按需发起最多 ${imageRequestBudget.value} 次图像生成或编辑请求，可能计费；使用本项目图像模型：${imageRoute.label}，不会切换渠道。`:'本次图像请求预算为 0：不授权新增出图，仅使用原图、绑定参考素材及本地工具；确需出图时会提示。'}${pendingNotice}\n只生成预览，不覆盖正式镜头；核查仍有问题时仅供检查，调整后重试，通过后才可采用。确认开始吗？`:`${freshNotice}\n\n将当前分镜图、生成本图时实际使用的参考图和最终字幕时间戳发送给 Vibe 专用接口（${config.model}）。\n${selectionNote}\n专用 API 选择已验证镜头模板，继承原图配色与背景风格编排，本机渲染。可从原图保真裁取最多 4 个矩形素材；不自动抠图；先使用本项目图像模型提取一次干净装饰背景，图像请求可能计费。\n最多修正 2 轮，专用模型调用可能计费。只生成预览，通过后仍需确认采用。确认开始吗？`))return
   busy.value='cloud-submit'
   try{
-    const result=await requestJSON(s.base+'/vibe-cloud-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_cloud:true,start_mode:'fresh',template_mode:layered?'layered':'shotcraft',...separationOptions,...(selectedTemplates.length?{template_ids:selectedTemplates}:{}),...(imageRoute?{image_route_key:imageRoute.key}:{}),...(pendingImage?{confirm_new_image_task:true}:{}),instruction:instruction.value.trim(),pace:pace.value,max_image_requests:layered?imageRequestBudget.value:0,...(layered?{max_model_calls:modelCallBudget.value}:{})})})
+    const result=await requestJSON(s.base+'/vibe-cloud-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm_cloud:true,start_mode:'fresh',template_mode:layered?'layered':'shotcraft',...separationOptions,...(selectedTemplates.length?{template_ids:selectedTemplates}:{}),...(imageRoute?{image_route_key:imageRoute.key}:{}),...(pendingImage?{confirm_new_image_task:true}:{}),instruction:instruction.value.trim(),pace:pace.value,max_image_requests:layered?imageRequestBudget.value:1,...(layered?{max_model_calls:modelCallBudget.value}:{})})})
     if(!current(s))return
     if(!result?.task_id)throw new Error('服务未返回任务编号，请刷新任务状态后重试。')
     applyCloud(result,s)
@@ -235,10 +243,10 @@ async function continueSteps(){
   const task=cloudTask.value,budget=stepsBudget.value,id=task.task_id
   const allowImages=stepsContinuationRequest.value?.taskId===id
     ? stepsContinuationRequest.value.body.confirm_remaining_images : continueStepsImages.value&&budget.imagesAllowed
-  if(!window.confirm(stepContinuationNotice(task,allowImages)))return
+  if(!window.confirm(stepContinuationNotice(task,allowImages)+`\n本次追加 ${stepsContinuationRequest.value?.body.additional_model_calls??stepsAdditionalCalls.value} 次模型调用授权，可能计费；累计上限不超过50次，不重置已用次数。`))return
   const s=scope()
   if(!stepsContinuationRequest.value||stepsContinuationRequest.value.taskId!==id){
-    stepsContinuationRequest.value={taskId:id,body:{confirm_model:true,additional_model_calls:0,
+    stepsContinuationRequest.value={taskId:id,body:{confirm_model:true,additional_model_calls:stepsAdditionalCalls.value,
       expected_model_calls:budget.modelUsed,expected_model_limit:budget.modelLimit,
       confirm_remaining_images:allowImages,expected_image_requests:budget.imageUsed,expected_image_limit:budget.imageLimit,
       request_id:globalThis.crypto?.randomUUID?.()||`steps-${Date.now()}-${Math.random().toString(36).slice(2)}`}}
@@ -316,13 +324,19 @@ async function copyBrief(){
   <details ref="panel" class="vibe-preview" @toggle="toggle">
     <summary>本镜动效预览 <small>{{adopted?'已采用 Vibe':reserved?'已预留 · 待采用':routeLabels[recommendation?.route]||'Vibe · 先预览，再采用'}}</small></summary>
     <template v-if="opened">
+      <div v-if="movie" class="vibe-preview-source"><strong>当前预览：{{previewLabel}}</strong><small v-if="rendererLabel" class="vibe-renderer">{{rendererLabel}}</small><small v-if="receipt?.template_ids?.length" class="vibe-template-ids">模板 {{templateNames(receipt.template_ids)}}</small><span v-if="retainedPreview" class="vibe-retained-preview">保留的上次预览 · 不是本轮云端制作的新结果</span></div>
+      <video v-if="movie" :key="movie" :src="movie" :poster="imageSrc" controls playsinline preload="metadata" aria-label="本镜动效与配音预览"></video>
+      <div v-else-if="imageSrc" class="vibe-still-preview"><img :src="imageSrc" :alt="'第 '+number+' 镜静态分镜'"><small>静态分镜 · Vibe 预览完成后在此展示</small></div>
+      <slot name="narration" />
       <p v-if="!ready">本镜还没有完成的核心图。可以先预留，生成核心图后再设计动效。</p>
       <div v-if="ready" class="vibe-designer">
         <div class="vibe-actions"><label>制作方式 <select :value="engine" :disabled="!!busy" @change="selectEngine($event.target.value)"><option value="local">本地 · 程序生成基础动效</option><option value="cloud">云端 · 模板动效</option><option value="layered">云端 · 原图分层动效（试用）</option></select></label>
-          <label>入场节奏 <select v-model="pace" :disabled="!!busy"><option value="normal">标准</option><option value="slow">舒缓</option><option value="brisk">轻快</option></select></label></div>
+          <label v-if="engine!=='local'||transition==='layered'">入场节奏 <select v-model="pace" :disabled="!!busy"><option value="normal">标准</option><option value="slow">舒缓</option><option value="brisk">轻快</option></select></label>
+          <template v-if="engine==='local'"><label>入场转场 <select v-model="transition" :disabled="!!busy"><option value="layered">分层渐入 · 字幕辅助</option><option value="brush">画笔显现 · 模拟手绘</option><option value="dissolve">叠化</option><option value="black">闪黑</option><option value="white">闪白</option><option value="left">从左移入</option><option value="right">从右移入</option><option value="up">从上移入</option><option value="down">从下移入</option></select></label><label>转场时长 <input v-model.number="transitionSeconds" type="number" min="0.1" max="3" step="0.1" :disabled="!!busy" style="width:85px"> 秒</label></template></div>
+        <p v-if="engine==='local'" class="muted">仅作用于本镜开头，上一镜已采用画面的末帧作为下层；首镜使用中性底色。不加出场动画、不改变配音时间轴。{{transition==='layered'?'至少 60% 的区块优先在前 1 秒内就位，其余可跟随字幕。':'整张原图完成入场后保持，不使用音频卡点。'}}</p>
         <ShotcraftTemplatePicker v-if="engine==='cloud'" :model-value="templateIds" :disabled="!!busy||designLocked" :duration="duration" @update:model-value="selectTemplates" @selection-meta="templateMeta=$event" />
         <label>动效要求 <small>选填</small><input v-model="instruction" :disabled="!!busy" maxlength="500" placeholder="例如：左边慢一点，最后多留半秒"></label>
-        <p v-if="engine==='local'">本地程序生成，不调用 AI 模型，无需模型费用，适合简单版式。<button type="button" class="vibe-gallery-link" :disabled="!!busy" @click="selectEngine('cloud')">浏览 12 款云端动效 →</button></p>
+        <p v-if="engine==='local'">纯本地处理，不调用 AI 模型、无模型费用。分层渐入适合简单版式，其余转场直接保留完整原图。<button type="button" class="vibe-gallery-link" :disabled="!!busy" @click="selectEngine('cloud')">浏览 12 款云端动效 →</button></p>
         <template v-else-if="engine==='layered'">
           <p>参考本镜海报构图，按最终配音编排可控图层；照片和原始数据图沿用原素材。默认优先保留复杂主体与背景的完整关系，不要求每个物件都单独抠图。</p>
           <p>专用模型（如 DS）自主使用取材、抠图、测量与预览工具，编写 Remotion 动效代码，并对照原图检查、返工。六步制作建议用于提高效率，不限制工具使用顺序；只生成预览，不覆盖正式镜头。</p>
@@ -343,15 +357,19 @@ async function copyBrief(){
         </template>
         <template v-else>
           <p title="使用设置中的专用 API，无需 GPT 会员。">通过 Vibe 专用 API 调用配置的模型（如 DeepSeek）设计方案，Remotion 在本机渲染。{{templateIds.length?'按手选模板编排，AI 决定顺序。':'AI 按语义选型，参考相邻镜头减少重复。'}} 沿用本镜配色与素材，预览通过后仍需采用。</p>
-          <p>{{cloudConfig?.configured?'当前模型：'+cloudConfig.model:'请在「接口与服务 → Vibe 动效」配置专用 API。'}} 仅专用模型调用可能计费，最多修正 2 轮；支持原图矩形保真裁切，本轮不自动抠图、不调用图像模型。</p>
+          <p>{{cloudConfig?.configured?'当前模型：'+cloudConfig.model:'请在「接口与服务 → Vibe 动效」配置专用 API。'}} 专用模型和背景提取可能计费，最多修正 2 轮；支持原图矩形保真裁切，不自动抠图；先使用本项目图像模型提取一次干净装饰背景，图像请求可能计费。</p>
         </template>
-        <div class="vibe-actions"><button class="primary-btn" type="button" :disabled="!!busy||unsaved||designLocked||(engine==='cloud'&&templateSelectionInvalid)||(engine==='layered'&&layeredBudgetInvalid)" @click="autoDesign">{{receipt?'重新设计并预览':'自动设计并预览'}}</button></div>
+        <div class="vibe-actions">
+          <button class="primary-btn" type="button" :disabled="!!busy||cloudRunning||unsaved||designLocked||(engine==='cloud'&&templateSelectionInvalid)||(engine==='layered'&&layeredBudgetInvalid)" @click="autoDesign">{{cloudRunning?'本镜制作中…':busy==='cloud-submit'?'正在提交任务…':receipt?'重新设计并预览':'自动设计并预览'}}</button>
+          <button v-if="cloudRunning" type="button" :disabled="busy==='stop'||cloudTask.status==='stopping'" @click="stopCloud">{{busy==='stop'||cloudTask.status==='stopping'?'正在停止…':'停止本镜制作'}}</button>
+        </div>
+        <p v-if="cloudRunning" role="status">停止后保留已有素材和上一版预览，不影响正式镜头及其他镜头任务。已提交的上游请求可能仍在执行或计费。</p>
+        <p v-else-if="busy==='cloud-submit'" role="status">正在等待任务编号，收到后可停止本镜制作；请勿重复提交。</p>
         <p v-if="editLocked&&!designLocked">当前阶段只可预览，待核心图确认并且任务空闲后可采用。</p>
         <p v-if="design" role="note">{{design.summary}} {{(design.warnings||[]).join(' ')}}</p>
       </div>
-      <div v-if="movie" class="vibe-preview-source"><strong>当前预览：{{previewLabel}}</strong><small v-if="rendererLabel" class="vibe-renderer">{{rendererLabel}}</small><small v-if="receipt?.template_ids?.length" class="vibe-template-ids">模板 {{templateNames(receipt.template_ids)}}</small><span v-if="retainedPreview" class="vibe-retained-preview">保留的上次预览 · 不是本轮云端制作的新结果</span></div>
-      <video v-if="movie" :key="movie" :src="movie" controls playsinline preload="metadata" aria-label="本镜动效与配音预览"></video>
-      <p v-else-if="ready&&!busy&&!error">{{stale?'本镜的画面、字幕或配音已有变化，旧预览已收起。请用最新素材重新预览。':'选择制作方式与动效后生成预览，不会修改正式镜头。'}}</p>
+
+      <p v-if="!receipt&&ready&&!busy&&!error">{{stale?'本镜的画面、字幕或配音已有变化，旧预览已收起。请用最新素材重新预览。':'选择制作方式与动效后生成预览，不会修改正式镜头。'}}</p>
       <section v-if="receipt&&previewNeedsReview" class="vibe-quality-warning" role="note" aria-label="预览待修正问题">
         <strong>{{previewQuality==='needs_review'?'视觉核查未通过 · 仅供检查':'缺少完整的视觉核查结果 · 仅供检查'}}</strong>
         <p>本次预览可以播放检查，但不能采用到正式镜头。请参考下面的问题调整动效要求后重新设计；原正式镜头保留。</p>
@@ -374,10 +392,11 @@ async function copyBrief(){
         <p v-if="cloudTask.image_route?.label">本次背景图像渠道：{{ cloudTask.image_route.label }}</p>
         <div v-if="cloudTask.can_resume_materials&&!cloudRunning" class="vibe-actions"><button type="button" :disabled="!!busy||unsaved||designLocked||!ready" @click="resumeMaterials">继续原素材任务</button><small>{{resumeRequiresModel?'按原任务渠道获取素材，不重复出图；随后继续模型复原、核查和动效编排，可能计费。':'按原任务渠道查询，不跟随当前设置切换；不重新调用 DS、不重复出图。'}}</small></div>
         <fieldset v-if="cloudTask.can_continue_steps&&!cloudRunning" class="vibe-budget vibe-continue-steps" :disabled="!!busy||unsaved||designLocked||!ready">
+          <label>追加模型次数 <input v-model.number="stepsAdditionalCalls" :disabled="!!stepsContinuationRequest" type="number" min="0" :max="Math.max(0,50-stepsBudget.modelLimit)" step="1" aria-label="续接步骤追加模型次数"></label>
           <legend>从保存步骤续接</legend>
           <div class="vibe-actions"><button type="button" :disabled="stepsContinuationInvalid" @click="continueSteps">继续未完成步骤</button><span>模型已用 {{stepsBudget.modelUsed}} / {{stepsBudget.modelLimit}} 次 · 剩余 {{stepsBudget.modelRemaining}} 次</span></div>
           <label v-if="stepsBudget.imagesAllowed" class="vibe-steps-image-choice"><input v-model="continueStepsImages" :disabled="!!stepsContinuationRequest" type="checkbox" aria-label="续接允许使用原授权剩余图片请求"><span>允许使用原授权剩余 {{stepsBudget.imageRemaining}} 次图片请求（可能计费）</span></label>
-          <small>不追加模型次数，不从头制作，不自动重放旧工具；即使尚无预览，也可接着完成。{{continueStepsImages&&stepsBudget.imagesAllowed?'仅沿用原图片额度和渠道。':'默认不新增出图，仅复用已有素材；确认后本轮后续续接也不恢复图片授权。'}}不覆盖正式镜头，不自动重试。</small>
+          <small>仅按上方输入追加授权，不从头制作，不自动重放旧工具；即使尚无预览，也可接着完成。{{continueStepsImages&&stepsBudget.imagesAllowed?'仅沿用原图片额度和渠道。':'默认不新增出图，仅复用已有素材；确认后本轮后续续接也不恢复图片授权。'}}不覆盖正式镜头，不自动重试。</small>
           <small v-if="stepsContinuationInvalid" class="vibe-error">{{stepsBudget.valid?'原模型预算已用完；请使用下方可用的追加预算入口，或确认后新建任务。':'续接预算信息不完整，请先刷新状态。'}}</small>
         </fieldset>
         <small v-else-if="isToolAgentTask&&!cloudRunning&&cloudTask.continue_steps_unavailable_reason" class="muted">暂不能续接未完成步骤：{{cloudTask.continue_steps_unavailable_reason}}</small>
@@ -387,7 +406,6 @@ async function copyBrief(){
           <small>复用本轮素材、代码与预览，不新增出图，不覆盖正式镜头。还可调用 {{continuationRemaining}} 次（含原剩余预算与独立核查），可能计费；累计授权最多 50 次。</small>
         </fieldset>
         <small v-else-if="isToolAgentTask&&['failed','stopped'].includes(cloudTask.status)&&!cloudTask.can_continue_steps&&!cloudTask.can_resume_materials&&cloudTask.continue_review_unavailable_reason" class="muted">暂不能继续已有预览：{{cloudTask.continue_review_unavailable_reason}}</small>
-        <div v-if="cloudRunning" class="vibe-actions"><button type="button" :disabled="busy==='stop'||cloudTask.status==='stopping'" @click="stopCloud">{{busy==='stop'||cloudTask.status==='stopping'?'正在停止…':'停止云端制作'}}</button><small>停止后保留已有素材；可调整要求后重试，不影响正式镜头。</small></div>
       </section>
       <p v-if="cloudReadError" class="vibe-error" role="alert">{{cloudReadError}}</p>
       <div v-if="!adopted&&(!reserveLocked||reserved)" class="vibe-actions"><button type="button" :disabled="!!busy||unsaved||reserveLocked" @click="reserve">{{reserved?'取消预留':'预留给 Vibe'}}</button><small>{{reserved?'本镜不送视频模型。请在导出前采用动效或取消预留。':'可选：预留后不送视频模型；只试预览无需预留。'}}</small></div>
@@ -412,6 +430,8 @@ async function copyBrief(){
   </details>
 </template>
 <style scoped>
+.vibe-still-preview{margin:15px 0}.vibe-still-preview img{display:block;width:100%;max-height:60vh;object-fit:contain;background:#101212;border-radius:8px}.vibe-still-preview small{display:block;margin:8px 0}.vibe-preview video{max-height:60vh!important;object-fit:contain}
+
 .vibe-designer{display:grid;gap:5px;margin:12px 0;padding:9px 14px;border-left:2px solid var(--accent,#82daca)}.vibe-designer select{width:auto}.vibe-designer label{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.vibe-designer input{flex:1;min-width:12em;max-width:44em}
 .vibe-preview{margin-top:12px;padding:12px 16px;border:1px solid var(--border,#35423f);border-radius:10px}.vibe-preview summary{cursor:pointer}.vibe-preview small,.vibe-preview p,.vibe-import{font-size:13px;color:var(--muted,#aab8b3)}.vibe-preview small{margin-left:8px}.vibe-preview video{display:block;width:100%;max-height:440px;margin:15px auto;background:#101212;border-radius:8px}.vibe-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:12px 0}.vibe-actions a{color:var(--accent,#82daca)}.vibe-preview textarea{width:100%;min-height:4em}.vibe-preview .vibe-error{color:var(--danger,#fa9797)}
 .vibe-budget{min-width:0;margin:6px 0;padding:10px 12px;border:1px solid var(--border,#35423f);border-radius:8px}.vibe-budget legend{padding:0 6px;font-size:13px;color:var(--muted,#aab8b3)}.vibe-budget .vibe-actions{margin:2px 0;gap:12px 22px}.vibe-budget label{margin:4px 0}.vibe-budget input[type=number]{min-width:70px;max-width:90px}.vibe-budget:disabled{opacity:.65}.vibe-cloud-status{padding:12px 14px;margin:12px 0;background:var(--surface,#202b29);border:1px solid var(--border,#35423f);border-radius:9px}

@@ -95,6 +95,13 @@ namespace OcvLauncher
         private static readonly int[] ManagedPorts = { 8010, 5173, 8030 };
         private static readonly string[] ReleaseIntegrityFiles =
         {
+            "backend/app/illustrated_transitions.py",
+            "backend/app/vibe_agent_diagnostics.py",
+            "backend/app/vibe_transition_source.py",
+            "backend/app/vibe_transitions.py",
+            "backend/app/video_bookends.py",
+            "frontend/src/components/VideoBookends.vue",
+            "frontend/src/narrationFollow.js",
             "OCV_Launcher.exe",
             "start_windows.bat",
             "frontend/src/App.vue",

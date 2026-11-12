@@ -5,6 +5,7 @@ import { planningPreferences } from './shotPlanningLimit'
 import { readCloudChannelPreference, saveCloudChannelPreference } from './cloudPoolPreference'
 import { taskImagePoolPreference } from './taskImagePool'
 import { imageRouteSelection, serviceImageRouteUpdate } from './projectImageRoute'
+import { followNarration } from './narrationFollow'
 
 // Navigation never cancels a task. A single useWorkspace instance keeps polling.
 export function useStudio(w) {
@@ -215,6 +216,13 @@ export function useStudio(w) {
     if(item)w.visualTimingSelectedId.value=item.id
   }
   const studioAudio = computed(()=>{const url=studioJob.value?.artifacts?.audio||'';return url?`${url}${url.includes('?')?'&':'?'}tts_revision=${Number(w.ttsEditor.value?.revision||0)}`:''})
+  const narrationList = ref(null)
+  const narrationPlayingIndex = ref(null)
+  function narrationPlayback(event) {
+    narrationPlayingIndex.value = followNarration(event, w.ttsEditor.value?.segments || [], narrationPlayingIndex.value, narrationList.value,
+      index => { studioSentence.value = index })
+  }
+  watch(studioAudio, () => { narrationPlayingIndex.value = null })
   const studioVideo = computed(() => {
     const url = studioJob.value?.artifacts?.video_with_subtitles
       || studioJob.value?.artifacts?.video_raw
@@ -400,7 +408,7 @@ export function useStudio(w) {
         const changed=key=>JSON.stringify(w.form[key]??null)!==JSON.stringify(base[key]??null)
         const ttsChanged=JSON.stringify(rerunTtsSnapshot())!==JSON.stringify(w.form._rerun_tts_baseline||rerunTtsSnapshot())
         if(!ttsChanged){
-          const visualKeys=['dynamic_max_shot_duration','dynamic_cluster_duration_recommended','method','size','visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
+          const visualKeys=['intro_video_id','outro_video_id','dynamic_max_shot_duration','dynamic_cluster_duration_recommended','method','size','visual_pacing_preset','visual_min_duration','visual_target_duration','visual_max_duration','visual_max_slides','image_profile_id','image_resolution','visual_backend','video_orientation','video_render_variant','subtitle_font','subtitle_size','subtitle_color','subtitle_outline_color','subtitle_outline_width','subtitle_position','subtitle_margin_bottom']
           const parameters={};for(const key of visualKeys)if(Object.hasOwn(w.form,key)&&changed(key))parameters[key]=w.form[key]
           const imagePoolChoice=taskImagePoolPreference(w.form)
           if(imagePoolChoice!==Boolean(base.use_cloud_image_pool))parameters.use_cloud_image_pool=imagePoolChoice
@@ -508,5 +516,5 @@ export function useStudio(w) {
     try{const result=await api.insertVisualTimingPicture(w.visualEditorProjectId.value,item.id,sentence.slide_id);w.visualEditor.value=result;w.hydrateVisualSubtitleDrafts({preserveDirty:false});const added=result.items.find(row=>row.id.startsWith('poster_added_')&&row.slides?.includes(sentence.slide_id));w.visualTimingSelectedId.value=added?.id||item.id;w.visualEditor.value.task={status:'completed',action:'timing_insert',message:'黑色占位画面已加入并选中；现在可以填写提示词重绘、上传参考图或替换本地图片。'}}
     catch(e){w.visualEditor.value.task={status:'failed',action:'timing_insert',message:e.message||'添加画面失败'}}finally{visualPictureInsertBusy.value=false}
   }
-return {canReturnDynamicStoryboard,activeVideoProjectId,pendingVideoImageRoute,imageRouteApplied,serviceImageProfileSaved,studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
+return {narrationList,narrationPlayingIndex,narrationPlayback,canReturnDynamicStoryboard,activeVideoProjectId,pendingVideoImageRoute,imageRouteApplied,serviceImageProfileSaved,studioSceneAssets,codexBridgeAvailable,handoffToCodex,openCodexDraft,openCodexProject,closeServices,openDynamicAudio,enterDynamicStoryboard,editingDynamicAudio,restoreDefaultsOnNewProject,duplicateStudioProject,resetStudioProject,studioDraftsExpanded,visibleStudioDrafts,deleteStudioDraft,clearStudioDrafts,studioPage,studioTab,studioDrawer,studioKind,studioError,studioBusy,studioSearch,studioFilter,studioSentence,studioLogsOpen,studioSaveState,studioDrafts,studioJobs,studioJob,studioLiveJobs,studioTabs,studioSelectedImage,studioSelectedImageIndex,canSelectPreviousImage,canSelectNextImage,selectAdjacentVisualImage,studioAudio,studioVideo,studioTaskLogs,studioReferenceAssets,studioTitle,studioHasRunning,typeOf,typeLabel,goHome,newProject,openProject,launch,changeStudioPage,openLogs,refreshEditorData,reconnectStudio,chooseTab,studioSubtitles,studioSubtitleMessage,exportStudioSubtitles,visualSubtitleSplitDialog,visualPictureInsertBusy,openVisualSubtitleSplit,closeVisualSubtitleSplit,playVisualSubtitleSplitRange,applyVisualSubtitleSplit,insertVisualPicture}
 }

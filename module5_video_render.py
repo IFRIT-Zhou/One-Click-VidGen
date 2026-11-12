@@ -434,10 +434,14 @@ def build_direct_filter_script(
     *,
     fps: int,
     fade_duration: float,
+    transition: str | None = None,
 ) -> tuple[str, str]:
     """Build a 1920x1080 poster timeline equivalent to the current HTML CSS."""
     if not timeline or total_duration <= 0:
         raise ValueError("画面时间轴为空")
+    from backend.app.illustrated_transitions import normalize, xfade
+    transition=normalize(transition if transition is not None else os.getenv('OCV_IMAGE_TRANSITION','none'))
+    if transition=='none':fade_duration=0
     lines: list[str] = []
     from backend.app.subtitle_layout import from_env
     portrait = from_env()['portrait']
@@ -457,12 +461,15 @@ def build_direct_filter_script(
         )
     if len(timeline) == 1:
         return ";\n".join(lines), "v0"
+    if transition=='none':
+        lines.append(''.join(f'[v{i}]' for i in range(len(timeline)))+f'concat=n={len(timeline)}:v=1:a=0[out]')
+        return ';\n'.join(lines),'out'
     previous = "v0"
     for index in range(1, len(timeline)):
         output = f"x{index}"
         offset = max(0.0, float(timeline[index]["start"]))
         lines.append(
-            f"[{previous}][v{index}]xfade=transition=fade:duration={fade_duration:.6f}:"
+            f"[{previous}][v{index}]xfade={xfade(transition)}:duration={fade_duration:.6f}:"
             f"offset={offset:.6f}[{output}]"
         )
         previous = output
@@ -521,11 +528,18 @@ def render_direct_raw_video(
         timeline, total_duration = load_direct_poster_timeline()
     fps = max(12, min(60, int(float(os.getenv("VIDEO_RENDER_FPS", "30")))))
     fade_duration = max(0.05, min(2.0, float(os.getenv("VIDEO_RENDER_CROSSFADE_SECONDS", "0.8"))))
+    from backend.app.illustrated_transitions import normalize
+    transition=normalize(os.getenv('OCV_IMAGE_TRANSITION','none'))
+    if transition=='none':fade_duration=0
+    else:
+        spans=[float(timeline[i+1]['start'] if i+1<len(timeline) else total_duration)-float(item['start']) for i,item in enumerate(timeline)]
+        fade_duration=min(fade_duration,max(1/fps,min(spans)-1/fps))
     filter_script, output_label = build_direct_filter_script(
         timeline,
         total_duration,
         fps=fps,
         fade_duration=fade_duration,
+        transition=transition,
     )
     output.unlink(missing_ok=True)
     attempts = [env_flag("VIDEO_RENDER_GPU_ENCODING", True), False]
@@ -682,6 +696,7 @@ def main() -> None:
         (FINAL_DIR / "final_raw_presentation.mp4").unlink(missing_ok=True)
     try:
         render_engine = str(os.getenv("VIDEO_RENDER_ENGINE", "ffmpeg")).strip().lower()
+        if 'OCV_IMAGE_TRANSITION' in os.environ:render_engine='ffmpeg'
         if render_engine not in {"ffmpeg", "hyperframes"}:
             render_engine = "ffmpeg"
         if render_engine == "ffmpeg":
@@ -690,6 +705,8 @@ def main() -> None:
             try:
                 render_direct_raw_video(raw_output)
             except Exception as exc:
+                if 'OCV_IMAGE_TRANSITION' in os.environ:
+                    raise RuntimeError('图文转场合成失败，未切换为不同转场效果：'+str(exc)) from exc
                 print(f"[WARN] FFmpeg 直出不可用，自动回退 Hyperframes：{exc}", flush=True)
                 raw_output.unlink(missing_ok=True)
                 render(raw_html, raw_output, "纯净版")
@@ -701,6 +718,8 @@ def main() -> None:
                         FINAL_DIR / "final_with_subtitles.mp4",
                     )
                 except Exception as exc:
+                    if 'OCV_IMAGE_TRANSITION' in os.environ:
+                        raise RuntimeError('字幕合成失败，转场纯净版已保留；未使用不同画面重新渲染：'+str(exc)) from exc
                     print(f"[WARN] FFmpeg 字幕压制不可用，自动回退 Hyperframes 字幕版：{exc}", flush=True)
                     render(subtitle_html, FINAL_DIR / "final_with_subtitles.mp4", "字幕版")
             temporary_raw.unlink(missing_ok=True)

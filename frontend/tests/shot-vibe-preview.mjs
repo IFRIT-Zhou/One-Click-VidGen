@@ -65,15 +65,19 @@ try {
   const panel = '.vibe-preview', video = panel+' video', link = panel+' a[download]'
   const select = '.navigator-list button[data-shot-index="1"]'
   await page.waitForSelector(panel,{hidden:true})
-  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='视频生成与结果').click())
+  assert.deepEqual(await page.$$eval('.production-tabs button',buttons=>buttons.map(b=>b.textContent)),['静态画面与提示词','动态视频','Vibe 动效'])
+  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
   await page.waitForSelector(panel,{visible:true})
-  assert.ok(await page.$('.motion-detail .vibe-preview'),'motion module belongs to video tab')
-  assert.equal(await page.$eval(panel,e=>e.open),false)
-  assert.equal(await page.evaluate(()=>window.fixture.calls.some(r=>r.url.includes('/vibe-preview'))),false,'mount is read-free')
+  assert.ok(await page.$('.vibe-detail .vibe-preview'),'Vibe owns its independent tab')
+  assert.equal(await page.$('.motion-detail .vibe-preview'),null)
+  assert.ok(await page.$('.production-toolbar select[aria-label="本分镜采用方式"]'))
+  assert.equal(await page.$eval(panel,e=>e.open),true,'Vibe tab opens preview automatically')
+  await page.click(panel+'>summary')
   await page.evaluate(()=>{
     const otherFetch=window.fetch
     window.previewMock={calls:[],pending:[]}
     window.fetch=(url,options={})=>{
+      if(String(url).endsWith('/vibe-cloud-job/latest'))return Promise.resolve(new Response(JSON.stringify({available:false})))
       if(!String(url).includes('/vibe-preview'))return otherFetch(url,options)
       window.previewMock.calls.push({method:options.method||'GET',url:String(url),body:options.body?JSON.parse(options.body):null})
       return new Promise(resolve=>window.previewMock.pending.push((data,status=200)=>resolve(new Response(JSON.stringify(data),{status}))))
@@ -90,6 +94,8 @@ try {
   const first='1'.repeat(32),second='2'.repeat(32),obsolete='3'.repeat(32)
   await page.click(panel+'>summary')
   await waitCount(1)
+  assert.equal(await page.$$eval('.vibe-designer select option',options=>options.filter(o=>['brush','dissolve','black','white','left','right','up','down','layered'].includes(o.value)).length),10,'nine local transitions plus the cloud layered engine option')
+  assert.ok(await page.$('.vibe-designer input[type="number"][min="0.1"][max="3"]'))
   await respond({available:true,preview_id:first,preview_url:'https://wrong.invalid/external.mp4'})
   await page.waitForFunction(sel=>document.querySelector(sel)?.readyState>=2,{},video)
   assert.equal(await page.$eval(video,e=>e.getAttribute('src')),apiPrefix+'/vibe-previews/'+first+'/preview')
@@ -129,9 +135,8 @@ try {
   await clickButton('刷新预览')
   await waitCount(4) // shot 1 GET pending
   await page.click(select)
-  await page.waitForFunction(()=>document.querySelector('.vibe-preview')?.open===false)
-  assert.equal(await count(),4,'switch does not launch rendering or reads')
-  await page.click(panel+'>summary');await waitCount(5) // shot 2 resolves first
+  await page.waitForFunction(()=>document.querySelector('.vibe-preview')?.open===true)
+  await waitCount(5) // open Vibe tab reads the next shot, never starts rendering
   await respond({available:false,stale:true},1)
   await page.waitForFunction(()=>document.querySelector('.vibe-preview').textContent.includes('旧预览已收起'))
   await respond({available:true,preview_id:obsolete},0) // old shot must never appear
@@ -144,6 +149,7 @@ try {
   // Exercise the ordinary user's complete workflow with a real parent VideoStudio and its
   // own checked-in mock project. Only the Vibe responses change. No project/model service.
   await page.goto(origin+'/tests/shot-result-overview.html',{waitUntil:'networkidle0'})
+  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
   await page.waitForSelector(panel,{visible:true})
   const installWorkflowMock=()=>page.evaluate(async apiPrefix=>{
     const baseFetch=window.fetch
@@ -152,6 +158,7 @@ try {
     window.confirm=text=>{window.previewMock.confirmations.push(text);return window.previewMock.answer}
     window.fetch=(url,options={})=>{
       if(String(url)==='/api/vibe-model')return Promise.resolve(new Response(JSON.stringify({configured:true,model:'deepseek-flash',max_image_requests:4})))
+      if(String(url).endsWith('/vibe-image-route'))return Promise.resolve(new Response(JSON.stringify({label:'测试个人 API',key:'fixture-route'})))
       if(String(url).endsWith('/vibe-cloud-job/latest'))return Promise.resolve(new Response(JSON.stringify({available:false})))
       if(String(url).split('?')[0]===apiPrefix)return Promise.resolve(new Response(JSON.stringify(window.previewMock.current)))
       if(!/\/vibe-(?:design|preview|adopt|undo|intent|cloud-jobs)/.test(String(url)))return baseFetch(url,options)
@@ -160,9 +167,14 @@ try {
     }
   },apiPrefix)
   await installWorkflowMock()
-  await page.click(panel+'>summary');await waitCount(1);await respond({available:false})
+  await clickButton('刷新预览');await waitCount(1);await respond({available:false})
   const btnState=label=>page.$eval(panel,(p,label)=>[...p.querySelectorAll('button')].filter(b=>b.textContent.trim()===label).map(b=>!b.disabled),label)
-  const batch=()=>page.$eval('.motion-batch-actions button',b=>({text:b.textContent.trim(),enabled:!b.disabled}))
+  const batch=async()=>{
+    await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='动态视频').click())
+    const result=await page.$eval('.motion-batch-actions button',b=>({text:b.textContent.trim(),enabled:!b.disabled}))
+    await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+    return result
+  }
   const requestAt=i=>page.evaluate(i=>window.previewMock.calls[i],i)
   const settle=()=>page.evaluate(()=>new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok))))
   const confirms=()=>page.evaluate(()=>window.previewMock.confirmations)
@@ -170,7 +182,7 @@ try {
   const normal={text:'全部重新生成（1）',enabled:true}
   assert.deepEqual(await batch(),normal)
   await clickButton('自动设计并预览');await waitCount(2)
-  assert.deepEqual((await requestAt(1)).body,{engine:'local',confirm_model:false,pace:'normal',instruction:''})
+  assert.deepEqual((await requestAt(1)).body,{engine:'local',confirm_model:false,pace:'normal',instruction:'',transition:'layered',transition_seconds:.8})
   assert.equal((await requestAt(1)).url,apiPrefix+'/shots/shot1/vibe-design')
   assert.equal((await confirms()).length,0,'free design needs no external consent')
   await respond({engine:'local',summary:'已有图层',warnings:[],preview_request:plan})
@@ -184,12 +196,11 @@ try {
   assert.deepEqual(await page.$eval(engine,el=>[...el.options].map(e=>e.value)),['local','cloud','layered'])
   await page.select(engine,'cloud');await answer(false)
   await clickButton('重新设计并预览');await settle()
-  assert.match((await confirms()).at(-1),/当前分镜图、生成本图时实际使用的参考图和最终字幕时间戳/)
-  assert.match((await confirms()).at(-1),/选择已验证镜头模板.*不自动抠图、不调用图像模型/s)
+  assert.match((await confirms()).at(-1),/模板背景.*测试个人 API.*可能产生图片费用/)
   assert.equal(await count(),3,'canceled external image request cannot call design or spend')
   await answer(true);await clickButton('重新设计并预览');await waitCount(4)
   assert.equal((await requestAt(3)).url,apiPrefix+'/shots/shot1/vibe-cloud-jobs')
-  assert.deepEqual((await requestAt(3)).body,{confirm_cloud:true,start_mode:'fresh',template_mode:'shotcraft',pace:'normal',instruction:'',max_image_requests:0})
+  assert.deepEqual((await requestAt(3)).body,{confirm_cloud:true,start_mode:'fresh',template_mode:'shotcraft',pace:'normal',instruction:'',max_image_requests:1,image_route_key:'fixture-route'})
   await respond({detail:'模型设计暂不可用'},0,502)
   await page.waitForSelector(panel+' [role=alert]')
   await settle();assert.equal(await count(),4,'model error does not silently rerender or adopt')
@@ -252,16 +263,19 @@ try {
   await page.waitForSelector('.production-tabs')
   assert.equal(await page.$eval(panel,e=>!!e.getClientRects().length),false,'early design tab does not show Vibe above core controls')
   await installWorkflowMock()
-  const type='[data-design-shot="shot1"] .video-row select:has(option[value="vibe"])'
+  const type='.production-toolbar select[aria-label="本分镜采用方式"]'
   const promptTab='[data-design-shot="shot1"] [data-panel="prompts"] .panel-toggle[aria-expanded="false"]'
   if(await page.$(promptTab))await page.click(promptTab)
   await page.waitForSelector(type,{visible:true});assert.equal(await page.$eval(type,e=>e.disabled),false)
-  await page.select(type,'vibe')
+  await answer(false);await page.select(type,'vibe');await settle()
+  assert.equal(await count(),0,'declining output change preserves the shot')
+  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+  await page.$eval(panel,el=>{el.open=true})
   await page.waitForFunction(()=>document.querySelector('.vibe-preview')?.open)
   assert.match(await page.$eval(panel,p=>p.textContent),/还没有完成的核心图/)
   assert.deepEqual(await btnState('自动设计并预览'),[])
   assert.deepEqual(await btnState('预留给 Vibe'),[true])
-  assert.equal(await count(),0,'selecting Vibe without a core image only opens the panel')
+  assert.equal(await count(),0,'browsing Vibe without a core image only opens the panel')
   await answer(false);await clickButton('预留给 Vibe');await settle()
   assert.equal(await count(),0);assert.match((await confirms()).at(-1),/不会提交给视频模型/)
   await answer(true);await finishReserve(true,1)
@@ -272,6 +286,16 @@ try {
   assert.equal(await page.$eval(type,e=>e.value),'video')
   assert.deepEqual(await noGenerations(),[],'early reserve/cancel never requests images, videos, or a replan')
   assert.equal(await count(),2,'only the two explicitly confirmed local reservation writes happened')
+  await page.select(type,'vibe');await waitCount(3)
+  assert.deepEqual(await requestAt(2),{method:'POST',url:apiPrefix+'/shots/shot1/vibe-intent',body:{revision:3,enabled:true}})
+  await respond(await setReservation(true,4));await settle()
+  assert.equal(await page.$eval(type,e=>e.value),'vibe')
+  await page.evaluate(()=>{
+    const fetch=window.fetch
+    window.fetch=(url,options)=>String(url).endsWith('/vibe-active-tasks')?Promise.resolve(new Response(JSON.stringify({items:[{shot_id:'shot1',status:'running',stage:'design',message:'test'}]}))):fetch(url,options)
+  })
+  await page.waitForSelector('.navigator-list button.vibe-running .vibe-running-label')
+  assert.equal(await page.$eval(type,e=>e.disabled),true,'running Vibe blocks output switching')
   assert.deepEqual(errors,[])
   console.log('PASS: preview/play/download, consent, adoption/undo, early reserve/cancel without images, export/batch guards, cache and stale results.')
 } finally {

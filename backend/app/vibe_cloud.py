@@ -62,7 +62,7 @@ class CloudRequest(BaseModel):
     max_model_calls: int=Field(default=30,strict=True,ge=6,le=50,
         description='Tool-agent layered jobs: 6–50 total authorized Vibe model requests including failed requests, repairs and independent delivery review. Material recovery keeps this total; saved-preview continuation may extend it only with separate explicit authorization.')
     max_image_requests: int | None=Field(default=None,strict=True,ge=0,le=12,
-        description='layered requires an explicit budget from 0 to 4 background image requests; other modes do not submit image requests. Resuming never submits a new image request.')
+        description='layered requires an explicit budget from 0 to 4 background image requests; shotcraft accepts 1 for a clean decorative background or 0/omitted for legacy color-only rendering. Resuming never submits a new image request.')
 
     @field_validator('confirm_cloud',mode='before')
     @classmethod
@@ -795,6 +795,22 @@ def _worker(project,sid,job_id,config,data,event):
         with _lock:_active.pop((str(project),sid),None)
 
 
+@router.get('/{identity}/vibe-active-tasks')
+def active_tasks(identity: str, request: Request):
+    """Read-only project status; never resumes or mutates persisted tasks."""
+    project = owned_project(request, identity)
+    with _lock:
+        active = [(sid, job_id) for (root, sid), (job_id, _) in _active.items()
+                  if root == str(project)]
+    items = []
+    for sid, job_id in active:
+        task = _read_job(project, job_id)
+        if task.get('status') not in _terminal:
+            items.append({key: task.get(key) for key in
+                          ('shot_id', 'task_id', 'status', 'stage', 'message')})
+    return {'items': items, 'design_concurrency': 2, 'render_concurrency': 1}
+
+
 @router.get('/{identity}/shots/{shot_id}/vibe-image-route')
 def image_route(identity:str,shot_id:str,request:Request):
     from .vibe_image_route import resolve, same_pending_route
@@ -846,6 +862,15 @@ def start(identity:str,shot_id:str,data:CloudRequest,request:Request):
         validate_reuse_task(project, shot_id, data.reuse_task_id, cloud_stamp)
     if data.template_mode == 'shotcraft':
         from .vibe_shotcraft import preflight_library, validate_requested_templates
+        if data.max_image_requests:
+            if data.max_image_requests != 1:
+                raise HTTPException(409, '模板模式仅授权一次干净背景提取')
+            from .vibe_image_route import resolve
+            image_config,resolved_route=resolve(project,int(require_user(request)['id']))
+            if data.image_route_key and data.image_route_key != resolved_route['key']:
+                raise HTTPException(409, '本项目图像模型已改变，请重新确认；未提交生成')
+            config={**config,'layered_owner_id':int(require_user(request)['id']),
+                    'layered_image_config':image_config,'layered_image_route':resolved_route}
         from .vibe_shotcraft_plan import RENDERER_VERSION as shotcraft_renderer, VERSION as shotcraft_version
         render_requirements = {'required_renderer': shotcraft_renderer, 'required_plan_version': shotcraft_version}
         try:
@@ -897,7 +922,7 @@ def start(identity:str,shot_id:str,data:CloudRequest,request:Request):
               'start_mode':data.start_mode,
               'previous_task_id':previous_task_id,
               'max_model_calls':data.max_model_calls,
-              'created_at':time.time(),'cloud_input_stamp':cloud_stamp,'max_image_requests':data.max_image_requests if data.template_mode=='layered' else 0,
+              'created_at':time.time(),'cloud_input_stamp':cloud_stamp,'max_image_requests':data.max_image_requests if data.template_mode in ('layered','shotcraft') else 0,
               'material_policy':'source_layers' if data.template_mode=='layered' else 'original_inputs_only',
               'usage':{'model_calls':[],'image_requests':0,'image_task_ids':[]}}
         _write(folder/'task.json',task);_write(_pointer(project,shot_id),{'task_id':job_id})

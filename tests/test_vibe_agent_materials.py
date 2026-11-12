@@ -91,6 +91,48 @@ class MaterialWorkspaceTests(unittest.TestCase):
         self.assertNotEqual(result['images']['subject_0'], result['images']['subject_0_original'])
         self.assertEqual(self.raw['subjects'][0]['source_crop'], [.1, .2, .4, .8])
 
+    def test_select_history_restores_geometry_without_new_cutout(self):
+        self.workspace.set_inventory(self.raw)
+        with patch('backend.app.vibe_agent_materials.rmbg.run_cutouts', side_effect=self.fake_cutout) as run:
+            first = self.workspace.prepare_subject('subject_0')
+            first_path = self.workspace.assets()['subject_0']
+            self.workspace.prepare_subject('subject_0', source_crop=[.05, .1, .45, .9])
+            before = self.workspace.fingerprint()
+            selected = self.workspace.select_subject('subject_0', first['receipt']['asset_id'])
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(selected['receipt']['reused'])
+        self.assertEqual(self.workspace.assets()['subject_0'], first_path)
+        self.assertEqual(self.workspace.inventory.subjects[0].source_crop, (.1, .2, .4, .8))
+        self.assertEqual(self.workspace.design.subjects[0].box, (.1, .2, .4, .8))
+        self.assertNotEqual(self.workspace.fingerprint(), before)
+
+    def test_select_history_rejects_wrong_source_and_unknown_id_without_mutation(self):
+        self.workspace.set_inventory(self.raw)
+        result = self.workspace.prepare_subject('subject_1')
+        before = self.workspace.snapshot()
+        with patch('backend.app.vibe_agent_materials.rmbg.run_cutouts') as run:
+            for identity in (result['receipt']['asset_id'], 'material_short', 'inspection_unknown'):
+                with self.assertRaises(MaterialError):
+                    self.workspace.select_subject('subject_0', identity)
+                self.assertEqual(self.workspace.snapshot(), before)
+        run.assert_not_called()
+
+    def test_select_history_survives_restore_and_rejects_nonoverlapping_crop(self):
+        self.workspace.set_inventory(self.raw)
+        first = self.workspace.prepare_subject('subject_0', treatment='preserve')
+        self.workspace.prepare_subject('subject_0', source_crop=[.6, .2, .9, .8])
+        restored = MaterialWorkspace(self.project, self.folder, self.sources, (640, 360))
+        restored.restore(self.workspace.snapshot())
+        before = restored.snapshot()
+        with self.assertRaises(MaterialError):
+            restored.select_subject('subject_0', first['receipt']['asset_id'])
+        self.assertEqual(restored.snapshot(), before)
+        restored.prepare_subject('subject_0', source_crop=[.05, .1, .45, .9])
+        with patch('backend.app.vibe_agent_materials.rmbg.run_cutouts') as run:
+            result = restored.select_subject('subject_0', first['receipt']['asset_id'])
+        self.assertTrue(result['receipt']['reused'])
+        run.assert_not_called()
+
     def test_failure_does_not_publish_geometry_or_aliases(self):
         self.workspace.set_inventory(self.raw)
         self.workspace.prepare_subject('subject_0', treatment='preserve')
@@ -560,6 +602,10 @@ class MaterialWorkspaceTests(unittest.TestCase):
         chosen = resumed.select_background(asset_id=first['receipt']['asset_id'])
         self.assertEqual(chosen['receipt']['render_asset_id'], 'background')
         self.assertEqual(chosen['receipt']['background']['recipe'], recipe)
+        reused = copy.deepcopy(raw)
+        reused['background'] = first['receipt']['asset_id']
+        resumed.set_inventory(reused)
+        self.assertEqual(resumed.inventory.background, first['receipt']['asset_id'])
         changed = copy.deepcopy(raw)
         changed['background_retained'][0]['name'] = '不同的透明物体'
         resumed.set_inventory(changed)

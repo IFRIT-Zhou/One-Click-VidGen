@@ -180,7 +180,7 @@ export function ShotcraftScene({plan,assets}:ShotcraftProps){
   const frame=useCurrentFrame(),[width,height]=plan.canvas;
   const scale=Math.min(width/1920,height/1080);
   return <AbsoluteFill style={{background:plan.palette.background,fontFamily:FONTS[plan.typography],color:plan.palette.ink,overflow:'hidden'}}>
-    <Field plan={plan}/>
+    {assets.template_background?<Img src={assets.template_background} style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>:<Field plan={plan}/>}
     <div style={{...ABS,left:(width-1920*scale)/2,top:(height-1080*scale)/2,width:1920,height:1080,transform:`scale(${scale})`,transformOrigin:'top left'}}>
       {plan.stages.map(stage=>{
         const from=Math.round(stage.start*30),frames=Math.round(stage.end*30)-from,Component=stage.recipe==='spotlight-hero-card'?Opening:stage.recipe==='word-relay-filmstrip'?Relay:stage.recipe==='outro-group-photo-launch'?Finale:null;

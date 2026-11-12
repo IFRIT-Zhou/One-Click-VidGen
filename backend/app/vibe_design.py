@@ -29,9 +29,10 @@ from . import vibe_preview as preview
 from .gemini_client import generate_gemini_text, language_model, parse_json_response, single_model_attempt
 from .language_routing import project_language_scope, uses_cloud_language
 from .vibe_render import VibePlan
+from .vibe_transitions import TransitionName, Entrance, prioritize_entrance
 
 router = APIRouter(prefix='/api/video-studio')
-VERSION = 'ocv-vibe-layout-2'
+VERSION = 'ocv-vibe-layout-3'
 _slot = threading.BoundedSemaphore(1)
 
 
@@ -43,6 +44,8 @@ class DesignRequest(BaseModel):
     confirm_model: StrictBool = Field(default=False, description='显式同意将所选范围的本镜设计资料发送到项目语言模型，可能计费。')
     instruction: str = Field(default='', max_length=600)
     pace: Literal['normal','slow','brisk'] = 'normal'
+    transition: TransitionName = 'layered'
+    transition_seconds: float = Field(default=.8, ge=.1, le=3, allow_inf_nan=False)
     previous_preview_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$',
         description='可选；改已有预览时固定其已提取的图层。')
 
@@ -367,12 +370,12 @@ def _model_layers(proposals,prior,rows,canvas,duration):
     return masks,plan
 
 
-def _new_pack(project,sid,path,sha,canvas,masks):
+def _new_pack(project,sid,path,sha,canvas,masks,*,preserve_plate=False):
     store=preview._safe(project,project/'assets'/'layer_packs')
     if not packs._slots.acquire(blocking=False): raise HTTPException(429,'本机正在提取其他图层，稍后可重试')
     try:
         return packs.create_pack(path,store,packs.LayerPackRequest(source_sha256=sha,canvas=canvas,elements=masks),
-                                 project_id=project.name,shot_id=sid)
+                                 project_id=project.name,shot_id=sid,preserve_plate=preserve_plate)
     finally: packs._slots.release()
 
 
@@ -409,9 +412,15 @@ def design(identity:str,shot_id:str,data:DesignRequest,request:Request):
         path=preview._safe(project,studio._storyboard_image_path(project,shot),file=True)
         rgb,jpeg=_thumbnail(path,sha)
         prior=None;old=None;notes=[]
-        if data.previous_preview_id: prior,old=_manifest(project,data.previous_preview_id,shot_id,sha,stamp)
+        if data.previous_preview_id and data.transition=='layered': prior,old=_manifest(project,data.previous_preview_id,shot_id,sha,stamp)
         canvas=tuple(prior['canvas']) if prior else rgb.size
-        if data.engine=='model':
+        if data.engine=='local' and data.transition!='layered':
+            masks=[packs.Element(name='完整原画面',shape='rect',box=[0,0,*canvas])]
+            manifest=_new_pack(project,shot_id,path,sha,canvas,masks,preserve_plate=True)
+            plan=VibePlan(sequence=[dict(asset_id='layer_01',cue=rows[0]['slide_id'],seconds=min(.1,duration/2))],
+                          fade_in=0.,fade_out=0.,entrance=Entrance(kind=data.transition,seconds=data.transition_seconds))
+            summary='完整原图入场转场；不改动图中文字和素材，不使用音频卡点，不添加出场动画。'
+        elif data.engine=='model':
             fixed_masks=[]
             previous=([{**{k:e[k] for k in ('name','asset_id','box')},
                 'motion':next(m for m in old['sequence'] if m['asset_id']==e['asset_id'])} for e in prior['elements']] if prior else [])
@@ -454,8 +463,10 @@ def design(identity:str,shot_id:str,data:DesignRequest,request:Request):
                 elif matched<len(regions): notes.append(f'{matched}/{len(regions)} 个区域匹配到字幕文字，其余按版式顺序安排，请核对。')
             elements=manifest['elements'] if prior else [dict(asset_id=f'layer_{i+1:02d}',box=m.box,name=m.name) for i,m in enumerate(masks)]
             notes.extend(_adjust_local(motions,elements,rows,duration,data.pace,data.instruction,canvas))
-            plan=VibePlan(sequence=motions,fade_in=(old['fade_in'] if old else min(.5,duration/4)),
-                          fade_out=(old['fade_out'] if old else min(.3,duration/5)))
+            prioritize_entrance(motions,elements,rows,duration)
+            plan=VibePlan(sequence=motions,fade_in=0.,fade_out=0.,
+                          entrance=Entrance(kind='layered',seconds=data.transition_seconds))
+            notes.append('入场优先：至少 60% 的区块（优先大面积内容）在前 1 秒内就位，其余可跟随字幕；无出场动画。')
             if not prior: manifest=_new_pack(project,shot_id,path,sha,canvas,masks)
             summary=('沿用已有图层和字幕入场顺序，调整本地节奏。' if prior
                      else f'从原画面提取 {len(motions)} 个图文区块，按已保存的字幕时间依次呈现。')

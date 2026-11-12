@@ -492,11 +492,14 @@ class AgentSession:
         cache = self.state.setdefault('inspected_images', {})
         previous = cache.get(key)
         if previous and previous['asset_id'] in self.workspace.registry:
+            previous['inspection_count'] = previous.get('inspection_count', 1) + 1
             # Resolve again to verify that the cached pixels have not changed.
             result = self.workspace.inspect_image(previous['asset_id'])
             result['receipt'].update({key: previous[key] for key in
                 ('asset_id', 'requested_asset_id', 'region', 'width', 'height', 'sha256')}, cached=True,
-                next='同一来源、同一裁区已检查，返回原始像素；请基于图像作决定，只有新裁区/新问题才需再次检查。')
+                inspection_count=previous['inspection_count'],
+                next='同一来源、同一裁区已检查，像素未变；本次未获得新证据。可据已有透明度/边界作决定，或换具体裁区核查。'
+                     '若选中历史主体，用 select_subject 绑定到 subject_N，再预览；material ID 可检查不等于可直接渲染。')
             return result
         result = self.workspace.inspect_image(**kwargs)
         cache[key] = dict(result['receipt'])
@@ -615,6 +618,7 @@ class AgentSession:
         return result
 
     def run(self):
+        consecutive_format_failures = 0
         while True:
             self.check()
             if self.closing_review():
@@ -628,17 +632,27 @@ class AgentSession:
                 raw = self.invoke(GUIDE+'\n\n'+CODING_GUIDE+'\n\n'+TOOL_RESPONSE_GUIDE,
                                   payload, images, 'agent_plan')
             except ModelResponseFormatError as exc:
+                from .vibe_agent_diagnostics import json_feedback
                 self.record('response_format', '模型返回不完整的工具 JSON',
                             dict(ok=False, error=_error(exc),
+                                 syntax_diagnostic=json_feedback(exc.response_text),
                                  previous_response=exc.response_text[-6000:],
                                  next='请返回一个完整工具调用，不是动效方案或说明文字。'))
+                consecutive_format_failures += 1
+                if consecutive_format_failures >= 3:
+                    raise ValueError('连续 3 次工具响应格式错误，已暂停以避免重复消耗调用次数；'
+                                     '具体语法位置与已有素材已保留，可修正设置后手动继续；未自动续费或切换模型')
                 continue
             try:
                 name, arguments = parse_tool_call(raw)
             except ValueError as exc:
                 self.record('response_format', '工具契约检查未通过',
                             dict(ok=False, error=_error(exc), previous_response=raw))
+                consecutive_format_failures += 1
+                if consecutive_format_failures >= 3:
+                    raise ValueError('连续 3 次工具响应格式或契约错误，已暂停以避免重复消耗；工作记录已保留，可手动继续')
                 continue
+            consecutive_format_failures = 0
             self.check()
             # This response parsed successfully. Any failure while executing
             # its tool is new, tool-specific feedback, not the old JSON error.
@@ -1067,6 +1081,9 @@ class AgentSession:
         if name == 'prepare_subject':
             self.require_inventory()
             return self.workspace.prepare_subject(**kwargs)
+        if name == 'select_subject':
+            self.require_inventory()
+            return self.workspace.select_subject(**kwargs)
         if name == 'edit_background':
             return self.edit_background(arguments.prompt,
                 remove_regions=[row.model_dump(mode='json') for row in arguments.remove_regions],

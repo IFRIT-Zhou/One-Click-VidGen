@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +45,33 @@ class Intent(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: int = Field(strict=True, ge=0)
     enabled: bool = Field(strict=True)
+
+
+class OutputKind(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: int = Field(strict=True, ge=0)
+    kind: Literal['static', 'video']
+
+
+@router.post('/{identity}/shots/{shot_id}/output-kind')
+def output_kind(identity: str, shot_id: str, data: OutputKind, request: Request):
+    project = owned_project(request, identity)
+    with studio.LOCK:
+        from . import vibe_cloud
+        with vibe_cloud._lock:
+            if (str(project), shot_id) in vibe_cloud._active:
+                raise HTTPException(409, '本镜 Vibe 正在执行，请结束后再切换采用方式')
+        record, shot = _target(project, shot_id, data.revision, reservation=True)
+        if studio.has_vibe_output(shot) or shot.get('vibe_reserved'):
+            raise HTTPException(409, '请先撤回 Vibe 采用或预留；现有素材保持不变')
+        if shot['kind'] == data.kind:
+            return record
+        # Output selection is not a design edit: preserve prompts, media,
+        # versions and readiness. Never regenerate or silently adopt a preview.
+        shot.update(kind=data.kind,
+                    generation_duration=max(4, math.ceil(shot['duration'])) if data.kind == 'video' else None)
+        studio.discard_planning_resume(record)
+        return _finish(project, record, shot_id+'：切换采用方式为 '+data.kind+'；已有素材保留，未生成')
 
 
 def _target(project, shot_id, revision, *, reservation=False):
@@ -166,6 +194,9 @@ def adopt(identity: str, shot_id: str, data: Choice, request: Request):
             raise HTTPException(409, '本镜已有其他预览或尚无预览；请刷新、核对后再采用')
         receipt = previews._receipt(project, data.preview_id)
         _require_quality_passed(receipt)
+        if receipt.get('transition_source') is not None:
+            from .vibe_transition_source import validate
+            validate(project,shot_id,receipt['transition_source'])
         stamp, _, _, _, start, end, _ = previews._snapshot(project, shot_id)
         if receipt.get('shot_id') != shot_id or receipt.get('input_stamp') != stamp:
             raise HTTPException(409, '本镜画面、配音或字幕已变；先重新预览，未改动正式镜头')
@@ -219,6 +250,8 @@ def adopt(identity: str, shot_id: str, data: Choice, request: Request):
                     video_resume_available=False, video_not_submitted=False, video_execution_started=True,
                     video_design_changed=False)
             shot.pop('video_resolution', None)
+            if receipt.get('transition_source') is not None:
+                shot['video_request']['transition_source']=copy.deepcopy(receipt['transition_source'])
             shot.pop('vibe_reserved', None)
             if shot.get('audio_timing_adjustment'):
                 shot['audio_timing_adjustment']['needs_review'] = False

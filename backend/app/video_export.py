@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from .subtitle_layout import normalize as normalize_layout, write_ass
 
 from . import video_studio as studio
@@ -25,6 +25,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ExportRequest(BaseModel):
+    intro_video_id: str | None = Field(default=None, max_length=180)
+    outro_video_id: str | None = Field(default=None, max_length=180)
     revision: int
     use_video_audio: bool = True
     subtitle_layouts: dict | None = None
@@ -151,6 +153,10 @@ def _asset(path: Path, relative: str) -> Path:
 
 
 def _source(path, shot):
+    dependency=(shot.get('video_request') or {}).get('transition_source')
+    if shot.get('kind')=='video' and dependency is not None:
+        from .vibe_transition_source import validate
+        validate(path,shot['id'],dependency)
     relative = shot.get('video') if shot.get('kind') == 'video' else shot.get('image')
     if not relative:
         raise ValueError(f'镜头 {shot.get("id")} 缺少{"视频" if shot.get("kind") == "video" else "图片"}资产')
@@ -297,6 +303,9 @@ def _render(path, record):
     actual = probe_media_duration(raw)
     if abs(actual - expected) > max(1.0, expected * .01):
         raise RuntimeError(f'成片时长校验失败：预期 {expected:.2f} 秒，实际 {actual:.2f} 秒')
+    from .video_bookends import apply_bookends
+    for target in (raw, subtitled):
+        apply_bookends(target, path.parent.name, record.get('creation_parameters') or {})
     return output_root, raw, subtitled
 
 
@@ -436,6 +445,16 @@ def start_export(identity: str, data: ExportRequest, request: Request):
                 raise HTTPException(409, f'第 {index:02d} 镜的素材不可用：{exc}') from exc
         if str(path) in studio.ACTIVE:
             raise HTTPException(409, '此任务正在处理')
+        from .video_bookends import resolve_clips
+        parameters = dict(record.get('creation_parameters') or {})
+        for key in ('intro_video_id', 'outro_video_id'):
+            if getattr(data, key) is not None:
+                parameters[key] = getattr(data, key)
+        try:
+            resolve_clips(user_id, parameters)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(400, '片头片尾素材不可用，请重新上传') from exc
+        record['creation_parameters'] = parameters
         studio.ACTIVE.add(str(path))
         if data.subtitle_layouts is not None:
             record.setdefault('creation_parameters', {})['subtitle_layouts'] = data.subtitle_layouts

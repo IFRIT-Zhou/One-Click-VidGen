@@ -185,10 +185,15 @@ class MaterialWorkspace:
     def material_status(self):
         wanted = [f'subject_{i}' for i in range(len(self.inventory.subjects))] if self.inventory else []
         return dict(prepared=sorted(self.prepared), missing=[key for key in wanted if key not in self.prepared],
+                    subject_evidence={key:dict(asset_id=item['prepared'], original_asset_id=item['original'],
+                        alpha_evidence=item.get('alpha_evidence'),
+                        note='若旧缓存没有透明度证据，inspect_image(subject_id)可读取本地证据，不需重新抠图。')
+                        for key,item in self.prepared.items()},
                     background_ready='background' in self._aliases,
                     selected_background_asset_id=self._aliases.get('background'),
                     selectable_background_asset_ids=sorted(self._background_history),
                     inventory_delta=copy.deepcopy(self.inventory_delta),
+                    historical_selection_hint='历史 material ID 可查看但不能直接写入 Scene；用 select_subject(subject_id, asset_id) 绑定后，Scene 使用 subject_N。选择前核对人物身份与裁区。',
                     reusable_subjects=[dict(source=item['spec']['source'],
                         source_crop=item['spec']['source_crop'], treatment=item['spec']['treatment'],
                         asset_id=item['prepared'], original_asset_id=item['original'],
@@ -223,7 +228,7 @@ class MaterialWorkspace:
                     for subject in inventory.background_retained]
         recipe_retained = recipe.get('retained') or []
         if recipe_retained != retained:
-            raise MaterialError('所选背景版本保留的主体与当前清单不一致，不能静默替换底图；请先核对保留主体清单')
+            raise MaterialError('所选背景版本保留的主体与当前清单不一致；不要清空保留项绕过校验。请对照底图复核以下实际生成时的清单，确认仍符合画面后按其name/source_box/content_kind登记（reason自行说明），再选择同一版本。底图清单='+json.dumps(recipe_retained,ensure_ascii=False)+'；当前清单='+json.dumps(retained,ensure_ascii=False))
         path = self._scoped(entries[target]['path'], self.folder)
         if _sha(path) != entries[target]['sha256']:
             raise MaterialError('已登记底图内容改变，未绑定该版本')
@@ -240,7 +245,10 @@ class MaterialWorkspace:
         if target:
             selected_entries = self._entries if entries is None else entries
             sources[inventory.background] = selected_entries[target]['path']
-        return inventory.to_design({'canvas': self.canvas}, sources), target
+        # A verified historical extraction keeps the extraction policy internally;
+        # target binds its existing pixels below, without another image request.
+        design_inventory = inventory.model_copy(update={'background':'extract'}) if target and inventory.background_retained else inventory
+        return design_inventory.to_design({'canvas': self.canvas}, sources), target
 
     def set_inventory(self, inventory):
         self._check_cancelled()
@@ -304,6 +312,29 @@ class MaterialWorkspace:
         self.epoch += 1
         return design
 
+    def select_subject(self, subject_id, asset_id):
+        self._check_cancelled()
+        match = _SUBJECT.fullmatch(str(subject_id))
+        if not match or self.inventory is None or int(match[1]) >= len(self.inventory.subjects):
+            raise MaterialError('请先登记目标主体')
+        selected = next((item for item in self._subject_history.values() if item['prepared'] == asset_id), None)
+        if not selected:
+            raise MaterialError('请选择 reusable_subjects 中的完整 prepared asset_id；截图、原裁片ID或短ID不能直接绑定')
+        current = self.inventory.subjects[int(match[1])]
+        spec = selected['spec']
+        a, b = current.source_crop, spec['source_crop']
+        if current.source != spec['source'] or min(a[2],b[2]) <= max(a[0],b[0]) or min(a[3],b[3]) <= max(a[1],b[1]):
+            raise MaterialError('历史素材与当前主体来源或裁区不一致；请先核对身份并用 set_inventory 明确修订来源，不能静默替换人物')
+        self._validate_prepared(selected)
+        candidate = self.inventory.model_dump(mode='json')
+        candidate['subjects'][int(match[1])].update(source_crop=spec['source_crop'], treatment=spec['treatment'])
+        if self._spec(Inventory.model_validate(candidate).subjects[int(match[1])]) != spec:
+            raise MaterialError('历史素材来源版本已改变，不能复用；未重新抠图，请重新核对取材')
+        result = self.prepare_subject(subject_id, source_crop=spec['source_crop'], treatment=spec['treatment'])
+        result['receipt'].update(selected_asset_id=asset_id,
+            next=f'已绑定历史素材；Scene 使用 <Asset id="{subject_id}" .../>。清单裁区与几何同步恢复；请重新预览，旧预览不可直接交付。')
+        return result
+
     def prepare_subject(self, subject_id, source_crop=None, treatment=None):
         self._check_cancelled()
         match = _SUBJECT.fullmatch(str(subject_id))
@@ -324,6 +355,8 @@ class MaterialWorkspace:
         cached = self._subject_history.get(_signature_key(spec))
         if cached:
             self._validate_prepared(cached)
+            from .vibe_agent_diagnostics import alpha_evidence
+            cached['alpha_evidence'] = alpha_evidence(self._resolve(cached['prepared'])[1]['path'])
             self.inventory, self.design = candidate, candidate_design
             self.prepared[subject_id] = copy.deepcopy(cached)
             self._aliases[subject_id] = cached['prepared']
@@ -333,7 +366,8 @@ class MaterialWorkspace:
                 original_asset_id=cached['original'], render_asset_id=subject_id,
                 original_render_asset_id=subject_id + '_original', source=subject.source,
                 source_crop=list(subject.source_crop), treatment=subject.treatment,
-                width=cached['width'], height=cached['height'], rmbg_used=False, reused=True),
+                width=cached['width'], height=cached['height'], rmbg_used=False, reused=True,
+                alpha_evidence=cached['alpha_evidence']),
                 (subject_id, subject_id + '_original'))
         directory = self._directory()
         original = crop_asset({subject.source: source}, subject.source, subject.source_crop, directory, 'original')
@@ -361,12 +395,15 @@ class MaterialWorkspace:
         entry = self._entries[prepared_id]
         self.prepared[subject_id] = dict(spec=spec, original=original_id,
                                          prepared=prepared_id, width=entry['width'], height=entry['height'])
+        from .vibe_agent_diagnostics import alpha_evidence
+        self.prepared[subject_id]['alpha_evidence'] = alpha_evidence(prepared)
         self._subject_history[_signature_key(spec)] = copy.deepcopy(self.prepared[subject_id])
         self.epoch += 1
         receipt = dict(subject_id=subject_id, asset_id=prepared_id, original_asset_id=original_id,
                        render_asset_id=subject_id, original_render_asset_id=subject_id + '_original',
                        source=subject.source, source_crop=list(subject.source_crop), treatment=subject.treatment,
-                       width=entry['width'], height=entry['height'], rmbg_used=rmbg_used, reused=False)
+                       width=entry['width'], height=entry['height'], rmbg_used=rmbg_used, reused=False,
+                       alpha_evidence=self.prepared[subject_id]['alpha_evidence'])
         return self._result(receipt, (subject_id, subject_id + '_original'))
 
     def inspect_image(self, asset_id, region=None):
@@ -377,8 +414,13 @@ class MaterialWorkspace:
             path = crop_asset({asset_id: entry['path']}, asset_id, region, directory, 'inspection')
             target = self._register(path, 'inspection')
             entry = self._entries[target]
+        from .vibe_agent_diagnostics import alpha_evidence
+        evidence = alpha_evidence(entry['path'])
+        if region is None and asset_id in self.prepared:
+            self.prepared[asset_id]['alpha_evidence'] = evidence
         return self._result(dict(asset_id=target, requested_asset_id=asset_id, region=region,
-                                 width=entry['width'], height=entry['height'], sha256=entry['sha256']), (target,))
+                                 width=entry['width'], height=entry['height'], sha256=entry['sha256'],
+                                 alpha_evidence=evidence), (target,))
 
     def register_image(self, asset_id, path):
         """Expose a job-local screenshot for inspection, not as a render alias."""
@@ -413,7 +455,7 @@ class MaterialWorkspace:
                     for item in self.inventory.background_retained] if self.inventory else []
         recipe = (historical or {}).get('recipe') or {}
         if retained and recipe.get('retained') != retained:
-            raise MaterialError('当前清单有保留在底图的主体，请使用按此清单编辑的底图，不能直接换成参考图')
+            raise MaterialError('保留在底图的主体清单不匹配；请使用已登记background_version_版本，不要使用core或普通参考图。该版本生成时的保留清单='+json.dumps(recipe.get('retained') or [],ensure_ascii=False)+'；当前清单='+json.dumps(retained,ensure_ascii=False)+'。先看图复核并统一清单，不要清空保留项或重复出图。')
         if recipe.get('retained') and recipe['retained'] != retained:
             raise MaterialError('历史底图保留的主体与当前清单不一致，请先调整清单或重新编辑背景')
         if historical:

@@ -3914,6 +3914,8 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
                 if not source.is_file() or source.stat().st_size <= 0:
                     raise FileNotFoundError(f"分步渲染完成后缺少{key}成片")
                 _copy_file_atomic(source, target)
+                from .video_bookends import apply_bookends
+                apply_bookends(target, job.user_id, request)
             else:
                 target.unlink(missing_ok=True)
         (other_dir / "任务参数.json").write_text(
@@ -4063,6 +4065,8 @@ def organize_project_output(job: Job, request: dict[str, Any]) -> Path:
         for source, target in video_copies.items():
             if source.is_file():
                 shutil.copy2(source, target)
+                from .video_bookends import apply_bookends
+                apply_bookends(target, job.user_id, request)
 
         final_srt = WORKSPACE_DIR / "2_audio_srt" / "final_short.srt"
         output_srt = other_dir / "最终字幕.srt"
@@ -4656,6 +4660,12 @@ def finalize_completed_pipeline(job: Job, store: JobStore, request: dict[str, An
     store.raise_if_cancelled(job)
     store.log(job, f"项目输出已整理: {output_dir}")
     artifacts = copy_artifacts(job)
+    if request.get('intro_video_id') or request.get('outro_video_id'):
+        for filename, artifact_name in [('最终视频_字幕版.mp4', 'final_with_subtitles.mp4'),
+                                        ('最终视频_纯净版.mp4', 'final_raw_presentation.mp4')]:
+            source = output_dir / 'video' / filename
+            if source.is_file():
+                shutil.copy2(source, JOBS_DIR / job.id / 'artifacts' / artifact_name)
     store.raise_if_cancelled(job)
     store.update(
         job,

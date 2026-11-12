@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 
 from .vibe_motion_plan import MotionPlan, RENDERER_VERSION, compile_motion_plan
 from .vibe_shotcraft_plan import ShotcraftPlan, compile_shotcraft_plan, RENDERER_VERSION as SHOTCRAFT_RENDERER
-from .vibe_render import FPS, _audio_length
+from .vibe_render import FPS, _audio_length, _render_slot
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / 'tools' / 'vibe_remotion'
@@ -61,6 +61,21 @@ def _terminate(proc):
 
 
 def _run(command, *, timeout, cancelled=None, log=None):
+    # All Remotion modes share one browser/render lane. Model design remains
+    # concurrent; queue time does not consume the subprocess execution budget.
+    rendering = any(Path(str(arg)).name in {'render.mjs', 'render-code.mjs'} for arg in command) and '--check' not in command
+    if not rendering:
+        return _run_process(command, timeout=timeout, cancelled=cancelled, log=log)
+    while not _render_slot.acquire(timeout=.2):
+        if cancelled and cancelled():
+            raise InterruptedError('已停止等待 Remotion 本地渲染；未修改正式镜头')
+    try:
+        return _run_process(command, timeout=timeout, cancelled=cancelled, log=log)
+    finally:
+        _render_slot.release()
+
+
+def _run_process(command, *, timeout, cancelled=None, log=None):
     if cancelled and cancelled(): raise InterruptedError('已停止 Remotion 本地渲染')
     began = time.monotonic()
     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)

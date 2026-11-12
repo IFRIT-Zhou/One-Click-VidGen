@@ -1201,6 +1201,7 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
         visual_changed |= normalize_text_mode(parameters.get('dynamic_text_mode', settings.get('dynamic_text_mode'))) != data.dynamic_text_mode
         visual_changed |= parameters.get('scene_references_enabled', True) != data.scene_references_enabled
         safe_parameter_keys = {
+            'intro_video_id', 'outro_video_id',
             'visual_pacing_preset', 'visual_min_duration', 'visual_target_duration',
             'visual_max_duration', 'visual_max_slides', 'image_profile_id', 'dynamic_max_shot_duration', 'dynamic_cluster_duration_recommended',
             'image_resolution', 'visual_backend', 'video_orientation',
@@ -1244,6 +1245,7 @@ def edit_project_settings(identity: str, data: ProjectSettingsEdit, request: Req
                 except ValueError as exc:
                     raise HTTPException(400, str(exc)) from exc
         planning_parameter_keys = safe_parameter_keys - {
+            'intro_video_id', 'outro_video_id',
             'dynamic_max_shot_duration', 'dynamic_cluster_duration_recommended',
             'video_render_variant', 'subtitle_font', 'subtitle_size', 'subtitle_color',
             'subtitle_outline_color', 'subtitle_outline_width', 'subtitle_position',

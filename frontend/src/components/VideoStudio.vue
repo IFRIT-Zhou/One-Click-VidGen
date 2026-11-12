@@ -19,6 +19,7 @@ import StoryboardPreviewExport from './StoryboardPreviewExport.vue'
 import {useWorkspaceLayout} from '../workspaceLayout'
 import DynamicTextModeSelector from './DynamicTextModeSelector.vue'
 import SubtitleStyleEditor from './SubtitleStyleEditor.vue'
+import VideoBookends from './VideoBookends.vue'
 import ShotReferencePreview from './ShotReferencePreview.vue'
 import { normalizeDynamicTextMode, dynamicTextModeLabel } from '../dynamicTextMode'
 import { shotPromptNotes, shotHasPromptWarning, promptWarningRows } from '../videoPromptWarnings'
@@ -31,10 +32,23 @@ const emit=defineEmits(['new-project','duplicate-config','edit-audio','edit-conf
 const imageRouteEditor=ref(null)
 const items=ref([]), project=ref(null), selected=ref(0), error=ref(''), busy=ref(false), dirty=ref(false)
 const vibePanel=ref(null), vibeRecommendations=ref({})
+const vibeTasks=ref({})
+let vibeStatusTimer, vibeStatusPending=false
+async function refreshVibeTasks(){
+ const id=project.value?.id
+ if(!id||vibeStatusPending)return
+ vibeStatusPending=true
+ try{const data=await call('/'+id+'/vibe-active-tasks');if(project.value?.id===id)vibeTasks.value=Object.fromEntries((data.items||[]).map(t=>[t.shot_id,t]))}
+ catch{if(project.value?.id===id)vibeTasks.value={}}
+ finally{vibeStatusPending=false}
+}
+watch(()=>project.value?.id,()=>{vibeTasks.value={};void refreshVibeTasks()})
+onMounted(()=>{vibeStatusTimer=setInterval(refreshVibeTasks,2500)})
+onUnmounted(()=>clearInterval(vibeStatusTimer))
 const isVibe=shot=>shot?.kind==='video'&&shot.video_request?.backend==='vibe'
 const usesVideoModel=shot=>shot?.kind==='video'&&!isVibe(shot)&&!shot.vibe_reserved
 const reservedVibeShots=computed(()=>(project.value?.shots||[]).map((shot,index)=>({shot,index})).filter(({shot})=>shot.vibe_reserved))
-async function openVibeShot(index){selected.value=index;view.value='storyboard';productionPanel.value='video';await nextTick();await vibePanel.value?.show()}
+async function openVibeShot(index){selected.value=index;view.value='storyboard';productionPanel.value='vibe';await nextTick();await vibePanel.value?.show()}
 function acceptVibeUpdate(record){
  if(project.value?.id===record?.id&&record.revision>=project.value.revision)acceptImageUpdate(record)
 }
@@ -159,6 +173,34 @@ const motionQueue=createSerialTaskQueue(async task=>{
  finally{busy.value=false;dirty.value=Object.keys(motionDrafts.value).length>0}
 },(key,state)=>{motionQueueStates.value={...motionQueueStates.value,[key]:state}})
 function motionQueueState(shot){return motionQueueStates.value[project.value?.id+':'+shot.id]}
+async function changeAdoption(event){
+ const shot=selectedShot.value, kind=event.target.value
+ if(!shot)return
+ const previous=isVibe(shot)||shot.vibe_reserved?'vibe':shot.kind
+ event.target.value=previous
+ if(kind===previous)return
+ if(busy.value||dirty.value||vibeTasks.value[shot.id]||shotRenderLocked(shot))return
+ const id=project.value.id, sid=shot.id
+ const message=kind==='vibe'?'预留本镜给 Vibe？已有素材保留，不自动生成或采用预览；导出前请确认采用动效。':previous==='vibe'?'撤回 Vibe 采用或预留，并切换本镜制作方式？已有预览保留，不删除素材。':'切换本镜采用方式？不会重新生成画面或视频。'
+ if(!window.confirm(message))return
+ busy.value=true;error.value=''
+ try{
+  const endpoint='/'+id+'/shots/'+encodeURIComponent(sid)
+  if(isVibe(shot))acceptVibeUpdate(await call(endpoint+'/vibe-undo','POST',{revision:project.value.revision,preview_id:shot.video_request.preview_id}))
+  else if(shot.vibe_reserved)acceptVibeUpdate(await call(endpoint+'/vibe-intent','POST',{revision:project.value.revision,enabled:false}))
+  if(kind==='vibe'){
+   acceptVibeUpdate(await call(endpoint+'/vibe-intent','POST',{revision:project.value.revision,enabled:true}))
+   productionPanel.value='vibe'
+   await nextTick();await vibePanel.value?.show()
+  }else{
+   const current=project.value.shots.find(s=>s.id===sid)
+   if(current.kind!==kind){
+    acceptImageUpdate(await call(endpoint+'/output-kind','POST',{revision:project.value.revision,kind}))
+   }
+   productionPanel.value=kind==='video'?'video':'design'
+  }
+ }catch(e){error.value=e.message}finally{busy.value=false}
+}
 function changeShotKind(shot,event){
  const kind=event.target.value
  if(kind==='vibe'||isVibe(shot)||shot.vibe_reserved){
@@ -287,6 +329,10 @@ const exportRunning=computed(()=>project.value?.status==='exporting')
 const useVideoAudio=ref(true)
 const exportLayoutSettings=ref({video_orientation:'landscape',subtitle_layouts:{}})
 const exportLayoutVariant=ref('both')
+const exportBookends=ref({intro_video_id:'',outro_video_id:''})
+watch(()=>[project.value?.id,project.value?.creation_parameters?.intro_video_id||'',project.value?.creation_parameters?.outro_video_id||''],(value,old)=>{
+ for(const [i,key] of [[1,'intro_video_id'],[2,'outro_video_id']])if(!old||value[0]!==old[0]||exportBookends.value[key]===old[i])exportBookends.value[key]=value[i]
+},{immediate:true})
 const exportLayoutDirty=computed(()=>JSON.stringify(exportLayoutSettings.value.subtitle_layouts)!==JSON.stringify(project.value?.creation_parameters?.subtitle_layouts||{}))
 watch(()=>[project.value?.id,project.value?.creation_parameters?.subtitle_layouts,project.value?.settings?.ratio],(value,old)=>{
  if(!old||value[0]!==old[0]||JSON.stringify(exportLayoutSettings.value.subtitle_layouts)===JSON.stringify(old[1]||{})){
@@ -302,7 +348,7 @@ async function exportVideo(automated=false){
  if(pendingAudioShots.value.length&&!confirm(`还有 ${pendingAudioShots.value.length} 个镜头的配音变化尚未检查。确定仍然合成？取消可返回检查。`)){nextAudioReview();return}
  const audioNote=useVideoAudio.value?'动态片段中的原声音效会降低音量后与 TTS 配音混合。':'动态片段原声将被忽略，成片只使用 TTS 配音。'
  if(!automated&&!confirm('将按字幕时间轴裁切动态片段、补齐静态镜头，并生成字幕版与纯净版成片。\n\n'+audioNote+'\n\n是否开始？'))return
- await run(async()=>{project.value=await call('/'+project.value.id+'/export','POST',{revision:project.value.revision,use_video_audio:useVideoAudio.value,subtitle_layouts:exportLayoutSettings.value.subtitle_layouts});view.value='export'})
+ await run(async()=>{project.value=await call('/'+project.value.id+'/export','POST',{revision:project.value.revision,use_video_audio:useVideoAudio.value,subtitle_layouts:exportLayoutSettings.value.subtitle_layouts,...exportBookends.value});view.value='export'})
 }
 async function openExportFolder(){await run(async()=>{await call('/'+project.value.id+'/export/open','POST')})}
 async function loadVideoModel(){
@@ -807,6 +853,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
   <details open><summary>最终字幕与时间戳 · 只读</summary><div class="subtitle-review-list"><p v-for="scene in project.scenes" :key="scene.slide_id"><time>{{scene.start.toFixed(1)}}～{{scene.end.toFixed(1)}}s</time><span>{{scene.text}}</span></p></div></details>
  </section>
  <section v-if="project&&view==='export'" class="video-card video-history-panel">
+  <VideoBookends :settings="exportBookends" :disabled="busy||exportRunning" />
   <div class="history-heading"><div><p class="eyebrow">阶段 5</p><h2>合成与导出</h2><p class="muted">动态片段按字幕时长裁切，静态镜头自动补帧；旁白和字幕始终沿用本任务确认后的时间轴。</p></div><span class="readonly-badge">{{project.status==='completed'?'已完成':exportRunning?'正在合成':project.status==='export_failed'?'需要重试':'等待合成'}}</span></div>
   <p v-if="project.error" class="studio-notice error">{{project.error}} <button v-if="project.cloud_login_required" @click="requestCloudLogin">重新登录</button></p>
   <details class="export-layout-panel" v-if="project.shots.length"><summary>调整成片布局与字幕 <span class="muted">{{exportLayoutDirty?'有修改 · 合成时保存':'拖动画面、缩放、调整字幕位置'}}</span></summary>
@@ -861,10 +908,10 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
    <p v-if="project.error" class="studio-notice error">{{project.error}}</p>
 </template>
   <div v-if="project.video_waiting_queue?.length&&!videoRunning" class="production-queue-notice"><span>已保存的生成队列待继续，刷新或关闭页面不会丢失。</span><button class="primary-btn" :disabled="busy" @click="resumeVideoQueue">继续等待队列</button></div>
-  <ResizableShotWorkspace class="video-editor" v-if="project.shots.length" scope="dynamic-production"><template #sidebar><VideoShotNavigator :shots="project.shots" :selected="selected" :image-url="imageUrl" :has-warning="shotHasPromptWarning" :scene-assets="sceneAssets" :vibe-recommendations="vibeRecommendations" :duration-issues="durationIssueById" motion :status-label="videoStatusLabel" @select="selected=$event;boundary=1;closeBoundaryEditor()" /></template>
+  <ResizableShotWorkspace class="video-editor" v-if="project.shots.length" scope="dynamic-production"><template #sidebar><VideoShotNavigator :shots="project.shots" :selected="selected" :image-url="imageUrl" :has-warning="shotHasPromptWarning" :scene-assets="sceneAssets" :vibe-tasks="vibeTasks" :vibe-recommendations="vibeRecommendations" :duration-issues="durationIssueById" motion :status-label="videoStatusLabel" @select="selected=$event;boundary=1;closeBoundaryEditor()" /></template>
    <div class="production-toolbar">
-    <div class="production-tabs" role="tablist" aria-label="本镜制作分区"><button role="tab" :aria-selected="productionPanel==='design'" :class="{active:productionPanel==='design'}" @click="productionPanel='design'">画面与提示词</button><button role="tab" :aria-selected="productionPanel==='video'" :class="{active:productionPanel==='video'}" :disabled="selected<0||(!videoStageReady&&!project.audio)" @click="productionPanel='video'">视频生成与结果</button></div>
-    <div v-if="selectedShot" class="production-shot-state"><span :class="{locked:shotRenderLocked(selectedShot)}">{{shotRenderLocked(selectedShot)?selectedShot.video_status==='running'?'本镜生成中 · 编辑已锁定':'本镜已排队 · 可取消后编辑':'本镜可编辑'}}</span><button v-if="selectedShot.video_queued||selectedShot.video_waiting" :disabled="busy||selectedShot.video_status==='running'" @click="cancelVideoQueue(selectedShot)">取消排队并编辑</button></div>
+    <div class="production-tabs" role="tablist" aria-label="本镜制作分区"><button role="tab" :aria-selected="productionPanel==='design'" :class="{active:productionPanel==='design'}" @click="productionPanel='design'">静态画面与提示词</button><button role="tab" :aria-selected="productionPanel==='video'" :class="{active:productionPanel==='video'}" :disabled="selected<0||(!videoStageReady&&!project.audio)" @click="productionPanel='video'">动态视频</button><button role="tab" :aria-selected="productionPanel==='vibe'" :class="{active:productionPanel==='vibe'}" :disabled="selected<0||!project.audio" @click="productionPanel='vibe'">Vibe 动效</button></div>
+    <div v-if="selectedShot" class="production-shot-state"><label v-if="selected>=0" class="adoption-selector">本分镜采用<select aria-label="本分镜采用方式" :value="isVibe(selectedShot)||selectedShot.vibe_reserved?'vibe':selectedShot.kind" :disabled="busy||dirty||!!vibeTasks[selectedShot.id]||shotRenderLocked(selectedShot)||imageAssetRunning(selectedShot)||(storyboardLocked&&!shotEditingStage)" @change="changeAdoption($event)"><option value="static">静态画面</option><option value="video">动态视频</option><option v-if="project.audio" value="vibe">Vibe 动效{{selectedShot.vibe_reserved?'（待采用）':''}}</option></select></label><span :class="{locked:shotRenderLocked(selectedShot)}">{{shotRenderLocked(selectedShot)?selectedShot.video_status==='running'?'本镜生成中 · 编辑已锁定':'本镜已排队 · 可取消后编辑':'本镜可编辑'}}</span><button v-if="selectedShot.video_queued||selectedShot.video_waiting" :disabled="busy||selectedShot.video_status==='running'" @click="cancelVideoQueue(selectedShot)">取消排队并编辑</button></div>
    </div>
     <article v-if="selectedShot&&selected>=0" v-show="productionPanel==='video'" :key="selectedShot.id" class="video-detail motion-detail">
      <div class="shot-local-navigation"><strong>镜头 {{String(selected+1).padStart(2,'0')}} <span>/ {{project.shots.length}}</span></strong><div><button :disabled="selected===0" @click="moveShot(-1)" aria-label="上一个镜头">← 上一镜</button><button :disabled="selected===project.shots.length-1" @click="moveShot(1)" aria-label="下一个镜头">下一镜 →</button></div></div>
@@ -875,7 +922,6 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
        <p v-else class="motion-result-placeholder">本镜暂无画面，可先编辑提示词，再生成核心分镜图。</p>
       </template>
       <template #motion>
-       <ShotVibePreview ref="vibePanel" v-if="project.audio" :key="vibePreviewKey" :project-id="project.id" :shot-id="selectedShot.id" :revision="project.revision" :number="selected+1" :duration="Number(selectedShot.duration)" :active="productionPanel==='video'" :unsaved="dirty" :ready="!!selectedShot.image&&selectedShot.image_status==='completed'" :reserved="!!selectedShot.vibe_reserved" :reserve-locked="busy||imageAssetRunning(selectedShot)||!['storyboard_review','generation_ready','image_review','video_generation_ready','video_review','completed','export_failed'].includes(project.status)" :adopted="isVibe(selectedShot)?selectedShot.video_request.preview_id:''" :recommendation="vibeRecommendations[selectedShot.id]" :design-locked="busy||imageAssetRunning(selectedShot)" :edit-locked="busy||shotRenderLocked(selectedShot)||selectedShot.design_needs_review||!['image_review','video_generation_ready','video_review','completed','export_failed'].includes(project.status)" @update="acceptVibeUpdate"/>
       </template>
       <template v-if="videoStageReady" #auxiliary>
        <div class="motion-secondary-tools">
@@ -912,6 +958,10 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
      </ShotResultOverview>
     </article>
 
+<article v-if="selectedShot&&selected>=0&&project.audio" v-show="productionPanel==='vibe'" class="video-detail vibe-detail">
+<div class="shot-local-navigation"><strong>镜头 {{String(selected+1).padStart(2,'0')}} · Vibe 动效</strong><span>两镜并行设计 · 单路本地渲染</span></div>
+       <ShotVibePreview ref="vibePanel" v-if="project.audio" :key="vibePreviewKey" :project-id="project.id" :shot-id="selectedShot.id" :image-src="selectedShot.image?imageUrl(selectedShot):''" :revision="project.revision" :number="selected+1" :duration="Number(selectedShot.duration)" :active="productionPanel==='vibe'" :unsaved="dirty" :ready="!!selectedShot.image&&selectedShot.image_status==='completed'" :reserved="!!selectedShot.vibe_reserved" :reserve-locked="busy||imageAssetRunning(selectedShot)||!['storyboard_review','generation_ready','image_review','video_generation_ready','video_review','completed','export_failed'].includes(project.status)" :adopted="isVibe(selectedShot)?selectedShot.video_request.preview_id:''" :recommendation="vibeRecommendations[selectedShot.id]" :design-locked="busy||imageAssetRunning(selectedShot)" :edit-locked="busy||shotRenderLocked(selectedShot)||selectedShot.design_needs_review||!['image_review','video_generation_ready','video_review','completed','export_failed'].includes(project.status)" @update="acceptVibeUpdate"><template #narration><div class="shot-subtitles"><strong>本镜文案</strong><p v-for="id in selectedShot.slide_ids" :key="id">{{scenesById[id]?.text}}</p></div></template></ShotVibePreview>
+</article>
    <div v-if="selected>=0&&selectedShot&&!isVibe(selectedShot)&&needsAutoSplit(selectedShot,selectedSplitMaximum)" class="auto-split-notice"><div><strong>本镜超过 {{selectedSplitMaximum}} 秒</strong><p>可拆分本镜或连同前后动态镜头重规划；也可单独更换支持该时长的生成通道。</p></div><button type="button" :disabled="!canEditStructure" @click="openAutoSplit()">自动拆分并重规划</button></div>
    <template v-if="selected>=0&&selectedShot&&productionPanel==='design'"><div class="structure-toolbar"><strong>局部返修</strong><button type="button" :disabled="!canEditStructure||selected===0" @click="selected-=1;openBoundaryEditor('boundary')">与上一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selected===project.shots.length-1" @click="openBoundaryEditor('boundary')">与下一镜调整字幕</button><button type="button" :disabled="!canEditStructure||selectedShot.slide_ids.length<2" @click="openBoundaryEditor('split')">拆分 / 新增分镜</button><button v-if="project.structure_history?.length" type="button" :disabled="!canEditStructure||videoRunning||Boolean(project.video_waiting_queue?.length)" @click="undoStructure">撤回结构调整</button><button v-if="shotEditingStage&&selectedShot.design_needs_review" type="button" :disabled="busy||imageEditRunning" @click="confirmDesign">确认本镜修改</button><span v-else-if="selectedShot.design_review_confirmed" class="muted">修改已确认</span></div></template>
    <div v-for="{shot,i} in storyboardRows" :key="shot.id" :data-design-shot="shot.id" v-show="i===selected&&productionPanel==='design'" class="video-detail">
@@ -926,7 +976,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
       </fieldset></template>
       <template #prompts><fieldset :disabled="busy||imageAssetRunning(shot)||['planning','stopping'].includes(project.status)">
      <label v-if="i>=0">这一镜头想表达什么<input v-model="shot.intent" :disabled="busy||imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @input="rememberMotionDraft(shot)"></label>
-     <div v-if="i>=0" class="video-row"><label>画面类型<select :value="isVibe(shot)||shot.vibe_reserved?'vibe':shot.kind" @input.stop @change="changeShotKind(shot,$event)" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)"><option value="static">静态画面</option><option value="video">动态视频</option><option v-if="project.audio" value="vibe">Vibe 图层动效（预览后采用）</option></select></label><div v-if="shot.kind==='video'&&projectReferenceAudio" class="shot-audio-settings"><span>参考音频</span><label><input type="checkbox" :checked="shot.reference_audio_enabled!==false" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @change="shot.reference_audio_enabled=$event.target.checked;rememberMotionDraft(shot)">本镜启用</label><label :class="{disabled:shot.reference_audio_enabled===false}"><input type="checkbox" :checked="shot.reference_audio_lipsync!==false" :disabled="shot.reference_audio_enabled===false||imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @change="shot.reference_audio_lipsync=$event.target.checked;rememberMotionDraft(shot)">人物对口型</label></div><p class="muted">使用 {{shot.duration}} 秒<span v-if="shot.kind==='video'"> · 请求 {{Math.max(4,Math.ceil(shot.duration))}} 秒</span></p></div>
+     <div v-if="i>=0" class="video-row"><div v-if="shot.kind==='video'&&projectReferenceAudio" class="shot-audio-settings"><span>参考音频</span><label><input type="checkbox" :checked="shot.reference_audio_enabled!==false" :disabled="imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @change="shot.reference_audio_enabled=$event.target.checked;rememberMotionDraft(shot)">本镜启用</label><label :class="{disabled:shot.reference_audio_enabled===false}"><input type="checkbox" :checked="shot.reference_audio_lipsync!==false" :disabled="shot.reference_audio_enabled===false||imageAssetRunning(shot)||(storyboardLocked&&!shotEditingStage)" @change="shot.reference_audio_lipsync=$event.target.checked;rememberMotionDraft(shot)">人物对口型</label></div><p class="muted">使用 {{shot.duration}} 秒<span v-if="shot.kind==='video'"> · 请求 {{Math.max(4,Math.ceil(shot.duration))}} 秒</span></p></div>
      <p v-if="shot.audio_timing_adjustment&&!shot.design_needs_review" class="image-edit-status completed">新配音时长已同步：已有动态片段继续复用；导出时会自动裁切较长片段，或匀速放慢较短片段以贴合本镜配音。</p>
      <p v-if="shot.duration_repair?.note" class="duration-repair-note" :class="{'needs-review':['boundary_fallback','single_subtitle_static'].includes(shot.duration_repair.method)}">{{shot.duration_repair.note}}</p>
      <p v-if="shot.warning" class="studio-notice">{{shot.warning}}</p>
@@ -1062,6 +1112,7 @@ onUnmounted(()=>{clearInterval(timer);stopBoundaryPreview();stopMotionPreviewAud
  </Teleport>
 </template>
 <style scoped>
+.adoption-selector{display:flex;align-items:center;gap:8px;font-size:13px}.adoption-selector select{min-width:130px;padding:8px 10px}.vibe-detail>.shot-subtitles{margin:16px 0}.vibe-detail .shot-local-navigation span{font-size:12px;color:var(--muted)}
 .shot-design-references{padding:13px 15px;border:1px solid var(--border,#35423f);border-radius:10px;margin:0 0 16px}.shot-design-references>summary{cursor:pointer;font-size:13px;font-weight:650}.shot-design-references>summary span{font-weight:400;font-size:12px;color:var(--muted,#aab8b3);margin-left:10px}.shot-design-references[open]>summary{margin-bottom:14px}.shot-design-references :deep(.planned-references){margin-bottom:0}.shot-design-references .shot-scene-reference{margin:12px 0 0}@media(max-width:600px){.shot-design-references>summary span{display:block;margin:6px 0 0}}
 .motion-detail .motion-preview{display:block;margin:0}.motion-detail .motion-preview video{max-height:min(48vh,480px);margin:0}.motion-result-image{position:relative;border-radius:12px;overflow:hidden}.video-workspace .motion-result-image img{display:block;max-height:min(48vh,480px);width:100%;object-fit:contain}.motion-image-caption{display:block;padding:8px 12px;font-size:12px;color:var(--muted,#aab8b3);background:var(--panel,#1e2625)}.motion-result-placeholder{display:grid;place-items:center;min-height:190px;padding:24px;border:1px dashed var(--border,#35423f);border-radius:12px;color:var(--muted,#aab8b3);text-align:center;line-height:1.7}.motion-secondary-tools{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}.motion-secondary-tools .motion-upload-button{margin-left:auto}.motion-generation-settings{padding:13px 15px;border:1px solid var(--border,#35423f);border-radius:10px;margin:16px 0}.motion-generation-settings>summary{cursor:pointer;font-size:13px;font-weight:650}.motion-generation-settings>summary span{font-size:12px;font-weight:400;margin-left:10px;color:var(--muted,#aab8b3)}.motion-generation-settings[open]>summary{margin-bottom:14px}.motion-result-log{margin-bottom:0!important}.motion-core-reference{margin-top:14px}.motion-secondary-tools .motion-download{margin:0}@media(max-width:600px){.motion-secondary-tools{align-items:flex-start}.motion-secondary-tools .motion-upload-button{margin-left:0}.motion-detail .motion-preview video{min-height:140px}.motion-generation-settings>summary span{display:block;margin:6px 0 0}}
 .auto-split-dialog header>button{flex-shrink:0;white-space:nowrap}

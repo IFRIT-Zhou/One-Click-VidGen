@@ -380,6 +380,28 @@ class ShotcraftPipelineTests(unittest.TestCase):
         return dict(recipes=['outro-group-photo-launch'], reason='短镜头保留原始证据后收束',
                     source_style=source_style())
 
+    def test_template_background_uses_project_route_once_and_reaches_renderer(self):
+        before = (self.project / 'record.json').read_bytes()
+        route = {'key':'a'*64,'label':'个人 API'}
+        def generate(*args, **kwargs):
+            self.assertIn('完全移除前景人物', args[1])
+            self.assertEqual(kwargs['image_route'], route)
+            self.assertEqual(kwargs['image_config'], {'test':True})
+            kwargs['on_submitted']('offline-background-task')
+            return {'path':self.project/'ref3.png'}
+        with patch('backend.app.vibe_image_route.resolve', return_value=({'test':True}, route)), \
+             patch.object(shotcraft, 'generate_asset', side_effect=generate) as image, \
+             patch.object(cloud, 'chat_json', side_effect=self.answers(
+                 self.selection(), proposal(), {'passed':True,'issues':[]})), \
+             patch.object(cloud, 'render_scene', side_effect=self.render) as render:
+            self.start(max_image_requests=1, image_route_key='a'*64)
+            task = self.finish()
+        self.assertEqual(task['status'], 'completed', task)
+        image.assert_called_once()
+        self.assertIn('template_background', render.call_args.kwargs['assets'])
+        self.assertEqual(task['usage']['image_requests'], 1)
+        self.assertEqual((self.project/'record.json').read_bytes(), before)
+
     def answers(self, *entries):
         return [self.response(entry) for entry in entries]
 
@@ -396,7 +418,7 @@ class ShotcraftPipelineTests(unittest.TestCase):
                 self.selection(), proposal(), {'passed': True, 'issues': []})) as model, \
              patch.object(shotcraft, 'neighbor_templates', return_value=[{'shot_id': 'neighbor',
                 'position': 'previous', 'recipes': ['carousel-3d'], 'source': 'completed_preview'}]):
-            self.start(max_image_requests=12)
+            self.start(max_image_requests=0)
             task = self.finish()
             self.assertEqual(task['status'], 'completed', task)
             receipt = task['preview']

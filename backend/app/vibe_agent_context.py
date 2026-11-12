@@ -119,7 +119,9 @@ def working_context(state, fingerprint):
             validation_error=error if is_current or not error else str(error)[:280],
             validation_scope='current_candidate' if is_current else 'historical_attempt_only',
             image_ids=item['image_ids'] if is_current else [], current=is_current))
+    from .vibe_agent_diagnostics import iteration_guidance
     return dict(observations=observations, recent_tool_results=recent, previews=summaries,
+                iteration_guidance=iteration_guidance(state['events']),
                 review_context=dict(current_candidate=binding(current) if current else None,
                     current_review=deepcopy(current_review), previous_findings_to_recheck=pending,
                     rule='旧问题是指定版本的待复查观察，不是新图的既定事实。看当前完整结果/局部图核实；'

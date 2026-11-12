@@ -12,13 +12,16 @@ from pathlib import Path
 import struct
 import subprocess
 import threading
+
+_render_slot = threading.Lock()
 import time
 from typing import Annotated
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from .vibe_transitions import Entrance, composite
 
-RENDERER_VERSION = 'ocv-vibe-layers-2'
+RENDERER_VERSION = 'ocv-vibe-layers-3'
 FPS = 30
 MAX_SECONDS = 60
 MAX_PIXELS = 16_777_216
@@ -57,6 +60,7 @@ class Motion(_Fields):
 
 
 class VibePlan(_Fields):
+    entrance: Entrance | None = None
     sequence: list[Motion] = Field(min_length=1, max_length=16,
                                    description='Back-to-front paint order; exactly one entry per extracted layer.')
     fade_in: float = Field(default=.5, strict=True, ge=0, le=3, allow_inf_nan=False)
@@ -122,6 +126,13 @@ class _Scene:
         self.count = round(duration*FPS)
         self.fade_in, self.fade_out = plan.fade_in, plan.fade_out
         self.plate = _load_png(assets['plate'], size, self.size, plate=True)
+        self.entrance = plan.entrance
+        def load_frame(key):
+            if not assets.get(key):return None
+            with Image.open(assets[key]) as image:
+                return ImageOps.exif_transpose(image).convert('RGB').resize(self.size,Image.Resampling.LANCZOS)
+        self.previous = load_frame('previous') or Image.new('RGB',self.size,self.plate.getpixel((0,0)))
+        self.core = load_frame('core')
         self.flat = Image.new('RGB', self.size, self.plate.getpixel((0,0)))
         self.line_height = max(3,round(6*h/ch))
         self.line_width = max(2,round(2*w/cw))
@@ -171,6 +182,9 @@ class _Scene:
 
     def frame(self, i):
         t = i/FPS
+        if self.entrance and self.entrance.kind!='layered':
+            if self.core is None:raise ValueError('入场转场缺少当前核心图')
+            return composite(self.previous,self.core,t/min(self.entrance.seconds,max(1/FPS,(self.count-1)/FPS)),self.entrance.kind)
         frame = self.plate.copy()
         for layer in self.layers:
             if t < layer.start: continue
@@ -192,6 +206,8 @@ class _Scene:
                     if height:
                         ImageDraw.Draw(frame).rounded_rectangle((cx-self.line_width,cy-height,cx+self.line_width,cy+height),
                                                                radius=self.line_width,fill='#59decf')
+        if self.entrance:
+            return composite(self.previous,frame,t/min(self.entrance.seconds,max(1/FPS,(self.count-1)/FPS)),'layered')
         opacity = min(_ease(t/self.fade_in) if self.fade_in else 1,
                       _ease(((self.count-1-i)/FPS)/self.fade_out) if self.fade_out else 1)
         return Image.blend(self.flat,frame,opacity) if opacity<1 else frame
@@ -205,6 +221,8 @@ class _ProofSheet:
         end = math.floor(last-min(scene.fade_out*FPS,last*.35))
         end = max(first,end)
         candidates = {first,end}
+        if scene.entrance:
+            candidates.update(min(end,max(first,round(scene.entrance.seconds*f*FPS))) for f in (.25,.5,1))
         for layer in scene.layers:
             beats = [layer.start+layer.motion.seconds*.55,layer.start+layer.motion.seconds]
             if layer.motion.settle:
@@ -314,7 +332,13 @@ def _audio_length(path):
     raise ValueError('找不到完整的 WAV 音轨')
 
 
-def render_preview(*,plan:VibePlan,manifest:dict,assets:dict[str,Path],cues:dict[str,float],audio:Path,
+def render_preview(**kwargs):
+    # Local fallback and cloud/Remotion share one rendering lane.
+    with _render_slot:
+        return _render_preview(**kwargs)
+
+
+def _render_preview(*,plan:VibePlan,manifest:dict,assets:dict[str,Path],cues:dict[str,float],audio:Path,
                    start:float,duration:float,output_dir:Path,ffmpeg:str,timeout:float=150) -> dict:
     """Render narrated and silent clips plus a contact sheet in an empty staging directory."""
     if not math.isfinite(start) or start<0 or not .1<=duration<=MAX_SECONDS or not 0<timeout<=300:

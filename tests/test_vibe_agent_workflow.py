@@ -879,6 +879,16 @@ class AgentWorkflowTests(unittest.TestCase):
         self.assertEqual([item['previous_response'] for item in formats], ['{first', '{second'])
         self.assertEqual(self.model.call_count, 4)
 
+    def test_three_invalid_responses_pause_without_burning_entire_budget(self):
+        self.responses = [workflow.ModelResponseFormatError('JSON错误', response_text='{"a":1},"b":2}') for _ in range(4)]
+        with self.assertRaisesRegex(ValueError, '连续 3 次'):
+            self.session.run()
+        self.assertEqual(self.model.call_count, 3)
+        evidence=self.session.state['observations']['response_format']['syntax_diagnostic']
+        self.assertEqual(evidence['message'],'Extra data')
+        self.assertGreater(evidence['column'],1)
+        self.assertIsNone(self.session.accepted)
+
     def test_restore_legacy_state_clears_superseded_error_and_preserves_latest_error(self):
         old = dict(ok=False, error='旧契约错误', previous_response={'tool': 'set_inventory'})
         for later_tool in (False, True):
@@ -1113,6 +1123,8 @@ class AgentWorkflowTests(unittest.TestCase):
         second = self.session.inspect(args)
         self.assertEqual(first['receipt']['asset_id'], second['receipt']['asset_id'])
         self.assertTrue(second['receipt']['cached'])
+        self.assertEqual(second['receipt']['inspection_count'], 2)
+        self.assertTrue(second['images'])
         self.assertEqual(second['receipt']['requested_asset_id'], 'core')
         self.assertEqual(second['receipt']['region'], (.1, .1, .8, .8))
         self.assertEqual(second['receipt']['epoch'], self.session.workspace.epoch)

@@ -1,7 +1,8 @@
 """Bounded dedicated-model -> pinned recipes -> trusted Remotion -> review.
 
-No GPT service, source code execution, image API, TTS, automatic adoption or
+No GPT service, source code execution, TTS, automatic adoption or
 project-record writes. Every paid call and retained attempt is auditable.
+An explicitly authorized image request extracts the decorative background.
 """
 from __future__ import annotations
 
@@ -21,7 +22,14 @@ from .vibe_shotcraft_guidance import (SELECTION, DIRECTOR, REVIEW, GUIDANCE_VERS
 from .vibe_shotcraft_capabilities import (VERSION as CAPABILITY_VERSION, capabilities_for,
                                         selection_taxonomy, motion_families, validate_capability_catalog)
 from .vibe_cloud_client import CloudCallError
-from .vibe_materials import MaterialError, crop_asset
+from .vibe_materials import MaterialError, crop_asset, generate_asset
+
+BACKGROUND_PROMPT = '''编辑输入分镜海报，提取可供重新排版的干净背景，不重新设计海报。
+只保留原图背景的色调、渐变、纹理、光影、氛围和背景装饰元素（如边缘光带、粒子、抽象纹样）。
+完全移除所有文字、数字、标题、标签、文本框、卡片、表格、图表、数据条、坐标轴、指示线和标注箭头。
+完全移除前景人物、器官、医疗器械、输液袋、产品、照片、期刊及其他复杂主体，不要将这些主体留在背景中。
+移除区域按周围原始背景自然补全，消除残字、轮廓、矩形色块、接缝和重影。
+不要新增主体、文字、水印或新装饰。保留原图画幅与背景装饰位置，交付一张完整干净底图。'''
 
 
 def prepare_original_crops(proposal, assets, output_dir):
@@ -203,6 +211,20 @@ def run_worker(project, sid, job_id, config, data, event):
         digest, seek = api.previews._audio(audio, start, end, folder/'narration.wav')
         if digest != a_hash:
             raise CloudCallError('配音已改变，请按最新时间轴重试')
+        if data.max_image_requests:
+            check()
+            api._update(path, stage='background', message='按本项目图像渠道提取干净背景：保留背景装饰，移除文字、文本框及复杂主体')
+            def submitted(identity):
+                usage = api._read_job(project, job_id)['usage']
+                usage.update(image_requests=1, image_task_ids=[identity])
+                api._update(path, usage=usage)
+            background = generate_asset(config['layered_owner_id'], BACKGROUND_PROMPT,
+                [assets['core']], resources, 'template_background', cancelled,
+                background_canvas=context['canvas'], on_submitted=submitted,
+                image_config=config['layered_image_config'], image_route=config['layered_image_route'])
+            assets['template_background'] = background['path']
+            context['template_background'] = {'asset_id':'template_background',
+                'usage':'已由图像模型移除文字和复杂主体的固定全画布背景。所有模板自动使用，不得裁成卡片；参考此底图安排可读文字。'}
         neighbors = neighbor_templates(api, project, sid)
         for neighbor in neighbors:
             neighbor['motion_families'] = motion_families(neighbor['recipes'])
@@ -212,7 +234,7 @@ def run_worker(project, sid, job_id, config, data, event):
                            'requested_template_ids': requested_templates,
                            'must_use_all': bool(requested_templates),
                            'allow_other_templates': not bool(requested_templates), 'order': 'director'},
-                       original_asset_ids=list(assets), display_asset_ids=[k for k in assets if k != 'core'],
+                       original_asset_ids=[k for k in assets if k != 'template_background'], display_asset_ids=[k for k in assets if k not in ('core','template_background')],
                        material_capabilities={'original_pixel_crop': True, 'max_crops': 4,
                                               'matting': False, 'image_generation': False})
         api._write(folder/'input_context.json', context)
@@ -357,9 +379,9 @@ def run_worker(project, sid, job_id, config, data, event):
                 'cached': False, 'may_charge': True, 'summary': proposal.summary, 'source_notes': proposal.source_notes,
                 'visual_basis': proposal.visual_basis.model_dump(mode='json'),
                 'source_style': frozen_style.model_dump(mode='json'),
-                'material_policy': 'original_pixels_with_crops' if proposal.crops else 'original_inputs_only',
+                'material_policy': 'original_subjects_with_generated_background' if 'template_background' in assets else ('original_pixels_with_crops' if proposal.crops else 'original_inputs_only'),
                 'original_crops': crop_specs(proposal, assets),
-                'max_image_requests': 0, 'cloud_task_id': job_id,
+                'max_image_requests': data.max_image_requests or 0, 'cloud_task_id': job_id,
                 'usage': api._read_job(project, job_id)['usage']}
             api._write(out/'receipt.json', receipt)
             store = api.previews._store(project)

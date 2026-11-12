@@ -191,6 +191,7 @@ class VideoRenderAccelerationTest(unittest.TestCase):
             24.0,
             fps=30,
             fade_duration=0.8,
+            transition='dissolve',
         )
         self.assertIn("offset=7.000000", script)
         self.assertIn("offset=15.000000", script)

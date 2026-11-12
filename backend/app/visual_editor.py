@@ -2277,6 +2277,8 @@ class VisualEditor:
                     for variant, (source, target) in outputs.items():
                         if variant not in selected:
                             continue
+                        from .video_bookends import apply_bookends
+                        apply_bookends(source, job.user_id, job.request)
                         shutil.copy2(source, target)
                         artifact = JOBS_DIR / job.id / "artifacts" / source.name
                         shutil.copy2(source, artifact)

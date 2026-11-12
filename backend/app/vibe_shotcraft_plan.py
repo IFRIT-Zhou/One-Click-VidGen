@@ -142,6 +142,8 @@ def crop_specs(proposal, original_ids):
     specs = {}
     used = {item.asset_id for stage in proposal.scene.stages for item in stage.items} if proposal.scene else set()
     for crop in proposal.crops:
+        if crop.source == 'template_background':
+            raise ValueError('生成的模板底图只作背景，不可当作原始证据裁切')
         if crop.id.startswith('render_'):
             raise ValueError('裁切素材编号不能占用审查帧的render_命名空间')
         if crop.id in originals or crop.id in specs:
@@ -184,6 +186,8 @@ def compile_shotcraft_plan(plan: ShotcraftPlan, cues, duration: float, asset_ids
         if stage.recipe == 'outro-group-photo-launch' and end-stage.at > 6.001:
             raise ValueError(f'阶段{stage.id}把收束模板占用{end-stage.at:.2f}秒，聚合动作后会长时间静止。收束最多6秒；将前面仍在讲解的内容用spotlight/relay表达，保留末段收束，不得压缩原配音')
         for item in stage.items:
+            if item.asset_id == 'template_background':
+                raise ValueError('模板底图自动铺满背景，不可作为卡片主体')
             if item.asset_id == 'core':
                 raise ValueError('core 是整张分镜海报，只用于阅读，不得当成已抠出的主体显示')
             if item.asset_id and item.asset_id not in known:

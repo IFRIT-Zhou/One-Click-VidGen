@@ -581,6 +581,8 @@ const form = reactive({
   image_profile_id: '',
   image_resolution: '2k',
   video_render_variant: 'both',
+  intro_video_id: '',
+  outro_video_id: '',
   video_orientation: 'landscape',
   subtitle_layouts: {},
   bgm_enabled: false,
@@ -4516,6 +4518,9 @@ async function renderEditedVideo() {
       return
     }
     const renderPayload = {
+      intro_video_id: visualPresentation.intro_video_id || '',
+      outro_video_id: visualPresentation.outro_video_id || '',
+      image_transition: visualPresentation.image_transition || 'none',
       mode: visualRenderMode.value,
       video_orientation: visualPresentation.video_orientation,
       subtitle_layouts: visualPresentation.subtitle_layouts,
@@ -4767,6 +4772,9 @@ function guidedVisualParameters() {
 
 function guidedRenderParameters() {
   return {
+    intro_video_id: form.intro_video_id || '',
+    outro_video_id: form.outro_video_id || '',
+    image_transition: visualPresentation.image_transition || 'none',
     video_orientation: form.video_orientation,
     subtitle_layouts: form.subtitle_layouts,
     video_render_variant: form.video_render_variant,

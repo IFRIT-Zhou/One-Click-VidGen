@@ -145,7 +145,7 @@ def _clean_plate(original, union):
     return result
 
 
-def create_pack(source: Path, store: Path, data: LayerPackRequest, *, project_id: str, shot_id: str):
+def create_pack(source: Path, store: Path, data: LayerPackRequest, *, project_id: str, shot_id: str, preserve_plate=False):
     # Hash the SAME bounded bytes that PIL decodes, even if another process replaces the shot.
     with source.open('rb') as f:
         if source.stat().st_size > MAX_BYTES:
@@ -155,7 +155,7 @@ def create_pack(source: Path, store: Path, data: LayerPackRequest, *, project_id
         raise HTTPException(413, '分镜图文件过大')
     if _hash(content) != data.source_sha256:
         raise HTTPException(409, '分镜图版本已改变，请重新读取当前分镜与选区')
-    fingerprint = json.dumps([ALGORITHM, project_id, shot_id, data.model_dump(mode='json')],
+    fingerprint = json.dumps([ALGORITHM+('-whole-frame' if preserve_plate else ''), project_id, shot_id, data.model_dump(mode='json')],
                              ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     pack_id = _hash(fingerprint.encode())[:32]
     store.mkdir(parents=True, exist_ok=True)
@@ -206,7 +206,15 @@ def create_pack(source: Path, store: Path, data: LayerPackRequest, *, project_id
                 tile.save(output / (asset+'.png'))
                 manifest['elements'].append(dict(asset_id=asset, name=mask.name, shape=mask.shape,
                          box=list(mask.box), box_px=list(box), url=base_url+asset))
-        _clean_plate(original, union).save(output / 'plate.png')
+        if preserve_plate:
+            # Internal whole-poster transition path: no inpainting or extraction.
+            # The public layer-pack endpoint never enables this option.
+            if len(boxes)!=1 or boxes[0]!=(0,0,w,h) or data.cleanup:
+                raise HTTPException(422,'整图转场必须使用完整画布')
+            original.save(output / 'plate.png')
+            manifest['clean_plate'].update(method='original_whole_frame',needs_visual_review=False)
+        else:
+            _clean_plate(original, union).save(output / 'plate.png')
         union.save(output / 'plate-mask.png')  # Internal binary authority for bounded AI plate refinements.
         (output / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
         try:

@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.13.1",
-  "release_order": 2026111301,
-  "display_version": "2026.11.13 组件管理与配音返修更新",
+  "release_id": "2026.11.13.2",
+  "release_order": 2026111302,
+  "display_version": "2026.11.13 Vibe 工作台与本地转场更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.13.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.13.2/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新增清单驱动的可选组件管理、Remotion 缺失依赖安装及抠图权重校验导入；已有组件和模型保留。独立 RMBG 不再借用 ComfyUI 依赖。修复段落改稿、字幕定位及交界调整；统一页面和 Launcher 的发布版本显示。保留近期公告与计费修复。SelfLift 授权待核实组件不随更新包分发。",
-  "content_fingerprint": "7c7ab8f4e5e4db6994e7331b6c0935be6884c78f959a6516e15c8218d82abf1a"
+  "notes": "整合静态/动态/Vibe三分页与顶部采用方式、两镜设计单路渲染、本镜停止与追加预算、本地入场转场、模板背景提取、配音播放跟随及片头片尾。保留远端收费、渠道、公告与组件管理更新；不覆盖用户素材、模型、配置。",
+  "content_fingerprint": "55e642c9dfdb9dab4aca84c46dfb45eb6092250181fec4380244dd91eea594ff"
 }

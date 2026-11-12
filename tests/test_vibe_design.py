@@ -1,5 +1,6 @@
 """Fresh synthetic artwork and final audio; no cloud, no production project."""
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -43,6 +44,23 @@ class TestVibeDesign(unittest.TestCase):
     def write(self):
         (self.project/'record.json').write_text(json.dumps(self.record,ensure_ascii=False),encoding='utf8')
 
+    def test_whole_poster_transition_uses_previous_adopted_image_and_detects_changes(self):
+        Image.new('RGB',(480,270),'#aa2255').save(self.project/'previous.png')
+        self.record['shots'].insert(0,dict(id='previous',kind='static',image='previous.png',image_status='completed',duration=2))
+        self.write()
+        with patch.object(design,'_offline_words',side_effect=AssertionError('whole-image transitions need no OCR')):
+            result=self.make(transition='brush',transition_seconds=1.2)
+        plan=result['preview_request']
+        self.assertEqual(plan['plan']['entrance'],{'kind':'brush','seconds':1.2})
+        self.assertEqual(plan['plan']['fade_out'],0)
+        receipt=preview.create(self.id,'s1',preview.PreviewRequest.model_validate(plan),self.request)
+        self.assertEqual(receipt['transition_source']['shot_id'],'previous')
+        from backend.app.vibe_transition_source import validate
+        validate(self.project,'s1',receipt['transition_source'])
+        Image.new('RGB',(480,270),'green').save(self.project/'previous.png')
+        with self.assertRaises(HTTPException):validate(self.project,'s1',receipt['transition_source'])
+        self.assertFalse(preview.latest(self.id,'s1',self.request)['available'])
+
     def make(self,**kwargs):
         return design.design(self.id,'s1',design.DesignRequest(**kwargs),self.request)
 
@@ -51,7 +69,10 @@ class TestVibeDesign(unittest.TestCase):
         with patch.object(design,'_model',side_effect=AssertionError('unexpected model call')):
             a=self.make()
             self.assertFalse(a['may_charge'] or a['model_called'])
-            self.assertEqual({el['name']:el['cue'] for el in a['layers']},{'甲楼':'cue-A','乙楼':'cue-A','丙单位':'cue-B'})
+            self.assertEqual({el['name'] for el in a['layers']},{'甲楼','乙楼','丙单位'})
+            sequence=a['preview_request']['plan']['sequence']
+            early=[m for m in sequence if m['cue']=='cue-A' and m['delay']+m['seconds']<=1.001]
+            self.assertGreaterEqual(len(early),math.ceil(len(sequence)*.6))
             req=a['preview_request']
             self.assertEqual(req['input_stamp'],preview._snapshot(self.project,'s1')[0])
             self.assertTrue(self.make()['cached'])

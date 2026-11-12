@@ -22,7 +22,7 @@ AssetId = Annotated[str, Field(pattern=r'^[A-Za-z0-9_:-]{1,80}$')]
 SubjectId = Annotated[str, Field(pattern=r'^subject_[0-7]$')]
 ToolName = Literal[
     'inspect_image', 'locate_elements', 'set_inventory', 'prepare_subject', 'edit_background',
-    'select_background', 'measure_text', 'preview_scene', 'review_evidence', 'finish', 'report_blocker',
+    'select_background', 'select_subject', 'measure_text', 'preview_scene', 'review_evidence', 'finish', 'report_blocker',
 ]
 
 
@@ -94,6 +94,11 @@ class LocateElementsArgs(InspectImageArgs):
         if value is not None and not value.strip():
             raise ValueError('查找文字不能只有空白')
         return value
+
+
+class SelectSubjectArgs(Strict):
+    subject_id: SubjectId
+    asset_id: AssetId = Field(description='reusable_subjects 中 prepared 素材的完整 asset_id，不接受短ID、路径或截图。选择后用 subject_id 渲染，不直接用 material ID。')
 
 
 class PrepareSubjectArgs(Strict):
@@ -269,6 +274,7 @@ ARGUMENT_MODELS = {
     'locate_elements': LocateElementsArgs,
     'set_inventory': SetInventoryArgs,
     'prepare_subject': PrepareSubjectArgs,
+    'select_subject': SelectSubjectArgs,
     'edit_background': EditBackgroundArgs,
     'select_background': SelectBackgroundArgs,
     'measure_text': MeasureTextArgs,
@@ -279,6 +285,7 @@ ARGUMENT_MODELS = {
 }
 
 _DESCRIPTIONS = {
+    'select_subject': '选择已完成的历史主体素材并绑定到当前subject_N，连同裁区和几何一起恢复；仅同一来源、相交裁区，须自行确认主体身份。无需重新抠图或出图。旧预览失效，需重新preview_scene。',
     'inspect_image': '查看完整图片或放大局部，核对主体边缘、原字、颜色和工具结果。',
     'locate_elements': '本地测量已绑定图片中的文字区域、框线候选；可全图或局部重新定位，返回置信度和坐标。免费本地工具，不出图、不自动修改设计；重复识别可复用缓存。',
     'set_inventory': '登记或修订内容/来源清单，选择独立取材或留在底图；可重新规划，不预设创作顺序。',
@@ -360,6 +367,10 @@ image_roles明确区分原图、当前渲染结果、动画帧、局部左右对
 审核意见绑定preview_id、代码和素材版本。review_context中的previous_findings_to_recheck是旧版待复查观察，不能认定在新图中仍存在，也不能直接忽略；先看当前完整poster或inspect_image核实。若实际存在而旧审核说缺失，保留正确部分并说明证据，调用finish让当前版本独立复核，不要为了迎合旧意见反复重画。
 预览只说明本地检查是否通过，不等于视觉验收。查看每次返回的实际边界、裁切反馈和截图，由你决定如何修复；未解决的事实错误、缺损和遮挡不能靠新版本号消除。'''
 
+
+GUIDE += '''
+历史主体素材的完整 material ID 可以 inspect_image，但不能直接用于 Scene。先从 material_status.reusable_subjects 核对来源、裁区及人物身份，再 select_subject(subject_id, asset_id) 绑定；工具会同步恢复裁区和几何，Scene 使用稳定的 subject_N。不要截短 ID。选择后旧预览失效，需要重新校样。重复查看同一像素不会获得新证据，可选择新的局部、对照来源或落实已确认的修正；工具不会禁止必要的复核。
+'''
 
 CODING_GUIDE = '''Scene编程工具说明（不是视觉模板）：
 代码是完整的function Scene(ctx) { const w=ctx.width; const h=ctx.height; return <div style={{position:'absolute',inset:0}}>...</div>; }。ctx包含width,height,duration,fps,frame,poster,measurements,geometry；另提供受控进度工具ctx.progress(start,end)，尺寸用输出画布像素，时间用秒。

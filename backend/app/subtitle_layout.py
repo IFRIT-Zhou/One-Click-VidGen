@@ -46,8 +46,10 @@ def from_env():
 
 
 def presentation_env(request):
+    from .illustrated_transitions import normalize
     data = {key: request.get(key) for key in ('video_orientation','subtitle_layouts')}
     result = {'OCV_PRESENTATION_JSON':json.dumps(data,ensure_ascii=False)}
+    result['OCV_IMAGE_TRANSITION']=normalize(request.get('image_transition'))
     if data['video_orientation'] == 'portrait':
         result['RUNNINGHUB_TARGET_RATIO'] = '9:16'
     return result

@@ -135,8 +135,8 @@ class Inventory(Strict):
         retained_count=len(self.background_retained)
         if summary.subject_count != count or summary.background_retained_count != retained_count or summary.has_nontext_subjects != bool(count+retained_count):
             raise ValueError('foreground_summary 的主体判断/数量与subjects、background_retained两表不一致；请清点独立取材和底图保留项，不能遗漏主体')
-        if self.background_retained and self.background!='extract':
-            raise ValueError('background_retained必须使用extract编辑core原图，不能用其他背景替代')
+        if self.background_retained and self.background!='extract' and not self.background.startswith('background_version_'):
+            raise ValueError('background_retained需要background="extract"，或已登记的background_version_底图版本ID；不能使用core冒充干净底图。复用时保留原底图recipe.retained清单，由素材工具核对来源，不需要再次出图。')
         if not count and not retained_count and not summary.text_only_reason:
             raise ValueError('subjects 为空时必须明确 text_only_reason：确认原图确为纯文字/抽象装饰，没有独立人物、物件、图标、照片或图表')
         if count+retained_count and summary.text_only_reason is not None:

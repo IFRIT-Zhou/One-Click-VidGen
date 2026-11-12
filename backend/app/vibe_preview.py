@@ -225,7 +225,11 @@ def create(identity:str, shot_id:str, data:PreviewRequest, request:Request):
             layer=el.get('asset_id','')
             assets[layer]=pack_asset_path(project,data.pack_id,layer)
         plan=data.plan.model_dump(mode='json')
-        preview_id=_hash([stamp,manifest,plan])[:32]
+        dependency=None
+        if data.plan.entrance:
+            from .vibe_transition_source import source
+            dependency=source(project,shot_id)[0]
+        preview_id=_hash([RENDERER_VERSION,stamp,manifest,plan,dependency])[:32]
         store=_store(project); store.mkdir(parents=True,exist_ok=True)
         dest=_safe(project,store/preview_id)
         if dest.exists():
@@ -236,6 +240,13 @@ def create(identity:str, shot_id:str, data:PreviewRequest, request:Request):
             raise HTTPException(409,'本项目预览缓存已达上限，请先由项目所有者清理不再使用的预览文件')
         with tempfile.TemporaryDirectory(prefix='.render-',dir=store) as tmp:
             temp=Path(tmp); out=temp/'out'; out.mkdir()
+            if data.plan.entrance:
+                from .vibe_transition_source import extract
+                record=_read_json(project/'record.json',32*1024**2)
+                shot=next(s for s in record['shots'] if s['id']==shot_id)
+                assets['core']=_safe(project,studio._storyboard_image_path(project,shot),file=True)
+                previous=extract(project,shot_id,temp/'previous.png',tuple(manifest['source_size']),dependency)
+                if previous:assets['previous']=previous
             digest,seek=_audio(audio,start,end,temp/'narration.wav')
             if digest!=a_hash: raise HTTPException(409,'配音版本已改变，请重新预览')
             try:
@@ -252,6 +263,9 @@ def create(identity:str, shot_id:str, data:PreviewRequest, request:Request):
                 raise HTTPException(500,'本地预览编码失败，请检查磁盘、FFmpeg 和原素材') from exc
             if stamp!=_snapshot(project,shot_id)[0]:
                 raise HTTPException(409,'预览期间图片、配音或字幕已变，未发布过期结果')
+            if data.plan.entrance:
+                from .vibe_transition_source import validate
+                validate(project,shot_id,dependency)
             for name,_ in _files.values():
                 artifact=_safe(project,out/name,file=True)
                 if artifact.stat().st_size==0:
@@ -261,6 +275,7 @@ def create(identity:str, shot_id:str, data:PreviewRequest, request:Request):
                          source_sha256=im_hash,input_stamp=stamp,plan=plan,metrics=metrics,
                          preview_url=base+'preview',silent_url=base+'silent',proof_url=base+'proof',
                          cached=False,may_charge=False)
+            if data.plan.entrance:receipt['transition_source']=dependency
             (out/'receipt.json').write_text(json.dumps(receipt,ensure_ascii=False),encoding='utf-8')
             try:
                 publish(out,dest)
@@ -291,6 +306,10 @@ def latest(identity:str,shot_id:str,request:Request):
         return {'available':False,'stale':True,'reason':exc.detail}
     if receipt.get('shot_id')!=shot_id or receipt.get('input_stamp')!=stamp:
         return {'available':False,'stale':True}
+    if receipt.get('transition_source') is not None:
+        from .vibe_transition_source import validate
+        try:validate(project,shot_id,receipt['transition_source'])
+        except HTTPException as exc:return {'available':False,'stale':True,'reason':exc.detail}
     if receipt.get('engine')=='cloud':
         from .vibe_cloud import validate_cloud_preview
         if not validate_cloud_preview(project,shot_id,receipt):

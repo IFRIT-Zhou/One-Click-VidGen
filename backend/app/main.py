@@ -151,6 +151,8 @@ class BgmTrackRequest(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    intro_video_id: str = Field(default='', max_length=180)
+    outro_video_id: str = Field(default='', max_length=180)
     @field_validator("tts_voice_id", mode="before")
     @classmethod
     def migrate_null_local_voice(cls, value):
@@ -203,6 +205,7 @@ class GenerateRequest(BaseModel):
     image_profile_id: str | None = Field(default=None, max_length=80)
     image_resolution: Literal["1k", "2k", "4k"] | None = '2k'
     video_render_variant: Literal["subtitles", "raw", "both"] = "both"
+    image_transition: Literal['none','layered','brush','dissolve','black','white','left','right','up','down'] = 'none'
     video_orientation: Literal['landscape', 'portrait'] = 'landscape'
     subtitle_layouts: dict[str, Any] = Field(default_factory=dict)
     bgm_enabled: bool = False
@@ -295,6 +298,9 @@ class SubtitleRenderRequest(BaseModel):
 
 
 class VisualRenderRequest(BaseModel):
+    intro_video_id: str | None = Field(default=None, max_length=180)
+    outro_video_id: str | None = Field(default=None, max_length=180)
+    image_transition: Literal['none','layered','brush','dissolve','black','white','left','right','up','down'] = 'none'
     mode: Literal["subtitles", "raw", "both"] = "both"
     video_orientation: Literal['landscape', 'portrait'] | None = None
     subtitle_layouts: dict[str, Any] | None = None
@@ -2612,7 +2618,8 @@ def advance_step_workflow(
         },
         "confirm_visual": set(),
         "start_render": {
-            "video_orientation", "subtitle_layouts",
+            "intro_video_id", "outro_video_id",
+            "video_orientation", "subtitle_layouts", "image_transition",
             "video_render_variant", "bgm_enabled", "bgm_tracks",
             "bgm_fade_enabled", "bgm_fade_duration",
         },
@@ -3957,7 +3964,7 @@ def render_visual_editor_video(job_id: str, payload: VisualRenderRequest, reques
             "fade_enabled": payload.bgm_fade_enabled,
             "fade_duration": payload.bgm_fade_duration,
         }
-    presentation = {key: value for key, value in {'video_orientation': payload.video_orientation, 'subtitle_layouts': payload.subtitle_layouts}.items() if value is not None}
+    presentation = {key: value for key, value in {'intro_video_id':payload.intro_video_id, 'outro_video_id':payload.outro_video_id, 'video_orientation': payload.video_orientation, 'subtitle_layouts': payload.subtitle_layouts, 'image_transition':payload.image_transition}.items() if value is not None}
     visual_editor.render_video(job=job, mode=payload.mode, bgm_override=bgm_override, presentation=presentation)
     return {"ok": True, "message": "module 5 render started"}
 
