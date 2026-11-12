@@ -25,8 +25,8 @@ class Setup(unittest.TestCase):
         resolver=self.enter(patch.object(setup, 'ready_interpreter',side_effect=setup.RmbgRuntimeError('missing')))
         self.assertIsNone(setup.compatible(self.root, self.spec))
         resolver.assert_called_once_with(self.root, self.spec)
-        resolver.side_effect=None; resolver.return_value=('shared-python',self.root/'python.exe')
-        self.assertEqual(setup.compatible(self.root, self.spec), 'shared-python')
+        resolver.side_effect=None; resolver.return_value=('launcher-managed',self.root/'python.exe')
+        self.assertEqual(setup.compatible(self.root, self.spec), 'launcher-managed')
 
     def test_pointer_changes_only_after_success_and_failure_keeps_old_runtime(self):
         base=self.root/'runtime/rmbg'
@@ -69,5 +69,6 @@ class Setup(unittest.TestCase):
         current=setup.installed_versions(base, sorted(target['packages']))
         dest=self.root/'test-venv'
         setup.install_environment(self.root,dest,target,base=base)
+        self.assertIn('include-system-site-packages = false', (dest/'pyvenv.cfg').read_text().lower())
         self.assertEqual(setup.installed_versions(dest/'Scripts/python.exe',sorted(target['packages'])),target)
         self.assertEqual(setup.installed_versions(base, sorted(target['packages'])),current)

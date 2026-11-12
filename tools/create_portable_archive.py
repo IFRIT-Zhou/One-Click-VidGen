@@ -8,9 +8,9 @@ import zipfile
 from pathlib import Path
 
 if __package__:
-    from .release_integrity import unmanaged_rmbg_file
+    from .release_integrity import unmanaged_rmbg_file, restricted_optional_file
 else:
-    from release_integrity import unmanaged_rmbg_file
+    from release_integrity import unmanaged_rmbg_file, restricted_optional_file
 
 
 ROOT_EXCLUDES = {
@@ -34,6 +34,8 @@ ROOT_EXCLUDES = {
 
 def is_excluded(relative: Path, *, without_local_tts: bool = False, without_local_video: bool = False, without_models: bool = False) -> bool:
     parts = relative.parts
+    if restricted_optional_file(relative.as_posix()):
+        return True
     # Include the independent RMBG worker/vendor/setup sources in *every*
     # edition. Its optional weights and locally provisioned interpreter are
     # never application files; in particular they are not an ordinary upgrade.

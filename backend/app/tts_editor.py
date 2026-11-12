@@ -42,6 +42,39 @@ class SubtitleAlignmentReview(RuntimeError):
     """A valid candidate exists, but its subtitle timings need human review."""
 
 
+def _redistribute_subtitle_paragraph(text: str, old_parts: list[str]) -> list[str]:
+    """Reflow a rewritten paragraph while retaining picture/timeline identities.
+
+    Diff boundaries are useful for typo edits, not deleted/replaced clauses.
+    Keep numbers and Latin words intact and prefer nearby punctuation breaks.
+    Actual cue timing is subsequently measured against the new speech.
+    """
+    tokens = list(re.finditer(r'百分之[零〇一二两三四五六七八九十百千万点]+|[A-Za-z0-9]+(?:[.,][0-9]+)*|[^\W_]', text, re.UNICODE))
+    count = len(old_parts)
+    if len(tokens) < count:
+        raise ValueError('新文案过短，无法为每个原画面分配有效字幕；请先合并对应字幕或减少画面分段，再重配（原素材未修改）')
+    raw_weights = [max(1, len(re.findall(r'\w', part))) for part in old_parts]
+    average = sum(raw_weights) / count
+    # Old tiny clauses no longer describe the rewritten text. Retain only a
+    # mild relative weight, avoiding one-word flashes and one oversized cue.
+    weights = [max(average*.85, min(average*1.15, weight)) for weight in raw_weights]
+    total, consumed, previous = sum(weights), 0, 0
+    cuts = [0]
+    for index, weight in enumerate(weights[:-1]):
+        consumed += weight
+        target = len(tokens) * consumed / total
+        remaining = count - index - 1
+        candidates = range(previous + 1, len(tokens) - remaining + 1)
+        def score(boundary):
+            gap = text[tokens[boundary-1].end():tokens[boundary].start()]
+            bonus = 3 if re.search(r'[。！？；.!?;]', gap) else 2 if re.search(r'[，、,:：]', gap) else 0
+            return (abs(boundary-target)-bonus, abs(boundary-target), boundary)
+        previous = min(candidates, key=score)
+        cuts.append(tokens[previous].start())
+    cuts.append(len(text))
+    return [text[left:right] for left, right in zip(cuts, cuts[1:])]
+
+
 def _speech_alignment(project_dir, segments, files, subtitle_updates=None, reading_texts=None):
     """Recognize only changed segments before publishing any edited assets."""
     from .pipeline import resolve_asr_python
@@ -1276,7 +1309,8 @@ class TtsEditor(TtsEditTasks):
             if subtitle_updates:
                 if display_updates:
                     self._snapshot_boundary_script(job, project_dir, history)
-                VisualEditor().save_subtitle_texts(job_id=job.id, user_id=user_id, updates=subtitle_updates)
+                VisualEditor().save_subtitle_texts(job_id=job.id, user_id=user_id, updates=subtitle_updates,
+                                                  _project_dir=project_dir)
                 for index, text in display_updates.items():
                     by_index[index]["text"] = text
             for raw_index in (subtitle_text_overrides or {}):
@@ -1407,8 +1441,40 @@ class TtsEditor(TtsEditTasks):
                 matches.append((score, first, last, start-first_pos, end-last_pos))
             offset = start + 1
         matches.sort()
+        if not matches:
+            # ASR display cues may omit punctuation, spell proper names differently,
+            # or use digits while the TTS manifest retains the authored narration.
+            # Only accept complete cues with BOTH endpoints anchored to this audio
+            # span. Never use unrestricted fuzzy matching across the whole project.
+            normalized = lambda value: ''.join(c.casefold() for c in str(value or '') if c.isalnum())
+            target = normalized(original_text)
+            tolerance = min(.4, max(0., old_end - old_start) * .05)
+            starts = [i for i, row in enumerate(entries)
+                      if abs(float(row['start']) - old_start) <= tolerance]
+            ends = [i for i, row in enumerate(entries)
+                    if abs(float(row['end']) - old_end) <= tolerance]
+            candidates = []
+            for first in starts:
+                for last in ends:
+                    if last < first:
+                        continue
+                    span = entries[first:last + 1]
+                    if any(float(r['end']) <= float(r['start']) for r in span):
+                        continue
+                    if any(float(a['end']) > float(b['start']) + .001 for a, b in zip(span, span[1:])):
+                        continue
+                    actual = normalized(''.join(texts[first:last + 1]))
+                    # Short phrases require equality; longer passages may tolerate
+                    # transcription mistakes, but not a missing or unrelated span.
+                    equal = bool(target) and actual == target
+                    similar = (len(target) >= 20 and len(actual) >= 20
+                               and difflib.SequenceMatcher(None, target, actual, autojunk=False).ratio() >= .75)
+                    if equal or similar:
+                        candidates.append((0., first, last, 0, len(texts[last])))
+            if len(candidates) == 1:
+                matches = candidates
         if not matches or (len(matches) > 1 and abs(matches[0][0]-matches[1][0]) < .001):
-            raise ValueError("原字幕无法唯一定位，请核对文字；尚未提交配音修改")
+            raise ValueError("原字幕无法唯一定位：文字差异过大或两端时间不明确，请核对对应字幕与配音；尚未提交配音修改")
         _, first, last, left, right = matches[0]
         before = [dict(row) for row in entries[:first]]
         after = [dict(row) for row in entries[last+1:]]
@@ -1830,7 +1896,8 @@ class TtsEditor(TtsEditTasks):
             old_text = ''.join(old_parts)
             if not old_text:
                 raise ValueError(f"第 {index} 句原字幕为空，无法同步")
-            operations = difflib.SequenceMatcher(None, old_text, text, autojunk=False).get_opcodes()
+            matcher = difflib.SequenceMatcher(None, old_text, text, autojunk=False)
+            operations = matcher.get_opcodes()
             def mapped_cut(position):
                 for tag, a, b, c, d in operations:
                     if tag == 'insert' and a == position:
@@ -1843,10 +1910,10 @@ class TtsEditor(TtsEditTasks):
                 cursor += len(part)
                 cuts.append(mapped_cut(cursor))
             cuts.append(len(text))
-            for (_, _, target), left, right in zip(ordered, cuts, cuts[1:]):
-                replacement = text[left:right]
-                if not replacement.strip():
-                    raise ValueError(f"第 {index} 句修改删除了完整字幕行，请先在字幕编辑中合并或调整该行，再重配")
+            replacements = [text[left:right] for left, right in zip(cuts, cuts[1:])]
+            if matcher.ratio() < .75 or any(not re.search(r'\w', part) for part in replacements):
+                replacements = _redistribute_subtitle_paragraph(text, old_parts)
+            for (_, _, target), replacement in zip(ordered, replacements):
                 if target.get('subtitle_hidden'):
                     raise ValueError(f"第 {index} 句对应字幕已隐藏，请先恢复后再同步")
                 slide_id = str(target['slide_id'])
@@ -2230,6 +2297,7 @@ class TtsEditor(TtsEditTasks):
                 job_id=job.id,
                 user_id=user_id,
                 updates=subtitle_updates,
+                _project_dir=project_dir,
             )
             # Also covers adoption of pending audio made by older versions,
             # whose recovery file did not retain per-segment display edits.

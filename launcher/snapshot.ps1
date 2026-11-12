@@ -14,10 +14,14 @@ $arguments = @(
     "/resource:$logo,OcvLauncher.Logo.png",
     "/reference:$(Join-Path $framework 'System.dll')",
     "/reference:$(Join-Path $framework 'System.Core.dll')",
+    "/reference:$(Join-Path $framework 'System.Web.Extensions.dll')",
     "/reference:$(Join-Path $framework 'System.Drawing.dll')",
     "/reference:$(Join-Path $framework 'System.Windows.Forms.dll')",
     (Join-Path $launcherDir 'src\LauncherRuntime.cs'),
     (Join-Path $launcherDir 'src\MainForm.cs'),
+    (Join-Path $launcherDir 'src\OptionalComponentsForm.cs'),
+    (Join-Path $launcherDir 'src\OptionalComponentInstaller.cs'),
+    (Join-Path $launcherDir 'src\OptionalComponentCatalog.cs'),
     (Join-Path $launcherDir 'tests\UiSnapshot.cs')
 )
 

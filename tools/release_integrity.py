@@ -33,6 +33,12 @@ def unmanaged_rmbg_file(path: str) -> bool:
     return path.casefold().startswith("tools/rmbg/") and path not in RMBG_MANAGED_FILES
 
 
+def restricted_optional_file(path: str) -> bool:
+    """Publication deny-list only; never removes locally installed components."""
+    parts = path.replace('\\', '/').casefold().split('/')
+    return any('selflift' in part for part in parts)
+
+
 INTEGRITY_FILES = (
     "OCV_Launcher.exe",
     "start_windows.bat",
@@ -82,6 +88,7 @@ INTEGRITY_FILES = (
     "backend/vendor/pypinyin/pinyin_dict.json",
     "backend/vendor/pypinyin/phrases_dict.json",
     "backend/app/main.py",
+    "backend/app/release_version.py",
     "backend/app/language_presets.py",
     "backend/app/gemini_client.py",
     "backend/app/image_profiles.py",
@@ -126,6 +133,7 @@ INTEGRITY_FILES = (
     "module6_dynamic_video.py",
     "launcher/safe_update_helper.ps1",
     "launcher/update-sources.json",
+    "launcher/optional-components.json",
     "tools/deploy_indextts25.ps1",
     "tools/portable_preflight.py",
     "backend/app/codex_bridge.py",

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "components": [
+    {"id":"rmbg-runtime","category":"Vibe 动效","title":"RMBG 独立推理环境","description":"从 PyTorch 官方源与 PyPI 安装到独立环境，不修改 ComfyUI，不下载权重。","action":"rmbg_runtime","label":"检查 / 安装依赖"},
+    {"id":"birefnet-weight","category":"Vibe 动效","title":"BiRefNet 抠图权重 · 校验 / 导入","description":"现用 1038lab 社区转换版，约 844 MiB。校验大小和 SHA-256；已有同名文件不覆盖。原作者其他权重不能直接改名替换。","action":"birefnet_import","label":"检查现有权重 / 导入文件"},
+    {"id":"remotion-license","category":"Vibe 动效","title":"Remotion 4.0.484 · 许可","description":"适用附条件免费许可。个人资格不自动覆盖其他组织；请按自身用途核对官方条款。","action":"link","label":"查看许可与资格","url":"https://www.remotion.dev/docs/license/faq"},
+    {"id":"remotion-runtime","category":"Vibe 动效","title":"Remotion 官方依赖安装","description":"仅在依赖目录不存在时安装项目锁定版本，使用 npm 官方源；失败保留暂存记录，不替换现有安装。","action":"remotion_install","label":"安装缺失的 Remotion 依赖"},
+    {"id":"shotcraft","category":"Vibe 动效","title":"video-shotcraft 模板资源","description":"上游 Apache-2.0；需保留许可与声明，第三方素材另行核查。暂不自动更新模板，避免覆盖现有适配。","action":"link","label":"查看官方项目","url":"https://github.com/Vincentwei1021/video-shotcraft"},
+    {"id":"selflift","category":"H3 动态视频","title":"SelfLift 二阶段采样 · 授权待核实","description":"使用的固定版本尚缺明确分发许可记录。暂不提供一键下载，不随新整合包或更新包发布。不会删除本机已有安装。","action":"link","label":"查看上游项目","url":"https://github.com/facok/comfyui-SelfLift"},
+    {"id":"h3-docs","category":"H3 动态视频","title":"H3 引擎、节点与模型","description":"各组件与权重分别核查许可。当前不改动已激活版本；安装入口按核验清单逐项开放。","action":"h3_docs","label":"打开组件说明目录"}
+  ]
+}

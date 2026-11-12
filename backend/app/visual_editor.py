@@ -958,9 +958,10 @@ class VisualEditor:
         }
 
     def save_subtitle_texts(
-        self, *, job_id: str, user_id: int, updates: dict[str, str]
+        self, *, job_id: str, user_id: int, updates: dict[str, str], _project_dir: Path | None = None
     ) -> dict[str, Any]:
-        project_dir = self.output_dir(job_id, user_id)
+        # Audio edits must stay in the resolved narration workspace, not exports.
+        project_dir = _project_dir if _project_dir is not None else self.output_dir(job_id, user_id)
         normalized: dict[str, str] = {}
         for raw_id, raw_text in dict(updates or {}).items():
             slide_id = str(raw_id or "").strip()
@@ -990,7 +991,7 @@ class VisualEditor:
             if hidden:
                 raise ValueError(f"请先恢复已隐藏字幕再修改文字：{', '.join(hidden[:3])}")
             if not changed:
-                return self.inspect(job_id, user_id)
+                return {"ok": True, "changed": 0} if _project_dir is not None else self.inspect(job_id, user_id)
             self._archive_subtitle_state(project_dir, "保存字幕修改前")
             for slide_id, text in changed.items():
                 by_id[slide_id]["text_content"] = text
@@ -1007,7 +1008,7 @@ class VisualEditor:
             action="subtitle",
             message=f"已保存 {len(changed)} 条字幕修改；重新渲染后进入成片。",
         )
-        return self.inspect(job_id, user_id)
+        return {"ok": True, "changed": len(changed)} if _project_dir is not None else self.inspect(job_id, user_id)
 
     def hide_subtitle(
         self, *, job_id: str, user_id: int, slide_id: str, mode: str

@@ -182,6 +182,21 @@ class ReeditConsistencyTests(unittest.TestCase):
         self.write_rows([dict(slide_id='elsewhere', text_content='是厨房搭档，开始使用。', start=2, end=4)])
         self.assertEqual(self.editor._load_manifest(self.project)['segments'][0]['text'], '成为厨房搭档，开始使用。')
 
+    def test_full_rewrite_keeps_ids_retimes_and_shifts_following_sentence(self):
+        original = json.loads(self.timeline_path.read_text(encoding='utf-8'))
+        for i, row in enumerate(original, 1):
+            row['slide_id'] = f'scene_{i:03d}'
+        self.write_rows(original)
+        text = '研究获得了新的发现，但仍需要后续验证。'
+        self.regenerate(1, text, text)
+        rows = json.loads(self.timeline_path.read_text(encoding='utf-8'))
+        self.assertEqual([row['slide_id'] for row in rows], [row['slide_id'] for row in original])
+        self.assertEqual(''.join(row['text_content'] for row in rows[:2]), text)
+        self.assertEqual(rows[1]['end'], 1.5)
+        self.assertEqual((rows[2]['start'], rows[2]['end']), (1.5, 3.5))
+        self.assertEqual(rows[2]['text_content'], '下一句。')
+        self.assertEqual(self.manifest()['segments'][0]['text'], text)
+
     def test_recovery_keeps_subtitle_sync_intent(self):
         pending = self.root / 'pending.wav'
         write_wav(pending, 1.5)

@@ -42,6 +42,7 @@ tools/*
 !tools/create_portable_archive.py
 !tools/release_integrity.py
 !tools/setup_ocv_mcp.ps1
+!tools/setup_ocv_mcp.ps1
 !tools/portable_release_audit.py
 !tools/publish_launcher_release.py
 !tools/deploy_indextts25.ps1
@@ -135,3 +136,6 @@ tools/vibe_ocr/*
 !tools/vibe_ocr/worker.py
 !tools/vibe_ocr/setup_runtime.py
 !tools/vibe_ocr/runtime-spec.json
+
+# License-unverified optional sampler: local installation only, never stage.
+*[Ss][Ee][Ll][Ff][Ll][Ii][Ff][Tt]*/

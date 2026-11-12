@@ -39,6 +39,7 @@ $arguments = @(
     "/resource:$logo,OcvLauncher.Logo.png",
     "/reference:$(Join-Path $framework 'System.dll')",
     "/reference:$(Join-Path $framework 'System.Core.dll')",
+    "/reference:$(Join-Path $framework 'System.Web.Extensions.dll')",
     "/reference:$(Join-Path $framework 'System.Drawing.dll')",
     "/reference:$(Join-Path $framework 'System.Windows.Forms.dll')"
 ) + $sources

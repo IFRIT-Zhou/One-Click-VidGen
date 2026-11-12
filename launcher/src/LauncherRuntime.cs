@@ -143,6 +143,7 @@ namespace OcvLauncher
             "backend/vendor/pypinyin/pinyin_dict.json",
             "backend/vendor/pypinyin/phrases_dict.json",
               "backend/app/main.py",
+            "backend/app/release_version.py",
               "backend/app/language_presets.py",
             "backend/app/gemini_client.py",
             "backend/app/image_profiles.py",
@@ -187,6 +188,7 @@ namespace OcvLauncher
             "module6_dynamic_video.py",
             "launcher/safe_update_helper.ps1",
             "launcher/update-sources.json",
+            "launcher/optional-components.json",
             "tools/deploy_indextts25.ps1",
             "tools/portable_preflight.py",
             "backend/app/codex_bridge.py",
@@ -302,12 +304,16 @@ namespace OcvLauncher
         {
             get
             {
-                string version = ReadPackageVersion();
-                string commit = ReadGitCommit();
-                if (!string.IsNullOrEmpty(commit)) return "v" + version + " · " + commit;
                 string release = ReadLocalReleaseId();
-                if (!string.IsNullOrEmpty(release)) return "OCV " + release + " · L" + version + " · 便携";
-                return "OCV 未标记版本 · L" + version + " · 便携";
+                string version = string.IsNullOrEmpty(release) ? "OCV 未标记版本" : "OCV " + release;
+                string commit = ReadGitCommit();
+                if (!string.IsNullOrEmpty(commit)) {
+                    string suffix = "";
+                    try { int code; string dirty = RunAndCapture("git.exe", "status --porcelain --untracked-files=no", root, 3000, out code);
+                        if (code == 0 && !string.IsNullOrWhiteSpace(dirty)) suffix = " · 本地修改版"; } catch { }
+                    return version + " · " + commit + suffix;
+                }
+                return version + " · 便携";
             }
         }
 
@@ -668,7 +674,7 @@ namespace OcvLauncher
 
         private string ReadGitCommit()
         {
-            if (!Directory.Exists(Path.Combine(root, ".git"))) return string.Empty;
+            if (!Directory.Exists(Path.Combine(root, ".git")) && !File.Exists(Path.Combine(root, ".git"))) return string.Empty;
             try
             {
                 int exitCode;

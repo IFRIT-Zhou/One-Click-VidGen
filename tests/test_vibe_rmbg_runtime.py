@@ -74,16 +74,28 @@ class RmbgRuntimeTests(unittest.TestCase):
         r=runtime.resolve_runtime(self.root)
         self.assertEqual((r.python,r.model_dir,r.origin),(py,legacy,'legacy-python'))
 
+    def test_shared_site_packages_environment_is_rejected(self):
+        version='rmbg-aabbccddeeff-112233445566'
+        base=self.root/'runtime/rmbg'
+        folder=base/'versions'/version
+        interp=folder/'Scripts/python.exe'
+        interp.parent.mkdir(parents=True)
+        interp.touch()
+        (folder/'pyvenv.cfg').write_text('include-system-site-packages = true\n', encoding='utf-8')
+        (base/'active.json').write_text(json.dumps({'version':version}), encoding='utf-8')
+        with self.assertRaisesRegex(runtime.RmbgRuntimeError, '共享依赖'):
+            runtime.ready_interpreter(self.root, self.spec)
+        self.probe.assert_not_called()
+
     def test_old_model_and_component_interpreter_no_running_service_needed(self):
         self.model.rmdir()
         legacy = self.root/'workspace/vibe_rmbg_trial/models/RMBG/BiRefNet'
         legacy.mkdir(parents=True)
         self.python(self.root/'runtime/python')
         py = self.python(self.component('v1')/'releases/v1/python')
-        self.probe.side_effect = [runtime.RmbgRuntimeError('缺少：kornia'),None]
-        r = runtime.resolve_runtime(self.root)
-        self.assertEqual((r.python, r.model_dir, r.origin),(py, legacy.resolve(), 'shared-python'))
-        self.assertEqual(self.probe.call_count, 2)
+        with self.assertRaises(runtime.RmbgRuntimeError):
+            runtime.resolve_runtime(self.root)
+        self.probe.assert_not_called()
 
     def test_invalid_component_pointer_is_never_executed(self):
         self.component('../elsewhere')
@@ -94,7 +106,7 @@ class RmbgRuntimeTests(unittest.TestCase):
 
     def test_stale_version_even_if_importable_never_shadows_new_candidate(self):
         stale=self.python(self.root/'tools/rmbg/python')
-        correct=self.python(self.root/'runtime/python')
+        correct=self.python(self.root/'runtime/rmbg/python')
         self.versions.side_effect=[{'python':'3.10','packages':{'torch':'2.7'}},self.spec['install']]
         r=runtime.resolve_runtime(self.root)
         self.assertEqual(r.python,correct)
@@ -114,7 +126,7 @@ class RmbgRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(runtime.RmbgRuntimeError, 'tools/rmbg/models/BiRefNet'):
             runtime.resolve_runtime(self.root)
         self.model.mkdir()
-        self.python(self.root/'runtime/python')
+        self.python(self.root/'tools/rmbg/python')
         self.probe.side_effect=runtime.RmbgRuntimeError('缺少：timm')
         with self.assertRaisesRegex(runtime.RmbgRuntimeError,'无需启动 ComfyUI.*缺少：timm'):
             runtime.resolve_runtime(self.root)

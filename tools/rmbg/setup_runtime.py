@@ -1,8 +1,8 @@
 """Launcher entry point for optional Windows RMBG dependencies, never model weights.
 
 --check is offline/read-only; --install must be selected explicitly in the Launcher.
-Only a new, private environment may be written. Existing OCV/Comfy Python
-installations may supply compatible packages but are never pip targets.
+Only a new, private environment may be written. OCV supplies the base standard
+library only; inference packages never come from OCV or ComfyUI site-packages.
 """
 import argparse
 from contextlib import contextmanager
@@ -72,7 +72,6 @@ def install_environment(root, dest, target, *, base=None):
     base_versions = installed_versions(base, ['torch'])
     if base_versions['python'] != target['python']:
         raise RuntimeError(f"此组件安装器需要 OCV 便携 Python {target['python']}；请使用对应的整合包，不会改动系统 Python。")
-    inherit = base_versions['packages'].get('torch') == pins['torch']
     env = {k:v for k,v in os.environ.items() if not k.upper().startswith(('PIP_', 'UV_', 'PYTHON'))}
     env.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8', PIP_CONFIG_FILE=os.devnull,
                PYTHONNOUSERSITE='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
@@ -83,15 +82,14 @@ def install_environment(root, dest, target, *, base=None):
                        timeout=2400, creationflags=_FLAGS)
 
     windows_py = dest/'Scripts/python.exe'
-    # --system-site-packages only reuses the read-only base stack. pip/uv's install
-    # destination is always the private venv. Never pass a shared interpreter as target.
-    inherited = ['--system-site-packages'] if inherit else []
+    # The base supplies Python's standard library only; all ML packages are private.
+    # Never expose shared site-packages or pass a shared interpreter as pip target.
     has_stdlib_tools = subprocess.run([str(base), '-I', '-B', '-c',
         "import venv,pip;from pip._internal.cli.main_parser import create_main_parser;"
         "assert create_main_parser().has_option('--python')"], capture_output=True,
         timeout=20, creationflags=_FLAGS).returncode == 0
     if has_stdlib_tools:
-        run([base, '-I', '-B', '-m', 'venv', '--without-pip', *inherited, dest])
+        run([base, '-I', '-B', '-m', 'venv', '--without-pip', dest])
         def pip(index, args):
             run([base, '-I', '-B', '-m', 'pip', '--isolated', '--python', windows_py, 'install',
                  '--no-input', '--disable-pip-version-check', '--only-binary=:all:', '--index-url', index, *args])
@@ -99,7 +97,7 @@ def install_environment(root, dest, target, *, base=None):
         uv = root/'tools/uv/uv.exe'
         if not uv.is_file():
             raise RuntimeError('此旧整合包缺少便携 venv/pip 和 tools/uv/uv.exe；请修复 OCV 便携 Python 或使用含 uv 的整合包。')
-        run([uv, '--no-config', 'venv', '--python', base, '--no-python-downloads', *inherited, dest])
+        run([uv, '--no-config', 'venv', '--python', base, '--no-python-downloads', dest])
         def pip(index, args):
             run([uv, '--no-config', 'pip', 'install', '--python', windows_py, '--no-python-downloads',
                  '--only-binary', ':all:', '--default-index', index, *args])

@@ -17,6 +17,34 @@ def wav(path, duration):
 
 
 class BoundaryTextSyncTests(unittest.TestCase):
+    def test_asr_spelling_and_punctuation_use_two_time_anchors(self):
+        original = '围绕这一问题，研究团队联合多家医院开展临床病理研究。成果发表于自然正刊。'
+        rows = [dict(text='前一句', start=0, end=2.15),
+                dict(id='a', text='围绕这一问题研究团队联合多家医院开展临床病例研究', start=2.15, end=6),
+                dict(id='b', text='成果发表于自然证刊', start=6, end=10.2),
+                dict(text='后一句', start=10.2, end=12)]
+        result = TtsEditor._resegment_rows(rows, 2, 10,
+                    [dict(start=2, end=11)], [original], original)
+        self.assertEqual(result[0]['text'], '前一句')
+        self.assertEqual(result[-1]['text'], '后一句')
+        self.assertEqual(result[-1]['end'], 13)
+        self.assertEqual(''.join(r['text'] for r in result[1:-1]), original)
+        self.assertEqual(rows[0]['end'], 2.15)  # input untouched
+
+    def test_punctuation_only_difference_on_short_cues(self):
+        result = TtsEditor._resegment_rows([dict(text='甲乙', start=0, end=2)],
+            0, 2, [dict(start=0, end=2)], ['甲，乙。'], '甲，乙。')
+        self.assertEqual(''.join(r['text'] for r in result), '甲，乙。')
+
+    def test_fuzzy_match_requires_both_endpoints_and_related_content(self):
+        original = '研究团队联合多家医院开展临床病理研究并对患者开展长期随访。'
+        for start, end, text in ((1, 10, original.replace('病理', '病例')),
+                                 (0, 9, original.replace('病理', '病例')),
+                                 (0, 10, '这是完全不同的研究内容不能因为时间一致就自动替换原有的字幕内容')):
+            with self.subTest(start=start, end=end), self.assertRaises(ValueError):
+                TtsEditor._resegment_rows([dict(text=text, start=start, end=end)],
+                    0, 10, [dict(start=0, end=10)], [original], original)
+
     def test_partial_cues_shift_both_directions_and_preserve_hidden(self):
         rows = [dict(text='前句成为搭档', start=0, end=3),
                 dict(text='继续后句', start=3, end=6, subtitle_hidden=True)]

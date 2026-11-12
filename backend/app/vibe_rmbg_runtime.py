@@ -1,7 +1,7 @@
 """Offline resolution of the standalone BiRefNet runner and pinned model.
 
 Neither a ComfyUI service, a workflow, nor model/node discovery over HTTP is
-needed. An already installed OCV component may supply *just* the interpreter.
+needed. Inference uses only RMBG-owned environments with private dependencies.
 All candidate paths are installation-scoped; never use a project/media path,
 the system PATH, or a Python chosen by a model response.
 """
@@ -32,7 +32,7 @@ class RmbgRuntime:
 
 
 def _interpreters(root):
-    """Prefer independent installations, then known portable Python bundles."""
+    """Only RMBG-owned interpreters; never borrow OCV or ComfyUI dependencies."""
     exe = 'python.exe' if os.name == 'nt' else 'bin/python'
     managed = root/'runtime'/'rmbg'
     try:
@@ -43,27 +43,22 @@ def _interpreters(root):
         yield 'launcher-managed', managed/'versions'/version/('Scripts/python.exe' if os.name == 'nt' else exe)
     yield 'standalone', root/'tools'/'rmbg'/'python'/exe
     yield 'legacy-python', managed/'python'/exe
-    yield 'ocv', root/'runtime'/'python'/exe
-    for component in (root/'comfyui'/'engine', root/'runtime'/'comfyui'):
-        try:
-            version = json.loads((component/'active.json').read_text(encoding='utf-8-sig'))['version']
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if not isinstance(version, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', version):
-            continue
-        yield 'shared-python', component/'releases'/version/'python'/exe
 
 
 _CHECK = """import importlib.util
 names = ['torch', 'torchvision', 'safetensors', 'numpy', 'PIL', 'transformers', 'timm', 'einops', 'kornia']
 missing = [name for name in names if importlib.util.find_spec(name) is None]
 if missing: raise SystemExit('缺少：'+', '.join(missing))
+print('正在加载 torch', flush=True)
 from torch import inference_mode
+print('正在加载 torchvision 本机组件', flush=True)
 from torchvision.ops import deform_conv2d
 from torchvision.extension import _has_ops
 if not _has_ops(): raise SystemExit('torchvision 本机运算组件不可用')
 from safetensors.torch import load_file
+print('正在加载 transformers', flush=True)
 from transformers import PreTrainedModel
+print('正在加载 timm/kornia', flush=True)
 from timm.models.layers import DropPath
 from kornia.filters import laplacian
 from einops import rearrange
@@ -80,10 +75,15 @@ def _probe(exe, modified_ns):
         probe = subprocess.run([str(exe), '-I', '-B', '-X', 'utf8', '-c', _CHECK],
             cwd=str(exe.parent), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace',
-            timeout=60, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            timeout=180, check=False, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             env={**os.environ,'HF_HUB_OFFLINE':'1','TRANSFORMERS_OFFLINE':'1','HF_HUB_DISABLE_TELEMETRY':'1'})
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RmbgRuntimeError('解释器无法启动或依赖自检超时') from exc
+    except subprocess.TimeoutExpired as exc:
+        output = exc.output or b''
+        if isinstance(output, bytes): output = output.decode('utf-8', errors='replace')
+        stage = next((line for line in reversed(output.splitlines()) if line.startswith('正在加载')), '尚未返回加载阶段')
+        raise RmbgRuntimeError(f'依赖冷启动自检超过180秒（{stage}）；可能资源繁忙，并不等同于缺少依赖，请空闲后重试；未启动生成引擎') from exc
+    except OSError as exc:
+        raise RmbgRuntimeError(f'解释器启动失败（{type(exc).__name__}）') from exc
     output = probe.stdout.strip().splitlines()
     if probe.returncode or not output or output[-1] != 'OCV_RMBG_READY':
         detail = output[-1][:220] if output else '没有收到依赖自检回执'
@@ -140,6 +140,10 @@ def ready_interpreter(root, spec):
         if not exe.is_file():
             continue
         try:
+            venv_config = exe.parent.parent/'pyvenv.cfg'
+            if venv_config.is_file() and re.search(r'(?im)^include-system-site-packages\s*=\s*true\s*$', venv_config.read_text(encoding='utf-8')):
+                issues.append(f'{origin}: 旧环境继承共享依赖，请通过 Launcher 更新为独立环境')
+                continue
             modified=exe.stat().st_mtime_ns
             actual=_runtime_versions(exe, modified, names, int(time.monotonic()//30))
             if not any(matches(actual,target) for target in options):

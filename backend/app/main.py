@@ -675,12 +675,14 @@ def _plugin_manifest_items() -> list[dict[str, Any]]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    from .release_version import release_info
     indextts25 = load_indextts25_config()
     local_tts_component = local_tts_component_status()
     cloud = load_cloud_config()
     active_tasks = store.active_job_summary() + edit_store.active_job_summary()
     return {
         "ok": True,
+        "release": release_info(),
         # Stable aliases used by older launchers/frontends now describe 2.5.
         "tts_online": indextts25.ready,
         "tts_provider": "official IndexTTS-2.5 (local GPU)",

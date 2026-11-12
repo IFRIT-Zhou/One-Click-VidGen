@@ -25,7 +25,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from release_integrity import fingerprint, unmanaged_rmbg_file, validate_launcher_integrity_files
+from release_integrity import fingerprint, unmanaged_rmbg_file, validate_launcher_integrity_files, restricted_optional_file
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +122,8 @@ def verify_archive(archive: Path, expected_fingerprint: str) -> None:
         with zipfile.ZipFile(archive) as package:
             for entry in package.infolist():
                 member = entry.filename.replace('\\', '/')
+                if restricted_optional_file(member):
+                    raise RuntimeError('拒绝更新包：包含授权待核实的 SelfLift 组件：' + member)
                 parts = member.rstrip('/').split('/')
                 if any(not p or p in ('.', '..') or p.endswith(('.', ' ')) or ':' in p for p in parts):
                     raise RuntimeError(f'拒绝更新包：非法文件路径：{member}')

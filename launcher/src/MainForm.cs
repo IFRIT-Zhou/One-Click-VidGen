@@ -341,9 +341,9 @@ namespace OcvLauncher
             componentActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             checkButton.Margin = new Padding(0, 6, 3, 6);
             componentActions.Controls.Add(checkButton, 0, 0);
-            rmbgButton = AccentButton("RMBG 抠图组件", PanelSoft, TextMain);
+            rmbgButton = AccentButton("可选组件与模型", PanelSoft, TextMain);
             rmbgButton.Margin = new Padding(3, 6, 0, 6);
-            rmbgButton.Click += RmbgButtonClick;
+            rmbgButton.Click += delegate { using (var dialog = new OptionalComponentsForm(runtime.Root, delegate { RmbgButtonClick(this, EventArgs.Empty); })) dialog.ShowDialog(this); };
             componentActions.Controls.Add(rmbgButton, 1, 0);
             layout.Controls.Add(componentActions, 0, 4);
 
@@ -634,7 +634,7 @@ namespace OcvLauncher
                     return;
                 }
                 if (code != 3) throw new InvalidOperationException("本机检查失败，详见启动日志。");
-                if (MessageBox.Show(this, "要安装或更新独立推理依赖吗？\n\n将从 PyTorch 官方源和 PyPI 下载程序包；如无法复用已有显卡库，下载量可能达数 GB。不会下载模型权重，不会修改现有 ComfyUI 或主程序 Python。", "RMBG 抠图组件",
+                if (MessageBox.Show(this, "要安装或更新独立推理依赖吗？\n\n将从 PyTorch 官方源和 PyPI 下载到 RMBG 专属环境；首次下载量可能达数 GB。不会借用 ComfyUI 的 Python 或依赖，不会下载模型权重，不会修改现有 ComfyUI 或主程序 Python。", "RMBG 抠图组件",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
                 SetBusy(true, "正在安装抠图依赖");
                 if (await RunRmbgSetup(true) != 0) throw new InvalidOperationException("安装未完成。保留原环境，请查看启动日志后重试。");

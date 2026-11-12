@@ -5,8 +5,8 @@
 ## 安装与更新
 
 1. **程序文件**：通过 OCV Launcher 的「安全更新」更新。此目录中的工作程序、模型结构代码、配置和依赖版本清单是软件的一部分，不需要从模型仓库手工复制 Python 代码。
-2. **运行依赖**：在 Launcher 的「状态与快捷入口 → RMBG 抠图组件」检查。若已有兼容的随包 Python 和依赖，会提示无需下载；若缺少依赖或版本不兼容，确认后才下载安装。安装依赖不等于下载模型，也不会启动 ComfyUI。
-3. **模型权重**：单独准备 [BiRefNet-general.safetensors（固定版本）](https://huggingface.co/1038lab/BiRefNet/resolve/4d000788a9698c7f8d67c8c6ce2b40c768f5b909/BiRefNet-general.safetensors)，放到下方位置。已有同一文件时无需重新下载。普通软件更新不会覆盖这个目录。
+2. **运行依赖**：在 Launcher 的「状态与快捷入口 → RMBG 抠图组件」检查并安装/更新。依赖安装到 `runtime/rmbg/versions` 专属环境，不再借用 ComfyUI 或主程序的机器学习依赖。首次下载 CUDA/PyTorch 等可能需要数 GB；不下载模型权重。新环境验证通过后才切换激活指针，旧环境保留供运行中的任务使用。Python 标准库由 OCV 便携 Python 提供，不继承其 site-packages；安装不会修改主程序 Python 或 ComfyUI。
+3. **模型权重**：单独准备 [BiRefNet-general.safetensors（固定社区转换版本）](https://huggingface.co/1038lab/BiRefNet/resolve/4d000788a9698c7f8d67c8c6ce2b40c768f5b909/BiRefNet-general.safetensors)，通过 Launcher「可选组件与模型 → Vibe 动效 → 检查现有权重 / 导入文件」导入，或放到下方位置。导入会检查大小和 SHA-256，并保留源文件；已有同名文件不覆盖，校验不符时停止。此源由 1038lab 发布，不是原作者账号；当前不提供自动下载，也不将其他作者版本直接改名替换。普通软件更新不会覆盖权重目录。
 
 从 OCV 根目录算起：
 
