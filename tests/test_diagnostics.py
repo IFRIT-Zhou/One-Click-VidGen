@@ -4,6 +4,12 @@ from backend.app.diagnostics import redact_text, sanitize_request
 
 
 class DiagnosticsPrivacyTest(unittest.TestCase):
+    def test_redacts_hex_key_arrays_and_env_pools(self):
+        keys = ['0123456789abcdef0123456789abcdef', 'abcdef0123456789abcdef0123456789']
+        for value in [str({'api_keys': keys}), 'RUNNINGHUB_API_KEYS=' + ','.join(keys), '{"tokens": ["' + keys[0] + '"]}']:
+            for key in keys:
+                self.assertNotIn(key, redact_text(value))
+
     def test_redacts_keys_and_user_paths(self):
         value = "api_key=sk-1234567890abcdefghijkl C:\\Users\\Alice\\secret.txt"
         cleaned = redact_text(value)

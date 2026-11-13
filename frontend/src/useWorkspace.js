@@ -481,6 +481,8 @@ const apiKeyForm = reactive({
   language_model: 'gemini-3.7-flash',
   language_api_base_url: '',
   custom_llm_thinking_mode: 'follow',
+  custom_llm_reasoning_compat: true,
+  custom_llm_reply_timeout: 120,
   language_api_key: '',
   image_api_base_url: '',
   image_model: 'rhart-image-g-2',
@@ -2118,20 +2120,26 @@ function addApiKeyAccount(kind) {
   editApiKey(kind)
 }
 
-async function deleteConfiguredApiKey(kind, index) {
-  if (form.use_cloud_image_pool || deletingApiKey.value) return
+async function deleteConfiguredApiKey(kind, index, savedProvider = '') {
+  if (deletingApiKey.value) return
   const targetLabel = kind === 'language' ? '这个语言模型 API Key' : '这个已保存的 API Key'
-  if (!window.confirm(`确定删除${targetLabel}吗？`)) return
+  if (!window.confirm(`确定清除${savedProvider ? savedProvider + ' 的' : ''}${targetLabel}吗？仅清除本机保存的密钥，不会撤销服务商密钥。依赖此接口的项目后续调用可能失败；已生成素材不变。部分旧渠道共用同一密钥，清除后会一起失效。`)) return
   deletingApiKey.value = true
   try {
-    const provider = kind === 'language' ? apiKeyForm.language_provider : ''
+    const provider = kind === 'language' ? (savedProvider || apiKeyForm.language_provider) : ''
     const result = await api.deleteApiKey(kind, index, provider)
     apiKeyStatus.value = result.keys || apiKeyStatus.value
     if (kind === 'language') apiKeyEditing.language = true
+    if (kind === 'qwen_tts') {
+      apiKeyEditing.qwen_tts = true
+      apiKeyForm.qwen_tts_api_key = ''
+      qwenTtsKeyMessage.value = result.message || 'Qwen-TTS 密钥已清除。'
+    }
     if (kind === 'image' && !apiKeyStatus.value.image?.configured) apiKeyEditing.image = true
     apiKeyMessage.value = result.message || 'API Key 已删除。'
   } catch (error) {
     apiKeyMessage.value = error.message || '删除 API Key 失败。'
+    if (kind === 'qwen_tts') qwenTtsKeyMessage.value = apiKeyMessage.value
   } finally {
     deletingApiKey.value = false
   }
@@ -2154,6 +2162,8 @@ async function loadApiKeySettings() {
       || currentLanguageProvider.value?.base_url
       || ''
     apiKeyForm.custom_llm_thinking_mode = apiKeyStatus.value.language?.custom_thinking_mode || 'follow'
+    apiKeyForm.custom_llm_reasoning_compat = apiKeyStatus.value.language?.custom_reasoning_compat ?? true
+    apiKeyForm.custom_llm_reply_timeout = apiKeyStatus.value.language?.custom_reply_timeout || 120
     apiKeyForm.image_api_base_url = apiKeyStatus.value.image?.configured
       ? ''
       : (apiKeyStatus.value.image?.base_url || '')
@@ -2201,6 +2211,8 @@ async function saveApiKeySettings() {
   if (customLanguageProvider.value) {
     payload.language_api_base_url = String(apiKeyForm.language_api_base_url || '').trim()
     payload.custom_llm_thinking_mode = apiKeyForm.custom_llm_thinking_mode || 'follow'
+    payload.custom_llm_reasoning_compat = apiKeyForm.custom_llm_reasoning_compat
+    payload.custom_llm_reply_timeout = Number(apiKeyForm.custom_llm_reply_timeout)
   }
   payload.image_api_base_url = String(apiKeyForm.image_api_base_url || '').trim()
   payload.image_model = String(apiKeyForm.image_model || '').trim()

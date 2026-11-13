@@ -25,6 +25,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .auth import COOKIE_NAME, current_user_from_request, local_auth_enabled, local_user, require_user, sign_session
 from .config import _parse_env_lines, save_project_env_values
+from .local_access import WorkspaceMediaFiles, local_request_boundary
 from .cloud_client import CloudApiError, cloud_client_for, load_cloud_config, tts_queue_accepting
 from .cloud_tts import build_quote_payload
 from .diagnostics import create_diagnostic_package
@@ -488,6 +489,8 @@ class ApiKeySettingsRequest(BaseModel):
     language_api_base_url: str | None = Field(default=None, max_length=2048)
     language_api_key: str | None = Field(default=None, max_length=2048)
     custom_llm_thinking_mode: Literal["follow", "disabled", "enabled"] | None = None
+    custom_llm_reasoning_compat: bool | None = None
+    custom_llm_reply_timeout: int | None = Field(default=None, ge=10, le=600)
     image_api_base_url: str | None = Field(default=None, max_length=2048)
     image_model: str | None = Field(default=None, max_length=256)
     image_resolution: str | None = Field(default=None, max_length=64)
@@ -566,11 +569,12 @@ app.add_middleware(
 )
 
 WORKSPACE_DIR = PROJECT_ROOT / "workspace"
+app.middleware("http")(local_request_boundary)
 PARAMETER_PRESETS_DIR = PROJECT_ROOT / "saved_parameters"
 AGENT_PROMPT_PRESETS_DIR = PROJECT_ROOT / "saved_agent_prompts"
 PLUGINS_DIR = PROJECT_ROOT / "plugins"
 if WORKSPACE_DIR.exists():
-    app.mount("/workspace", StaticFiles(directory=str(WORKSPACE_DIR)), name="workspace")
+    app.mount("/workspace", WorkspaceMediaFiles(directory=str(WORKSPACE_DIR)), name="workspace")
 
 
 @app.on_event("startup")
@@ -1307,7 +1311,7 @@ def _api_key_status() -> dict[str, Any]:
             "source": config.get("source", "relay"),
             "configured": provider_configured,
             "count": 1 if provider_key and provider_configured else 0,
-            "key_hints": _masked_api_keys([provider_key]) if not config.get("disabled") else [],
+            "key_hints": _masked_api_keys([provider_key]),
             "selected_model": "" if name == "custom" and provider_configured else provider_model,
             "models": language_provider_models(name),
             "allow_custom_model": bool(config.get("allow_custom_model")),
@@ -1372,6 +1376,8 @@ def _api_key_status() -> dict[str, Any]:
                 "" if selected_configured else selected_base_url
             ) if legacy_relay_selected or provider == "custom" else "",
             "custom_thinking_mode": str(values.get("CUSTOM_LLM_THINKING_MODE") or "follow"),
+            "custom_reasoning_compat": values.get("CUSTOM_LLM_REASONING_COMPAT", "1") == "1",
+            "custom_reply_timeout": int(values.get("CUSTOM_LLM_REPLY_TIMEOUT") or "120"),
             "providers": provider_statuses,
         },
         "image": {
@@ -1907,6 +1913,8 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         and not language_provider
         and not language_model
         and custom_llm_thinking_mode is None
+        and payload.custom_llm_reasoning_compat is None
+        and payload.custom_llm_reply_timeout is None
         and not image_api_base_url
         and not image_model
         and not image_resolution
@@ -1967,18 +1975,32 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
     existing_image_base_url = str(
         existing.get("IMAGE_API_BASE_URL") or existing.get("RUNNINGHUB_BASE_URL") or ""
     ).strip()
+    if language_api_base_url and language_provider:
+        config = LANGUAGE_PROVIDER_OPTIONS[language_provider]
+        old_base = str(existing.get(config["base_env"]) or config.get("default_base") or "").rstrip("/")
+        if old_base != language_api_base_url.rstrip("/") and not language and existing.get(config["key_env"]):
+            raise HTTPException(400, "更换语言接口地址时请重新填写 API Key，旧密钥不会发送到新地址")
+    image_destination_changed = bool(image_api_base_url and image_api_base_url.rstrip("/") != existing_image_base_url.rstrip("/"))
+    if image_destination_changed and existing_image:
+        if not supplied_image:
+            raise HTTPException(400, "更换图像接口地址时请重新填写 API Key，旧密钥不会发送到新地址")
+        existing_image = []
     if supplied_image and not (image_api_base_url or existing_image_base_url or existing_image):
         raise HTTPException(status_code=400, detail="请先填写图像 API Base URL")
     image_pool = _unique_api_keys([*existing_image, *supplied_image])
     image_primary = (
         image
-        or existing.get("RUNNINGHUB_API_KEY", "").strip()
+        or (existing.get("RUNNINGHUB_API_KEY", "").strip() if not image_destination_changed else "")
         or (image_pool[0] if image_pool else "")
     )
 
     # Relay model families share GEMINI_API_KEY. Official providers keep their
     # own credentials so an official key is never accidentally sent to a relay.
     updates: dict[str, str] = {}
+    if image_destination_changed:
+        for name in existing:
+            if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name):
+                updates[name] = ""
     if language_provider:
         provider_config = LANGUAGE_PROVIDER_OPTIONS[language_provider]
         if provider_config.get("disabled"):
@@ -1996,6 +2018,10 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
         if language:
             updates[provider_config["key_env"]] = language
         if language_provider == "custom":
+            if payload.custom_llm_reasoning_compat is not None:
+                updates["CUSTOM_LLM_REASONING_COMPAT"] = "1" if payload.custom_llm_reasoning_compat else "0"
+            if payload.custom_llm_reply_timeout is not None:
+                updates["CUSTOM_LLM_REPLY_TIMEOUT"] = str(payload.custom_llm_reply_timeout)
             if custom_llm_thinking_mode is not None:
                 updates["CUSTOM_LLM_THINKING_MODE"] = custom_llm_thinking_mode
             # An old relay installation is displayed as the unified custom
@@ -2024,7 +2050,10 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
                     or ""
                 ).strip()
                 if legacy_key and not str(existing.get("CUSTOM_LLM_API_KEY") or "").strip():
-                    updates["CUSTOM_LLM_API_KEY"] = legacy_key
+                    if not language:
+                        if language_api_base_url and language_api_base_url.rstrip("/") != legacy_base:
+                            raise HTTPException(400, "迁移并更换语言接口地址时请重新填写 API Key")
+                        updates["CUSTOM_LLM_API_KEY"] = legacy_key
                 if legacy_base and not language_api_base_url and not str(existing.get("CUSTOM_LLM_API_BASE") or "").strip():
                     updates["CUSTOM_LLM_API_BASE"] = legacy_base
                 if legacy_model and not language_model and not str(existing.get("CUSTOM_LLM_MODEL") or "").strip():
@@ -2072,9 +2101,14 @@ def save_api_key_settings(payload: ApiKeySettingsRequest, request: Request) -> d
 @app.delete("/api/api-keys/{kind}/{index}")
 def delete_api_key(kind: str, index: int, request: Request, provider: str | None = None) -> dict[str, Any]:
     require_user(request)
-    if kind not in {"language", "image"} or index < 0:
+    if kind not in {"language", "image", "qwen_tts"} or index < 0:
         raise HTTPException(status_code=400, detail="无效的 API Key 类型或序号")
     values = _parse_env_lines(PROJECT_ROOT / ".env")
+    if kind == "qwen_tts":
+        if index != 0 or not str(values.get("DASHSCOPE_API_KEY") or "").strip():
+            raise HTTPException(status_code=404, detail="找不到要删除的 Qwen-TTS API Key")
+        save_project_env_values({"DASHSCOPE_API_KEY": ""})
+        return {"keys": _api_key_status(), "message": "Qwen-TTS 本机密钥已清除；服务商密钥未撤销。"}
     if kind == "language":
         provider_name = str(provider or values.get("LANGUAGE_PROVIDER") or "gemini_official").strip().lower()
         provider_config = LANGUAGE_PROVIDER_OPTIONS.get(provider_name)

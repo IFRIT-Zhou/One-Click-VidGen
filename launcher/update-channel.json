@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.13.2",
-  "release_order": 2026111302,
-  "display_version": "2026.11.13 Vibe 工作台与本地转场更新",
+  "release_id": "2026.11.13.3",
+  "release_order": 2026111303,
+  "display_version": "2026.11.13 API 安全加固与密钥管理更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.13.2/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.13.3/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "整合静态/动态/Vibe三分页与顶部采用方式、两镜设计单路渲染、本镜停止与追加预算、本地入场转场、模板背景提取、配音播放跟随及片头片尾。保留远端收费、渠道、公告与组件管理更新；不覆盖用户素材、模型、配置。",
-  "content_fingerprint": "55e642c9dfdb9dab4aca84c46dfb45eb6092250181fec4380244dd91eea594ff"
+  "notes": "紧急安全更新：接口地址变更防止误带旧密钥；补齐多密钥日志脱敏、本机访问与工作区文件保护、随机会话签名密钥。完善语言/图像/视频/配音/Vibe密钥删除入口及思考模型兼容和等待上限。不覆盖用户素材和模型，不改写旧版本历史。",
+  "content_fingerprint": "6226a551f9c4e2618f455a47c4d14c09758c9872d29d0ea9e610ad649a0ef046"
 }

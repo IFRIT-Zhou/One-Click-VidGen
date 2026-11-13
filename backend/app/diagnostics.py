@@ -37,6 +37,9 @@ _SENSITIVE_REQUEST_KEYS = {
 def redact_text(value: object) -> str:
     """Remove credential-shaped values and personal machine paths from exported text."""
     text = str(value or "")
+    # Arrays and env-style comma-separated pools must not leave later keys visible.
+    text = re.sub(r'''(?ix)\b((?:[\w-]{0,100}(?:api_?keys?|tokens?|secrets?|passwords?))["']?\s*[:=]\s*)\[[^\]]*\]''', r'\1[REDACTED]', text)
+    text = re.sub(r'''(?m)^([A-Z_]*(?:API_KEYS?|TOKEN|SECRET|PASSWORD)[A-Z_0-9]*\s*=)[^\r\n]*''', r'\1[REDACTED]', text)
     text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._~+/-]+=*', 'Bearer [REDACTED]', text)
     text = re.sub(r'(?i)\bms-[0-9a-f-]{32,}\b', '[REDACTED]', text)
     text = _SENSITIVE_ASSIGNMENT_RE.sub(r"\1[REDACTED]", text)

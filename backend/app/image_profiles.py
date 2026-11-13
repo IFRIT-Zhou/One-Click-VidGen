@@ -84,11 +84,9 @@ def _legacy_keys(values: dict[str, str]) -> list[str]:
 def _legacy_document(values: dict[str, str]) -> dict[str, Any] | None:
     keys = _legacy_keys(values)
     base_url = str(values.get("IMAGE_API_BASE_URL") or values.get("RUNNINGHUB_BASE_URL") or "").strip().rstrip("/")
-    if not keys or not base_url:
+    if not keys:
         return None
     model = str(values.get("IMAGE_MODEL_ID") or values.get("RUNNINGHUB_IMAGE_MODEL") or "").strip()
-    if not model:
-        return None
     endpoint = str(values.get("RUNNINGHUB_ENDPOINT") or "/{model}/text-to-image").strip()
     endpoint = endpoint.replace(model, "{model}") if model in endpoint else endpoint
     if endpoint.startswith("/") and not endpoint.startswith("/openapi/"):
@@ -193,8 +191,12 @@ def profile_provider_configs(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     resolution = str(snapshot.get("resolution") or "1k").lower()
     model = str(snapshot.get("model_id") or profile.get("model_id") or "").strip()
     base = str(snapshot.get("base_url") or profile.get("base_url") or "").rstrip("/")
+    if base != str(profile.get("base_url") or "").rstrip("/"):
+        raise ValueError("图像接口地址已改变，请重新确认任务配置；不会将新密钥发送到旧任务地址")
     def absolute(endpoint: str) -> str:
         value = endpoint.replace("{model}", model)
+        if value.startswith(("http://", "https://")) and (urlparse(value).scheme, urlparse(value).netloc) != (urlparse(base).scheme, urlparse(base).netloc):
+            raise ValueError("图像接口路径不能指向其他主机，避免泄露 API Key")
         if (snapshot.get('protocol') or profile.get('protocol')) == 'openai_sync' and base.endswith('/v1') and value.startswith('/v1/'):
             value = value[3:]
         return value if value.startswith(("http://", "https://")) else f"{base}/{value.lstrip('/')}"
@@ -258,9 +260,17 @@ def save_profile(payload: ImageProfileRequest, request: Request) -> dict[str, An
             "response_format": payload.response_format, "request_parameters": payload.request_parameters,
             "timeout_seconds": payload.timeout_seconds,
         }
+        for field in ("text_endpoint", "reference_endpoint", "query_endpoint"):
+            endpoint = document[field]
+            if endpoint.startswith(("http://", "https://")) and (urlparse(endpoint).scheme, urlparse(endpoint).netloc) != (urlparse(base_url).scheme, urlparse(base_url).netloc):
+                raise ValueError("图像接口路径必须与 Base URL 同源，避免将密钥发送到其他地址")
         with LOCK:
             documents = _read_documents()
             index = next((i for i, item in enumerate(documents) if item.get("id") == profile_id), -1)
+            supplied = _unique_keys([str(payload.api_key or ""), *payload.api_keys])
+            previous = documents[index] if index >= 0 else (_legacy_document(_parse_env_lines(ENV_PATH)) if profile_id == LEGACY_PROFILE_ID else None)
+            if previous and str(previous.get("base_url") or "").rstrip("/") != base_url and not supplied:
+                raise ValueError("更换图像接口地址时请重新填写 API Key，旧密钥不会发送到新地址")
             if index >= 0:
                 document["legacy"] = bool(documents[index].get("legacy"))
                 documents[index] = document
@@ -268,10 +278,11 @@ def save_profile(payload: ImageProfileRequest, request: Request) -> dict[str, An
                 document["legacy"] = profile_id == LEGACY_PROFILE_ID
                 documents.append(document)
             _write_documents(documents)
-            supplied = _unique_keys([str(payload.api_key or ""), *payload.api_keys])
             if supplied:
                 if document.get("legacy"):
-                    save_project_env_values({"RUNNINGHUB_API_KEY": supplied[0], "RUNNINGHUB_API_KEYS": ",".join(supplied[1:])})
+                    updates = {name: "" for name in _parse_env_lines(ENV_PATH) if re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name)}
+                    updates.update({"RUNNINGHUB_API_KEY": supplied[0], "RUNNINGHUB_API_KEYS": ",".join(supplied[1:])})
+                    save_project_env_values(updates)
                 else:
                     save_project_env_values({_secret_name(profile_id): ",".join(supplied)})
         saved_profile = profile_by_id(profile_id, require_configured=False)
@@ -287,6 +298,14 @@ def delete_profile(profile_id: str, request: Request) -> dict[str, Any]:
     with LOCK:
         documents = _read_documents()
         retained = [item for item in documents if item.get("id") != profile_id]
+        if profile_id == LEGACY_PROFILE_ID:
+            values = _parse_env_lines(ENV_PATH)
+            updates = {name: "" for name in values if name in {"RUNNINGHUB_API_KEY", "RUNNINGHUB_API_KEYS"} or re.fullmatch(r"RUNNINGHUB_API_KEY_?\d+", name)}
+            updates.update({"IMAGE_API_BASE_URL": "", "IMAGE_MODEL_ID": ""})
+            save_project_env_values(updates)
+            if retained != documents:
+                _write_documents(retained)
+            return {"ok": True, "message": "旧版图像接口及本机密钥已清除；服务商密钥未撤销"}
         if len(retained) == len(documents):
             raise HTTPException(status_code=404, detail="图像模型配置不存在")
         _write_documents(retained)

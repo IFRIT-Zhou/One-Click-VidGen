@@ -8,10 +8,11 @@ const changed=computed(()=>!!key.value||!saved.value||['base_url','model','max_i
 function hydrate(value){saved.value=value;draft.value={base_url:value.base_url,model:value.model,max_image_requests:value.max_image_requests};key.value=''}
 async function load(){busy.value='load';try{hydrate(await requestJSON('/api/vibe-model'))}catch(e){error.value=e.message}finally{busy.value=''}}
 async function save(clear=false){
-  if(clear&&!window.confirm('清除本账号的 Vibe 专用密钥？不会更改其他接口配置。'))return
+  if(clear&&!window.confirm('清除本账号已保存地址的 Vibe 专用密钥？不会撤销服务商密钥或更改其他接口，后续 Vibe 调用需要重新配置。'))return
   busy.value='save';error.value='';message.value=''
   try{
-    hydrate(await requestJSON('/api/vibe-model',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...draft.value,api_key:key.value||null,clear_key:clear})}))
+    const target=clear?{base_url:saved.value.base_url,model:saved.value.model,max_image_requests:saved.value.max_image_requests}:draft.value
+    hydrate(await requestJSON('/api/vibe-model',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({...target,api_key:clear?null:key.value||null,clear_key:clear})}))
     message.value=clear?'Vibe 密钥已清除。':'Vibe 专用配置已保存。'
   }catch(e){error.value=e.message}finally{busy.value=''}
 }

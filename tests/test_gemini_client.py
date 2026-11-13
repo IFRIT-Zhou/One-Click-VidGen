@@ -7,6 +7,26 @@ from backend.app import gemini_client, html_generator
 
 
 class GeminiClientTest(unittest.TestCase):
+    def test_custom_deepseek_alias_preserves_thinking_selection(self):
+        for model, mode, expected in [
+            ('deepseek/deepseek-v4.1-flash', 'follow', None),
+            ('deepseek-flash', 'follow', None),
+            ('deepseek/deepseek-v4.1-flash', 'enabled', 'enabled'),
+            ('other-model', 'follow', None),
+        ]:
+            with self.subTest(model=model, mode=mode):
+                response = Mock(ok=True)
+                response.json.return_value = {'choices':[{'message':{'content':'[]'},'finish_reason':'stop'}]}
+                with patch.object(gemini_client.requests,'post',return_value=response) as post, patch.dict('os.environ', {
+                    'LANGUAGE_PROVIDER':'custom','CUSTOM_LLM_API_BASE':'https://relay.example/v1',
+                    'CUSTOM_LLM_MODEL':model,'CUSTOM_LLM_API_KEY':'test-only',
+                    'CUSTOM_LLM_THINKING_MODE':mode,'GEMINI_REASONING_EFFORT':'high',
+                }):
+                    gemini_client.generate_gemini_text(system_prompt='system',user_prompt='user')
+                body=post.call_args.kwargs['json']
+                self.assertEqual(body.get('thinking'), {'type':expected} if expected else None)
+                if expected=='disabled':self.assertNotIn('reasoning_effort',body)
+
     def test_explicit_legacy_relay_configuration_remains_compatible(self) -> None:
         response = Mock()
         response.ok = True

@@ -188,6 +188,9 @@
                 <option value="enabled">强制开启（DeepSeek 兼容）</option>
               </select>
             </label>
+            <label><input type="checkbox" v-model="apiKeyForm.custom_llm_reasoning_compat">思考模型兼容：保留思考，仅将结论正文交给下游</label>
+            <label v-if="apiKeyForm.custom_llm_reasoning_compat">单次回复最长等待（秒）<input type="number" min="10" max="600" step="1" v-model.number="apiKeyForm.custom_llm_reply_timeout"></label>
+            <small v-if="apiKeyForm.custom_llm_reasoning_compat">默认120秒，包含思考和正文接收。超时不自动重试或切换渠道；本地停止等待不保证上游停止计费。</small>
             <small>需兼容 <code>/chat/completions</code>、具备足够上下文长度并能稳定输出 JSON。</small>
             <small>强制开关会发送 DeepSeek 格式的 <code>thinking</code> 参数；其他模型请选择“跟随接口默认”。</small>
             <small class="api-custom-security-note">安全提示：API Key 会随请求发送到此网址，请只填写你信任的服务地址。</small>
@@ -212,6 +215,16 @@
             </details>
             <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加语言模型 API Key" aria-label="添加语言模型 API Key" @click="addApiKeyAccount('language')">＋</button>
           </div>
+          <details class="api-key-account-details" open>
+            <summary>管理本机已保存的语言 API 密钥</summary>
+            <p class="muted">仅显示脱敏密钥。清除不会切换当前模型，也不会删除已有作品；模型预设与密钥是两回事。</p>
+            <div v-for="provider in (apiKeyStatus.language?.providers || []).filter(p => (p.key_hints || []).length)" :key="provider.value" class="api-key-account-row">
+              <div><strong>{{provider.label}}</strong><div v-for="(hint,index) in provider.key_hints" :key="index"><code>{{hint}}</code>
+                <button type="button" :disabled="deletingApiKey || savingApiKeys" @click="deleteConfiguredApiKey('language',index,provider.value)">清除已保存密钥</button>
+              </div></div>
+            </div>
+            <small v-if="!(apiKeyStatus.language?.providers || []).some(p => (p.key_hints || []).length)">暂无已保存的语言 API 密钥。</small>
+          </details>
           <button v-if="!customLanguageProvider && apiKeyFieldOpen('language')" class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys || form.use_cloud_image_pool" @click="saveApiKeySettings">
             {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
           </button>
@@ -1240,6 +1253,7 @@
               <span v-else class="api-key-hints"><code v-for="hint in apiKeyStatus.qwen_tts?.key_hints || []" :key="hint">{{ hint }}</code></span>
             </span>
                   <button type="button" title="重新输入 Qwen-TTS API Key" @click="editApiKey('qwen_tts')">✏️</button>
+                  <button type="button" :disabled="deletingApiKey" @click="deleteConfiguredApiKey('qwen_tts', 0)">删除密钥</button>
                 </div>
                 <div class="qwen-voice-controls">
                   <label>

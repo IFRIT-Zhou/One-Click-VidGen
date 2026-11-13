@@ -50,6 +50,38 @@ class ImageProfilesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不支持 4K"):
             image_profiles.profile_snapshot("model-a", "4k")
 
+    def test_incomplete_legacy_credentials_remain_manageable(self):
+        self.env.write_text("RUNNINGHUB_API_KEY=test-secret\n", encoding="utf-8")
+        profiles = image_profiles.list_profiles()
+        self.assertEqual(profiles[0]["id"], image_profiles.LEGACY_PROFILE_ID)
+        self.assertFalse(profiles[0]["configured"])
+        self.assertEqual(profiles[0]["key_count"], 1)
+
+    def test_delete_legacy_clears_all_key_variants_only(self):
+        self.env.write_text("RUNNINGHUB_API_KEY=a\nRUNNINGHUB_API_KEYS=b,c\nRUNNINGHUB_API_KEY_2=d\nRUNNINGHUB_API_KEY3=e\nDASHSCOPE_API_KEY=keep\n", encoding="utf-8")
+        with patch.object(image_profiles, "require_user"), patch.object(image_profiles, "save_project_env_values") as save:
+            image_profiles.delete_profile(image_profiles.LEGACY_PROFILE_ID, None)
+        updates = save.call_args.args[0]
+        for name in ["RUNNINGHUB_API_KEY", "RUNNINGHUB_API_KEYS", "RUNNINGHUB_API_KEY_2", "RUNNINGHUB_API_KEY3"]:
+            self.assertEqual(updates[name], "")
+        self.assertNotIn("DASHSCOPE_API_KEY", updates)
+
+    def test_delete_named_profile_keeps_other_profiles(self):
+        self.profiles.write_text(json.dumps({"profiles": [{"id": "one"}, {"id": "two"}]}), encoding="utf-8")
+        with patch.object(image_profiles, "require_user"), patch.object(image_profiles, "save_project_env_values") as save:
+            image_profiles.delete_profile("one", None)
+        self.assertEqual(json.loads(self.profiles.read_text())["profiles"], [{"id": "two"}])
+        save.assert_called_once_with({image_profiles._secret_name("one"): ""})
+
+    def test_changing_image_destination_requires_new_key_before_any_write(self):
+        payload = image_profiles.ImageProfileRequest(id=image_profiles.LEGACY_PROFILE_ID, name='legacy', base_url='https://other.example', model_id='model')
+        with patch.object(image_profiles, 'require_user'), patch.object(image_profiles, '_write_documents') as write, patch.object(image_profiles, 'save_project_env_values') as save:
+            from fastapi import HTTPException
+            with self.assertRaisesRegex(HTTPException, '重新填写'):
+                image_profiles.save_profile(payload, None)
+            write.assert_not_called()
+            save.assert_not_called()
+
     def test_task_environment_uses_snapshotted_model_and_paths(self):
         self.profiles.write_text(json.dumps({"profiles": [{
             "id": "model-a", "name": "模型 A", "protocol": "async_task",

@@ -7,6 +7,8 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
+import threading
 import time
 from typing import Any
 
@@ -17,7 +19,21 @@ from .db import get_user_by_id
 
 COOKIE_NAME = "voice_video_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
-SESSION_SECRET = os.getenv("SESSION_SECRET", "voice-over-video-local-session-secret")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+_SECRET_LOCK = threading.Lock()
+
+
+def session_secret() -> str:
+    global SESSION_SECRET
+    with _SECRET_LOCK:
+        if not SESSION_SECRET or SESSION_SECRET == "voice-over-video-local-session-secret":
+            from .config import ENV_PATH, _parse_env_lines, save_project_env_values
+            saved = _parse_env_lines(ENV_PATH).get("SESSION_SECRET", "")
+            if not saved or saved == "voice-over-video-local-session-secret":
+                saved = secrets.token_urlsafe(48)
+                save_project_env_values({"SESSION_SECRET": saved})
+            SESSION_SECRET = saved
+        return SESSION_SECRET
 AUTH_MODE = os.getenv("AUTH_MODE", "account").strip().lower()
 DISABLE_AUTH = os.getenv("DISABLE_AUTH", "").strip().lower() in {"1", "true", "yes", "on"}
 LOCAL_USER_ID = int(os.getenv("LOCAL_USER_ID", "1"))
@@ -54,7 +70,7 @@ def sign_session(user_id: int) -> str:
         "exp": int(time.time()) + SESSION_TTL_SECONDS,
     }
     body = _b64_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    signature = hmac.new(SESSION_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    signature = hmac.new(session_secret().encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64_encode(signature)}"
 
 
@@ -62,7 +78,7 @@ def read_session(token: str | None) -> dict[str, Any] | None:
     if not token or "." not in token:
         return None
     body, signature = token.split(".", 1)
-    expected = hmac.new(SESSION_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    expected = hmac.new(session_secret().encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     try:
         actual = _b64_decode(signature)
         if not hmac.compare_digest(actual, expected):
