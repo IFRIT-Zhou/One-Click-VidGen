@@ -22,7 +22,7 @@ import uuid
 
 
 PROVIDERS = {"runninghub": (Decimal("30"), "USD", "RunningHub", "美元"),
-             "ican": (Decimal("30"), "CNY", "ICAN", "元人民币")}
+             "ican": (Decimal("30"), "USD", "ICAN", "美元")}
 DeliveryStatus = Literal["accepted", "failed", "unknown"]
 
 

@@ -110,14 +110,14 @@ class BalanceAlertTests(unittest.TestCase):
 
     def test_currency_validation_and_ican_threshold(self):
         key = account_fingerprint("ican", "other-secret")
-        for amount, currency in [("NaN", "CNY"), ("Infinity", "CNY"), ("29", "USD")]:
+        for amount, currency in [("NaN", "USD"), ("Infinity", "USD"), ("29", "CNY")]:
             with self.assertRaises(ValueError):
                 self.store.check(provider="ican", account_id=key, balance=amount, currency=currency,
                                  recipients=self.receivers, send=self.send)
-        results = self.store.check(provider="ican", account_id=key, balance=Decimal("29.90"), currency="CNY",
+        results = self.store.check(provider="ican", account_id=key, balance=Decimal("29.90"), currency="USD",
                                    recipients=self.receivers, send=self.send)
         self.assertEqual(len(results), 2)
-        self.assertIn("元人民币", self.sent[0][1])
+        self.assertIn("美元", self.sent[0][1])
         self.assertNotEqual(key, self.account)
 
     def test_invalid_sender_reply_is_unknown(self):
