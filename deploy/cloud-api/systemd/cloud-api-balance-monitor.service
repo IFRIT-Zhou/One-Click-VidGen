@@ -1,0 +1,22 @@
+[Unit]
+Description=OCV provider balance monitor and email alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cloudapi
+Group=cloudapi
+WorkingDirectory=/opt/cloud-api
+EnvironmentFile=/etc/cloud-api.env
+EnvironmentFile=-/etc/cloud-api-ican.env
+EnvironmentFile=-/etc/cloud-api-smtp.env
+EnvironmentFile=-/etc/cloud-api-balance-monitor.env
+ExecStart=/opt/cloud-api/.venv/bin/python -m app.pool_balance_runner
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cloud-api
+TimeoutStartSec=600

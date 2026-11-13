@@ -1,0 +1,10 @@
+[Unit]
+Description=Check OCV provider balances every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=cloud-api-balance-monitor.service
+
+[Install]
+WantedBy=timers.target
