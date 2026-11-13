@@ -1,0 +1,10 @@
+[Unit]
+Description=Check upstream actual spend every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+Unit=cloud-api-spend-monitor.service
+
+[Install]
+WantedBy=timers.target

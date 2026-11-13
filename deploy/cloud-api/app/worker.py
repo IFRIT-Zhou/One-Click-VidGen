@@ -645,6 +645,7 @@ def poll_images() -> None:
             job.result_url = remote["image_url"]
             charged = image_pool_actual_credits(base_cost, fixed_credits=job.request_json.get("runninghub_fixed_credits"))
             job.actual_cost_credits = base_cost
+            job.request_json = {**job.request_json, "upstream_usage": remote.get("upstream_usage", {})}
             job.finished_at = utcnow()
             job.poll_attempts = 0
             job.poll_started_at = None

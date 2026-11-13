@@ -173,7 +173,12 @@ class RunningHubImageAdapter:
         if state in SUCCESS_STATES or image_url:
             if not image_url:
                 raise UpstreamBusyError("Image provider completed without a result URL")
-            return {"status": "SUCCESS", "image_url": str(image_url), "actual_cost_credits": actual_cost}
+            usage = _first(result, {"usage"})
+            safe_usage = {key: str(value) for key, value in (usage.items() if isinstance(usage, dict) else [])
+                          if key in {"settleMode", "chargedPoint", "thirdPartyConsumeMoney", "consumeMoney", "consumeCoins", "currency"}
+                          and isinstance(value, (str, int, float, Decimal)) and not isinstance(value, bool)}
+            return {"status": "SUCCESS", "image_url": str(image_url), "actual_cost_credits": actual_cost,
+                    "upstream_usage": safe_usage}
         if state in RUNNING_STATES:
             return {"status": "RUNNING" if state not in {"QUEUED", "PENDING"} else "QUEUED"}
         code = _error_code(result, 400)
