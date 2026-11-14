@@ -99,7 +99,7 @@ export function useStudio(w) {
   async function openCodexDraft(draft) {
     const id = 'codex-' + draft.id
     const local = studioDrafts.value.find(row => row.id === id)
-    if (local && !window.confirm('本机已有这份草稿。确定：重新载入 Codex 服务器版本；取消：保留并打开本机编辑。')) {
+    if (local && !window.confirm('本机已有这份草稿。确定：重新载入 AI 保存的服务器版本；取消：保留并打开本机编辑。')) {
       newProject('dynamic', local); return
     }
     try {
@@ -113,7 +113,7 @@ export function useStudio(w) {
         source_audio_id:'', skip_tts:false, dynamic_video:true, dynamic_auto_advance:false, step_mode:true,
         use_cloud_image_pool:w.form.use_cloud_image_pool, method:w.form.method, size:w.form.size}
       newProject('dynamic', {id, form, subtitle:{...subtitleDefaults}, engine:form.tts_engine||'indextts25'})
-      studioSaveState.value = 'Codex 草稿已载入并保存到本机；请核对参数后手动生成配音'
+      studioSaveState.value = 'AI 草稿已载入并保存到本机；请核对参数后手动生成配音'
     } catch (e) { studioError.value = e.message }
   }
   function openCodexProject(id) {
@@ -164,7 +164,7 @@ export function useStudio(w) {
   }, {immediate:true})
   async function handoffToCodex() {
     if (studioBusy.value || !studioJob.value?.id) return
-    if (!window.confirm('请确认配音与字幕已核查。将保存现有配音并交给 Codex 规划，不运行自动分镜、不生成图片或视频。')) return
+    if (!window.confirm('请确认配音与字幕已核查。将保存现有配音并交给 AI 规划，不运行自动分镜、不生成图片或视频。')) return
     studioBusy.value=true; studioError.value=''
     try {
       const result=await requestJSON('/api/codex-bridge/from-audio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:studioJob.value.id,audio_confirmed:true})})

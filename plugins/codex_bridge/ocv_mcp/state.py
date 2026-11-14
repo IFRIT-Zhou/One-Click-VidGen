@@ -6,6 +6,15 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+# Cache retention. Plans (receipts) are tiny and kept longer; large JSON results and
+# downloaded assets are pruned by age and by total size so the cache cannot grow forever.
+RESULT_MAX_AGE = 14 * 86400
+RESULT_MAX_BYTES = 64 * 1024 * 1024
+ASSET_MAX_AGE = 14 * 86400
+ASSET_MAX_BYTES = 512 * 1024 * 1024
+PLAN_MAX_AGE = 60 * 86400
+PRUNE_INTERVAL = 6 * 3600
+
 
 class State:
     def __init__(self, folder):
@@ -23,6 +32,14 @@ class State:
             db.execute('''CREATE TABLE IF NOT EXISTS assets (
                 id TEXT PRIMARY KEY, owner TEXT NOT NULL, filename TEXT NOT NULL,
                 mime TEXT NOT NULL, size INTEGER NOT NULL)''')
+            # Older databases have no timestamp on results; existing rows count as "now"
+            # for the age rule (the size rule still trims the oldest ones by insertion order).
+            columns = {row[1] for row in db.execute('PRAGMA table_info(results)')}
+            if 'created' not in columns:
+                db.execute('ALTER TABLE results ADD COLUMN created REAL')
+                db.execute('UPDATE results SET created=? WHERE created IS NULL', (time.time(),))
+            db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        self.last_prune = 0.0
 
     @contextmanager
     def connect(self):
@@ -73,7 +90,9 @@ class State:
     def put_result(self, owner, result):
         ident = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute('INSERT INTO results VALUES (?,?,?)', (ident, owner, json.dumps(result, ensure_ascii=False)))
+            db.execute('INSERT INTO results (id, owner, payload, created) VALUES (?,?,?,?)',
+                       (ident, owner, json.dumps(result, ensure_ascii=False), time.time()))
+        self.maybe_prune()
         return ident
 
     def get_result(self, owner, ident):
@@ -87,6 +106,7 @@ class State:
         ident = uuid.uuid4().hex
         with self.connect() as db:
             db.execute('INSERT INTO assets VALUES (?,?,?,?,?)', (ident, owner, str(path), mime, path.stat().st_size))
+        self.maybe_prune()
         return {'asset_id': ident, 'uri': f'ocv://assets/{ident}', 'path': str(path),
                 'mime_type': mime, 'size': path.stat().st_size}
 
@@ -96,3 +116,77 @@ class State:
         if not row:
             raise ValueError('找不到当前用户的素材')
         return dict(row)
+
+    # ---- retention ----
+    def maybe_prune(self):
+        """Prune at most every few hours; shared by several MCP processes via the meta table."""
+        now = time.time()
+        if now - self.last_prune < PRUNE_INTERVAL:
+            return None
+        self.last_prune = now
+        try:
+            with self.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                row = db.execute("SELECT value FROM meta WHERE key='last_prune'").fetchone()
+                if row and now - float(row['value']) < PRUNE_INTERVAL:
+                    return None
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('last_prune', ?)", (str(now),))
+            return self.prune(now)
+        except (OSError, sqlite3.Error):
+            return None  # Cleanup must never break a tool call.
+
+    def prune(self, now=None):
+        now = time.time() if now is None else now
+        removed = {'results': 0, 'assets': 0, 'plans': 0, 'files': 0, 'bytes_freed': 0}
+        with self.connect() as db:
+            removed['results'] += db.execute('DELETE FROM results WHERE created < ?', (now - RESULT_MAX_AGE,)).rowcount
+            total = db.execute('SELECT COALESCE(SUM(LENGTH(payload)),0) FROM results').fetchone()[0]
+            if total > RESULT_MAX_BYTES:
+                for row in db.execute('SELECT rowid, LENGTH(payload) AS size FROM results ORDER BY rowid').fetchall():
+                    if total <= RESULT_MAX_BYTES:
+                        break
+                    db.execute('DELETE FROM results WHERE rowid=?', (row['rowid'],))
+                    total -= row['size'] or 0
+                    removed['results'] += 1
+            # Finished plans only; prepared/submitting receipts stay for duplicate-submit protection.
+            removed['plans'] += db.execute(
+                "DELETE FROM plans WHERE created < ? AND status NOT IN ('prepared', 'submitting')",
+                (now - PLAN_MAX_AGE,)).rowcount
+        root = self.folder / 'assets'
+        files = []
+        if root.is_dir():
+            for path in root.rglob('*'):
+                try:
+                    if path.is_file():
+                        stat = path.stat()
+                        files.append((stat.st_mtime, stat.st_size, path))
+                except OSError:
+                    continue
+        files.sort()
+        total = sum(size for _, size, _ in files)
+        for mtime, size, path in files:
+            if mtime < now - ASSET_MAX_AGE or total > ASSET_MAX_BYTES or (path.suffix == '.part' and mtime < now - 3600):
+                try:
+                    path.unlink()
+                    total -= size
+                    removed['files'] += 1
+                    removed['bytes_freed'] += size
+                except OSError:
+                    pass
+        # Drop only rows whose file is really gone. Stored paths may be spelled differently
+        # from the scanned ones (drive letters, mapped folders), so never compare path strings.
+        with self.connect() as db:
+            for row in db.execute('SELECT id, filename FROM assets').fetchall():
+                if not Path(row['filename']).is_file():
+                    db.execute('DELETE FROM assets WHERE id=?', (row['id'],))
+                    removed['assets'] += 1
+        if removed['results'] or removed['plans']:
+            try:
+                vacuum = sqlite3.connect(self.db, timeout=10, isolation_level=None)
+                try:
+                    vacuum.execute('VACUUM')
+                finally:
+                    vacuum.close()
+            except sqlite3.Error:
+                pass  # Another process is busy; the next prune will retry.
+        return removed

@@ -575,12 +575,12 @@
             </div>
 
             <label class="stack">
-              <span>{{ form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
+              <span>{{ form.skip_tts && form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
               <textarea
                 ref="workspaceScriptTextarea"
                 v-model="form.script"
                 rows="14"
-                :disabled="form.skip_text_correction"
+                :disabled="form.skip_tts && form.skip_text_correction"
                 :placeholder="scriptPlaceholder"
               ></textarea>
               <div v-if="!form.skip_tts" class="structural-blank-toolbar">

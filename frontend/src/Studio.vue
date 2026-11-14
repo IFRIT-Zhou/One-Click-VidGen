@@ -53,26 +53,44 @@
    <ImageStudio v-else-if="studioPage==='images'" />
    <ComfyUIWorkbench v-else-if="studioPage==='comfyui'" />
    <section v-else-if="studioPage==='home'" class="content home">
-    <CodexBridgePanel compact @open-draft="openCodexDraft" @open-project="openCodexProject"/>
     <div class="page-heading"><div><p class="eyebrow">YOUR CREATIVE SPACE</p><h1>让想法，成为作品。</h1><p class="muted">从一段文字开始，继续上次的创作。</p></div><button class="primary" @click="newProject()">＋ 新建图文视频</button></div>
     <div v-if="!session.user" class="resume"><div><h3>连接你的工作空间</h3><p>登录本地工作台后，查看项目并开始创作。</p></div><button @click="studioDrawer='接口与服务'">打开登录与配置</button></div>
+    <div class="home-layout">
+    <div class="home-main">
+    <div class="section-heading"><h2>我的项目 <small>{{jobTotal}}</small></h2><input v-model="studioSearch" class="search" placeholder="搜索当前页项目…" aria-label="搜索项目"/></div>
+    <div class="filters"><button v-for="f in [{id:'all',label:'全部'},{id:'video',label:'图文视频'},{id:'dynamic',label:'动态视频'},{id:'audio',label:'仅配音'},{id:'subtitle',label:'仅字幕识别'}]" :key="f.id" :class="{selected:studioFilter===f.id}" @click="studioFilter=f.id">{{f.label}}</button></div>
+    <div class="project-table"><div class="table-head"><span>项目名称</span><span class="col-wide">类型</span><span>状态</span><span>进度</span><span class="col-wide">更新</span><span/></div><div v-for="job in studioJobs" :key="job.id" class="project-row"><button class="project-title" @click="openProject(job)"><span class="project-icon">{{typeOf(job)==='dynamic'?'▷':typeOf(job)==='video'?'▧':typeOf(job)==='audio'?'◉':'≡'}}</span><span><b>{{job.request?.project_name||job.id}}</b><small><span class="project-type-inline">{{typeLabel(job)}} · </span>{{job.message}}</small></span></button><span class="col-wide project-type">{{typeLabel(job)}}</span><span class="status" :class="['is-'+job.status,{waiting:job.status==='waiting_confirmation'}]">{{statusLabel(job.status)}}</span><span class="project-progress"><span class="project-progress-bar" aria-hidden="true"><i :style="{width:Math.max(0,Math.min(100,Number(job.progress)||0))+'%'}"></i></span><span class="muted">{{job.progress}}%</span></span><span class="col-wide project-updated" :title="formatJobTime(job.updated_at,true)">{{formatJobTime(job.updated_at)}}</span><span class="project-actions"><button type="button" class="col-wide project-quick" :aria-label="'查看日志：'+(job.request?.project_name||job.id)" @click="openLogs(job)">日志</button><details class="project-menu"><summary>更多</summary><button @click="openProject(job)">打开项目</button><button @click="openLogs(job)">查看日志</button><button @click="exportDiagnosticPackage(job)">诊断包</button><button :disabled="['running','queued'].includes(job.status)" @click="deleteGenerationJob(job)">删除任务</button></details></span></div><div v-if="!studioJobs.length" class="empty">当前分类暂无项目。</div></div>
+    <div v-if="jobTotalPages>1" class="studio-pagination"><button :disabled="jobPage<=1" @click="changeStudioPage(jobPage-1)">上一页</button><span>{{jobPage}} / {{jobTotalPages}}</span><button :disabled="jobPage>=jobTotalPages" @click="changeStudioPage(jobPage+1)">下一页</button></div>
+    </div>
+    <aside class="home-side" aria-label="快速开始与草稿">
+     <section class="home-quick" aria-labelledby="home-quick-title"><h2 id="home-quick-title">快速开始</h2>
+      <div class="home-quick-grid"><button type="button" @click="newProject()"><span aria-hidden="true">▧</span><b>图文视频</b><small>文案配音 + 分镜图</small></button><button type="button" @click="newProject('dynamic')"><span aria-hidden="true">▷</span><b>动态视频</b><small>分步制作动态镜头</small></button><button type="button" @click="newProject('audio')"><span aria-hidden="true">◉</span><b>仅配音</b><small>生成后逐句精修</small></button><button type="button" @click="newProject('subtitle')"><span aria-hidden="true">≡</span><b>字幕识别</b><small>音视频转 SRT</small></button></div>
+     </section>
     <div v-if="studioDrafts.length" class="studio-drafts">
      <header class="draft-heading"><h2>未完成的草稿 <small>{{studioDrafts.length}}</small></h2><button @click="clearStudioDrafts">清空草稿</button></header>
      <div class="draft-rows"><div v-for="draft in visibleStudioDrafts" :key="draft.id" class="draft-row"><button class="draft-open" @click="newProject(draft.kind,draft)"><span>{{draft.name||'未命名草稿'}}</span><small>{{typeLabel(draft.form?.dynamic_video?'dynamic':draft.kind)}}</small></button><button class="draft-delete" :aria-label="`删除草稿：${draft.name||'未命名草稿'}`" @click="deleteStudioDraft(draft.id)">删除</button></div></div>
      <button v-if="studioDrafts.length>3" class="draft-expand" @click="studioDraftsExpanded=!studioDraftsExpanded">{{studioDraftsExpanded?'收起':'查看其余 '+(studioDrafts.length-3)+' 条草稿'}}</button>
     </div>
-    <div class="section-heading"><h2>我的项目 <small>{{jobTotal}}</small></h2><input v-model="studioSearch" class="search" placeholder="搜索当前页项目…" aria-label="搜索项目"/></div>
-    <div class="filters"><button v-for="f in [{id:'all',label:'全部'},{id:'video',label:'图文视频'},{id:'dynamic',label:'动态视频'},{id:'audio',label:'仅配音'},{id:'subtitle',label:'仅字幕识别'}]" :key="f.id" :class="{selected:studioFilter===f.id}" @click="studioFilter=f.id">{{f.label}}</button></div>
-    <div class="project-table"><div class="table-head"><span>项目名称</span><span>状态</span><span>进度</span><span/></div><div v-for="job in studioJobs" :key="job.id" class="project-row"><button class="project-title" @click="openProject(job)"><span class="project-icon">{{typeOf(job)==='dynamic'?'▷':typeOf(job)==='video'?'▧':typeOf(job)==='audio'?'◉':'≡'}}</span><span><b>{{job.request?.project_name||job.id}}</b><small>{{typeLabel(job)}} · {{job.message}}</small></span></button><span class="status" :class="{waiting:job.status==='waiting_confirmation'}">{{statusLabel(job.status)}}</span><span class="muted">{{job.progress}}%</span><details class="project-menu"><summary>更多</summary><button @click="openProject(job)">打开项目</button><button @click="openLogs(job)">查看日志</button><button @click="exportDiagnosticPackage(job)">诊断包</button><button :disabled="['running','queued'].includes(job.status)" @click="deleteGenerationJob(job)">删除任务</button></details></div><div v-if="!studioJobs.length" class="empty">当前分类暂无项目。</div></div>
-    <div v-if="jobTotalPages>1" class="studio-pagination"><button :disabled="jobPage<=1" @click="changeStudioPage(jobPage-1)">上一页</button><span>{{jobPage}} / {{jobTotalPages}}</span><button :disabled="jobPage>=jobTotalPages" @click="changeStudioPage(jobPage+1)">下一页</button></div>
+     <CodexBridgePanel compact @open-draft="openCodexDraft" @open-project="openCodexProject"/>
+    </aside>
+    </div>
    </section>
    <section v-else-if="studioPage==='logs'" class="content logs-page">
     <div class="page-heading"><div><p class="eyebrow">TASK CONSOLE</p><h1>任务日志</h1><p class="muted">后台执行过程、生成进度与报错原文。</p></div><button :disabled="!studioJob" @click="studioPage='editor'">返回当前项目 ↗</button></div>
+    <div class="logs-layout">
+    <aside class="logs-list" aria-label="任务列表">
+     <div class="logs-list-head"><h2>任务 <small>{{jobTotal}}</small></h2></div>
+     <div class="logs-jobs"><button v-for="job in jobs" :key="job.id" type="button" class="logs-job" :class="{active:studioJob?.id===job.id}" :aria-current="studioJob?.id===job.id?'true':null" @click="openLogs(job)"><b>{{job.request?.project_name||job.id}}</b><small><span class="status" :class="['is-'+job.status,{waiting:job.status==='waiting_confirmation'}]">{{statusLabel(job.status)}}</span> · {{typeLabel(job)}} · {{formatJobTime(job.updated_at)}}</small><span class="project-progress-bar" aria-hidden="true"><i :style="{width:Math.max(0,Math.min(100,Number(job.progress)||0))+'%'}"></i></span></button><div v-if="!jobs.length" class="empty">暂无任务。</div></div>
+     <div v-if="jobTotalPages>1" class="studio-pagination"><button :disabled="jobPage<=1" @click="changeStudioPage(jobPage-1)">上一页</button><span>{{jobPage}} / {{jobTotalPages}}</span><button :disabled="jobPage>=jobTotalPages" @click="changeStudioPage(jobPage+1)">下一页</button></div>
+    </aside>
+    <div class="logs-main">
     <div class="log-toolbar"><label>查看任务<select :value="studioJob?.id||''" @change="openLogs(jobs.find(j=>j.id===$event.target.value))"><option value="" disabled>选择任务</option><option v-for="job in jobs" :key="job.id" :value="job.id">{{job.request?.project_name||job.id}}</option></select></label><span class="muted">{{studioJob?.message||'请选择任务'}} · {{studioJob?.progress||0}}%</span></div>
     <TaskConsole :lines="studioTaskLogs" :diagnostic-available="!!studioJob" :diagnostic-exporting="diagnosticExporting" @export-diagnostic="exportDiagnosticPackage(studioJob)"/>
     <div class="log-help" role="status"><span>{{diagnosticMessage}}</span><button :disabled="!studioJob" @click="studioDrawer='参数回顾'">参数回顾 · 只读</button></div>
+    </div>
+    </div>
    </section>
-   <section v-else-if="studioPage==='services'" class="content services-page"><div class="page-heading"><div><h1>接口与服务</h1><p class="muted">每类服务独立配置与保存，先测试单张或单镜，再批量运行。</p></div><div class="service-header-actions"><button @click="apiGuideOpen=true">API 设置说明 ↗</button><button @click="closeServices">返回工作页面</button></div></div><nav class="services-nav" aria-label="接口分类"><button v-for="tab in [{id:'overview',label:'服务概览'},{id:'language',label:'语言模型'},{id:'images',label:'图像接口'},{id:'video',label:'视频接口'},{id:'vibe',label:'Vibe 动效'},{id:'concurrency',label:'出图并发'},{id:'tts',label:'TTS 状态'}]" :key="tab.id" :class="{active:serviceTab===tab.id}" :aria-pressed="serviceTab===tab.id" @click="serviceTab=tab.id">{{tab.label}}</button></nav><div class="studio-service-settings">
+   <section v-else-if="studioPage==='services'" class="content services-page"><div class="page-heading"><div><h1>接口与服务</h1><p class="muted">每类服务独立配置与保存，先测试单张或单镜，再批量运行。</p></div><div class="service-header-actions"><button @click="apiGuideOpen=true">API 设置说明 ↗</button><button @click="closeServicesChecked">返回工作页面</button></div></div><div class="services-nav" role="tablist" aria-label="接口分类" @keydown="onServiceTabKey"><button v-for="tab in serviceTabs" :id="'service-tab-'+tab.id" :key="tab.id" type="button" role="tab" :class="{active:serviceTab===tab.id}" :aria-selected="serviceTab===tab.id" :aria-controls="tab.panel" :tabindex="serviceTab===tab.id?0:-1" @click="serviceTab=tab.id">{{tab.label}}<template v-if="serviceMark(tab.id)"><span class="service-tab-mark" :class="serviceMark(tab.id).cls" aria-hidden="true">{{serviceMark(tab.id).text}}</span><span class="service-sr-only">（{{serviceMark(tab.id).title}}）</span></template></button></div><div class="studio-service-settings">
       <div class="brand">
         <img class="brand-mark brand-logo" src="/one-click-vidgen-logo.png" alt="One-Click VidGen Logo" />
         <div>
@@ -148,130 +166,33 @@
         </div>
       </div>
 
-      <div v-if="session.user" v-show="['language','images','video','concurrency'].includes(serviceTab)" class="sidebar-card api-key-card" :class="{ 'pool-mode-active': form.use_cloud_image_pool }">
-        <div class="sidebar-label">{{{language:'语言模型 · 文案与分镜规划',images:'图像接口 · 分镜图生成与重绘',video:'视频接口 · 动态片段生成',concurrency:'出图并发 · 请求数量控制'}[serviceTab]}}</div>
-        <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。</div>
-        <div v-show="serviceTab==='language'" id="service-language" class="api-key-entry" :class="{ 'cloud-pool-disabled': form.use_cloud_image_pool }">
-          <LanguageModelPresets manage :cloud-pool="form.use_cloud_image_pool" />
-          <span>语言模型</span>
-          <small class="api-model-field-label">接口来源</small>
-          <select v-model="apiKeyForm.language_source" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageSourceChanged">
-            <option value="official">官方 API</option>
-            <option value="custom">自定义兼容接口（高级）</option>
-          </select>
-          <small class="api-model-field-label">模型家族</small>
-          <select v-model="apiKeyForm.language_provider" class="language-provider-select" :disabled="form.use_cloud_image_pool" @change="onLanguageProviderChanged">
-            <option v-for="provider in visibleLanguageProviderOptions" :key="provider.value" :value="provider.value" :disabled="provider.disabled">
-              {{ provider.family_label || provider.label }}
-            </option>
-          </select>
-          <small class="api-model-field-label">Agent 模型</small>
-          <select v-if="currentLanguageModels.length && !customLanguageProvider" v-model="apiKeyForm.language_model" class="language-provider-select language-model-select" :disabled="form.use_cloud_image_pool" @change="onLanguageModelChanged">
-            <option v-for="model in currentLanguageModels" :key="model.value" :value="model.value">{{ model.label }}</option>
-          </select>
-          <input v-else v-model="apiKeyForm.language_model" class="language-model-input" name="ocv-language-model-id" type="text" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :disabled="form.use_cloud_image_pool" :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的模型 ID'" @focus="unlockProtectedInput" @change="onLanguageModelChanged" />
-          <div v-if="customLanguageProvider" class="api-custom-provider-guide">
-            <strong>高级功能：仅支持 OpenAI 兼容接口</strong>
-            <label>
-              <span>API Base URL</span>
-              <input v-model="apiKeyForm.language_api_base_url" name="ocv-language-api-base-url" type="url" inputmode="url" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '例如 https://api.example.com/v1'" @focus="unlockProtectedInput" />
-            </label>
-            <label>
-              <span>API Key（本地无鉴权可留空）</span>
-              <input v-model="apiKeyForm.language_api_key" name="ocv-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="currentLanguageProvider.configured ? '已保存；不修改可留空' : '填写服务商提供的 API Key'" @focus="unlockProtectedInput" />
-            </label>
-            <label>
-              <span>思考模式</span>
-              <select v-model="apiKeyForm.custom_llm_thinking_mode">
-                <option value="follow">跟随接口默认（推荐）</option>
-                <option value="disabled">强制关闭（DeepSeek 兼容）</option>
-                <option value="enabled">强制开启（DeepSeek 兼容）</option>
-              </select>
-            </label>
-            <label><input type="checkbox" v-model="apiKeyForm.custom_llm_reasoning_compat">思考模型兼容：保留思考，仅将结论正文交给下游</label>
-            <label v-if="apiKeyForm.custom_llm_reasoning_compat">单次回复最长等待（秒）<input type="number" min="10" max="600" step="1" v-model.number="apiKeyForm.custom_llm_reply_timeout"></label>
-            <small v-if="apiKeyForm.custom_llm_reasoning_compat">默认120秒，包含思考和正文接收。超时不自动重试或切换渠道；本地停止等待不保证上游停止计费。</small>
-            <small>需兼容 <code>/chat/completions</code>、具备足够上下文长度并能稳定输出 JSON。</small>
-            <small>强制开关会发送 DeepSeek 格式的 <code>thinking</code> 参数；其他模型请选择“跟随接口默认”。</small>
-            <small class="api-custom-security-note">安全提示：API Key 会随请求发送到此网址，请只填写你信任的服务地址。</small>
-            <button class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys" @click="saveApiKeySettings">
-              {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
-            </button>
-          </div>
-          <input v-else-if="apiKeyFieldOpen('language')" v-model="apiKeyForm.language_api_key" name="ocv-official-language-api-secret" type="password" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore readonly :placeholder="`${currentLanguageProviderLabel} API Key`" @focus="unlockProtectedInput" />
-          <div v-else-if="!customLanguageProvider" class="api-key-state-bar api-key-pool-state" :class="{ error: !form.use_cloud_image_pool && apiKeyRuntimeErrors.language }">
-            <div class="api-key-pool-heading">
-              <strong>{{ form.use_cloud_image_pool ? '号池已接管文本模型' : (apiKeyRuntimeErrors.language ? 'ERROR' : `${currentLanguageProviderLabel} · ${currentLanguageModelLabel}`) }}</strong>
-              <small v-if="!form.use_cloud_image_pool && apiKeyRuntimeErrors.language">{{ apiKeyRuntimeErrors.language }}</small>
-            </div>
-            <details v-if="!form.use_cloud_image_pool && !apiKeyRuntimeErrors.language && (currentLanguageProvider.key_hints || []).length" class="api-key-account-details">
-              <summary>查看已配置账号（{{ (currentLanguageProvider.key_hints || []).length }}）</summary>
-              <div class="api-key-account-list">
-                <div v-for="(hint, index) in currentLanguageProvider.key_hints || []" :key="hint + index" class="api-key-account-row">
-                  <code>{{ hint }}</code>
-                  <button type="button" class="api-key-delete-btn" :disabled="deletingApiKey" :title="`删除此 ${currentLanguageProviderLabel} API Key`" @click="deleteConfiguredApiKey('language', index)">×</button>
-                </div>
-              </div>
-            </details>
-            <button v-if="!form.use_cloud_image_pool" class="api-key-corner-add" type="button" title="添加语言模型 API Key" aria-label="添加语言模型 API Key" @click="addApiKeyAccount('language')">＋</button>
-          </div>
-          <details class="api-key-account-details" open>
-            <summary>管理本机已保存的语言 API 密钥</summary>
-            <p class="muted">仅显示脱敏密钥。清除不会切换当前模型，也不会删除已有作品；模型预设与密钥是两回事。</p>
-            <div v-for="provider in (apiKeyStatus.language?.providers || []).filter(p => (p.key_hints || []).length)" :key="provider.value" class="api-key-account-row">
-              <div><strong>{{provider.label}}</strong><div v-for="(hint,index) in provider.key_hints" :key="index"><code>{{hint}}</code>
-                <button type="button" :disabled="deletingApiKey || savingApiKeys" @click="deleteConfiguredApiKey('language',index,provider.value)">清除已保存密钥</button>
-              </div></div>
-            </div>
-            <small v-if="!(apiKeyStatus.language?.providers || []).some(p => (p.key_hints || []).length)">暂无已保存的语言 API 密钥。</small>
-          </details>
-          <button v-if="!customLanguageProvider && apiKeyFieldOpen('language')" class="primary-btn full-btn api-inline-save" type="button" :disabled="savingApiKeys || form.use_cloud_image_pool" @click="saveApiKeySettings">
-            {{ savingApiKeys ? '保存中…' : '保存语言接口设置' }}
-          </button>
-        </div>
-        <div v-show="serviceTab==='images'" id="service-images"><ImageProfileSelector :form="form" manage @saved="serviceImageProfileSaved" /></div>
-        <div v-show="serviceTab==='video'" id="service-video"><VideoModelSettings /></div>
-        <div v-show="serviceTab==='concurrency'" id="service-concurrency" class="image-concurrency-panel" :class="{ disabled: form.use_cloud_image_pool }">
-            <div class="image-concurrency-summary">
-              <div>
-                <strong>出图并发</strong>
-                <small v-if="form.use_cloud_image_pool">由云端号池服务器动态调度</small>
-                <small v-else>{{ imageConcurrencyPreview }}</small>
-              </div>
-              <select v-model="apiKeyForm.image_concurrency_mode" :disabled="form.use_cloud_image_pool" @change="saveImageConcurrencySettings">
-                <option value="auto">自动（推荐）</option>
-                <option value="manual">手动限制</option>
-              </select>
-            </div>
-            <details v-if="!form.use_cloud_image_pool" class="image-concurrency-details">
-              <summary>高级设置</summary>
-              <label>
-                <span>单 Key 并发</span>
-                <input v-model.number="apiKeyForm.image_per_key_concurrency" type="number" min="1" max="16" />
-              </label>
-              <label v-if="apiKeyForm.image_concurrency_mode === 'manual'">
-                <span>总并发上限</span>
-                <input v-model.number="apiKeyForm.image_total_concurrency" type="number" min="1" max="64" />
-              </label>
-              <button type="button" class="ghost-btn image-concurrency-save" :disabled="savingImageConcurrency" @click="saveImageConcurrencySettings">
-                {{ savingImageConcurrency ? '保存中…' : '保存并发设置' }}
-              </button>
-              <small>三方接口通常保持单 Key 并发 1；官方或高并发接口可按服务商额度提高。</small>
-            </details>
-        </div>
-        <div class="muted small">{{ form.use_cloud_image_pool ? '号池模式不需要填写个人的语言或图像 API Key；视频号池尚未接入。' : 'OCV 不指定或推荐第三方接口；请自行选择服务商，并只向可信地址发送 API Key。' }}</div>
-        <div v-if="apiKeyMessage" class="api-key-message">{{ apiKeyMessage }}</div>
+      <div v-if="session.user" v-show="['language','images'].includes(serviceTab)" class="sidebar-card service-config-card">
+        <div class="sidebar-label">{{ serviceTab==='language' ? '语言模型 · 文案与分镜规划' : '图像接口 · 分镜图生成与重绘' }}</div>
+        <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。OCV 不指定或推荐第三方接口，请只向可信地址发送 API Key。</div>
+        <div v-show="serviceTab==='language'" id="service-language" role="tabpanel" aria-labelledby="service-tab-language"><LanguageServicePanel :status="apiKeyStatus.language || {}" :form="apiKeyForm" :save-account="saveLanguageAccount" :saving="savingApiKeys" :pool-mode="form.use_cloud_image_pool" :runtime-error="apiKeyRuntimeErrors.language" @keys="setApiKeyStatus" @state="serviceState.language=$event" /></div>
+        <div v-show="serviceTab==='images'" id="service-images" role="tabpanel" aria-labelledby="service-tab-images"><ImageServicePanel :form="form" :concurrency="apiKeyStatus.image?.concurrency || {}" :save-concurrency="saveImageConcurrency" @saved="serviceImageProfileSaved" @state="serviceState.images=$event" /></div>
+      </div>
+      <div v-if="session.user" v-show="serviceTab==='video'" class="sidebar-card service-config-card">
+        <div class="sidebar-label">视频接口 · 动态片段生成</div>
+        <div class="muted small">密钥仅保存到本机 `.env`，页面不会回显原文。视频号池尚未接入。OCV 不指定或推荐第三方接口，请只向可信地址发送 API Key。</div>
+        <div id="service-video" role="tabpanel" aria-labelledby="service-tab-video"><VideoServicePanel @state="serviceState.video=$event" /></div>
       </div>
 
-      <div v-if="session.user" v-show="serviceTab==='vibe'" id="service-vibe" class="sidebar-card"><VibeModelSettings /></div>
-      <div v-show="serviceTab==='tts'" id="service-tts" class="sidebar-card">
-        <div class="sidebar-label">TTS 引擎</div>
-        <div class="sidebar-value">{{ ttsStatusText }}</div>
-        <div class="muted small">{{ health.tts_provider || 'TTS' }}</div>
-        <div class="muted small">当前音色: {{ form.tts_voice_id.startsWith('upload:') ? (ttsVoiceUploadName || '本地上传音色') : voiceLabel(form.tts_voice_id) }}</div>
-        <button class="ghost-btn full-btn" type="button" :disabled="startingTts || health.tts_online || !session.user" @click="startTts">
-          {{ startingTts ? '检测中...' : '重新检测' }}
-        </button>
+      <div v-if="session.user" v-show="serviceTab==='vibe'" class="sidebar-card service-config-card">
+        <div class="sidebar-label">Vibe 动效 · 看图设计与渲染检查</div>
+        <div class="muted small">密钥仅保存在本机，不写入项目，页面不会回显原文。</div>
+        <div id="service-vibe" role="tabpanel" aria-labelledby="service-tab-vibe"><VibeModelSettings @state="serviceState.vibe=$event" /></div>
+      </div>
+      <div v-show="serviceTab==='tts'" class="sidebar-card service-config-card">
+        <div class="sidebar-label">TTS 状态 · 配音引擎</div>
+        <div id="service-tts" role="tabpanel" aria-labelledby="service-tab-tts" class="svc-panel">
+          <div class="svc-current" aria-live="polite">
+            <div class="svc-current-top"><span class="svc-eyebrow">当前配音引擎</span><span class="svc-scope">只读状态</span></div>
+            <div class="svc-row-title"><span class="svc-current-main">{{ ttsStatusText }}</span><span class="svc-badge" :class="ttsReady ? 'ok' : startingTts ? 'muted' : 'warn'">{{ ttsReady ? '● 可用' : startingTts ? '检测中…' : '▲ 未连接' }}</span></div>
+            <div class="svc-current-sub">{{ health.tts_provider || 'TTS' }} · 当前音色：{{ form.tts_voice_id.startsWith('upload:') ? (ttsVoiceUploadName || '本地上传音色') : voiceLabel(form.tts_voice_id) }}</div>
+            <div class="svc-row-actions"><button type="button" :disabled="startingTts || health.tts_online || !session.user" @click="startTts">{{ startingTts ? '检测中…' : '重新检测' }}</button></div>
+          </div>
+        </div>
       </div>
       <button
         class="sidebar-secondary-entry sidebar-plugin-entry"
@@ -290,7 +211,7 @@
         待开发功能
       </button>
     </div></section>
-   <section v-else-if="studioPage==='plugins'" class="content"><section  class="plugins-page stack">
+   <section v-else-if="studioPage==='plugins'" class="content plugins-content"><section  class="plugins-page stack">
           <article class="panel plugins-hero">
             <div>
               <div class="eyebrow">OCV EXTENSIONS</div>
@@ -412,8 +333,8 @@
       <button v-for="(stage,index) in form._rerun_stages" :key="stage.key" type="button" :class="[stage.state,{active:stage.key==='script'}]" @click="stage.key==='script'?null:form._return_dynamic_stage(stage.key)"><span>{{String(index+1).padStart(2,'0')}}</span><b>{{stage.label}}</b><small>{{stage.key==='script'?'正在编辑':stage.state==='done'?'已完成':'查看阶段'}}</small></button>
     </nav>
 <div class="page-heading creation-heading-compact"><label class="creation-project-title"><span>项目名称</span><input v-model.trim="form.project_name" type="text" maxlength="80" placeholder="输入项目名称" aria-label="项目名称" /></label><button @click="studioDrawer='我的预设'">预设 · {{selectedParameterPreset||'选择预设'}}⌄</button></div>
-<div class="setting-summaries creation-settings-top"><button v-if="studioKind!=='subtitle'" @click="studioDrawer='声音设置'"><span>◉</span><div><small>配音</small><b>{{ttsEngine==='cluster'?'集群 GPU · IndexTTS-2.5':ttsEngine==='qwen'?'Qwen TTS':'IndexTTS-2.5'}} · {{form.tts_emotion?emotionLabel(form.tts_emotion):'参考原音频'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='作品风格'"><span>▧</span><div><small>作品风格</small><b>{{styleName||contentModeOptions.find(m=>m.key===form.content_mode)?.label||'自定义'}}{{styleDirty?' · 已修改':''}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='画面编排'"><span>⊞</span><div><small>画面编排 · {{form.video_orientation==='portrait'?'竖屏 9:16':'横屏 16:9'}}</small><b>{{visualPacingSummary}} · {{form.dynamic_video?(form.video_generation_backend==='cloud_h3'?'集群 H3':form.video_generation_backend==='comfyui'?'本地 ComfyUI'+(form.comfyui_h3_prompt_agent?' · H3 Agent':''):'视频 API')+' · '+dynamicTextModeLabel(form.dynamic_text_mode):form.director_strategy==='enhanced_beta'?'叙事增强':'稳健还原'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='字幕样式'"><span>字</span><div><small>字幕样式</small><b>{{form.video_render_variant==='raw'?'仅无字幕版':form.video_render_variant==='subtitles'?'仅字幕版':'字幕版 + 无字幕版'}}</b></div><span>›</span></button></div>
-    <LanguageModelPresets v-if="studioKind!=='subtitle'" :disabled="studioBusy" :cloud-pool="form.use_cloud_image_pool"/>
+    <div class="creation-layout" :class="'kind-'+studioKind">
+    <div class="creation-main">
     <template v-if="studioKind!=='subtitle'"><div class="create-copy-column">
             <div class="form-grid">
               <div class="script-upload-field">
@@ -457,12 +378,12 @@
             </div>
 
             <label class="stack">
-              <span>{{ form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
+              <span>{{ form.skip_tts && form.skip_text_correction ? '口播文案（已选择无文案，可留空）' : '口播文案' }}</span>
               <textarea
                 ref="workspaceScriptTextarea"
                 v-model="form.script"
                 rows="14"
-                :disabled="form.skip_text_correction"
+                :disabled="form.skip_tts && form.skip_text_correction"
                 :placeholder="scriptPlaceholder"
               ></textarea>
               <div v-if="!form.skip_tts" class="structural-blank-toolbar">
@@ -523,7 +444,7 @@
                   <div v-if="subtitleReferenceError" class="board-error">{{ subtitleReferenceError }}</div>
                 </div>
                 <div v-if="subtitleForm.use_correction && !subtitleForm.reference_text" class="muted small">
-                  当前将使用语言模型校对。语言模型或通用 API Key 未配置时，任务会提示你先在左侧填写。
+                  当前将使用语言模型校对。语言模型尚未配置时，请先到「接口与服务 → 语言模型」完成配置。
                 </div>
                 <div class="inline-actions module1-actions">
                   <button class="ghost-btn stop-btn" type="button" :disabled="!subtitleJobRunning" @click="cancelSubtitleJob">停止识别</button>
@@ -534,6 +455,12 @@
               </div>
             </div>
           </article></template>
+    </div>
+    <aside class="creation-side" aria-label="制作设置">
+      <div v-if="studioKind!=='subtitle'" class="creation-side-head"><b>制作设置</b><small>点击卡片修改对应设置</small></div>
+<div class="setting-summaries creation-settings-top"><button v-if="studioKind!=='subtitle'" @click="studioDrawer='声音设置'"><span>◉</span><div><small>配音</small><b>{{ttsEngine==='cluster'?'集群 GPU · IndexTTS-2.5':ttsEngine==='qwen'?'Qwen TTS':'IndexTTS-2.5'}} · {{form.tts_emotion?emotionLabel(form.tts_emotion):'参考原音频'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='作品风格'"><span>▧</span><div><small>作品风格</small><b>{{styleName||contentModeOptions.find(m=>m.key===form.content_mode)?.label||'自定义'}}{{styleDirty?' · 已修改':''}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='画面编排'"><span>⊞</span><div><small>画面编排 · {{form.video_orientation==='portrait'?'竖屏 9:16':'横屏 16:9'}}</small><b>{{visualPacingSummary}} · {{form.dynamic_video?(form.video_generation_backend==='cloud_h3'?'集群 H3':form.video_generation_backend==='comfyui'?'本地 ComfyUI'+(form.comfyui_h3_prompt_agent?' · H3 Agent':''):'视频 API')+' · '+dynamicTextModeLabel(form.dynamic_text_mode):form.director_strategy==='enhanced_beta'?'叙事增强':'稳健还原'}}</b></div><span>›</span></button><button v-if="studioKind==='video'" @click="studioDrawer='字幕样式'"><span>字</span><div><small>字幕样式</small><b>{{form.video_render_variant==='raw'?'仅无字幕版':form.video_render_variant==='subtitles'?'仅字幕版':'字幕版 + 无字幕版'}}</b></div><span>›</span></button></div>
+    <LanguageModelPresets v-if="studioKind!=='subtitle'" :disabled="studioBusy" :cloud-pool="form.use_cloud_image_pool"/>
+      <div class="creation-side-actions">
     <div v-if="studioKind==='video'" class="create-footer dynamic-create-footer">
       <label v-if="!form.dynamic_video"><input v-model="form.step_mode" type="checkbox"/>逐步确认<small>配音与画面完成后，由你确认再继续</small></label>
       <label v-else class="one-click-video-option"><input v-model="form.dynamic_auto_advance" type="checkbox"/><span><b>一键出视频</b><small>仍使用完整分步流程；阶段成功后由 OCV 自动确认并继续，异常时停下等待处理。</small></span></label>
@@ -542,6 +469,9 @@
     <div v-else-if="studioKind==='audio'" class="create-footer"><span class="muted">生成后可以逐句精修、断句与添加停顿。</span><button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitModule1" @click="launch">生成配音 →</button></div>
     <div v-else class="create-footer"><span class="muted">识别完成后，可以校对文字并导出字幕。</span><button class="primary" :disabled="studioBusy||studioHasRunning||!canSubmitSubtitle" @click="launch">开始识别 →</button></div>
     <p v-if="studioHasRunning" class="studio-notice">已有任务正在执行，可先保存草稿，待当前任务结束后开始。</p><p v-if="studioKind==='video'&&generationBlockReason" class="muted">{{generationBlockReason.message}}</p>
+      </div>
+    </aside>
+    </div>
    </section>
    <section v-else class="editor studio-editor">
 <div class="editor-heading"><div><h1>{{studioTitle}}</h1><span class="muted">{{typeLabel(studioKind)}} · {{statusLabel(studioJob?.status)}}</span></div><button v-if="studioTab!=='参数回顾'" @click="studioDrawer='我的预设'">我的预设⌄</button></div>
@@ -551,345 +481,8 @@
     <ParameterReview v-if="studioTab==='参数回顾'" :request="studioJob?.request||{}" :reference-assets="studioReferenceAssets" :status="studioJob?.status" :busy="studioBusy" @duplicate="duplicateStudioProject" @reset="resetStudioProject"/>
     <template v-else-if="studioTab==='文案'"><div class="studio-original-script"><h2>本次任务文案</h2><p class="muted">原始文案用于核对。发音修正请在“配音”里操作，显示文字请在“画面与字幕”里修改。</p><textarea :value="studioJob?.request?.script||''" readonly rows="14"/></div></template>
     <template v-else-if="studioTab==='素材'"><p class="muted">当前任务已创建，替换素材请新建字幕识别任务。</p><button @click="newProject('subtitle')">新建字幕任务</button></template>
-    <template v-else-if="studioTab==='配音'">
-     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-     <button v-if="studioJob?.request?.dynamic_video" class="primary-btn" :title="canReturnDynamicStoryboard ? '保存并返回已有分镜' : '尚无分镜，请先在下方确认配音并进入自动分镜'" :disabled="!canReturnDynamicStoryboard||studioBusy||ttsEditor.task?.status==='running'||!ttsEditor.available||!ttsEditor.segments.length||!studioAudio||['queued','running'].includes(studioJob?.status)" @click="enterDynamicStoryboard">保存配音编辑，返回动态分镜 →</button>
-     <button v-if="codexBridgeAvailable && studioJob?.request?.dynamic_video && guidedStage==='audio_review' && !editingDynamicAudio" :disabled="studioBusy||guidedSubtitleSaving||ttsEditor.task?.status==='running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
-     <TtsRebuildButton :editor="ttsEditor" :busy="ttsBoundaryBusy" @rebuild="rebuildTtsAudio" />
-     <TtsFindReplace :save-subtitles="saveTtsSubtitleBatch" :project-id="visualEditorProjectId" :editor="ttsEditor" :drafts="ttsReadingDrafts" :busy="ttsBoundaryBusy" @reading="updateTtsReadingDraft" @subtitle-sync="setTtsSubtitleSync" @select="selectedTtsSegmentIndices=$event" />
-     </div>
-
-     <div class="studio-audio-player"><audio v-if="studioAudio" :key="studioAudio" :src="studioAudio" controls preload="metadata" @play="narrationPlayback" @timeupdate="narrationPlayback" @seeking="narrationPlayback" @seeked="narrationPlayback"/><p v-else class="muted">{{studioJob?.message||'音频生成后可在此试听'}}</p></div>
-     <div class="studio-audio-layout"><aside ref="narrationList" class="studio-sentence-list"><div class="list-heading">全部句子 <span>{{ttsEditor.segments.length}} 句</span></div><div v-for="segment in ttsEditor.segments" :key="segment.index" :data-narration-index="segment.index" :class="{selected:studioSentence===segment.index, 'narration-current':narrationPlayingIndex===segment.index}"><input v-model="selectedTtsSegmentIndices" type="checkbox" :value="segment.index" :aria-label="'选中第'+segment.index+'句'"/><button @click="studioSentence=segment.index"><small>{{segment.index}}<b v-if="narrationPlayingIndex===segment.index" class="narration-marker">当前播放</b></small><span>{{segment.text}}</span><small>{{Number(segment.duration).toFixed(1)}}s</small></button></div></aside><div class="studio-sentence-detail"><section class="tts-segment-editor">
-                <div class="visual-timing-head">
-                  <div>
-                    <div class="eyebrow">配音精修</div>
-                    <h3>逐句试听与重配音</h3>
-                    <p class="muted small">按原始 TTS 断句试听。可单选或多选重配；新时长会自动更新整条配音、字幕及画面时间线。</p>
-                  </div>
-                  <div class="visual-timing-head-actions">
-                    <span v-if="selectedTtsSegmentIndices.length" class="muted small">已选 {{ selectedTtsSegmentIndices.length }} 句</span>
-                    <TtsStructureControls selection-only :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" @busy="setTtsStructureBusy" @started="onTtsStructureStarted" />
-                    <button
-                      class="primary-btn compact-btn"
-                      type="button"
-                      :disabled="ttsEditor.structural_edit_available === false || !selectedTtsSegmentIndices.length || ttsEditor.task?.status === 'running'"
-                      @click="regenerateSelectedTtsSegments"
-                    >{{ ttsEditor.task?.status === 'running' ? '重配音中…' : '重配选中句' }}</button>
-                  </div>
-                </div>
-                <div v-if="ttsEditorLoading" class="timing-unavailable">正在读取逐句配音…</div>
-                <div v-else-if="!ttsEditor.available" class="timing-unavailable">{{ ttsEditor.message || '该项目没有可编辑的逐句配音。' }}</div>
-                <template v-else>
-                  <TtsEditorFeedback :project-id="visualEditorProjectId" :editor="ttsEditor" @adopted="loadTtsEditor" />
-                  <TtsStructureControls :project-id="visualEditorProjectId" :editor="ttsEditor" :selected-indices="selectedTtsSegmentIndices" :busy="ttsBoundaryBusy" :has-drafts="hasTtsStructureDrafts()" :anchor-index="studioSentence" show-undo @busy="setTtsStructureBusy" @started="onTtsStructureStarted" @undo="undoLastTtsEdit" />
-<button class="studio-refine-settings" @click="studioDrawer='重配参数'">重配参数 · 情绪、语速与音色 →</button>
-                  <div v-if="ttsEditor.structural_edit_available === false" class="timing-unavailable">{{ ttsEditor.structural_edit_message }}</div>
-                  <div class="tts-segment-grid">
-                    <article
-                      v-for="item in ttsEditor.segments.filter(segment => segment.index === studioSentence)"
-                      :key="`tts-segment-${item.index}-${item.audio_url}`"
-                      class="tts-segment-card"
-                      :class="{
-                        selected: selectedTtsSegmentIndices.includes(item.index),
-                        'pronunciation-open': isTtsPronunciationOpen(item.index),
-                      }"
-                    >
-                      <p class="tts-segment-text">{{ item.text }}</p>
-                      <div class="tts-segment-controls">
-                        <div class="tts-segment-meta">
-                          <strong>第 {{ item.index }} 句</strong>
-                          <span>{{ Number(item.duration || 0).toFixed(2) }} 秒</span>
-                        </div>
-                        <span v-if="item.subtitle_independent" class="tts-pronunciation-badge" title="字幕已独立保存，原配音不变">独立字幕</span>
-                        <span v-else-if="isTtsReadingModified(item)" class="tts-pronunciation-badge">已修音</span>
-                        <label class="tts-segment-select">
-                          <span>选中</span>
-                          <input v-model="selectedTtsSegmentIndices" type="checkbox" :value="item.index" :disabled="ttsEditor.task?.status === 'running'" />
-                        </label>
-                      </div>
-                      <div class="tts-segment-player">
-                        <button
-                          class="tts-segment-play"
-                          type="button"
-                          :title="ttsSegmentPlayingIndex === item.index && ttsSegmentIsPlaying ? '暂停' : '播放本句'"
-                          @click="toggleTtsSegmentAudio(item)"
-                        >{{ ttsSegmentPlayingIndex === item.index && ttsSegmentIsPlaying ? '❚❚' : '▶' }}</button>
-                        <input
-                          class="tts-segment-progress"
-                          type="range"
-                          min="0"
-                          :max="Math.max(0.01, ttsSegmentPlayingIndex === item.index ? ttsSegmentDuration : Number(item.duration || 0))"
-                          step="0.01"
-                          :value="ttsSegmentPlayingIndex === item.index ? ttsSegmentCurrentTime : 0"
-                          aria-label="本句播放进度"
-                          @input="seekTtsSegmentAudio(item, $event)"
-                        />
-                      </div>
-                      <TtsSentenceControls :item="item" :editor="ttsEditor" :busy="ttsBoundaryBusy"
-                        :reading="ttsReadingDrafts[item.index]" :opened="isTtsPronunciationOpen(item.index)"
-                        :subtitle-sync="(ttsEditor.subtitle_sync_indices || []).includes(item.index)" :pause="ttsPauseDrafts[item.index]"
-                        @toggle="toggleTtsPronunciationEditor(item)" @reading="updateTtsReadingDraft(item, { target: { value: $event } })"
-                        @reset="resetTtsReadingDraft(item)" @subtitle-sync="setTtsSubtitleSync(item, $event)" @save-subtitle="saveTtsSubtitleOnly(item)"
-                        @boundary="openTtsBoundaryEditor(item, $event)" @pause="ttsPauseDrafts[item.index] = $event"
-                        @save-pause="saveTtsPause(item)" @preview="previewTtsBoundary(item)" />
-                    </article>
-                  </div>
-                  <TtsBoundaryEditor v-if="ttsBoundary.open" :state="ttsBoundary" :project-id="visualEditorProjectId" :busy="ttsBoundaryBusy" :over-limit="ttsBoundaryOverLimit()" @close="closeTtsBoundaryEditor" @split="updateTtsBoundaryParts" @count="refreshTtsBoundaryTokenCounts" @submit="submitTtsBoundary" />
-                </template>
-              </section></div></div>
-    </template>
-    <template v-else-if="studioTab==='画面与字幕'">
-     <label class="illustrated-entrance" v-if="visualEditor.items.length">入场转场（整部图文视频）<select v-model="visualPresentation.image_transition" :disabled="visualEditor.task?.status==='running'" aria-label="图文视频入场转场"><option value="none">无（默认）</option><option value="brush">画笔蒙版显现</option><option value="layered">分块渐入</option><option value="dissolve">叠化</option><option value="black">闪黑</option><option value="white">闪白</option><option value="left">从左移入</option><option value="right">从右移入</option><option value="up">从上移入</option><option value="down">从下移入</option></select><small class="muted">仅图片入场，默认 0.8 秒；下次合成时生效，不重新出图。</small></label>
-     <OperationStatus title="画面处理状态" :task="visualEditor.has_active_image_tasks?{status:'running',message:'图片正在后台处理，可切换画面查看各图状态'}:visualEditor.task" :summary="`处理中 ${visualEditor.items.filter(item=>item.task?.status==='running').length} 张`"><button type="button" @click="openLogs()">查看详细日志</button></OperationStatus>
-     <div v-if="!visualEditor.items.length" class="empty">{{visualEditor.task?.message||'画面生成后，将在这里显示可编辑内容。'}}</div>
-     <ResizableShotWorkspace v-else class="studio-visual-layout" scope="illustrated-visuals"><template #sidebar><aside class="studio-shot-list"><div class="list-heading">画面 <span>{{visualEditor.items.length}} 张</span></div><button v-for="scene in studioSceneAssets" :key="scene.id" :class="{selected:studioSelectedImage?.id===scene.id}" @click="visualTimingSelectedId=scene.id"><img :src="scene.image_url" alt=""/><span><b>{{scene.display_name}}</b><small>参考资产 · 不占时长</small></span></button><button v-for="item in visualEditor.items" :key="item.id" :class="{selected:studioSelectedImage?.id===item.id}" @click="visualTimingSelectedId=item.id"><img :src="item.image_url" :alt="item.id"/><span><b>{{item.id}}</b><small>{{formatTimingRange(item.timing)}}</small><small v-if="item.audio_timing_adjustment?.needs_review">配音已更新 · 待核对</small></span></button></aside></template><div class="studio-shot-detail"><div class="visual-image-grid">
-                <article v-for="item in studioSelectedImage ? [studioSelectedImage] : []" :key="item.id" class="visual-image-card" :class="{ processing: item.task?.status === 'running' }">
-                 <OperationStatus title="本图运行状态" :task="item.task"/>
-                 <p v-if="item.audio_timing_adjustment?.needs_review" class="notice">配音已更新：{{Number(item.audio_timing_adjustment.previous_duration).toFixed(2)}} 秒 → {{Number(item.audio_timing_adjustment.target_duration).toFixed(2)}} 秒。画面已按最终配音时间轴同步，请核对{{item.audio_timing_adjustment.text_changed?'内容与画面含义':'停留时长'}}；原图保留。</p>
-                 <WorkspacePanels scope="illustrated-visuals" :log-count="studioTaskLogs.length">
-                  <template #preview>
-                  <div class="visual-image-actions">
-                    <strong>{{ item.display_name||item.id }}</strong>
-                    <label class="visual-redraw-resolution" title="仅用于重绘本图，不改变接口服务中的全局分辨率">
-                      <span>分辨率</span>
-                      <select :value="item.redraw_resolution ?? ''" :disabled="item.task?.status === 'running'" :aria-label="item.id+' 重绘分辨率'" @change="item.redraw_resolution = $event.target.value">
-                        <option value="">跟随全局</option>
-                        <option value="1k">1K</option>
-                        <option value="2k">2K</option>
-                        <option value="4k">4K</option>
-                      </select>
-                    </label>
-                    <button type="button" class="icon-action" :title="'按当前提示词重绘'+(item.redraw_resolution ? '（'+item.redraw_resolution.toUpperCase()+'）' : '（跟随全局分辨率）')" aria-label="按当前提示词重绘" :disabled="item.task?.status === 'running'" @click="redrawVisualImage(item, item.redraw_resolution || null)">▶</button>
-                    <button
-                      type="button"
-                      class="icon-action self-reference-action"
-                      :class="{ selected: visualSelfReferenceMacroId === item.id }"
-                      :title="visualSelfReferenceMacroId === item.id ? '已作为图1参考，再次点击取消' : '将这张项目内图片作为图1参考'"
-                      :aria-label="visualSelfReferenceMacroId === item.id ? '取消图1参考' : '将本图作为图1参考'"
-                      :disabled="item.task?.status === 'running'"
-                      @click="toggleVisualSelfReferenceImage(item.id)"
-                    >⬆️</button>
-                    <label class="icon-action replace-action reference-image-action" title="上传本地重绘参考图（最多 3 张）" aria-label="上传本地重绘参考图">
-                      ▣<input type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualReferenceImages($event, item.id)" />
-                    </label>
-                    <button type="button" class="icon-action" title="撤回图片" aria-label="撤回图片" :disabled="item.task?.status === 'running'" @click="undoVisualImage(item)">↶</button>
-                    <button v-if="!item.is_scene" type="button" class="icon-action" title="重置提示词" aria-label="重置提示词" :disabled="item.task?.status === 'running'" @click="resetVisualImagePrompt(item)">↺</button>
-                    <label class="icon-action replace-action" title="替换本地图片" aria-label="替换本地图片">
-                      ↕<input type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" @change="uploadVisualImage($event, item)" />
-                    </label>
-                    <button v-if="!item.is_scene" type="button" class="icon-action commit-baseline-action" title="将当前图片和提示词确认为新的原图" aria-label="确认当前图片为新的原图" :disabled="item.task?.status === 'running'" @click="commitVisualBaseline(item)">✅</button>
-                  </div>
-                  <div v-if="visualReferenceOwnerMacroId === item.id && (visualSelfReferenceMacroId || visualReferenceUploads.length)" class="visual-reference-summary">
-                    <span class="visual-reference-title">本次重绘参考</span>
-                    <span v-if="visualSelfReferenceMacroId === item.id" class="visual-reference-chip">图 1 · 当前画面<button type="button" title="取消当前画面参考" @click="toggleVisualSelfReferenceImage(item.id)">×</button></span>
-                    <span v-for="(asset,index) in visualReferenceUploads" :key="asset.id" class="visual-reference-chip" :title="asset.name">{{ visualSelfReferenceMacroId === item.id ? `图 ${index + 2}` : `图 ${index + 1}` }} · {{ asset.name }}<button type="button" :title="`移除 ${asset.name}`" @click="clearVisualReferenceImages(index)">×</button></span>
-                    <button type="button" class="visual-reference-clear" @click="clearVisualReferenceImages()">清空全部</button>
-                  </div>
-                  <div v-if="item.scene_reference_url" class="visual-reference-summary">
-                    <label><input type="checkbox" v-model="item.use_scene_reference" /> 使用场景参考 · {{ item.scene_reference_name }}</label>
-                    <button type="button" @click="visualPreviewItem = { ...item, image_url: item.scene_reference_url }">查看场景图</button>
-                    <small>取消勾选仅影响本次重绘；上传新的重绘参考图可替代原参考组合，不影响其他镜头。</small>
-                  </div>
-                  <div v-if="item.reference_materials?.length" class="visual-reference-summary">
-                    <span>本图使用的参考素材 · 按提交顺序</span>
-                    <button v-for="(reference,index) in item.reference_materials" :key="reference.label" type="button" :title="reference.description" @click="visualPreviewItem={id:reference.label,image_url:reference.image_url}"><img :src="reference.image_url" :alt="reference.label" style="width:100px;height:75px;object-fit:contain"/>图{{index+1}} · {{ reference.description||reference.label }}</button>
-                  </div>
-                  <p v-if="!item.reference_materials?.length&&!item.scene_reference_url" class="muted">本图未记录参考素材，按提示词生成；旧项目可能未保存参考记录。</p>
-                  <div class="visual-image-preview-shell">
-                    <button class="visual-image-preview" type="button" title="点击放大图片" @click="visualPreviewItem = item">
-                      <img :src="item.image_url" :alt="item.id" />
-                      <span>点击放大预览</span>
-                      <em v-if="item.placeholder" class="visual-image-running visual-image-placeholder">待生成 · 请填写提示词或替换图片</em>
-                      <em v-if="item.task?.status === 'running'" class="visual-image-running">{{ item.task?.action === 'upload' ? '替换中…' : '重绘中…' }}</em>
-                    </button>
-                    <button class="visual-image-nav visual-image-nav-prev" type="button" :disabled="!canSelectPreviousImage" title="前一个画面" aria-label="前一个画面" @click="selectAdjacentVisualImage(-1)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg></button>
-                    <button class="visual-image-nav visual-image-nav-next" type="button" :disabled="!canSelectNextImage" title="后一个画面" aria-label="后一个画面" @click="selectAdjacentVisualImage(1)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg></button>
-                  </div>
-                  </template>
-                  <template #prompts>
-                  <label class="stack compact-stack">
-                    <span>提示词</span>
-                    <textarea v-model="item.prompt" rows="3" maxlength="12000"></textarea>
-                  </label>
-                  <label class="stack compact-stack">
-                    <span>{{item.is_scene?'场景说明':'对应文案（暂只读）'}}</span>
-                    <textarea :value="item.text" rows="2" readonly></textarea>
-                  </label>
-                  </template>
-                  <template #logs><TaskConsole :lines="studioTaskLogs" compact :diagnostic-available="!!studioJob" :diagnostic-exporting="diagnosticExporting" @export-diagnostic="exportDiagnosticPackage(studioJob)"/><p v-if="diagnosticMessage" class="muted" role="status">{{diagnosticMessage}}</p></template>
-                  <template #subtitles><section v-if="!item.is_scene" class="visual-timing-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
-                <div class="visual-timing-head">
-                  <div>
-                    <div class="eyebrow">画面时序</div>
-                    <h3>按字幕调整画面位置与文字</h3>
-                    <p class="muted small">移动字幕句可调整画面边界；点击单句右侧的编辑键可修正最终字幕文字，不会改变配音内容。</p>
-                  </div>
-                  <div class="visual-timing-head-actions">
-                    <button class="ghost-btn compact-btn" type="button" :disabled="!ttsEditor.history_count || ttsBoundaryBusy" @click="undoLastTtsEdit">撤销上一步 · {{ ttsEditor.history_count || 0 }}/{{ ttsEditor.history_limit || 20 }}</button>
-                    <select v-model="selectedVisualTimingHistory" class="timing-history-select" :disabled="visualTimingAdjusting || ttsEditor.task?.status === 'running' || !visualEditor.timing_history?.length" @change="restoreSelectedVisualTimingHistory">
-                      <option value="">历史时序</option>
-                      <option v-for="entry in visualEditor.timing_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
-                    </select>
-                    <button class="ghost-btn compact-btn timing-save-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="commitEditedTiming">✅ 保存当前时序</button>
-                    <button class="ghost-btn compact-btn" type="button" :disabled="!visualEditor.timing_available || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="resetEditedTiming">恢复初始时序</button>
-                  </div>
-                </div>
-                <div v-if="ttsEditor.task?.status === 'running'" class="visual-subtitle-lock-note">配音精修正在改变句子时长，画面时序与字幕编辑已暂时锁定，完成后会自动刷新。</div>
-                <div v-if="!visualEditor.timing_available" class="timing-unavailable">{{ visualEditor.timing_message || '该历史项目缺少可用的字幕时间线。' }}</div>
-                <template v-else>
-                  <div class="visual-subtitle-toolbar">
-                    <div>
-                      <strong>字幕文字精修</strong>
-                      <small>直接修改最终显示文字；保存时自动同步字幕文件与画面时间线。</small>
-                    </div>
-                    <div class="visual-subtitle-toolbar-actions">
-                      <select v-model="selectedVisualSubtitleHistory" class="timing-history-select" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running' || !visualEditor.subtitle_history?.length" @change="restoreSelectedVisualSubtitleHistory">
-                        <option value="">字幕历史</option>
-                        <option v-for="entry in visualEditor.subtitle_history || []" :key="entry.id" :value="entry.id">{{ entry.label }}</option>
-                      </select>
-                      <span v-if="visualSubtitleDirtyCount" class="visual-subtitle-dirty-count">{{ visualSubtitleDirtyCount }} 处未保存</span>
-                      <button class="primary-btn compact-btn" type="button" :disabled="!visualSubtitleDirtyCount || visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="saveVisualSubtitles">{{ visualSubtitleSaving ? '保存中…' : '保存字幕修改' }}</button>
-                    </div>
-                  </div>
-                  <div class="visual-timing-track" role="list" aria-label="画面时序列表">
-                    <button
-                      v-for="item in visualEditor.items"
-                      :key="`timing-${item.id}`"
-                      type="button"
-                      class="timing-track-item"
-                      :class="{ selected: visualTimingSelectedId === item.id }"
-                      @click="visualTimingSelectedId = item.id"
-                    >
-                      <strong>{{ item.display_name||item.id }}</strong>
-                      <span>{{ formatTimingRange(item.timing) }}</span>
-                      <small>{{ item.timing?.sentences?.length || 0 }} 句</small>
-                    </button>
-                  </div>
-                  <div v-if="selectedVisualTimingItem" class="visual-timing-editor">
-                    <button class="timing-image" type="button" @click="visualPreviewItem = selectedVisualTimingItem">
-                      <img :src="selectedVisualTimingItem.image_url" :alt="selectedVisualTimingItem.id" />
-                    </button>
-                    <div class="timing-detail">
-                      <div class="timing-detail-title">
-                        <strong>{{ selectedVisualTimingItem.id }}</strong>
-                        <span>{{ formatTimingRange(selectedVisualTimingItem.timing) }} · {{ selectedVisualTimingItem.timing?.duration?.toFixed(1) || '0.0' }} 秒</span>
-                      </div>
-                      <div class="timing-sentences">
-                        <div
-                          v-for="sentence in selectedVisualTimingItem.timing?.sentences || []"
-                          :key="sentence.slide_id"
-                          class="timing-sentence"
-                          :class="{ editing: visualSubtitleEditingId === sentence.slide_id, modified: isVisualSubtitleModified(sentence), hidden: sentence.subtitle_hidden }"
-                        >
-                          <span class="timing-sentence-meta"><strong>{{ sentence.slide_id }}</strong><small>{{ formatSubtitleTiming(sentence) }}</small></span>
-                          <div v-if="sentence.subtitle_hidden" class="timing-sentence-content hidden-subtitle-copy">
-                            <p>已隐藏字幕 · {{ visualSubtitleHiddenModeLabel(sentence.subtitle_hidden_mode) }}</p>
-                            <small>配音、图片与画面时序仍保留</small>
-                          </div>
-                          <div v-else class="timing-sentence-content">
-                            <textarea
-                              v-if="visualSubtitleEditingId === sentence.slide_id"
-                              v-model="visualSubtitleDrafts[sentence.slide_id]"
-                              rows="2"
-                              maxlength="1200"
-                              :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'"
-                              @keydown.ctrl.enter.prevent="finishVisualSubtitleEdit(sentence)"
-                            ></textarea>
-                            <p v-else>{{ visualSubtitleDrafts[sentence.slide_id] ?? sentence.text }}</p>
-                            <small v-if="visualSubtitlePaceWarning(sentence)" class="visual-subtitle-pace-warning">{{ visualSubtitlePaceWarning(sentence) }}</small>
-                          </div>
-                          <div class="timing-sentence-actions">
-                            <button v-if="sentence.subtitle_hidden" class="ghost-btn compact-btn subtitle-restore-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="restoreHiddenVisualSubtitle(sentence)">恢复</button>
-                            <template v-else>
-                              <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" @click="toggleVisualSubtitleEdit(sentence)">{{ visualSubtitleEditingId === sentence.slide_id ? '完成' : '✏️' }}</button>
-                              <button v-if="isVisualSubtitleModified(sentence)" class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="撤销本句未保存修改" @click="resetVisualSubtitleDraft(sentence)">↶</button>
-                              <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="把本句显示字幕拆成两条，配音保持不变" @click="openVisualSubtitleSplit(sentence)">拆成两条</button>
-                              <button v-if="(selectedVisualTimingItem.timing?.sentences?.length || 0) >= 2" class="ghost-btn compact-btn timing-insert-label" type="button" :disabled="visualPictureInsertBusy || visualTimingAdjusting || ttsEditor.task?.status === 'running'" title="从本句开始插入一张可编辑的黑色占位画面" @click="insertVisualPicture(sentence)">{{ visualPictureInsertBusy ? '添加中…' : '＋画面' }}</button>
-                              <button v-else class="ghost-btn compact-btn" type="button" disabled title="当前画面只有一句，请先拆分字幕">＋画面</button>
-                              <button v-if="hasNextVisualSubtitle(sentence)" class="ghost-btn compact-btn subtitle-align-trigger" type="button" :disabled="visualBoundaryAlign.status === 'loading' || visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="只移动本句结束与下一句开始的共同边界" @click="previewVisualSubtitleBoundary(sentence)">调整与下一句分界</button>
-                              <button class="ghost-btn compact-btn subtitle-hide-btn" type="button" :disabled="visualSubtitleSaving || ttsEditor.task?.status === 'running'" title="从成片与 SRT 中隐藏这条字幕" @click="openVisualSubtitleRemove(sentence)">×</button>
-                            </template>
-                          </div>
-                        </div>
-                      </div>
-                      <div v-if="visualSubtitleRemoveDialog.open" class="subtitle-remove-panel">
-                        <div class="subtitle-remove-head">
-                          <div>
-                            <strong>隐藏 {{ visualSubtitleRemoveDialog.sentence?.slide_id }} 的字幕</strong>
-                            <small>{{ visualSubtitleRemoveDialog.sentence?.text }}</small>
-                          </div>
-                          <button class="icon-action" type="button" title="取消" @click="closeVisualSubtitleRemove">×</button>
-                        </div>
-                        <p>只移除成片和 SRT 中的显示文字，不删除配音、图片或画面时间线。请选择这段时间如何处理：</p>
-                        <div class="subtitle-remove-options">
-                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving" @click="hideVisualSubtitle('blank')"><strong>留空</strong><small>这段时间不显示字幕</small></button>
-                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'previous')" @click="hideVisualSubtitle('merge_previous')"><strong>并入前句</strong><small>前一条可见字幕延长到这里</small></button>
-                          <button class="ghost-btn compact-btn" type="button" :disabled="visualSubtitleSaving || !canMergeHiddenSubtitle(visualSubtitleRemoveDialog.sentence, 'next')" @click="hideVisualSubtitle('merge_next')"><strong>并入后句</strong><small>后一条可见字幕提前到这里</small></button>
-                        </div>
-                      </div>
-                      <div v-if="visualSubtitleSplitDialog.open" class="subtitle-boundary-panel subtitle-split-panel">
-                        <div class="subtitle-boundary-head">
-                          <div>
-                            <strong>拆分 {{ visualSubtitleSplitDialog.sentence?.slide_id }} 的显示字幕</strong>
-                            <small>只拆字幕与时间显示，原配音文件保持不变</small>
-                          </div>
-                          <button class="icon-action" type="button" title="关闭" @click="closeVisualSubtitleSplit">×</button>
-                        </div>
-                        <div class="subtitle-split-copy">
-                          <label><span>前一条字幕</span><textarea v-model="visualSubtitleSplitDialog.left_text" rows="2" maxlength="1200"></textarea></label>
-                          <label><span>后一条字幕</span><textarea v-model="visualSubtitleSplitDialog.right_text" rows="2" maxlength="1200"></textarea></label>
-                        </div>
-                        <label class="subtitle-boundary-slider">
-                          <span>两条字幕的共同分界：{{ formatTimingRange({ start: visualSubtitleSplitDialog.sentence?.start, end: visualSubtitleSplitDialog.boundary }) }}</span>
-                          <input v-model.number="visualSubtitleSplitDialog.boundary" type="range" :min="Number(visualSubtitleSplitDialog.sentence?.start || 0) + 0.05" :max="Number(visualSubtitleSplitDialog.sentence?.end || 0) - 0.05" step="0.01" />
-                        </label>
-                        <div class="subtitle-boundary-actions">
-                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.sentence?.start, visualSubtitleSplitDialog.boundary)">▶ 试听前句</button>
-                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.boundary, visualSubtitleSplitDialog.sentence?.end)">▶ 试听后句</button>
-                          <button class="ghost-btn compact-btn" type="button" @click="playVisualSubtitleSplitRange(visualSubtitleSplitDialog.sentence?.start, visualSubtitleSplitDialog.sentence?.end)">▶ 连续试听</button>
-                          <button class="ghost-btn compact-btn" type="button" :disabled="Math.abs(Number(visualSubtitleSplitDialog.boundary) - Number(visualSubtitleSplitDialog.original_boundary)) < 0.005" @click="visualSubtitleSplitDialog.boundary = Number(visualSubtitleSplitDialog.original_boundary)">恢复边界</button>
-                          <button class="primary-btn compact-btn" type="button" :disabled="visualSubtitleSaving" @click="applyVisualSubtitleSplit">{{ visualSubtitleSaving ? '保存中…' : '确认拆分' }}</button>
-                        </div>
-                      </div>
-                      <div class="timing-actions">
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_prev || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('extend_prev')">← 前面多一句</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_prev || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('shrink_prev')">前面少一句 →</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_shrink_next || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('shrink_next')">← 后面少一句</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="!selectedVisualTimingItem.timing?.can_extend_next || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="adjustEditedTiming('extend_next')">后面多一句 →</button>
-                        <button class="ghost-btn compact-btn timing-remove-btn" type="button" :disabled="visualEditor.items.length <= 1 || visualTimingAdjusting || ttsEditor.task?.status === 'running'" @click="removeEditedTimingPicture">移除这张画面</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div v-if="visualBoundaryAlign.open" class="subtitle-boundary-panel">
-                    <div class="subtitle-boundary-head">
-                      <div>
-                        <strong>相邻字幕时间边界</strong>
-                        <small>{{ visualBoundaryAlign.left_slide_id }} → {{ visualBoundaryAlign.right_slide_id }}</small>
-                      </div>
-                      <button class="icon-action" type="button" title="关闭" @click="closeVisualBoundaryAlign">×</button>
-                    </div>
-                    <div v-if="visualBoundaryAlign.status === 'loading'" class="subtitle-boundary-loading">正在读取相邻两句的音频边界…</div>
-                    <div v-else-if="visualBoundaryAlign.status === 'failed'" class="subtitle-boundary-loading error">{{ visualBoundaryAlign.message || '读取字幕边界失败' }}</div>
-                    <template v-else-if="visualBoundaryAlign.status === 'ready'">
-                      <div class="subtitle-boundary-copy"><span>{{ visualBoundaryAlign.left_text }}</span><i>｜</i><span>{{ visualBoundaryAlign.right_text }}</span></div>
-                      <label class="subtitle-boundary-slider">
-                        <span>共同边界：{{ formatBoundaryOffset(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_start) }} · {{ formatBoundaryDelta(visualBoundaryAlign.boundary, visualBoundaryAlign.current_boundary) }}</span>
-                        <input v-model.number="visualBoundaryAlign.boundary" type="range" :min="visualBoundaryAlign.minimum_boundary" :max="visualBoundaryAlign.maximum_boundary" step="0.01" />
-                      </label>
-                      <small class="muted small">只会移动这两句的共享分界：前句结束时间与后句开始时间同步变化；后句结束、下一张画面和更后面的内容保持不变。</small>
-                      <div class="subtitle-boundary-actions">
-                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.pair_start, visualBoundaryAlign.boundary)">▶ 试听前句</button>
-                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.boundary, visualBoundaryAlign.pair_end)">▶ 试听后句</button>
-                        <button class="ghost-btn compact-btn" type="button" @click="playVisualBoundaryRange(visualBoundaryAlign.clip_start, visualBoundaryAlign.clip_end)">▶ 连续试听</button>
-                        <button class="ghost-btn compact-btn" type="button" :disabled="Math.abs(Number(visualBoundaryAlign.boundary) - Number(visualBoundaryAlign.current_boundary)) < 0.005" @click="visualBoundaryAlign.boundary = Number(visualBoundaryAlign.current_boundary)">恢复原边界</button>
-                        <button class="primary-btn compact-btn" type="button" :disabled="visualBoundaryApplying" @click="applyVisualSubtitleBoundary">{{ visualBoundaryApplying ? '应用中…' : '确认应用边界' }}</button>
-                      </div>
-                    </template>
-                  </div>
-                </template>
-              </section></template></WorkspacePanels></article></div></div></ResizableShotWorkspace>
-    </template>
+    <template v-else-if="studioTab==='配音'"><AudioWorkbench /></template>
+    <template v-else-if="studioTab==='画面与字幕'"><VisualWorkbench /></template>
     <template v-else-if="studioTab==='字幕'">
      <audio v-if="studioAudio" :src="studioAudio" controls/>
      <p class="muted">校对后可导出新的 SRT，原始识别文件保留。</p>
@@ -945,7 +538,7 @@
             </div>
           </article></template>
     </template>
-    <section v-if="['video','dynamic'].includes(studioKind) && isGuidedWorkflowJob(studioJob) && studioJob?.status !== 'completed'" class="guided-workflow-shell" aria-label="分步制作流程">
+    <section v-if="['video','dynamic'].includes(studioKind) && isGuidedWorkflowJob(studioJob) && studioJob?.status !== 'completed' && !['配音','画面与字幕'].includes(studioTab)" class="guided-workflow-shell" aria-label="分步制作流程">
           <div class="guided-stage-strip">
             <div v-for="stage in guidedStageSteps" :key="stage.key" class="guided-stage-chip" :class="guidedStageChipClass(stage.key)">
               <span>{{ stage.index }}</span>
@@ -977,7 +570,7 @@
               </button>
               <div v-else-if="guidedStage === 'audio_review' && studioJob?.request?.dynamic_video" class="bridge-tools">
                 <button class="primary-btn guided-primary-action" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="enterDynamicStoryboard">确认配音与字幕，进入自动分镜 →</button>
-                <button v-if="codexBridgeAvailable" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="handoffToCodex">确认配音，交给 Codex 规划</button>
+                <button v-if="codexBridgeAvailable" type="button" :disabled="studioBusy || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="handoffToCodex">确认配音，交给 AI 规划</button>
               </div>
               <button v-else-if="guidedStage === 'audio_review'" class="primary-btn guided-primary-action" type="button" :disabled="guidedAdvancing || guidedSubtitleSaving || ttsEditor.task?.status === 'running'" @click="advanceGuidedWorkflow('confirm_audio')">
                 {{ guidedAdvancing ? '正在确认…' : '确认配音与字幕' }}
@@ -1022,7 +615,7 @@
       </footer>
   </main>
   <ApiSetupGuide v-if="apiGuideOpen" @close="apiGuideOpen=false"/>
-  <div v-if="studioDrawer" class="drawer-backdrop" @click.self="studioDrawer=''"><aside class="drawer"><header><div><p class="eyebrow">WORKSPACE SETTINGS</p><h2>{{studioDrawer}}</h2></div><button aria-label="关闭设置" @click="studioDrawer=''">×</button></header><div class="drawer-body">
+  <div v-if="studioDrawer" class="drawer-backdrop" :class="{'is-beside':drawerRight>0}" :style="drawerRight>0?{'--drawer-right':drawerRight+'px'}:null" @click.self="studioDrawer=''"><aside class="drawer" :class="{'is-wide':drawerWide}" role="dialog" :aria-label="studioDrawer"><header><div><p class="eyebrow">WORKSPACE SETTINGS</p><h2>{{studioDrawer}}</h2><nav v-if="drawerSections.length>1" class="drawer-sections" aria-label="跳到分节"><button v-for="section in drawerSections" :key="section.index" type="button" @click="jumpDrawerSection(section.index)">{{section.label}}</button></nav></div><button aria-label="关闭设置" @click="studioDrawer=''">×</button></header><div ref="drawerBody" class="drawer-body">
    <template v-if="studioDrawer==='重配参数'"><div class="tts-refine-parameter-panel" :class="{ locked: ttsEditor.task?.status === 'running' }">
                     <div class="tts-refine-parameter-head">
                       <div>
@@ -1062,7 +655,7 @@
                       <label v-if="ttsEditor.engine === 'indextts25'"><span>并行数</span><input v-model.number="ttsRefineForm.tts_parallelism" type="number" min="1" max="3" step="1" /></label>
                     </div>
                   </div></template>
-   <template v-else-if="studioDrawer==='声音设置'"><div
+   <template v-else-if="studioDrawer==='声音设置'"><div class="drawer-cols"><div class="drawer-col" data-drawer-section="配音参数"><div
               v-if="!form.skip_tts"
               class="tts-parameter-panel"
               :class="{ 'refinement-locked': ttsRefinementActive }"
@@ -1288,7 +881,8 @@
                 <small v-if="qwenTtsKeyMessage" class="api-key-message">{{ qwenTtsKeyMessage }}</small>
               </div>
             </div>
-            <section class="bgm-panel bgm-full-row creation-bgm-panel" :class="{ expanded: form.bgm_enabled }">
+            </div><div class="drawer-col">
+            <section class="bgm-panel bgm-full-row creation-bgm-panel" data-drawer-section="背景音乐" :class="{ expanded: form.bgm_enabled }">
               <div class="bgm-panel-head">
                 <div>
                   <div class="sidebar-label">背景音乐（可选）</div>
@@ -1346,6 +940,7 @@
                 </div>
               </div>
             </section>
+            <details class="drawer-optional" data-drawer-section="长文处理" :open="form.auto_split_long_text"><summary>长文处理 <small>{{ form.auto_split_long_text ? '已开启自动分段' : '未开启 · 可选' }}</small></summary>
             <div class="tts-parameter-panel split-panel">
               <div class="tts-parameter-head">
                 <div>
@@ -1374,16 +969,18 @@
               <small class="muted">
                 系统会先让大模型通读全文，按主题完整性分段；该数值只是上限，不会为了凑字数硬切。分段视频完成后会按顺序自动拼接。
               </small>
-            </div></template>
+            </div></details></div></div></template>
    <template v-else-if="studioDrawer==='参数回顾'"><ParameterReview :request="studioJob?.request||{}" :reference-assets="studioReferenceAssets" :status="studioJob?.status" :busy="studioBusy" @duplicate="duplicateStudioProject" @reset="resetStudioProject"/></template>
    <template v-else-if="studioDrawer==='作品风格'">
     <div class="style-library">
      <p class="muted">风格只改变内容与画面表现，不修改配音、节奏、导演策略、API 或出图分辨率。当前任务的修改不会自动覆盖风格库。</p>
+     <div class="drawer-cols"><div class="drawer-col" data-drawer-section="选择风格">
      <h3>内置示范</h3>
      <div class="style-example-list"><button v-for="mode in contentModeOptions" :key="mode.key" @click="useExample(mode.key)">{{mode.label}}<small>{{mode.key==='general'?'自由创作起点':'以此为基础创作'}}</small></button></div>
      <h3>我的风格 <small>{{styles.length}}</small></h3>
      <p v-if="!styles.length" class="muted">还没有保存的风格。在下方调整画风，再为它取一个名字。</p>
      <div class="style-saved-list"><div v-for="style in styles" :key="style.id" class="style-saved-row"><button @click="applyStyle(style)"><b>{{style.name}}</b><small>{{contentModeOptions.find(m=>m.key===style.values.content_mode)?.label}} · {{Object.hasOwn(style.values,'global_character_prompt')?'含人物':'不含人物'}} · {{Object.hasOwn(style.values,'story_environment_prompt')?'含环境':'不含环境'}}</small></button><button :aria-label="'删除风格 '+style.name" @click="deleteStyle(style)">×</button></div></div>
+     </div><div class="drawer-col" data-drawer-section="当前画面设置">
      <h3>保存当前画面设置</h3>
      <div class="tts-parameter-panel visual-prompt-panel">
               <template v-if="form.visual_prompt_mode !== 'full'">
@@ -1524,9 +1121,10 @@
      <div class="style-save-actions"><button class="primary" @click="saveStyle(false)">保存为新风格</button><button :disabled="!styleId" @click="saveStyle(true)">更新所选风格</button></div>
      <p role="status" class="muted">{{styleMessage}}</p>
      <p class="muted">风格库保存在当前浏览器本机，不会上传到云端。</p>
+     </div></div>
     </div>
    </template>
-   <template v-else-if="studioDrawer==='画面编排'"><VideoBookends :settings="form" /><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><ImageProfileSelector :form="form" :authenticated="cloudSession.authenticated" /><ComfyUIVideoSelector v-if="form.dynamic_video" :form="form" @open-workbench="studioDrawer='';studioPage='comfyui'" /><DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" /><div v-else class="director-strategy-row">
+   <template v-else-if="studioDrawer==='画面编排'"><p class="muted">决定画面如何表达文案、多久切换。与作品风格独立保存；完整配置可使用右上角参数预设。</p><div class="drawer-cols"><div class="drawer-col" data-drawer-section="出图与生成方式"><ImageProfileSelector :form="form" :authenticated="cloudSession.authenticated" /><ComfyUIVideoSelector v-if="form.dynamic_video" :form="form" @open-workbench="studioDrawer='';studioPage='comfyui'" /></div><div class="drawer-col" data-drawer-section="画面表达与节奏"><DynamicTextModeSelector v-if="form.dynamic_video" v-model="form.dynamic_text_mode" /><div v-else class="director-strategy-row">
                 <div class="director-strategy-copy">
                   <span>导演策略</span>
                   <small>控制文字如何转成画面，不改变作品风格、配音、字幕和渲染。</small>
@@ -1614,9 +1212,9 @@
                 </label>
               </div>
             </div>
-            </div></template>
-   <template v-else-if="studioDrawer==='字幕样式'"><SubtitleStyleEditor :settings="form" :dynamic="form.dynamic_video" v-model:variant="form.video_render_variant" /></template>
-   <template v-else-if="studioDrawer==='导出字幕样式'"><SubtitleStyleEditor :settings="visualPresentation" v-model:variant="visualRenderMode" orientation-control :readonly="visualEditor.task?.status==='running'" /></template>
+            </div></div></div><details class="drawer-optional" data-drawer-section="片头与片尾" :open="!!(form.intro_video_id||form.outro_video_id)"><summary>片头与片尾 <small>可选 · {{ form.intro_video_id||form.outro_video_id ? '已设置' : '未设置' }}</small></summary><VideoBookends :settings="form" /></details></template>
+   <template v-else-if="studioDrawer==='字幕样式'"><SubtitleStyleEditor split :settings="form" :dynamic="form.dynamic_video" v-model:variant="form.video_render_variant" /></template>
+   <template v-else-if="studioDrawer==='导出字幕样式'"><SubtitleStyleEditor split :settings="visualPresentation" v-model:variant="visualRenderMode" orientation-control :readonly="visualEditor.task?.status==='running'" /></template>
    <template v-else-if="studioDrawer==='背景音乐' && !(isGuidedWorkflowJob(studioJob) && guidedStage === 'render_setup')"><section class="bgm-panel visual-editor-bgm" :class="{ expanded: visualBgm.enabled }">
                 <div class="bgm-panel-head">
                   <div>
@@ -2008,12 +1606,16 @@ import TaskConsole from './components/TaskConsole.vue'
 import OperationStatus from './components/OperationStatus.vue'
 import ApiSetupGuide from './components/ApiSetupGuide.vue'
 import LanguageModelPresets from './components/LanguageModelPresets.vue'
-import {ref} from 'vue'
+import {ref,reactive,computed,watch,nextTick,onMounted,onUnmounted,provide} from 'vue'
+import AudioWorkbench from './components/workbench/AudioWorkbench.vue'
+import VisualWorkbench from './components/workbench/VisualWorkbench.vue'
+import LanguageServicePanel from './components/services/LanguageServicePanel.vue'
+import ImageServicePanel from './components/services/ImageServicePanel.vue'
+import VideoServicePanel from './components/services/VideoServicePanel.vue'
 import ImageStudio from './components/ImageStudio.vue'
 import ComfyUIWorkbench from './components/ComfyUIWorkbench.vue'
 import ComfyUIVideoSelector from './components/ComfyUIVideoSelector.vue'
 import VideoStudio from './components/VideoStudio.vue'
-import VideoModelSettings from './components/VideoModelSettings.vue'
 import VibeModelSettings from './components/VibeModelSettings.vue'
 import ImageProfileSelector from './components/ImageProfileSelector.vue'
 import TtsBoundaryEditor from './components/TtsBoundaryEditor.vue'
@@ -2028,12 +1630,130 @@ import DynamicTextModeSelector from './components/DynamicTextModeSelector.vue'
 import ResizableShotWorkspace from './components/ResizableShotWorkspace.vue'
 import WorkspacePanels from './components/WorkspacePanels.vue'
 import { dynamicTextModeLabel } from './dynamicTextMode'
-export default { components: { VideoBookends, Announcements, IcanChannelHint, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VideoModelSettings, VibeModelSettings, ImageProfileSelector, SubtitleStyleEditor }, setup() { const workspace = useWorkspace(); return { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...useStudio(workspace), ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel } } }
+export default { components: { AudioWorkbench, VisualWorkbench, VideoBookends, Announcements, IcanChannelHint, TtsFindReplace, TtsStructureControls, ShotPlanningLimit, TtsEditorFeedback, TtsSentenceControls, TtsRebuildButton, TtsDraftResolutionDialog, TtsBoundaryEditor, CloudPasswordRecovery, CloudImageQuality, ModelInstallGuide, CodexBridgePanel, LanguageModelPresets, ApiSetupGuide, OperationStatus, ResizableShotWorkspace, WorkspacePanels, DynamicTextModeSelector, ReferenceMaterials, SceneAssets, TaskConsole, ParameterReview, ImageStudio, ComfyUIWorkbench, ComfyUIVideoSelector, VideoStudio, VibeModelSettings, ImageProfileSelector, SubtitleStyleEditor, LanguageServicePanel, ImageServicePanel, VideoServicePanel }, setup() { const workspace = useWorkspace(); const studio = useStudio(workspace); const bag = { serviceTab:ref('overview'),apiGuideOpen:ref(false), ...workspace, ...studio, ...useServicesPage(workspace, studio), ...useWideDrawer(studio), formatJobTime, ...useStyleLibrary(workspace), ...useAppearance(), visualPresentation, dynamicTextModeLabel }; provide('ocv', reactive(bag)); return bag } }
+
+// 任务时间：列表里显示相对时间，悬停显示完整时间。后端时间戳为秒。
+function formatJobTime(seconds, full = false) {
+  const value = Number(seconds)
+  if (!value) return full ? '' : '—'
+  const date = new Date(value * 1000), pad = (n) => String(n).padStart(2, '0')
+  const absolute = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (full) return '更新于 ' + absolute
+  const diff = Math.max(0, Date.now() / 1000 - value)
+  if (diff < 60) return '刚刚'
+  if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前'
+  if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前'
+  if (diff < 7 * 86400) return Math.floor(diff / 86400) + ' 天前'
+  return absolute.slice(5)
+}
+
+// 设置抽屉：宽屏时变成宽面板；在创作页从「制作设置」栏左侧展开，不遮住设置卡和开始按钮。
+// 分节导航来自抽屉内容里的 data-drawer-section 标记。
+function useWideDrawer(studio) {
+  const COMPACT = ['我的预设']
+  const drawerRight = ref(0), drawerSections = ref([]), drawerBody = ref(null)
+  const drawerWide = computed(() => !!studio.studioDrawer.value && !COMPACT.includes(studio.studioDrawer.value))
+  function measureDrawer() {
+    const side = studio.studioDrawer.value && studio.studioPage.value === 'new' && window.innerWidth >= 1200 ? document.querySelector('.creation-side') : null
+    const rect = side?.getBoundingClientRect()
+    drawerRight.value = rect && rect.width ? Math.max(0, Math.round(window.innerWidth - rect.left + 12)) : 0
+  }
+  function collectSections() {
+    const nodes = drawerBody.value ? [...drawerBody.value.querySelectorAll('[data-drawer-section]')] : []
+    drawerSections.value = nodes.map((node, index) => ({ index, label: node.dataset.drawerSection }))
+  }
+  function jumpDrawerSection(index) {
+    const node = drawerBody.value?.querySelectorAll('[data-drawer-section]')[index]
+    if (!node) return
+    if (node.tagName === 'DETAILS') node.open = true
+    node.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }
+  watch(() => [studio.studioDrawer.value, studio.studioPage.value, studio.studioKind.value], async () => { await nextTick(); measureDrawer(); collectSections() })
+  onMounted(() => window.addEventListener('resize', measureDrawer))
+  onUnmounted(() => window.removeEventListener('resize', measureDrawer))
+  return { drawerRight, drawerSections, drawerBody, drawerWide, jumpDrawerSection }
+}
+
+// 接口与服务页：分类标签（tablist）、各分类状态标记、语言账号显式保存与离开前提醒。
+function useServicesPage(workspace, studio) {
+  const serviceTabs = [{id:'overview',label:'服务概览'},{id:'language',label:'语言模型',panel:'service-language'},{id:'images',label:'图像接口',panel:'service-images'},{id:'video',label:'视频接口',panel:'service-video'},{id:'vibe',label:'Vibe 动效',panel:'service-vibe'},{id:'tts',label:'TTS 状态',panel:'service-tts'}]
+  const serviceState = reactive({ language: null, images: null, video: null, vibe: null, tts: null })
+  const TTS_READY = ['IndexTTS-2.5 在线', '集群在线', 'Qwen 已配置']
+  const ttsReady = computed(() => TTS_READY.includes(workspace.ttsStatusText.value))
+  watch([ttsReady, workspace.startingTts], () => { serviceState.tts = workspace.startingTts.value ? null : { level: ttsReady.value ? 'ready' : 'missing' } }, { immediate: true })
+  function serviceMark(id) {
+    const state = serviceState[id]
+    if (!state) return null
+    if (state.dirty) return { text: '未保存', cls: 'dirty', title: '有未保存修改' }
+    if (state.level === 'error') return { text: '▲', cls: 'error', title: '有错误' }
+    if (state.level === 'missing') return { text: '○', cls: 'missing', title: id === 'tts' ? '未连接' : '未配置完整' }
+    if (state.level === 'ready') return { text: '●', cls: 'ready', title: '已配置' }
+    return null
+  }
+  function onServiceTabKey(event) {
+    const keys = { ArrowRight: 1, ArrowLeft: -1, Home: 'first', End: 'last' }
+    if (!(event.key in keys) || event.target?.getAttribute('role') !== 'tab') return
+    event.preventDefault()
+    const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')]
+    const index = tabs.indexOf(event.target)
+    const step = keys[event.key]
+    const next = step === 'first' ? 0 : step === 'last' ? tabs.length - 1 : (index + step + tabs.length) % tabs.length
+    tabs[next].focus(); tabs[next].click()
+  }
+  function setApiKeyStatus(keys) { if (keys) workspace.apiKeyStatus.value = keys }
+  // Shared saveApiKeySettings reports through apiKeyMessage and replaces
+  // apiKeyStatus only on success; translate that into an explicit result.
+  async function saveLanguageAccount() {
+    const before = workspace.apiKeyStatus.value
+    await workspace.saveApiKeySettings()
+    return { ok: workspace.apiKeyStatus.value !== before, message: workspace.apiKeyMessage.value }
+  }
+  // 出图并发 keeps the shared saveImageConcurrencySettings payload; the panel
+  // edits a draft and only writes it into apiKeyForm at save time.
+  async function saveImageConcurrency(draft) {
+    const f = workspace.apiKeyForm, keys = ['image_concurrency_mode', 'image_per_key_concurrency', 'image_total_concurrency']
+    const before = Object.fromEntries(keys.map((k) => [k, f[k]]))
+    Object.assign(f, { image_concurrency_mode: draft.mode, image_per_key_concurrency: draft.per_key, image_total_concurrency: draft.total })
+    const status = workspace.apiKeyStatus.value
+    await workspace.saveImageConcurrencySettings()
+    const ok = workspace.apiKeyStatus.value !== status
+    if (!ok) Object.assign(f, before)
+    return { ok, message: workspace.apiKeyMessage.value }
+  }
+  function closeServicesChecked() {
+    if (Object.values(serviceState).some((state) => state?.dirty) && !window.confirm('接口配置有未保存的修改，返回后草稿会丢失。仍要返回工作页面？')) return
+    studio.closeServices()
+  }
+  return { serviceTabs, serviceState, serviceMark, onServiceTabKey, setApiKeyStatus, saveLanguageAccount, saveImageConcurrency, ttsReady, closeServicesChecked }
+}
 </script>
 <style scoped>
 .live-studio .studio-sentence-list>div.narration-current{background:rgba(70,180,220,.17);box-shadow:inset 4px 0 #66dcff}.narration-marker{display:block;color:#66dcff;font-size:10px;white-space:nowrap;margin-top:4px}.studio-sentence-list{scroll-behavior:auto}
-.service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page #service-language{max-width:760px}.services-page .api-key-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}
-.services-page{max-width:1280px;margin:0 auto;width:100%}.services-nav{display:flex;gap:10px;flex-wrap:wrap;padding:12px 0;margin-bottom:20px}.services-nav a{padding:9px 14px;border:1px solid var(--border,#35423f);border-radius:8px;color:var(--text,#eef3f1);text-decoration:none}.services-nav a:hover{border-color:var(--accent,#81d9bd);color:var(--accent,#81d9bd)}.services-page .studio-service-settings{width:100%;max-width:none;display:grid;gap:18px}.services-page .brand{display:none}.services-page .sidebar-card{margin:0;padding:22px;min-width:0}.services-page .api-key-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}.services-page .api-key-card>.sidebar-label,.services-page .api-key-card>.muted,.services-page .api-key-message{grid-column:1/-1}.services-page [id^="service-"]{min-width:0;scroll-margin-top:90px}.services-page .api-key-entry{margin:0}.services-page input,.services-page select{max-width:100%}.services-page .sidebar-secondary-entry{display:none}@media(max-width:1050px){.services-page .api-key-card{grid-template-columns:minmax(0,1fr)}.services-page .sidebar-card{padding:16px}}
+.service-header-actions{display:flex;gap:10px;flex-wrap:wrap}.services-page .services-nav{border-bottom:1px solid var(--border,#35423f);gap:6px;padding-bottom:14px}.services-nav button{padding:10px 18px}.services-nav button.active{background:var(--accent,#81d9bd);color:#132720;border-color:var(--accent,#81d9bd)}.live-studio .services-page .api-key-card{display:flex;flex-direction:column;gap:18px}.services-page .api-key-card>*{width:100%;min-width:0}.services-page .api-key-card>.sidebar-label,.services-page .service-config-card>.sidebar-label{font-size:16px;color:var(--text,#eef3f1)}.services-page .service-config-card{display:grid;gap:12px}.services-page .service-config-card>.muted{margin-bottom:6px}.services-nav button:focus-visible{outline:2px solid var(--accent,#81d9bd);outline-offset:2px}.service-tab-mark{margin-left:7px;font-size:10px;vertical-align:1px}.service-tab-mark.ready{color:var(--accent,#81d9bd)}.service-tab-mark.missing{color:var(--warning,#d6bc87)}.service-tab-mark.error{color:var(--danger,#ed9292)}.service-tab-mark.dirty{font-size:11px;padding:1px 6px;border-radius:99px;border:1px solid currentColor;color:var(--warning,#d6bc87);vertical-align:1px}.services-nav button.active .service-tab-mark{color:inherit}.service-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.services-page :deep(.video-model-settings),.services-page :deep(.image-profile-selector){margin:0}
+.services-page{max-width:2400px;margin:0 auto;width:100%}
+/* 插件与设置：宽屏两栏，外观单独一栏 */
+@media(min-width:1600px){.live-studio .content.plugins-content{max-width:2400px}.plugins-page{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-areas:"hero hero" "pref look" "plug look";gap:20px 24px;align-items:start}.plugins-page>*{margin:0!important;min-width:0}.plugins-page>.plugins-hero{grid-area:hero}.plugins-page>.creation-preference-panel{grid-area:pref}.plugins-page>.appearance-panel{grid-area:look}.plugins-page>.plugin-manager-panel{grid-area:plug}}
+
+/* 项目首页 / 任务日志 */
+.home-layout,.logs-layout{display:flex;flex-direction:column}.home-main,.logs-main{min-width:0}.home-main{container-type:inline-size}.home-side{display:contents}.home-quick{display:none}.home-side>.studio-drafts{order:-1}.home-side>:last-child{order:-2}.logs-list{display:none}
+.project-table .col-wide{display:none}.project-actions{display:flex;align-items:center;gap:6px;justify-content:flex-end}.project-progress{display:flex;align-items:center;gap:10px;min-width:0}.project-progress-bar{display:block;flex:1;max-width:120px;height:4px;border-radius:99px;background:var(--line,#ffffff12);overflow:hidden}.project-progress-bar i{display:block;height:100%;background:var(--accent,#83dec5);border-radius:inherit}.status.is-failed{color:var(--danger,#ed9292)}.status.is-running,.status.is-queued{color:var(--accent,#83dec5)}.status.is-completed{color:var(--muted,#a0aaa8)}
+@media(min-width:1200px){.live-studio .content.home,.live-studio .content.logs-page{max-width:2400px}
+.home-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(320px,24vw,440px);gap:28px;align-items:start}.home-side{display:grid;gap:18px;position:sticky;top:16px;align-content:start}.home-side>.studio-drafts,.home-side>:last-child{order:0;margin:0}.home-quick{display:grid;gap:12px;padding:16px 18px;border:1px solid var(--border,#35423f);border-radius:12px}.home-quick h2{font-size:15px;margin:0}.home-quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.home-quick-grid button{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;column-gap:10px;row-gap:2px;align-items:center;text-align:left;white-space:normal;padding:12px}.home-quick-grid button>span{grid-row:1/3;font-size:18px;color:var(--accent,#83dec5)}.home-quick-grid button small{font-size:11px;color:var(--muted,#a0aaa8)}
+.logs-layout{display:grid;grid-template-columns:clamp(280px,22vw,400px) minmax(0,1fr);gap:24px;align-items:start}.logs-list{display:grid;gap:12px;position:sticky;top:16px;align-content:start}.logs-list-head h2{font-size:15px;margin:0}.logs-list-head small{color:var(--muted,#a0aaa8);margin-left:6px}.logs-jobs{display:grid;gap:6px}.logs-job{display:grid;gap:5px;text-align:left;white-space:normal;padding:11px 13px;border:1px solid var(--border,#35423f);border-radius:10px;background:transparent}.logs-job b{font-weight:600;font-size:13px;overflow-wrap:anywhere}.logs-job small{font-size:12px;color:var(--muted,#a0aaa8)}.logs-job .project-progress-bar{max-width:none}.logs-job.active{border-color:var(--accent,#83dec5);background:color-mix(in srgb,var(--accent,#83dec5) 8%,transparent)}.logs-job:focus-visible{outline:2px solid var(--accent,#83dec5);outline-offset:2px}.logs-list .studio-pagination{margin:0}.logs-main .log-toolbar label{display:none}.logs-main :deep(.console-output){height:max(360px,calc(100vh - 540px))}}
+/* Extra project columns only when the table itself is wide enough. */
+@container (min-width:900px){.project-table .col-wide{display:block}.project-table .project-type-inline{display:none}.project-table .table-head,.project-table .project-row{grid-template-columns:minmax(260px,1fr) 100px 96px 190px 110px 150px}.project-type,.project-updated{font-size:12px;color:var(--muted,#a0aaa8)}.project-quick{font-size:12px;padding:6px 12px}}
+
+/* 设置抽屉 */
+.drawer-sections{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.drawer-sections button{padding:4px 11px;font-size:12px;border-radius:99px}.drawer-sections button:focus-visible{outline:2px solid var(--accent,#83dec5);outline-offset:2px}
+.drawer-cols,.drawer-col{display:grid;gap:18px;min-width:0;align-content:start}.drawer-col:empty{display:none}.drawer-col>*{margin-top:0;margin-bottom:0}
+.drawer-optional{border:1px solid var(--border,#35423f);border-radius:10px;padding:12px 14px;min-width:0}.drawer-optional>summary{cursor:pointer;display:flex;gap:10px;align-items:baseline;font-weight:600;font-size:14px}.drawer-optional>summary small{font-weight:400;font-size:12px;color:var(--muted,#a0aaa8)}.drawer-optional[open]>summary{margin-bottom:14px}.drawer-optional>summary:focus-visible{outline:2px solid var(--accent,#83dec5);outline-offset:3px}
+.drawer-body{container-type:inline-size}@container (min-width:760px){.drawer-cols{grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;align-items:start}}
+@media(min-width:1200px){.drawer.is-wide{width:max(470px,min(1100px,calc(100vw - var(--drawer-right,0px) - 240px)));max-width:none}.drawer-backdrop.is-beside{right:var(--drawer-right)}}
+
+/* 创作页（新建图文 / 动态视频、配音、字幕识别）: below 1200px keep the original top-to-bottom order; on desktop write on the left, settings + start on a sticky right column. */
+.live-studio .creation-layout{display:flex;flex-direction:column}.live-studio .creation-side{display:contents}.live-studio .creation-side-head{display:none}.live-studio .creation-side>.setting-summaries{order:1}.live-studio .creation-side>.language-presets{order:2}.live-studio .creation-main{order:3;min-width:0}.live-studio .creation-side-actions{order:4}
+@media(min-width:1200px){.live-studio .content.creation{max-width:2400px}.live-studio .creation-main{order:0}.live-studio .creation-side{order:1}.live-studio .creation-layout{display:grid;grid-template-columns:minmax(0,1fr) clamp(340px,28vw,520px);gap:28px;align-items:start}.live-studio .creation-side{display:flex;flex-direction:column;gap:14px;position:sticky;top:16px;padding:18px;border:1px solid var(--border,#35423f);border-radius:12px;background:var(--panel,#202526)}.live-studio .creation-side-head{display:grid;gap:3px}.live-studio .creation-side-head b{font-size:15px}.live-studio .creation-side-head small{font-size:12px;color:var(--muted,#a0aaa8)}.live-studio .creation-side .setting-summaries{grid-template-columns:minmax(0,1fr);margin:0;gap:10px}.live-studio .creation-side .setting-summaries:empty{display:none}.live-studio .creation-side .setting-summaries>button{min-height:0;padding:12px 14px}.live-studio .creation-side .language-presets{margin:0}.live-studio .creation-side-actions{display:grid;gap:12px;padding:14px 18px 18px;margin:0 -18px -18px;border-top:1px solid var(--border,#35423f);border-radius:0 0 12px 12px;position:sticky;bottom:0;background:var(--panel,#202526);z-index:1}.live-studio .creation-side .create-footer{display:grid;gap:12px;justify-content:stretch;margin:0}.live-studio .creation-side .create-footer>button.primary{width:100%;padding:13px 16px;font-size:14px}.live-studio .creation-side .create-footer .one-click-video-option{max-width:none}.live-studio .creation-side .studio-notice{margin:0}.live-studio .creation-side-actions>p{margin:0}.live-studio .kind-subtitle .creation-side-actions{border-top:0;padding-top:0}.live-studio .creation-main textarea{min-height:max(260px,calc(100vh - 620px))}}
+.services-nav{display:flex;gap:10px;flex-wrap:wrap;padding:12px 0;margin-bottom:20px}.services-nav a{padding:9px 14px;border:1px solid var(--border,#35423f);border-radius:8px;color:var(--text,#eef3f1);text-decoration:none}.services-nav a:hover{border-color:var(--accent,#81d9bd);color:var(--accent,#81d9bd)}.services-page .studio-service-settings{width:100%;max-width:none;display:grid;gap:18px}.services-page .brand{display:none}.services-page .sidebar-card{margin:0;padding:22px;min-width:0}.services-page .api-key-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}.services-page .api-key-card>.sidebar-label,.services-page .api-key-card>.muted,.services-page .api-key-message{grid-column:1/-1}.services-page [id^="service-"]{min-width:0;scroll-margin-top:90px}.services-page .api-key-entry{margin:0}.services-page input,.services-page select{max-width:100%}.services-page .sidebar-secondary-entry{display:none}@media(max-width:1050px){.services-page .api-key-card{grid-template-columns:minmax(0,1fr)}.services-page .sidebar-card{padding:16px}}
 .live-studio .creation-heading-compact{margin-bottom:16px;gap:16px;align-items:center}.live-studio .creation-heading-compact h1{font-size:20px;font-weight:600;line-height:1.4}.live-studio .creation-heading-compact .eyebrow{font-size:9px;letter-spacing:1.5px;margin:0 0 4px;opacity:.7}.live-studio .creation-heading-compact .muted{font-size:12px;margin:5px 0 0}.live-studio .creation-settings-top{margin:0 0 24px;gap:12px}.live-studio .creation-settings-top>button{padding:14px 16px;min-height:76px}.live-studio .creation-settings-top b{font-size:13px;line-height:1.5}.live-studio .creation-settings-top small{font-size:11px}.live-studio .creation-heading-compact>button{font-size:12px;padding:9px 12px}
 .live-studio .creation-project-title{display:grid;gap:6px;flex:1;min-width:0;max-width:900px;margin:0}.live-studio .creation-project-title>span{font-size:12px;color:var(--muted,#9aa9bb)}.live-studio .creation-project-title>input{width:100%;min-width:0;box-sizing:border-box;font-size:22px;font-weight:600;line-height:1.4;padding:8px 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:inherit;text-overflow:ellipsis}.live-studio .creation-project-title>input:hover{border-color:var(--border,#34403e)}.live-studio .creation-project-title>input:focus{outline:2px solid var(--accent,#83dec5);outline-offset:2px;background:var(--bg,#111827)}.live-studio .creation-heading-compact>button{flex-shrink:0}
 @media(max-width:680px){.live-studio .creation-project-title{flex-basis:100%}.live-studio .creation-project-title>input{font-size:18px}.live-studio .creation-heading-compact{align-items:flex-start;flex-wrap:wrap}.live-studio .creation-settings-top>button{min-height:62px;padding:10px 12px}}

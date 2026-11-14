@@ -96,6 +96,24 @@ class VibeAdoptionTests(unittest.TestCase):
         self.assertEqual(export._source(self.p,row),self.p/'card.png')
         self.assertTrue(clip.is_file())
 
+    def test_idle_shot_can_adopt_while_other_shots_render_but_not_during_image_work(self):
+        key=str(self.p)
+        rec=copy.deepcopy(self.rec);rec['status']='video_generating';self.persist(rec)
+        # Another shot's video worker is running: this idle shot may adopt and undo.
+        with patch.dict(vg.VIDEO_WORKERS,{key:{'w':{'cloud_h3'}}}),patch.object(studio,'ACTIVE',{key}):
+            adopted=self.post();self.assertEqual(adopted.status_code,200,adopted.text)
+            self.assertEqual(adopted.json()['status'],'video_generating')
+            self.assertEqual(adopted.json()['shots'][0]['video_backend'],'vibe')
+            self.assertEqual(self.post('undo',2).status_code,200)
+        # Image or planning workers hold a full record in memory: still blocked.
+        rec=copy.deepcopy(self.rec);rec['revision']=3;self.persist(rec)
+        with patch.object(studio,'ACTIVE',{key}):
+            self.assertEqual(self.post(revision=3).status_code,409)
+        # A queued or rendering shot itself stays locked.
+        rec=copy.deepcopy(self.rec);rec.update(status='video_generating',revision=3);rec['shots'][0]['video_queued']=True;self.persist(rec)
+        with patch.dict(vg.VIDEO_WORKERS,{key:{'w':{'cloud_h3'}}}),patch.object(studio,'ACTIVE',{key}):
+            self.assertEqual(self.post(revision=3).status_code,409)
+
     def test_preserve_paid_original_and_optimistic_and_ownership_guards(self):
         old=self.p/'original.mp4'
         old.write_bytes(self.client.get(self.preview['silent_url']).content)

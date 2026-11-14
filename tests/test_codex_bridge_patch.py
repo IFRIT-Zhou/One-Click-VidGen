@@ -186,6 +186,27 @@ class PatchTests(unittest.TestCase):
             if key != 'updated_at':
                 self.assertEqual(backup[key], self.before[key], key)
 
+    def test_patch_before_any_core_image_keeps_storyboard_stage(self):
+        r = self.load()
+        for shot in r['shots']:
+            for key in ('image', 'image_status', 'video', 'video_status', 'video_version'):
+                shot.pop(key, None)
+        r['status'] = 'storyboard_review'
+        r.pop('export', None)
+        bridge.studio.save(self.path, r)
+        self.repair.update(revision=r['revision'], timeline_token=bridge.timeline_token(r, self.path))
+        result = self.run_patch().json()
+        self.assertTrue(result['written'], result)
+        self.assertEqual(self.load()['status'], 'storyboard_review')
+
+    def test_missing_global_image_key_is_readable_not_internal_error(self):
+        import module4_video_render as visual
+        r = self.load()
+        r['creation_parameters'] = {'use_cloud_image_pool': False}
+        with patch.object(visual, '_provider_configs', side_effect=RuntimeError('missing key')):
+            with self.assertRaisesRegex(ValueError, '还没有选择出图渠道'):
+                bridge.studio._image_configs(r, 1)
+
     def test_video_only_does_not_invalidate_image(self):
         self.repair['shots'] = [{'id': 'shot01', 'video_prompt': '图1为主体参考，主体逐步变化，固定机位。'}]
         result = self.run_patch().json()

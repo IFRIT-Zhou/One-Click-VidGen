@@ -1130,7 +1130,7 @@ const preflightPassedCount = computed(() => (
   preflightResult.value?.items || []
 ).filter((item) => item.status === 'passed').length)
 const scriptPlaceholder = computed(() => {
-  if (form.skip_text_correction) return '已选择“没有文案”，系统会用 ASR 识别结果继续生成画面和字幕。'
+  if (form.skip_tts && form.skip_text_correction) return '已选择“没有文案”，系统会用 ASR 识别结果继续生成画面和字幕。'
   if (form.skip_tts) return '粘贴与已有配音对应的文案，系统会跳过配音并进行字幕校对。'
   return '粘贴完整文案，系统会自动断句、配音、生成字幕和视频页面。'
 })
@@ -4729,6 +4729,9 @@ function generationRequestPayload() {
   }
   delete payload.auto_analyze_reference_images
   delete payload.task_image_pool
+  // 「跳过字幕校对」只在使用已有配音（skip_tts）时有效；由 OCV 生成配音时一律校对。
+  // 复制项目 / 从草稿继续会把旧值原样带过来，界面上又没有这个开关，这里统一纠正。
+  if (!payload.skip_tts) payload.skip_text_correction = false
   delete payload._rerun_source_project
   delete payload._rerun_source_revision
   delete payload._rerun_base

@@ -1,0 +1,135 @@
+/* Shared layout for the service configuration panels. Every selector is
+   prefixed with .svc- so nothing leaks into other pages. */
+.svc-panel{--svc-accent:var(--ocv-accent,var(--accent,#83dec5));--svc-muted:var(--ocv-muted,var(--muted,#a0aaa8));--svc-border:var(--ocv-border,#35433e);--svc-danger:var(--ocv-danger,var(--danger,#ed9292));--svc-warning:var(--ocv-warning,var(--warning,#d6bc87));--svc-surface:color-mix(in srgb,var(--ocv-panel,#202825) 88%,transparent);display:grid;gap:18px;min-width:0;color:var(--ocv-text,var(--text,#e7e9eb))}
+.svc-panel *{box-sizing:border-box}
+.svc-panel :where(h2,h3,p){margin:0}
+.svc-panel button:focus-visible,.svc-panel input:focus-visible,.svc-panel select:focus-visible,.svc-panel textarea:focus-visible,.svc-panel summary:focus-visible{outline:2px solid var(--svc-accent);outline-offset:2px}
+.svc-panel button:disabled{opacity:.5;cursor:not-allowed}
+
+/* Banner */
+.svc-banner{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid color-mix(in srgb,var(--svc-accent) 45%,var(--svc-border));border-radius:10px;background:color-mix(in srgb,var(--svc-accent) 8%,transparent);font-size:13px;line-height:1.6}
+.svc-banner strong{white-space:nowrap}
+
+/* Current (in effect) card */
+.svc-current{display:grid;gap:8px;padding:16px 18px;border:1px solid var(--svc-border);border-radius:12px;background:var(--svc-surface)}
+.svc-current-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.svc-eyebrow{font-size:12px;color:var(--svc-muted);letter-spacing:.04em}
+.svc-scope{font-size:12px;color:var(--svc-accent);padding:3px 9px;border:1px solid color-mix(in srgb,var(--svc-accent) 40%,transparent);border-radius:99px;line-height:1.5}
+.svc-current-main{font-size:17px;font-weight:600;overflow-wrap:anywhere;line-height:1.45}
+.svc-current-sub{font-size:13px;color:var(--svc-muted);line-height:1.6;overflow-wrap:anywhere}
+.svc-current-fields{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:4px}
+.svc-current-fields .svc-field{min-width:180px;flex:0 1 240px}
+
+/* Status badges */
+.svc-badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;line-height:1.4;padding:2px 8px;border-radius:99px;white-space:nowrap;font-weight:500}
+.svc-badge.ok{color:var(--svc-accent);background:color-mix(in srgb,var(--svc-accent) 14%,transparent)}
+.svc-badge.warn{color:var(--svc-warning);background:color-mix(in srgb,var(--svc-warning) 14%,transparent)}
+.svc-badge.error{color:var(--svc-danger);background:color-mix(in srgb,var(--svc-danger) 14%,transparent)}
+.svc-badge.muted{color:var(--svc-muted);background:color-mix(in srgb,var(--svc-muted) 12%,transparent)}
+
+/* Section */
+.svc-section{display:grid;gap:12px;min-width:0}
+.svc-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.svc-section-head h3{font-size:15px;font-weight:600}
+.svc-section-head p{font-size:12px;color:var(--svc-muted);margin-top:4px;line-height:1.6}
+.svc-split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:16px;align-items:start}
+.svc-split.single{grid-template-columns:minmax(0,1fr)}
+
+/* List */
+.svc-list{display:grid;gap:8px;margin:0;padding:0;list-style:none;min-width:0}
+.svc-row{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--svc-border);border-radius:10px;min-width:0;transition:border-color .15s,background .15s}
+.svc-row.is-current{border-color:color-mix(in srgb,var(--svc-accent) 55%,var(--svc-border))}
+.svc-row.is-editing{border-color:var(--svc-accent);background:color-mix(in srgb,var(--svc-accent) 6%,transparent)}
+.svc-row.is-flash{background:color-mix(in srgb,var(--svc-accent) 12%,transparent)}
+.svc-row-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.svc-row-title b{font-weight:600;overflow-wrap:anywhere;min-width:0}
+.svc-row-meta{font-size:12px;color:var(--svc-muted);line-height:1.55;overflow-wrap:anywhere}
+.svc-row-meta code,.svc-secret code,.svc-secret-saved code{font-size:12px;padding:1px 6px;margin-right:4px;border-radius:5px;background:color-mix(in srgb,var(--svc-muted) 14%,transparent)}
+.svc-row-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.svc-row-actions button,.svc-secret-saved button,.svc-link-btn{padding:5px 11px;font-size:12px;border-radius:7px}
+.svc-danger-text{color:var(--svc-danger)!important}
+.svc-empty{display:grid;gap:12px;padding:16px;border:1px dashed color-mix(in srgb,var(--svc-accent) 50%,var(--svc-border));border-radius:12px;background:color-mix(in srgb,var(--svc-accent) 4%,transparent)}
+.svc-empty-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.svc-empty-title>div{display:grid;gap:3px}
+.svc-empty-title span{font-size:12px;color:var(--svc-accent)}
+.svc-empty-title em{padding:3px 8px;border-radius:99px;background:color-mix(in srgb,var(--svc-accent) 12%,transparent);color:var(--svc-muted);font-size:12px;font-style:normal;white-space:nowrap}
+.svc-empty dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}
+.svc-empty dl>div{display:grid;gap:3px;padding:8px 10px;border-radius:8px;background:var(--svc-surface)}
+.svc-empty dt{font-size:12px;color:var(--svc-muted)}
+.svc-empty dd{margin:0;overflow-wrap:anywhere;font-size:13px}
+.svc-empty p{font-size:12px;color:var(--svc-muted);line-height:1.6}
+.svc-empty button{justify-self:start}
+.svc-skeleton{height:58px;border-radius:10px;background:linear-gradient(90deg,color-mix(in srgb,var(--svc-muted) 8%,transparent),color-mix(in srgb,var(--svc-muted) 16%,transparent),color-mix(in srgb,var(--svc-muted) 8%,transparent));background-size:200% 100%;animation:svc-shimmer 1.4s linear infinite}
+@keyframes svc-shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.svc-skeleton{animation:none}.svc-row{transition:none}}
+
+/* Editor */
+.svc-editor{display:grid;gap:14px;padding:16px 18px;border:1px solid var(--svc-accent);border-radius:12px;background:var(--svc-surface);min-width:0}
+.svc-editor-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.svc-editor-head h4{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
+.svc-dirty{font-size:12px;color:var(--svc-warning)}
+.svc-clean{font-size:12px;color:var(--svc-muted)}
+.svc-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0;margin:0;padding:0;border:0}
+.svc-group>legend{grid-column:1/-1;padding:0;margin-bottom:2px;font-size:12px;font-weight:600;color:var(--svc-muted);letter-spacing:.04em}
+.svc-wide{grid-column:1/-1}
+.svc-field{display:grid;gap:6px;min-width:0;align-content:start}
+.svc-label-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.svc-label{font-size:13px}
+.svc-req{font-size:11px;line-height:1.5;padding:0 6px;border-radius:5px;color:var(--svc-warning);border:1px solid color-mix(in srgb,var(--svc-warning) 45%,transparent)}
+.svc-opt{font-size:11px;color:var(--svc-muted)}
+.svc-field input:not([type=checkbox]),.svc-field select,.svc-field textarea{width:100%;min-width:0}
+.svc-field textarea{font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6;min-height:96px;height:auto;resize:vertical}
+.svc-field small,.svc-note{font-size:12px;color:var(--svc-muted);line-height:1.6}
+.svc-field.is-missing input,.svc-field.is-missing select{border-color:color-mix(in srgb,var(--svc-danger) 70%,transparent)}
+.svc-check{display:flex!important;align-items:center;gap:8px;font-size:13px}
+.svc-checks{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.svc-advanced{border:1px solid var(--svc-border);border-radius:10px;padding:10px 12px}
+.svc-advanced>summary{cursor:pointer;font-size:13px;display:flex;gap:8px;align-items:center}
+.svc-advanced[open]>summary{margin-bottom:12px}
+.svc-secret-saved{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--svc-border);border-radius:8px}
+.svc-secret-state{display:grid;gap:2px;flex:1;min-width:160px;font-size:13px}
+.svc-secret-state small{font-size:12px;color:var(--svc-muted)}
+.svc-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--svc-border)}
+.svc-missing{margin-right:auto;font-size:12px;color:var(--svc-danger);line-height:1.6}
+.svc-footer-note{flex-basis:100%;text-align:right;font-size:12px;color:var(--svc-muted);line-height:1.6}
+
+/* Feedback */
+.svc-status{margin:0;font-size:13px;color:var(--svc-accent);line-height:1.6}
+.svc-error{margin:0;font-size:13px;color:var(--svc-danger);line-height:1.6;overflow-wrap:anywhere}
+.svc-error button{margin-left:8px;padding:3px 10px;font-size:12px}
+
+@media (max-width:900px){.svc-split{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){.svc-group,.svc-empty dl{grid-template-columns:minmax(0,1fr)}.svc-footer{justify-content:stretch}.svc-footer button{flex:1 1 auto}.svc-footer-note{text-align:left}.svc-current-fields .svc-field{flex-basis:100%}}
+.svc-key-chip{display:inline-flex;align-items:center;gap:2px;margin-right:8px}
+.svc-key-chip button{padding:2px 8px;font-size:12px;border-radius:6px}
+
+/* Desktop (16:9) master–detail: lists on the left, one sticky editor on the right. */
+.svc-workspace{display:grid;gap:18px;min-width:0;container-type:inline-size}
+.svc-main{display:grid;gap:24px;min-width:0;align-content:start}
+.svc-main .svc-section{container-type:inline-size}
+.svc-aside{display:grid;gap:12px;min-width:0;align-content:start}
+.svc-aside-idle{display:grid;gap:10px;padding:16px 18px;border:1px dashed var(--svc-border);border-radius:12px}
+.svc-aside-idle h4{margin:0;font-size:14px;font-weight:600}
+.svc-aside-idle p{margin:0;font-size:13px;color:var(--svc-muted);line-height:1.65}
+.svc-aside-idle ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:13px;color:var(--svc-muted);line-height:1.6}
+@media (min-width:1200px){
+  .svc-workspace{grid-template-columns:minmax(0,1.2fr) minmax(400px,1fr);gap:24px;align-items:start}
+  .svc-aside{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto;overscroll-behavior:contain;padding-right:2px}
+}
+/* Compact list rows when the list column is wide enough: text left, actions right. */
+@container (min-width:560px){
+  .svc-row{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:repeat(5,auto);column-gap:16px;row-gap:0;align-items:center;padding:10px 14px}
+  .svc-row>*{grid-column:1}
+  .svc-row>*+*{margin-top:4px}
+  .svc-row>.svc-row-actions{grid-column:2;grid-row:1/-1;align-self:center;justify-content:flex-end;margin-top:0;flex-wrap:nowrap}
+}
+@media (max-width:1199px){
+  /* Single column: current config and any open editor first, then the lists. */
+  .svc-workspace>.svc-aside{order:-1}
+  .svc-aside-idle{display:none}
+}
+
+/* Very wide screens (e.g. 3840×2160 at 150% ≈ 2560 CSS px): split the list column again. */
+@container (min-width:1800px){
+  .svc-main.svc-main--split{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;column-gap:24px}
+}

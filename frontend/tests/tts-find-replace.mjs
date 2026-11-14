@@ -33,15 +33,17 @@ assert.equal(saved.length,1);assert.equal(saved[0].after,'某字与结，某字�
 assert.equal(JSON.stringify(props.drafts),draftsBefore);assert.equal(events.length,0)
 assert.ok(ui.notice.value.includes('朗读文本、配音及时间轴未改变'))
 props.saveSubtitles=async()=>{throw Error('保存失败')};await ui.apply();assert.equal(ui.notice.value,'保存失败')
+const src=path=>readFileSync(new URL('../src/'+path,import.meta.url),'utf8')
+// Studio's 配音 tab is components/workbench/AudioWorkbench.vue; the dynamic-audio return button lives in GuidedStage.vue.
 for(const [file,count] of [['Studio.vue',1],['App.vue',3]]){
- const text=readFileSync(new URL('../src/'+file,import.meta.url),'utf8')
+ const text=file==='Studio.vue'?src(file)+src('components/workbench/AudioWorkbench.vue'):src(file)
  assert.equal((text.match(/<TtsFindReplace\b/g)||[]).length,count)
- assert.ok(text.includes('@reading="updateTtsReadingDraft"'))
- assert.ok(text.includes('@subtitle-sync="setTtsSubtitleSync"'))
- assert.ok(text.includes(':save-subtitles="saveTtsSubtitleBatch"'))
+ assert.match(text,/@reading="(ws\.)?updateTtsReadingDraft"/)
+ assert.match(text,/@subtitle-sync="(ws\.)?setTtsSubtitleSync"/)
+ assert.match(text,/:save-subtitles="(ws\.)?saveTtsSubtitleBatch"/)
 }
-const studio=readFileSync(new URL('../src/Studio.vue',import.meta.url),'utf8')
-assert.match(studio,/:disabled="!canReturnDynamicStoryboard\|\|studioBusy/)
+const studio=src('components/workbench/GuidedStage.vue')
+assert.match(studio,/:disabled="!ws\.canReturnDynamicStoryboard \|\| ws\.studioBusy/)
 const state=readFileSync(new URL('../src/useStudio.js',import.meta.url),'utf8')
 assert.ok(state.includes('editingDynamicAudio.value && dynamicAudioHasShots.value'))
 assert.ok(state.includes('dynamicAudioHasShots.value=Boolean(project.shots?.length)'))

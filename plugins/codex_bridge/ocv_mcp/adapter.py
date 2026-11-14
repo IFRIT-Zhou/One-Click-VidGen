@@ -21,6 +21,10 @@ UPLOAD_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.wav', '.mp3', '.m4a', '
                      '.flac', '.ogg', '.mp4', '.mov', '.webm', '.mkv', '.avi', '.m4v',
                      '.srt', '.ass', '.vtt'}
 MAX_BYTES = 256 * 1024 * 1024
+# The current user is re-checked on every call (owner scoping of plans/results/assets must
+# follow logins immediately). Only the plugin-enabled gate is reused briefly per user, so
+# consecutive tool calls pay one extra round trip instead of two. ocv_connection always re-checks.
+GATE_CACHE_SECONDS = 20
 CONFIRM_FORMAL_EDITS = {'ocv_video_vibe_intent','ocv_video_vibe_adopt','ocv_video_vibe_undo'}
 LOCAL_COMPUTE_COST = {
     'ocv_video_layer_pack_create': '本机确定性裁切与补底；不上传图片，不调用计费模型',
@@ -203,14 +207,28 @@ class Adapter:
         self.dispatch_lock = threading.Lock()
         self.active = set()
         self.active_lock = threading.Lock()
+        self.auth_cache = None  # (owner, plugin gate checked_at)
+        self.auth_lock = threading.Lock()
+        try:
+            self.state.maybe_prune()
+        except Exception:
+            pass  # Cleanup is best effort and must not block the MCP from starting.
 
-    def authenticate(self, client):
+    def authenticate(self, client, refresh=False):
         session = client.call('GET', '/api/session')
         user = session.get('user')
         if not user or user.get('id') is None:
             raise ValueError('请先登录 OCV；账号模式需提供有效 cookie-file，本地模式自动使用本地用户')
-        client.call('GET', '/api/codex-bridge/info')  # Honor native plugin enable/auth gate.
-        return digest([self.base_url, user['id'], session.get('auth_mode')])
+        owner = digest([self.base_url, user['id'], session.get('auth_mode')])
+        with self.auth_lock:
+            cached = self.auth_cache
+            fresh = (not refresh and cached and cached[0] == owner
+                     and time.monotonic() - cached[1] < GATE_CACHE_SECONDS)
+        if not fresh:
+            client.call('GET', '/api/codex-bridge/info')  # Honor native plugin enable/auth gate.
+            with self.auth_lock:
+                self.auth_cache = (owner, time.monotonic())
+        return owner
 
     def ensure_catalog(self, client, refresh=False):
         with self.schema_lock:
@@ -220,12 +238,19 @@ class Adapter:
     def connect(self, refresh=False):
         client = self.transport_factory()
         try:
-            owner = self.authenticate(client)
+            owner = self.authenticate(client, refresh)
             self.ensure_catalog(client, refresh)
             return client, owner
-        except Exception:
+        except Exception as exc:
+            self.forget_auth(exc)
             client.close()
             raise
+
+    def forget_auth(self, exc=None):
+        """Drop the cached plugin-gate check, e.g. after plugin disable or logout (401/403/404)."""
+        if exc is None or (isinstance(exc, ApiError) and exc.status in {401, 403, 404}):
+            with self.auth_lock:
+                self.auth_cache = None
 
     def allowed(self, op):
         if op.access == 'read':
@@ -409,6 +434,9 @@ class Adapter:
             if op.access != 'read':
                 raise ValueError('写操作必须先 prepare，再 commit')
             return self.execute(client, owner, op, arguments)
+        except ApiError as exc:
+            self.forget_auth(exc)
+            raise
         finally:
             client.close()
 
@@ -490,6 +518,7 @@ class Adapter:
                     result = self.execute(client, owner, op, args, guard.get('upload_sha256'))
                     self.state.finish(owner, plan_id, 'submitted', result)
                 except ApiError as exc:
+                    self.forget_auth(exc)
                     # Server 5xx can occur after side effects; never blindly retry.
                     self.state.finish(owner, plan_id, 'failed' if 400 <= exc.status < 500 else 'unknown',
                                       {'http_status': exc.status, 'error': exc.detail})
@@ -535,9 +564,23 @@ class Adapter:
         if pointer:
             if not pointer.startswith('/'):
                 raise ValueError('pointer 必须是 JSON pointer，如 /shots/0 或 /logs')
+            walked = ''
             for raw in pointer[1:].split('/'):
                 key = raw.replace('~1', '/').replace('~0', '~')
-                value = value[int(key)] if isinstance(value, list) else value[key]
+                if isinstance(value, list):
+                    if not re.fullmatch(r'\d+', key) or int(key) >= len(value):
+                        raise ValueError(f'JSON pointer {pointer} 在 {walked or "/"} 处无效：这里是长度 {len(value)} 的列表，'
+                                         f'请使用 0～{max(0, len(value) - 1)} 的序号。')
+                    value = value[int(key)]
+                elif isinstance(value, dict):
+                    if key not in value:
+                        keys = list(value)[:40]
+                        raise ValueError(f'JSON pointer {pointer} 在 {walked or "/"} 处找不到字段 {key!r}；'
+                                         f'可用字段：{", ".join(map(str, keys))}{" …" if len(value) > 40 else ""}')
+                    value = value[key]
+                else:
+                    raise ValueError(f'JSON pointer {pointer} 在 {walked or "/"} 处已是 {type(value).__name__} 值，不能继续向下读取。')
+                walked += '/' + raw
         if isinstance(value, list):
             items, size = [], 0
             for item in value[offset:offset+limit]:

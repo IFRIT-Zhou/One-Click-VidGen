@@ -65,12 +65,13 @@ try {
   const panel = '.vibe-preview', video = panel+' video', link = panel+' a[download]'
   const select = '.navigator-list button[data-shot-index="1"]'
   await page.waitForSelector(panel,{hidden:true})
-  assert.deepEqual(await page.$$eval('.production-tabs button',buttons=>buttons.map(b=>b.textContent)),['静态画面与提示词','动态视频','Vibe 动效'])
-  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+  assert.deepEqual(await page.$$eval('[aria-label="本镜制作区"] button',buttons=>buttons.map(b=>b.firstChild.textContent)),['静态画面与提示词','动态视频','Vibe 动效'])
+  const tab=label=>page.$eval('[aria-label="本镜制作区"]',(el,label)=>[...el.querySelectorAll('button')].find(b=>b.firstChild.textContent===label).click(),label)
+  await tab('Vibe 动效')
   await page.waitForSelector(panel,{visible:true})
   assert.ok(await page.$('.vibe-detail .vibe-preview'),'Vibe owns its independent tab')
   assert.equal(await page.$('.motion-detail .vibe-preview'),null)
-  assert.ok(await page.$('.production-toolbar select[aria-label="本分镜采用方式"]'))
+  assert.ok(await page.$('[role="radiogroup"][aria-label="本镜成片采用"]'))
   assert.equal(await page.$eval(panel,e=>e.open),true,'Vibe tab opens preview automatically')
   await page.click(panel+'>summary')
   await page.evaluate(()=>{
@@ -149,7 +150,7 @@ try {
   // Exercise the ordinary user's complete workflow with a real parent VideoStudio and its
   // own checked-in mock project. Only the Vibe responses change. No project/model service.
   await page.goto(origin+'/tests/shot-result-overview.html',{waitUntil:'networkidle0'})
-  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+  await tab('Vibe 动效')
   await page.waitForSelector(panel,{visible:true})
   const installWorkflowMock=()=>page.evaluate(async apiPrefix=>{
     const baseFetch=window.fetch
@@ -170,9 +171,9 @@ try {
   await clickButton('刷新预览');await waitCount(1);await respond({available:false})
   const btnState=label=>page.$eval(panel,(p,label)=>[...p.querySelectorAll('button')].filter(b=>b.textContent.trim()===label).map(b=>!b.disabled),label)
   const batch=async()=>{
-    await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='动态视频').click())
-    const result=await page.$eval('.motion-batch-actions button',b=>({text:b.textContent.trim(),enabled:!b.disabled}))
-    await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+    await tab('动态视频')
+    const result=await page.$eval('[data-action="regenerate-videos"]',b=>({text:b.textContent.trim(),enabled:!b.disabled}))
+    await tab('Vibe 动效')
     return result
   }
   const requestAt=i=>page.evaluate(i=>window.previewMock.calls[i],i)
@@ -249,27 +250,28 @@ try {
     await page.waitForFunction(on=>document.querySelector('.vibe-preview summary')?.textContent.includes('已预留')===on,{},enabled)
   }
   const noGenerations=()=>page.evaluate(()=>window.fixture.calls.filter(r=>r.method!=='GET'))
-  const nextExport='.video-next-stage button'
-  assert.equal(await page.$eval(nextExport,b=>b.textContent.trim()),'下一步：合成与导出')
+  const nextExport='[data-action="enter-export"]'
+  assert.equal(await page.$eval(nextExport,b=>b.disabled),false)
   await finishReserve(true,3,true);await settle()
   assert.deepEqual(await batch(),{text:'全部重新生成（0）',enabled:false})
-  assert.equal(await page.$(nextExport),null,'even previously completed footage does not override an unfulfilled reservation')
+  assert.equal(await page.$eval(nextExport,b=>b.disabled),true,'even previously completed footage does not override an unfulfilled reservation')
   assert.deepEqual(await noGenerations(),[],'auto-advance never submits video generation or export for reserved shots')
   await finishReserve(false,4);await settle()
   assert.deepEqual(await batch(),normal)
-  assert.equal(await page.$eval(nextExport,b=>b.textContent.trim()),'下一步：合成与导出')
+  assert.equal(await page.$eval(nextExport,b=>b.disabled),false)
 
   await page.goto(origin+'/tests/shot-result-overview.html?early-vibe=1',{waitUntil:'networkidle0'})
-  await page.waitForSelector('.production-tabs')
+  await page.waitForSelector('[aria-label="本镜制作区"]')
   assert.equal(await page.$eval(panel,e=>!!e.getClientRects().length),false,'early design tab does not show Vibe above core controls')
   await installWorkflowMock()
-  const type='.production-toolbar select[aria-label="本分镜采用方式"]'
+  const type='[role="radiogroup"][aria-label="本镜成片采用"] [role="radio"]:last-child'
+  const adoptedLabel=()=>page.$eval('[role="radiogroup"] [aria-checked="true"]',e=>e.textContent.replace(/[●○]/g,'').replace('待采用','').trim())
   const promptTab='[data-design-shot="shot1"] [data-panel="prompts"] .panel-toggle[aria-expanded="false"]'
   if(await page.$(promptTab))await page.click(promptTab)
   await page.waitForSelector(type,{visible:true});assert.equal(await page.$eval(type,e=>e.disabled),false)
-  await answer(false);await page.select(type,'vibe');await settle()
+  await answer(false);await page.click(type);await settle()
   assert.equal(await count(),0,'declining output change preserves the shot')
-  await page.$eval('.production-tabs',el=>[...el.querySelectorAll('button')].find(b=>b.textContent==='Vibe 动效').click())
+  await tab('Vibe 动效')
   await page.$eval(panel,el=>{el.open=true})
   await page.waitForFunction(()=>document.querySelector('.vibe-preview')?.open)
   assert.match(await page.$eval(panel,p=>p.textContent),/还没有完成的核心图/)
@@ -279,17 +281,17 @@ try {
   await answer(false);await clickButton('预留给 Vibe');await settle()
   assert.equal(await count(),0);assert.match((await confirms()).at(-1),/不会提交给视频模型/)
   await answer(true);await finishReserve(true,1)
-  assert.equal(await page.$eval(type,e=>e.value),'vibe')
+  assert.equal(await adoptedLabel(),'Vibe 动效')
   await answer(false);await clickButton('取消预留');await settle()
   assert.equal(await count(),1);assert.match((await confirms()).at(-1),/取消预留/)
   await answer(true);await finishReserve(false,2);await settle()
-  assert.equal(await page.$eval(type,e=>e.value),'video')
+  assert.equal(await adoptedLabel(),'动态视频')
   assert.deepEqual(await noGenerations(),[],'early reserve/cancel never requests images, videos, or a replan')
   assert.equal(await count(),2,'only the two explicitly confirmed local reservation writes happened')
-  await page.select(type,'vibe');await waitCount(3)
+  await page.click(type);await waitCount(3)
   assert.deepEqual(await requestAt(2),{method:'POST',url:apiPrefix+'/shots/shot1/vibe-intent',body:{revision:3,enabled:true}})
   await respond(await setReservation(true,4));await settle()
-  assert.equal(await page.$eval(type,e=>e.value),'vibe')
+  assert.equal(await adoptedLabel(),'Vibe 动效')
   await page.evaluate(()=>{
     const fetch=window.fetch
     window.fetch=(url,options)=>String(url).endsWith('/vibe-active-tasks')?Promise.resolve(new Response(JSON.stringify({items:[{shot_id:'shot1',status:'running',stage:'design',message:'test'}]}))):fetch(url,options)

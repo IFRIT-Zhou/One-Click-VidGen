@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { requestJSON } from '../api'
-const props = defineProps({ settings: { type: Object, required: true }, variant: { type: String, default: 'both' }, readonly: Boolean, orientationControl: Boolean, dynamic: Boolean, previewImage: String, previewUrl: String, previewShotId: String, hideEditions: Boolean })
+const props = defineProps({ settings: { type: Object, required: true }, variant: { type: String, default: 'both' }, readonly: Boolean, orientationControl: Boolean, dynamic: Boolean, previewImage: String, previewUrl: String, previewShotId: String, hideEditions: Boolean, split: Boolean })
 const emit = defineEmits(['update:variant'])
 const portrait = computed(() => props.settings.video_orientation === 'portrait')
 const defaults = computed(() => ({ font: 'Microsoft YaHei', size: portrait.value ? 56 : 36, position: portrait.value ? 75 : 95, width_percent: portrait.value ? 78 : 92, max_chars: portrait.value ? 14 : 44, color: '#ffffff', outline_color: '#000000', outline: 2, background: true, opacity: 0.75 }))
@@ -68,8 +68,9 @@ async function preview() {
 </script>
 
 <template>
- <section class="subtitle-design">
+ <section class="subtitle-design" :class="{ split }">
   <header><div><small>最终渲染 · {{width}} × {{height}}</small><h3>{{dynamic ? '画面布局与字幕' : '成片版本与字幕'}}</h3></div><span>{{portrait ? '竖屏 9:16' : '横屏 16:9'}}</span></header>
+   <div class="sd-grid"><div class="sd-settings">
   <div v-if="!hideEditions" class="edition-options">
    <label><input type="checkbox" :checked="variant !== 'raw'" :disabled="readonly || variant === 'subtitles'" @change="variantChange('subtitles', $event.target.checked)">字幕版</label>
    <label><input type="checkbox" :checked="variant !== 'subtitles'" :disabled="readonly || variant === 'raw'" @change="variantChange('raw', $event.target.checked)">无字幕版</label>
@@ -93,6 +94,7 @@ async function preview() {
     <label>底色不透明度<input type="range" min="0" max="1" step="0.05" :disabled="!layout.background" :value="layout.opacity" @input="set('opacity',Number($event.target.value))"></label>
    </div></details>
   </fieldset>
+   </div><div class="sd-preview">
    <div class="preview-heading"><b>{{dynamic?'成片布局预览':'字幕预览'}}</b><label class="check"><input v-model="guides" type="checkbox">安全区参考线</label></div>
    <div class="layout-tools">
     <div class="layout-target" aria-label="调整对象"><button v-if="dynamic" type="button" :class="{active:target==='frame'}" :disabled="readonly" @click="target='frame';actual=null">调整画面</button><button type="button" :class="{active:target==='subtitle'}" :disabled="disabled" @click="target='subtitle';actual=null">调整字幕</button></div>
@@ -118,10 +120,14 @@ async function preview() {
    <p class="hint">示意预览便于即时调整；真实预览使用本机渲染器，无需出图或扣费。参考线不进入成片，实际平台按钮遮挡范围可能不同。</p>
    <p v-if="dynamic&&!previewImage&&!previewUrl" class="hint">创建阶段使用占位画面，真实预览帧仅校验字幕。已有分镜后，可到“合成与导出”选择实际分镜检查完整布局。</p>
    <p v-if="error" role="alert">{{error}}</p>
+   </div></div>
  </section>
 </template>
 
 <style scoped>
 .subtitle-design{display:grid;gap:16px;min-width:0}.subtitle-design header,.preview-heading,.preview-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.subtitle-design h3{margin:4px 0}.hint,.subtitle-design small{font-size:12px;color:var(--muted,#a1aaa6);line-height:1.6}.edition-options{display:flex;gap:24px}.edition-options label,.check{display:flex!important;align-items:center;gap:9px}.subtitle-design input[type=checkbox]{appearance:auto!important;width:17px!important;height:17px!important;min-height:0!important;flex:none}.subtitle-design fieldset{border:0;padding:0;margin:0;min-width:0;display:grid;gap:18px}.locked{opacity:.45}.style-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.style-fields label,.sample-input,.orientation-field{display:grid;gap:7px;font-size:13px;min-width:0}.wide{grid-column:1/-1}.subtitle-design select,.subtitle-design input:not([type=checkbox]){width:100%;min-width:0;box-sizing:border-box}.subtitle-design input[type=color]{height:40px;padding:4px}.subtitle-design summary{cursor:pointer;padding:8px 0}.subtitle-preview{max-width:100%;width:100%;margin:auto;overflow:hidden;border:1px solid #394440;border-radius:10px;line-height:0}.subtitle-preview.portrait{max-width:260px}.subtitle-preview svg,.subtitle-preview img{display:block;width:100%;height:auto}.preview-heading .check{font-size:12px}.locked-note{font-size:13px;color:var(--muted,#a1aaa6)}.preview-actions button{padding:10px 14px}.preview-actions span{font-size:12px}.subtitle-design .style-fields{margin-top:8px}@media(max-width:480px){.style-fields{grid-template-columns:1fr}}
 .layout-tools,.layout-target,.layout-scale{display:flex;align-items:center;gap:10px;min-width:0}.layout-tools{justify-content:space-between;flex-wrap:wrap}.layout-tools button{font-size:12px;padding:8px 12px}.layout-target button.active{border-color:#85ddc9;color:#85ddc9;background:#263d36}.layout-scale{font-size:12px}.layout-scale label,.layout-scale span{white-space:nowrap;flex:none}.layout-scale input{flex:1}.layout-scale span{width:55px;text-align:right}.subtitle-preview svg.draggable{touch-action:none;cursor:move;user-select:none}.resize-handle{cursor:nwse-resize}.selection{pointer-events:none}.resize-handle{pointer-events:auto}
+/* Settings and live preview groups. Side by side only when the parent opts in (split) and the panel is wide enough. */
+.sd-grid{display:grid;gap:16px;min-width:0}.sd-settings,.sd-preview{display:grid;gap:16px;min-width:0;align-content:start}.subtitle-design.split{container-type:inline-size}
+@container (min-width:820px){.subtitle-design.split .sd-grid{grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:24px;align-items:start}.subtitle-design.split .sd-preview{position:sticky;top:0}}
 </style>

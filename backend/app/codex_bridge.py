@@ -140,7 +140,7 @@ def enabled():
 def user_for(request):
     user = require_user(request)
     if not enabled():
-        raise HTTPException(404, 'Codex 制作桥未安装或已停用，请在插件与设置中启用')
+        raise HTTPException(404, 'AI 制作桥未安装或已停用，请在插件与设置中启用')
     return user
 
 
@@ -204,7 +204,7 @@ def compact_pack(record, path):
 @router.get('/info')
 def info(request: Request):
     user_for(request)
-    return {'version': 1, 'name': 'Codex 制作桥', 'client_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'ocv_bridge.py'),
+    return {'version': 1, 'name': 'AI 制作桥', 'client_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'ocv_bridge.py'),
             'skill_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'skills' / 'ocv-production-bridge' / 'SKILL.md'),
             'guide_url': '/api/codex-bridge/guide',
             'ai_guide_path': str(PROJECT_ROOT / 'plugins' / PLUGIN_ID / 'AI_GUIDE.md'),
@@ -520,7 +520,7 @@ def review_plan(identity, data, request, commit):
         updated['codex_bridge'] = {'receipt': receipt, 'applied_revision': updated['revision'], 'backup_id': backup_id, 'at': time.time(),
                                   'evidence': {s.id: s.evidence for s in data.shots if s.evidence}}
         studio.discard_planning_resume(updated)
-        updated.setdefault('logs', []).append('Codex 制作桥：分镜方案已校验导入，配音与字幕未修改，等待人工确认；未启动生成。')
+        updated.setdefault('logs', []).append('AI 制作桥：分镜方案已校验导入，配音与字幕未修改，等待人工确认；未启动生成。')
         studio.save(path, updated)
         actual = read_record(path)
         if actual['shots'] != shots or actual['scenes'] != record['scenes'] or actual.get('audio') != record.get('audio'):
@@ -733,13 +733,19 @@ def review_patches(identity, data, request, commit):
                     row['baseline_image_prompt'] = old['baseline_image_prompt']
                 materialize_replacement(path, row)
             if impact['video_needs_review']:
-                studio._invalidate_shot_video(updated, row, 'Codex 局部返修已更新画面方案')
-            row['prompt_refresh_note'] = ('Codex 局部返修已保存。' +
+                studio._invalidate_shot_video(updated, row, 'AI 局部返修已更新画面方案')
+            row['prompt_refresh_note'] = ('AI 局部返修已保存。' +
                 ('新图与方案已一起保存，旧图已归档，请核查新图。' if impact['image_replaced'] else
                  '旧图保留，请检查并按新提示词重绘。' if impact['image_needs_review'] else '') +
                 ('旧视频保留在历史记录，请核查后重新生成或手动选用历史版本。' if impact['video_needs_review'] else '') +
                 '配音、字幕、时长与其他镜头未变，未启动生成。')
-        if any(i['image_needs_review'] for i in impacts):
+        # A patch before any core image exists stays in the storyboard stage, so
+        # the normal "confirm storyboard -> generate core images" path remains.
+        pre_image = record['status'] in {'draft', 'storyboard_review', 'generation_ready'} and not any(
+            s.get('image') for s in updated['shots'])
+        if pre_image:
+            pass
+        elif any(i['image_needs_review'] for i in impacts):
             updated['status'] = 'image_review'
         elif any(i['video_needs_review'] for i in impacts):
             updated['status'] = 'video_review'
@@ -754,7 +760,7 @@ def review_patches(identity, data, request, commit):
         summary['readback_verified'] = True
         updated['codex_bridge']['patch_receipt'] = {'receipt': receipt, 'revision': updated['revision'], 'summary': summary}
         studio.discard_planning_resume(updated)
-        updated.setdefault('logs', []).append('Codex 制作桥：局部返修 ' + '、'.join(summary['changed']) + '；素材已保留，未启动生成。')
+        updated.setdefault('logs', []).append('AI 制作桥：局部返修 ' + '、'.join(summary['changed']) + '；素材已保留，未启动生成。')
         try:
             studio.save(path, updated)
             actual = read_record(path)

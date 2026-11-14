@@ -4,7 +4,7 @@ const props=defineProps({vibeTasks:{type:Object,default:()=>({})},shots:{type:Ar
 const emit=defineEmits(['select'])
 const filter=ref('all')
 const listElement=ref(null)
-const needsAttention=shot=>props.durationIssues[shot.id]||shot.audio_timing_adjustment?.needs_review||props.hasWarning?.(shot)||['failed','unknown'].includes(shot.video_status)||shot.image_status==='failed'
+const needsAttention=shot=>props.durationIssues[shot.id]||shot.audio_timing_adjustment?.needs_review||props.hasWarning?.(shot)||['failed','unknown','stopped'].includes(shot.video_status)||shot.image_status==='failed'
 const splitRows=computed(()=>props.shots.map((shot,index)=>({shot,index,issue:props.durationIssues[shot.id]})).filter(row=>row.issue))
 const rows=computed(()=>props.shots.map((shot,index)=>({shot,index})).filter(({shot})=>filter.value==='all'||(filter.value==='vibe'?(shot.vibe_reserved||props.vibeRecommendations[shot.id]?.route==='vibe'||shot.video_request?.backend==='vibe'):filter.value==='attention'?needsAttention(shot):filter.value==='split'?props.durationIssues[shot.id]:shot.kind===filter.value)))
 async function selectSplit(index){

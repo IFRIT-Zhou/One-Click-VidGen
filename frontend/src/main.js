@@ -9,4 +9,4 @@ import './style.css'
 
 const legacy = location.pathname === '/legacy.html'
 if (legacy) createApp(App).mount('#app')
-else import('./prototype/prototype.css').then(() => import('./studio.css')).then(() => createApp(Studio).mount('#app'))
+else import('./prototype/prototype.css').then(() => import('./studio.css')).then(() => import('./polish.css')).then(() => createApp(Studio).mount('#app'))

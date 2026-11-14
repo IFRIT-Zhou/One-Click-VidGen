@@ -1,0 +1,68 @@
+/* SPDX-License-Identifier: AGPL-3.0-only
+   Copyright (C) 2026 Zhou Ruoyu and He Yun
+   OCV Studio visual polish. Applies only inside the new Studio shell
+   (.live-studio); the classic interface is untouched. Colours come from the
+   appearance theme variables so every built-in and custom palette follows. */
+
+/* Theme consistency: older rules use --accent/--danger/…; make them follow the chosen theme. */
+html[data-ocv-theme] .live-studio{--accent:var(--ocv-accent,#83dec5);--text:var(--ocv-text,#e7e9eb);--muted:var(--ocv-muted,#a0aaa8);--danger:var(--ocv-danger,#ed9292);--warning:var(--ocv-warning,#d6bc87);--panel:var(--ocv-panel,#202526);--panel-solid:var(--ocv-panel,#202526);--bg:var(--ocv-bg,#151719)}
+/* Settings cards on 接口与服务 used a fixed green-grey; follow the theme surface instead. */
+html[data-ocv-theme] .live-studio .sidebar-card{background:color-mix(in srgb,var(--ocv-panel,#202526) 88%,var(--ocv-bg,#151719));border-color:color-mix(in srgb,var(--ocv-muted,#a0aaa8) 22%,transparent)}
+
+.live-studio{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
+.live-studio ::selection{background:color-mix(in srgb,var(--ocv-accent,#83dec5) 32%,transparent)}
+
+/* Interaction feedback */
+.live-studio button,.live-studio a,.live-studio input,.live-studio select,.live-studio textarea,.live-studio summary{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,opacity .16s ease}
+.live-studio button:not(:disabled):active{transform:translateY(1px)}
+.live-studio button:disabled{cursor:not-allowed}
+.live-studio button:focus-visible,.live-studio a:focus-visible,.live-studio summary:focus-visible,.live-studio [role="tab"]:focus-visible{outline:2px solid var(--ocv-accent,#83dec5);outline-offset:2px}
+.live-studio input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):focus-visible,.live-studio select:focus-visible,.live-studio textarea:focus-visible{outline:none;border-color:var(--ocv-accent,#83dec5);box-shadow:0 0 0 3px color-mix(in srgb,var(--ocv-accent,#83dec5) 22%,transparent)}
+.live-studio input[type=checkbox],.live-studio input[type=radio],.live-studio input[type=range]{accent-color:var(--ocv-accent,#83dec5)}
+
+/* Primary actions: subtle depth so the main action reads first */
+.live-studio button.primary:not(:disabled),.live-studio .primary-btn:not(:disabled){box-shadow:inset 0 1px 0 #ffffff33,0 8px 22px -12px color-mix(in srgb,var(--ocv-accent,#83dec5) 85%,transparent)}
+.live-studio button.primary:not(:disabled):hover,.live-studio .primary-btn:not(:disabled):hover{filter:brightness(1.06)}
+
+/* Page rhythm on desktop: less dead space above the first content */
+@media(min-width:1200px){.live-studio .content{padding-top:40px}.live-studio .page-heading{margin-bottom:28px}}
+.live-studio .page-heading h1{letter-spacing:-.02em}
+.live-studio .eyebrow{letter-spacing:.22em;font-weight:600;opacity:.75}
+
+/* Sidebar: a clear marker for the current page */
+.live-studio .rail nav button.active{box-shadow:inset 3px 0 0 var(--ocv-accent,#83dec5)}
+
+/* Calm, theme-coloured scrollbars */
+.live-studio *{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--ocv-muted,#a0aaa8) 35%,transparent) transparent}
+
+/* Lists: hover feedback */
+.live-studio .project-row:hover{background:color-mix(in srgb,var(--ocv-accent,#83dec5) 5%,transparent)}
+.live-studio .logs-job:hover:not(.active),.live-studio .svc-row:hover:not(.is-editing):not(.is-current){border-color:color-mix(in srgb,var(--ocv-accent,#83dec5) 35%,var(--ocv-border,#35433e))}
+.live-studio .history article:hover,.live-studio .home-quick-grid button:hover{border-color:color-mix(in srgb,var(--ocv-accent,#83dec5) 40%,var(--ocv-border,#35433e))}
+
+@media (prefers-reduced-motion:reduce){.live-studio *,.live-studio *::before,.live-studio *::after{transition:none!important;animation:none!important}.live-studio button:not(:disabled):active{transform:none}}
+
+/* Former hard-coded mint accents → follow the chosen theme */
+html[data-ocv-theme] .live-studio .rail nav button.active{color:var(--ocv-accent,#83dec5);background:color-mix(in srgb,var(--ocv-accent,#83dec5) 12%,var(--ocv-panel,#202526))}
+html[data-ocv-theme] .live-studio .dot{background:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .running progress,html[data-ocv-theme] .live-studio progress{accent-color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .resume-mark,html[data-ocv-theme] .live-studio .activity-symbol{color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .resume:before{background:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .sentence-list>button.selected,html[data-ocv-theme] .live-studio .studio-sentence-list>div.selected{background:color-mix(in srgb,var(--ocv-accent,#83dec5) 12%,var(--ocv-panel,#202526));border-left-color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .rerun-stage-nav button.done,html[data-ocv-theme] .live-studio .draft-expand{color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .cloud-pool-priority-card.active{border-color:var(--ocv-accent,#83dec5);background:color-mix(in srgb,var(--ocv-accent,#83dec5) 10%,var(--ocv-panel,#202526))}
+html[data-ocv-theme] .live-studio .running-project-entry:hover{border-color:var(--ocv-accent,#83dec5);background:color-mix(in srgb,var(--ocv-accent,#83dec5) 10%,var(--ocv-panel,#202526))}
+html[data-ocv-theme] .live-studio .running-project-entry:focus-visible{outline-color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .local-tts-progress i{background:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .audio-transport .play,html[data-ocv-theme] .live-studio .studio-topbar .cloud-account-entry .cloud-login-entry{background:var(--ocv-accent,#83dec5);border-color:var(--ocv-accent,#83dec5);color:var(--ocv-bg,#151719)}
+
+/* Borders and inner panels derive from the theme (faint accent tint keeps each theme's character). */
+html[data-ocv-theme] .live-studio{--border:color-mix(in srgb,var(--ocv-accent,#83dec5) 7%,color-mix(in srgb,var(--ocv-muted,#a0aaa8) 20%,var(--ocv-panel,#202526)));--ocv-border:var(--border)}
+html[data-ocv-theme] .live-studio .tts-parameter-panel{background:color-mix(in srgb,var(--ocv-panel,#202526) 86%,var(--ocv-bg,#151719));border-color:var(--border)}
+html[data-ocv-theme] .live-studio .comfy-video-selector .backend-options button.active{background:color-mix(in srgb,var(--ocv-accent,#83dec5) 12%,var(--ocv-panel,#202526));border-color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .comfy-workbench .profile-row.active,html[data-ocv-theme] .live-studio .subtitle-design .layout-target button.active{background:color-mix(in srgb,var(--ocv-accent,#83dec5) 12%,var(--ocv-panel,#202526));border-color:var(--ocv-accent,#83dec5)}
+html[data-ocv-theme] .live-studio .subtitle-design .layout-target button.active{color:var(--ocv-accent,#83dec5)}
+
+/* Editor pages (配音 / 画面与字幕 / 导出) use the full desktop width like the other pages. */
+.live-studio .editor.studio-editor{max-width:2400px}
+.live-studio .studio-editor>.studio-notice{margin:16px 0 0}

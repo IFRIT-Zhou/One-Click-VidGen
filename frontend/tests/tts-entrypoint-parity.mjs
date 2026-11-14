@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 const read=path=>readFileSync(new URL(path,import.meta.url),'utf8')
+// Studio's 配音 tab lives in components/workbench/AudioWorkbench.vue (inline sentence cards replace TtsSentenceControls;
+// insert / delete / undo are separate TtsStructureControls instances; TtsEditorFeedback has two mutually exclusive branches).
+const studioExpected={TtsSentenceControls:0,TtsStructureControls:3,TtsRebuildButton:1,TtsEditorFeedback:2,TtsBoundaryEditor:1}
 for(const [file,count] of [['../src/Studio.vue',1],['../src/App.vue',3]]){
-  const source=read(file)
+  const studio=file.endsWith('Studio.vue')
+  const source=studio?read(file)+read('../src/components/workbench/AudioWorkbench.vue'):read(file)
   for(const name of ['TtsSentenceControls','TtsStructureControls','TtsRebuildButton','TtsEditorFeedback','TtsBoundaryEditor'])
-    assert.equal((source.match(new RegExp('<'+name+'\\b','g'))||[]).length,name==='TtsStructureControls'?count*2:count,file+' '+name)
+    assert.equal((source.match(new RegExp('<'+name+'\\b','g'))||[]).length,studio?studioExpected[name]:name==='TtsStructureControls'?count*2:count,file+' '+name)
+  if(studio)for(const binding of ['setTtsSubtitleSync','saveTtsSubtitleOnly','saveTtsPause','previewTtsBoundary','openTtsBoundaryEditor','updateTtsReadingDraft','resetTtsReadingDraft'])assert.ok(source.includes('ws.'+binding+'('),'AudioWorkbench '+binding)
   assert.equal((source.match(/<TtsDraftResolutionDialog\b/g)||[]).length,1)
   for(const tag of source.match(/<TtsSentenceControls[\s\S]*?\/>/g)||[]){
     assert.ok(!tag.includes('dynamic_video'))

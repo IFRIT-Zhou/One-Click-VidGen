@@ -749,7 +749,7 @@ def list_plugins(request: Request) -> dict[str, Any]:
         "directory": str(PLUGINS_DIR.resolve()),
         "framework_only": not any(p['valid'] and not p['framework_only'] for p in plugins),
         "execution_enabled": False,
-        "notice": "支持可选导演配置与 Codex 制作桥；仅使用宿主提供的受控接口，不执行任意第三方代码。",
+        "notice": "支持可选导演配置与 AI 制作桥；仅使用宿主提供的受控接口，不执行任意第三方代码。",
     }
 
 
@@ -2478,6 +2478,11 @@ def create_job(payload: GenerateRequest, request: Request) -> dict[str, Any]:
             str(data.get("global_character_prompt") or ""),
         )
     script = str(data.get("script") or "").strip()
+    # Skipping subtitle correction is only meaningful with an uploaded narration (skip_tts).
+    # When OCV generates the narration from the script, always correct against it; a stale
+    # flag copied from another project must not silently keep raw ASR text (all TTS engines).
+    if not data.get("skip_tts") and data.get("skip_text_correction"):
+        data["skip_text_correction"] = False
     if data.get("module1_only"):
         data["skip_tts"] = False
         data["skip_text_correction"] = False

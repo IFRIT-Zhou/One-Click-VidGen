@@ -7,6 +7,9 @@ const props = defineProps({
   selectedIndices: { type: Array, default: () => [] }, anchorIndex: Number,
   busy: Boolean, hasDrafts: Boolean, showUndo: Boolean,
   selectionOnly: Boolean,
+  // Optional: render a single action ('insert' | 'delete' | 'undo') so the buttons can live in different places.
+  only: { type: String, default: '' },
+  label: { type: String, default: '' },
 })
 const emit = defineEmits(['started', 'undo', 'busy'])
 const mode = ref(''), working = ref(false), error = ref(''), details = ref(null)
@@ -86,10 +89,10 @@ onBeforeUnmount(() => { previousFocus = null })
 </script>
 
 <template>
-  <div class="tts-structure-controls" :class="{'selection-only':selectionOnly}">
-    <button v-if="!selectionOnly" type="button" class="secondary small" :disabled="locked || !available" @click="open('insert')">＋ 插入配音</button>
-    <button v-if="selectionOnly" type="button" class="secondary small remove" :disabled="locked || !available || !selectedIndices.length" :title="selectedIndices.length ? '删除选中的完整配音段' : '请先勾选左侧配音段'" @click="open('delete')">删除选中<span v-if="selectedIndices.length">（{{ selectedIndices.length }}）</span></button>
-    <button v-if="!selectionOnly" type="button" class="secondary small" :disabled="locked || hasDrafts || !editor.history_count" title="撤回最近一次配音编辑，包括重配、交界调整或增删；不按勾选范围撤回" @click="$emit('undo')">撤回配音</button>
+  <div class="tts-structure-controls" :class="{'selection-only':selectionOnly||only}">
+    <button v-if="only ? only === 'insert' : !selectionOnly" type="button" class="secondary small" :disabled="locked || !available" @click="open('insert')">{{ label || '＋ 插入配音' }}</button>
+    <button v-if="only ? only === 'delete' : selectionOnly" type="button" class="secondary small remove" :disabled="locked || !available || !selectedIndices.length" :title="selectedIndices.length ? '删除选中的完整配音段' : '请先勾选左侧配音段'" @click="open('delete')"><template v-if="label">{{ label }}</template><template v-else>删除选中<span v-if="selectedIndices.length">（{{ selectedIndices.length }}）</span></template></button>
+    <button v-if="only ? only === 'undo' : !selectionOnly" type="button" class="secondary small" :disabled="locked || hasDrafts || !editor.history_count" title="撤回最近一次配音编辑，包括重配、交界调整或增删；不按勾选范围撤回" @click="$emit('undo')">{{ label || '撤回配音' }}</button>
     <span v-if="error && !mode" class="error" role="alert">{{ error }}</span>
   </div>
   <Teleport to="body">
@@ -123,9 +126,9 @@ onBeforeUnmount(() => { previousFocus = null })
 <style scoped>
 .tts-structure-controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0}
 .tts-structure-controls.selection-only{margin:0;display:inline-flex}button.remove:disabled{color:var(--muted,#aab8b3)}
-button{font:inherit;font-weight:600;border:1px solid #53666566;border-radius:9px;background:#263132;color:#e4eeee;padding:10px 14px;cursor:pointer}button:hover:not(:disabled){border-color:#82cfc0}button:focus-visible{outline:2px solid #82cfc0;outline-offset:3px}button.small{font-size:13px;padding:8px 11px}
-.remove,.error{color:#f3a4a4}.error{font-size:14px}.tts-structure-backdrop{position:fixed;inset:0;z-index:15000;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px}
-.tts-structure-dialog{width:min(600px,100%);max-height:85vh;overflow:auto;background:var(--panel-bg,#1d272b);color:var(--text-primary,#eef4f4);border:1px solid #607977;border-radius:16px;padding:24px;box-shadow:0 20px 70px #0006;outline:none}
-header,footer{display:flex;align-items:center;justify-content:space-between;gap:12px}h3{margin:0;font-size:20px}p{line-height:1.65}footer{justify-content:flex-end;margin-top:22px}footer button:last-child{background:#82d9c3;color:#102d32}footer button.delete-confirm{background:#c3585f;color:#fff}.hint{color:#aebebf;font-size:14px}.summary{font-weight:600}.segment-summary{max-height:230px;overflow:auto;padding:0;list-style:none}.segment-summary li{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid #53626255}.insert-position{display:grid;grid-template-columns:minmax(0,1fr) 105px;gap:12px;margin:20px 0}label{display:grid;gap:8px;min-width:0}select,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:130px}button:disabled{opacity:.45;cursor:not-allowed}
+button{font:inherit;font-weight:600;border:1px solid color-mix(in srgb,var(--ocv-text,#e4eeee) 14%,transparent);border-radius:9px;background:color-mix(in srgb,var(--ocv-text,#e4eeee) 6%,var(--ocv-panel,#263132));color:var(--ocv-text,#e4eeee);padding:10px 14px;cursor:pointer}button:hover:not(:disabled){border-color:var(--ocv-accent,#82cfc0)}button:focus-visible{outline:2px solid var(--ocv-accent,#82cfc0);outline-offset:3px}button.small{font-size:13px;padding:8px 11px}
+.remove,.error{color:var(--ocv-danger,#f3a4a4)}.error{font-size:14px}.tts-structure-backdrop{position:fixed;inset:0;z-index:15000;background:#0009;display:flex;align-items:center;justify-content:center;padding:20px}
+.tts-structure-dialog{width:min(600px,100%);max-height:85vh;overflow:auto;background:var(--ocv-panel,#1d272b);color:var(--ocv-text,#eef4f4);border:1px solid color-mix(in srgb,var(--ocv-text,#eef4f4) 18%,transparent);border-radius:16px;padding:24px;box-shadow:0 20px 70px #0006;outline:none}
+header,footer{display:flex;align-items:center;justify-content:space-between;gap:12px}h3{margin:0;font-size:20px}p{line-height:1.65}footer{justify-content:flex-end;margin-top:22px}footer button:last-child{background:var(--ocv-accent,#82d9c3);color:var(--ocv-bg,#102d32);border-color:transparent}footer button.delete-confirm{background:var(--ocv-danger,#c3585f);color:#fff}.hint{color:var(--ocv-muted,#aebebf);font-size:14px}.summary{font-weight:600}.segment-summary{max-height:230px;overflow:auto;padding:0;list-style:none}.segment-summary li{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid #53626255}.insert-position{display:grid;grid-template-columns:minmax(0,1fr) 105px;gap:12px;margin:20px 0}label{display:grid;gap:8px;min-width:0}select,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:130px}button:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:480px){.tts-structure-dialog{padding:16px}.insert-position{grid-template-columns:1fr}.tts-structure-backdrop{padding:12px}}
 </style>

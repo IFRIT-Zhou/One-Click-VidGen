@@ -67,5 +67,5 @@ window.fetch=(url,options={})=>{
   if(action.endsWith('/stop')){fixture.tasks[shot]={...fixture.tasks[shot],status:fixture.stopStatus||'stopped',message:'已请求停止'};return respond(fixture.tasks[shot])}
   return new Promise(resolve=>resolve(new Response(JSON.stringify({detail:'Unexpected request'}),{status:404})))
 }
-createApp({setup:()=>()=>h('div',{class:'studio live-studio'},[h('main',{style:'width:100%;max-width:1080px;margin:20px auto;padding:20px'},[state.view==='shot'&&state.visible?h(ShotVibePreview,{projectId:'cloud-fixture',shotId:state.shot,number:1,revision:1,duration:13}):state.view==='settings'?h(VibeModelSettings):null])])}).mount('#app')
+createApp({setup:()=>()=>h('div',{class:'studio live-studio'},[h('main',{style:'width:100%;max-width:1080px;margin:20px auto;padding:20px'},[state.view==='shot'&&state.visible?h(ShotVibePreview,{projectId:'cloud-fixture',shotId:state.shot,number:1,revision:1,duration:13,active:false}):state.view==='settings'?h(VibeModelSettings):null])])}).mount('#app')
 </script></html>

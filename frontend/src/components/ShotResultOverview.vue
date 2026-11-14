@@ -31,14 +31,10 @@ async function moveTab(direction) {
 
 <template>
   <div class="shot-result-overview">
+    <div class="sro-side">
     <section class="shot-review-copy" aria-label="本镜文案">
       <h3>本镜文案</h3>
       <div class="shot-review-copy-text"><p v-for="(text,index) in subtitles" :key="index">{{ text }}</p><p v-if="!subtitles.length" class="review-muted">本镜暂无文案</p></div>
-    </section>
-    <section class="shot-review-effect" aria-label="分镜效果">
-      <header><h3>分镜效果</h3><span class="review-muted">{{ statusLabel }}</span></header>
-      <slot name="preview" />
-      <p v-if="shot.intent" class="shot-review-intent">{{ shot.intent }}</p>
     </section>
     <section class="shot-review-prompts" aria-label="本镜提示词">
       <header>
@@ -54,7 +50,16 @@ async function moveTab(direction) {
       <slot name="presenter" />
     </section>
     <slot name="motion" />
+    <div v-if="$slots.settings" class="shot-review-settings"><slot name="settings" /></div>
+    </div>
+    <div class="sro-main">
+    <section class="shot-review-effect" aria-label="分镜效果">
+      <header><h3>分镜效果</h3><span class="review-muted">{{ statusLabel }}</span></header>
+      <slot name="preview" />
+      <p v-if="shot.intent" class="shot-review-intent">{{ shot.intent }}</p>
+    </section>
     <div v-if="$slots.auxiliary" class="shot-review-auxiliary"><slot name="auxiliary" /></div>
+    </div>
   </div>
 </template>
 
@@ -64,6 +69,10 @@ async function moveTab(direction) {
 .shot-review-copy{padding:18px 20px;border:1px solid var(--border,#35423f);border-left:3px solid var(--accent,#81d9bd);border-radius:10px;background:color-mix(in srgb,var(--accent,#81d9bd) 5%,var(--panel,#1e2625))}.shot-review-copy h3{color:var(--muted,#aab8b3);font-size:12px;margin-bottom:10px}.shot-review-copy-text{font-size:17px;line-height:1.9;overflow-wrap:anywhere}.shot-review-copy-text p{margin:4px 0}.shot-review-intent{margin:9px 0 0;font-size:13px;line-height:1.65;color:var(--muted,#aab8b3)}
 .shot-review-prompts{padding:16px 18px;border:1px solid var(--border,#35423f);border-radius:10px;background:var(--panel,#1e2625)}
 .shot-result-overview .shot-edit-design{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:10px 14px!important;min-height:40px;border:1px solid #b9a6ff!important;border-radius:9px;background:#b9a6ff!important;color:#251a42!important;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px #0002}.shot-edit-design span{font-size:17px}.shot-result-overview .shot-edit-design:hover:not(:disabled){background:#cebeff!important}.shot-result-overview .shot-edit-design:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}.shot-edit-design:focus-visible,.shot-prompt-tabs button:focus-visible,.shot-prompt-expand:focus-visible{outline:2px solid #b9a6ff;outline-offset:3px}
-.shot-prompt-tabs{display:flex;gap:18px;border-bottom:1px solid var(--border,#35423f);margin-bottom:12px}.shot-result-overview .shot-prompt-tabs button{padding:8px 0!important;border:0!important;border-bottom:2px solid transparent!important;border-radius:0!important;background:transparent!important;color:var(--muted,#aab8b3)!important;font-size:13px;cursor:pointer}.shot-result-overview .shot-prompt-tabs button.active{color:var(--text,#eef3f1)!important;border-bottom-color:#b9a6ff!important}.shot-readable-prompt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.85}.shot-readable-prompt.clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:7;overflow:hidden}.shot-result-overview .shot-prompt-expand{margin-top:8px;padding:4px 0!important;background:none!important;border:0!important;color:var(--muted,#aab8b3)!important;font-size:12px;cursor:pointer}.shot-prompt-note{font-size:12px;color:var(--muted,#aab8b3);margin:12px 0 0}.shot-review-auxiliary{padding-top:18px;border-top:1px solid var(--border,#35423f);min-width:0}
+.shot-prompt-tabs{display:flex;gap:18px;border-bottom:1px solid var(--border,#35423f);margin-bottom:12px}.shot-result-overview .shot-prompt-tabs button{padding:8px 0!important;border:0!important;border-bottom:2px solid transparent!important;border-radius:0!important;background:transparent!important;color:var(--muted,#aab8b3)!important;font-size:13px;cursor:pointer}.shot-result-overview .shot-prompt-tabs button.active{color:var(--text,#eef3f1)!important;border-bottom-color:#b9a6ff!important}.shot-readable-prompt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.85}.shot-readable-prompt.clamped{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:7;overflow:hidden}.shot-result-overview .shot-prompt-expand{margin-top:8px;padding:4px 0!important;background:none!important;border:0!important;color:var(--muted,#aab8b3)!important;font-size:12px;cursor:pointer}.shot-prompt-note{font-size:12px;color:var(--muted,#aab8b3);margin:12px 0 0}.shot-review-settings{display:grid;gap:12px;min-width:0}.shot-review-settings>:deep(*){margin-top:0;margin-bottom:0}.shot-review-auxiliary{padding-top:18px;border-top:1px solid var(--border,#35423f);min-width:0}
 @media(max-width:600px){.shot-result-overview{gap:16px}.shot-review-copy{padding:14px}.shot-review-copy-text{font-size:16px}.shot-review-prompts{padding:14px}.shot-review-prompts header{align-items:stretch}.shot-review-prompts h3{width:100%}.shot-result-overview .shot-edit-design{width:100%}}
+/* Narrow: one column in reading order (copy, effect, prompts, settings). */
+.sro-side,.sro-main{display:contents}.shot-review-copy{order:1}.shot-review-effect{order:2}.shot-review-prompts{order:3}.sro-side>:not(.shot-review-copy):not(.shot-review-prompts){order:4}.shot-review-auxiliary{order:5}
+/* Wide: preview, run status and logs on the left; copy, prompts and generation settings on the right. */
+@container (min-width:1000px){.shot-result-overview{grid-template-columns:minmax(0,1.3fr) minmax(360px,1fr);column-gap:24px;align-items:start}.sro-main,.sro-side{display:flex;flex-direction:column;gap:20px;min-width:0}.sro-main{grid-column:1;grid-row:1;position:sticky;top:calc(var(--dv-top,0px) + 12px);max-height:calc(100vh - var(--dv-top,0px) - 24px);overflow-y:auto;scrollbar-width:thin}.sro-side{grid-column:2;grid-row:1}.shot-review-auxiliary{border-top:0;padding-top:0}}
 </style>

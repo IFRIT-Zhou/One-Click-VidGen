@@ -78,9 +78,18 @@ def _target(project, shot_id, revision, *, reservation=False):
     # Do not call studio.read: recovery there can change an unrelated shot even
     # on a failed adoption. Check mutation preconditions against the saved record.
     record = previews._read_json(previews._safe(project, project/'record.json', file=True), 32*1024**2)
-    studio.editable(record, revision)
     stages = _INTENT_STAGES if reservation else _STAGES
-    if str(project) in studio.ACTIVE or record.get('status') not in stages:
+    # Video workers re-read record.json and only write their own shots, so an
+    # idle shot may adopt or undo its Vibe clip while other shots render; the
+    # per-shot guard below still refuses a queued or rendering shot.
+    # Image/planning workers save a held record, so they still block.
+    while_rendering = (not reservation and record.get('status') == 'video_generating'
+                       and str(project) in video.VIDEO_WORKERS)
+    if while_rendering:
+        stages = stages | {'video_generating'}
+    else:
+        studio.editable(record, revision)
+    if (str(project) in studio.ACTIVE and not while_rendering) or record.get('status') not in stages:
         raise HTTPException(409, '请在分镜检查阶段预留，或在核心图完成后采用动效')
     shot = studio.shot_editable(record, revision, shot_id, extra_stages=stages)
     if shot.get('asset_kind') == 'scene_reference' or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', shot_id):

@@ -2,70 +2,40 @@
 import IcanChannelHint from './IcanChannelHint.vue'
 import CloudImageQuality from './CloudImageQuality.vue'
 import { imageChoice } from '../icanImageSizes'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api } from '../api'
 import { taskImagePoolEnabled } from '../taskImagePool'
 
-const props = defineProps({ form: { type: Object, required: true }, manage: Boolean, authenticated: Boolean })
-const emit = defineEmits(['saved'])
-const poolEnabled = computed(() => props.manage ? props.form.use_cloud_image_pool : taskImagePoolEnabled(props.form, props.authenticated))
+// Task-side image route selector. Profile management lives in services/ImageServicePanel.vue.
+const props = defineProps({ form: { type: Object, required: true }, authenticated: Boolean })
+const poolEnabled = computed(() => taskImagePoolEnabled(props.form, props.authenticated))
 function toggleTaskPool(event) {
  props.form.task_image_pool = event.target.checked
  if (!poolEnabled.value) syncResolution()
 }
 const profiles = ref([])
 const message = ref('')
-const saving = ref(false)
-const editing = ref(false)
-const draft = reactive({ id:'', name:'', protocol:'async_task', base_url:'', model_id:'', text_endpoint:'/openapi/v2/{model}/text-to-image', reference_endpoint:'/openapi/v2/{model}/image-to-image', query_endpoint:'/openapi/v2/query', resolutions:['1k','2k','4k'], reference_images:true, api_key:'' })
 const selected = computed(() => profiles.value.find(item => item.id === props.form.image_profile_id) || null)
 const cloudSummary = computed(() => props.form.method === 'ican'
  ? `ICAN · GPT Image 2.5 · ${imageChoice(props.form.size).quality}`
  : `稳定版 · ${(props.form.image_resolution || '2k').toUpperCase()}`)
 const resolutions = computed(() => selected.value?.resolutions || ['1k','2k','4k'])
-const extraParameters = ref('{}')
-function chooseProtocol(){Object.assign(draft,draft.protocol==='openai_sync'?{text_endpoint:'/v1/images/generations',reference_endpoint:'/v1/images/edits',size:'auto',quality:'',response_format:'',timeout_seconds:600}:{text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query'})}
-watch(editing,value=>{if(value){extraParameters.value=JSON.stringify(draft.request_parameters||{},null,2);draft.size ||= 'auto';draft.timeout_seconds ||= 600}})
 
-function reset(profile=null){Object.assign(draft,{size:'auto',quality:'',response_format:'',request_parameters:{},timeout_seconds:600},profile?{...profile,api_key:'',resolutions:[...(profile.resolutions||['1k','2k','4k'])]}:{id:'',name:'',protocol:'async_task',base_url:'',model_id:'',text_endpoint:'/openapi/v2/{model}/text-to-image',reference_endpoint:'/openapi/v2/{model}/image-to-image',query_endpoint:'/openapi/v2/query',resolutions:['1k','2k','4k'],reference_images:true,api_key:''});editing.value=true}
 async function load(){try{profiles.value=(await api.imageProfiles()).profiles||[];if(!profiles.value.some(x=>x.id===props.form.image_profile_id))props.form.image_profile_id=profiles.value.find(x=>x.configured)?.id||'';syncResolution()}catch(e){message.value=e.message}}
 function syncResolution(){if(poolEnabled.value)return;if(!resolutions.value.includes(props.form.image_resolution))props.form.image_resolution=resolutions.value[0]||'1k'}
-async function save(){saving.value=true;message.value='';try{const parameters=draft.protocol==='openai_sync'?JSON.parse(extraParameters.value||'{}'):{};if(!parameters||Array.isArray(parameters)||typeof parameters!=='object')throw new Error('额外参数须为 JSON 对象');const payload={...draft,request_parameters:parameters,resolutions:[...draft.resolutions]};if(!payload.api_key.trim())delete payload.api_key;const result=await api.saveImageProfile(payload);message.value=result.message;await load();props.form.image_profile_id=result.profile.id;editing.value=false;emit('saved',result.profile.id)}catch(e){message.value=e.message}finally{saving.value=false}}
-async function remove(profile){if(saving.value||!confirm(`删除“${profile.name}”及其本机保存的全部密钥？不会撤销服务商密钥，也不会删除已生成素材。依赖此接口的项目后续调用可能失败。`))return;saving.value=true;try{const result=await api.deleteImageProfile(profile.id);profiles.value=(await api.imageProfiles()).profiles||[];if(props.form.image_profile_id===profile.id)props.form.image_profile_id='';message.value=result.message||'图像接口已删除；请按需重新选择配置。'}catch(e){message.value=e.message}finally{saving.value=false}}
-function toggleResolution(value){const list=draft.resolutions;const index=list.indexOf(value);if(index>=0&&list.length>1)list.splice(index,1);else if(index<0)list.push(value)}
 watch(()=>props.form.image_profile_id,syncResolution)
 onMounted(load)
 </script>
 
 <template>
- <section class="image-profile-selector" :class="{manager:manage}">
-  <div class="profile-head"><div><strong>{{manage?'图像模型配置':'本任务图像模型'}}</strong><small>{{poolEnabled?'选择本任务的云端图片渠道':manage?'每个模型、接口和 Key 独立保存，不预设任何中转商。':'使用已配置的个人 API；仅影响本任务出图。'}}</small></div><button v-if="manage&&!editing" type="button" @click="reset()">＋ 新增模型</button><label v-if="!manage" class="task-pool-toggle" :title="authenticated?'仅切换本任务图像渠道':'请先登录云端账户'"><span>使用集群</span><input type="checkbox" role="switch" :checked="poolEnabled" :disabled="!authenticated" @change="toggleTaskPool" /></label></div>
+ <section class="image-profile-selector">
+  <div class="profile-head"><div><strong>本任务图像模型</strong><small>{{poolEnabled?'选择本任务的云端图片渠道':'使用已配置的个人 API；仅影响本任务出图。'}}</small></div><label class="task-pool-toggle" :title="authenticated?'仅切换本任务图像渠道':'请先登录云端账户'"><span>使用集群</span><input type="checkbox" role="switch" :checked="poolEnabled" :disabled="!authenticated" @change="toggleTaskPool" /></label></div>
   <div v-if="poolEnabled" class="cloud-profile-settings"><strong class="cloud-profile-summary">{{cloudSummary}}</strong><label class="stack"><span>图片生成渠道</span><IcanChannelHint :active="form.method === 'ican'"><select v-model="form.method"><option value="running">稳定版</option><option value="ican">ICAN · GPT Image 2.5</option></select></IcanChannelHint></label><CloudImageQuality :form="form" compact /></div>
-  <template v-if="!poolEnabled || manage">
-   <div v-if="!poolEnabled && (!manage||!editing)" class="profile-select-row">
+  <template v-if="!poolEnabled">
+   <div class="profile-select-row">
     <label><span>模型配置</span><select v-model="form.image_profile_id" :disabled="!profiles.length"><option value="">{{profiles.length?'请选择':'尚未配置'}}</option><option v-for="p in profiles" :key="p.id" :value="p.id" :disabled="!p.configured">{{p.name}} · {{p.model_id}}{{p.configured?'':'（缺少 Key）'}}</option></select></label>
     <label v-if="selected?.protocol==='openai_sync'"><span>同步接口出图尺寸</span><input :value="selected.size||'auto'" disabled /><small>由模型配置的 size 控制；需修改时编辑该配置。</small></label>
     <label v-else><span>出图分辨率</span><select v-model="form.image_resolution" :disabled="!selected"><option v-for="r in resolutions" :key="r" :value="r">{{r.toUpperCase()}}</option></select></label>
-   </div>
-   <div v-if="manage&&!editing" class="profile-list"><article v-for="p in profiles" :key="p.id"><div><b>{{p.name}}</b><small>{{p.model_id}} · {{p.protocol==='async_task'?'异步任务接口':'兼容接口'}} · {{p.key_count}} 个 Key</small><small v-if="p.key_hints?.length">已保存密钥：{{p.key_hints.join('、')}}</small></div><button type="button" @click="reset(p)">编辑</button><button type="button" :disabled="saving" @click="remove(p)">{{p.legacy?'清除旧接口':'删除接口及密钥'}}</button></article><div v-if="!profiles.length" class="profile-empty"><div class="profile-empty-title"><div><span>填写示范</span><b>Image 2.5 · 我的接口</b></div><em>仅为格式示例</em></div><dl><div><dt>API Base URL</dt><dd>https://api.example.com</dd></div><div><dt>模型 ID</dt><dd>image-2.5</dd></div><div><dt>API Key</dt><dd>填写服务商提供的密钥</dd></div><div><dt>支持分辨率</dt><dd>1K / 2K / 4K</dd></div></dl><p>实际内容请以你的接口服务商文档为准。OCV 不指定或推荐第三方服务商。</p><button class="primary" type="button" @click="reset()">＋ 按格式新增配置</button></div></div>
-   <div v-if="manage&&editing" class="profile-editor">
-    <label><span>配置名称</span><input v-model="draft.name" placeholder="例如：Image 2.5 · 我的中转接口" /></label>
-    <label><span>接口协议</span><select v-model="draft.protocol" @change="chooseProtocol"><option value="async_task">异步任务接口 · 提交后查询</option><option value="openai_sync">OpenAI 兼容图像接口 · 同步返回</option></select></label>
-    <p class="wide" v-if="draft.protocol==='openai_sync'">适用于 images/generations 与 images/edits；支持 Base64 或图片 URL 返回。不会调用 RunningHub 上传/查询接口。超时后不会自动重新出图，避免重复收费。</p>
-    <template v-if="draft.protocol==='openai_sync'">
-     <label><span>实际出图尺寸</span><input v-model="draft.size" placeholder="auto 或 1536x1024" /></label>
-     <label><span>质量参数（可留空）</span><input v-model="draft.quality" placeholder="以服务商文档为准，例如 high" /></label>
-     <label><span>返回格式</span><select v-model="draft.response_format"><option value="">不传参数 · 服务商默认</option><option value="b64_json">b64_json</option><option value="url">url</option></select></label>
-     <label><span>等待超时（秒）</span><input v-model.number="draft.timeout_seconds" type="number" min="30" max="1800" /></label>
-     <label class="wide"><span>额外请求参数（JSON，可选）</span><textarea v-model="extraParameters" rows="3" placeholder='{"output_format":"png"}' /></label>
-     <small class="wide">同步接口使用以上 size，不将 1K/2K/4K 擅自转成不受支持的尺寸；模型、提示词、参考图与数量由 OCV 管理。额外参数请以服务商文档为准。</small>
-    </template>
-    <label class="wide"><span>API Base URL</span><input v-model="draft.base_url" placeholder="https://api.example.com" /></label>
-    <label><span>模型 ID</span><input v-model="draft.model_id" placeholder="填写服务商提供的模型 ID" /></label>
-    <label><span>API Key</span><input v-model="draft.api_key" type="password" :placeholder="draft.id?'已保存；不修改可留空':'填写 API Key；多个可用逗号分隔'" /></label>
-    <details class="wide"><summary>接口路径与能力（高级）</summary><div class="endpoint-grid"><label><span>文生图路径</span><input v-model="draft.text_endpoint" /></label><label><span>参考生图路径</span><input v-model="draft.reference_endpoint" /></label><label><span>查询路径</span><input v-model="draft.query_endpoint" /></label></div></details>
-    <div class="wide profile-capabilities"><span>支持分辨率</span><label v-for="r in ['1k','2k','4k']" :key="r"><input type="checkbox" :checked="draft.resolutions.includes(r)" @change="toggleResolution(r)" /> {{r.toUpperCase()}}</label><label><input v-model="draft.reference_images" type="checkbox" /> 支持参考图</label></div>
-    <div class="wide profile-actions"><button type="button" @click="editing=false">取消</button><button class="primary" type="button" :disabled="saving||!draft.name||!draft.base_url||!draft.model_id" @click="save">{{saving?'保存中…':'保存模型配置'}}</button></div>
    </div>
   </template>
   <p v-if="message" class="profile-message">{{message}}</p>
@@ -75,6 +45,5 @@ onMounted(load)
 <style scoped>
 .task-pool-toggle{display:flex!important;align-items:center;gap:8px;white-space:nowrap;font-size:12px}.task-pool-toggle input{appearance:none;width:38px!important;height:22px!important;min-height:0!important;padding:2px!important;border-radius:20px;background:#46525d;cursor:pointer}.task-pool-toggle input:before{content:'';display:block;width:16px;height:16px;border-radius:50%;background:white;transition:transform .15s}.task-pool-toggle input:checked{background:var(--ocv-accent,#72cdb7)}.task-pool-toggle input:checked:before{transform:translateX(15px)}.task-pool-toggle input:disabled{opacity:.45;cursor:not-allowed}
 .cloud-profile-settings{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}.cloud-profile-settings>.stack{display:grid;gap:7px;min-width:0}.cloud-profile-settings select{width:100%;min-width:0;box-sizing:border-box}.cloud-profile-summary{font-size:14px;color:var(--ocv-accent,#7ddac5);overflow-wrap:anywhere}
-.image-profile-selector{display:grid;gap:14px;padding:18px;border:1px solid var(--ocv-border,#35433e);border-radius:14px;background:color-mix(in srgb,var(--ocv-panel,#202825) 88%,transparent)}.profile-head,.profile-select-row,.profile-list article,.profile-actions{display:flex;gap:12px;align-items:center}.profile-head{justify-content:space-between}.profile-head>div,.profile-list article>div{display:grid;gap:4px}.profile-head small,.profile-list small{display:block;color:var(--ocv-muted,#9aa6a1)}.profile-select-row label{flex:1;display:grid;gap:7px}.profile-list{display:grid;gap:8px}.profile-list article{padding:10px 12px;border:1px solid var(--ocv-border,#35433e);border-radius:10px}.profile-list article>div{flex:1}.profile-editor{display:grid;grid-template-columns:1fr 1fr;gap:12px}.profile-editor label{display:grid;gap:6px}.wide{grid-column:1/-1}.endpoint-grid{display:grid;gap:10px;margin-top:12px}.profile-capabilities{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.profile-capabilities label{display:flex;grid-auto-flow:column;align-items:center}.profile-actions{justify-content:flex-end}.profile-message{margin:0;color:var(--ocv-accent,#7ddac5)}.disabled{opacity:.72}@media(max-width:760px){.profile-select-row,.profile-editor{display:grid;grid-template-columns:1fr}.wide{grid-column:auto}}
-.profile-empty{display:grid;gap:14px;padding:16px;border:1px dashed color-mix(in srgb,var(--ocv-accent,#7ddac5) 55%,var(--ocv-border,#35433e));border-radius:12px;background:color-mix(in srgb,var(--ocv-accent,#7ddac5) 5%,transparent)}.profile-empty-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.profile-empty-title>div{display:grid;gap:4px}.profile-empty-title span{font-size:.8rem;color:var(--ocv-accent,#7ddac5)}.profile-empty-title em{padding:4px 8px;border-radius:999px;background:color-mix(in srgb,var(--ocv-accent,#7ddac5) 12%,transparent);color:var(--ocv-muted,#9aa6a1);font-size:.75rem;font-style:normal}.profile-empty dl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.profile-empty dl>div{display:grid;gap:3px;padding:9px 10px;border-radius:8px;background:color-mix(in srgb,var(--ocv-panel,#202825) 80%,transparent)}.profile-empty dt{font-size:.76rem;color:var(--ocv-muted,#9aa6a1)}.profile-empty dd{margin:0;overflow-wrap:anywhere}.profile-empty p{margin:0;color:var(--ocv-muted,#9aa6a1);font-size:.82rem}.profile-empty button{justify-self:start}
+.image-profile-selector{display:grid;gap:14px;padding:18px;border:1px solid var(--ocv-border,#35433e);border-radius:14px;background:color-mix(in srgb,var(--ocv-panel,#202825) 88%,transparent)}.profile-head,.profile-select-row{display:flex;gap:12px;align-items:center}.profile-head{justify-content:space-between}.profile-head>div{display:grid;gap:4px}.profile-head small{display:block;color:var(--ocv-muted,#9aa6a1)}.profile-select-row label{flex:1;display:grid;gap:7px}.profile-message{margin:0;color:var(--ocv-accent,#7ddac5)}.disabled{opacity:.72}@media(max-width:760px){.profile-select-row{display:grid;grid-template-columns:1fr}}
 </style>

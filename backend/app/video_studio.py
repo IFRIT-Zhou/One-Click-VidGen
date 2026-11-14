@@ -330,7 +330,10 @@ def _image_configs(record, user_id=None):
         from .image_profiles import profile_provider_configs
         configs = profile_provider_configs(snapshot)
     else:
-        configs = visual._provider_configs()
+        try:
+            configs = visual._provider_configs()
+        except RuntimeError as exc:
+            raise ValueError('本项目还没有选择出图渠道：请在「项目设置 · 本项目图像模型」里选择号池或已配置的个人 API，保存后再生成。') from exc
     if not configs:
         raise ValueError('请先在接口与服务中配置可用的图像 API')
     ratio = str(record.get('settings', {}).get('ratio') or '16:9')
@@ -1828,7 +1831,8 @@ def generate_storyboard_images(identity: str, data: Review, request: Request):
         record['logs'].append(f'开始生成核心分镜图；本轮共 {len(unfinished)} 张。')
         save(path, record)
         _start_storyboard_images(path, record, configs)
-        return record
+        # Copy under LOCK: the started worker edits record while FastAPI encodes it.
+        return copy.deepcopy(record)
 
 
 @router.post('/{identity}/images/stop')
@@ -1863,7 +1867,7 @@ def generate_scene_references(identity: str, data: Review, request: Request):
         record['logs'].append('开始补充场景参考，仅准备共用场景资产；不自动重绘已有核心图。')
         save(path, record)
         _start_storyboard_images(path, record, configs, scenes_only=True)
-        return record
+        return copy.deepcopy(record)
 
 
 @router.get('/{identity}/images/{shot_id}')
@@ -2050,7 +2054,7 @@ def redraw_storyboard_image(identity: str, shot_id: str, data: StoryboardRedraw,
         record['revision'] += 1
         _start_storyboard_redraw(path, record, shot, data, configs, reference_paths,
                                  scene.get('image_version', '') if scene else '')
-        return record
+        return copy.deepcopy(record)
 
 
 @router.post('/{identity}/images/{shot_id}/upload')
@@ -2642,7 +2646,8 @@ def plan(identity: str, request: Request, repair_only: bool = False, fresh: bool
                     ACTIVE.discard(str(path))
                     CANCEL_EVENTS.pop(str(path), None)
     threading.Thread(target=worker, daemon=True).start()
-    return record
+    with LOCK:
+        return copy.deepcopy(record)
 
 
 @router.post('/{identity}/stop')

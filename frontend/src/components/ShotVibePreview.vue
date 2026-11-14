@@ -365,7 +365,7 @@ async function copyBrief(){
         </div>
         <p v-if="cloudRunning" role="status">停止后保留已有素材和上一版预览，不影响正式镜头及其他镜头任务。已提交的上游请求可能仍在执行或计费。</p>
         <p v-else-if="busy==='cloud-submit'" role="status">正在等待任务编号，收到后可停止本镜制作；请勿重复提交。</p>
-        <p v-if="editLocked&&!designLocked">当前阶段只可预览，待核心图确认并且任务空闲后可采用。</p>
+        <p v-if="editLocked&&!designLocked">当前阶段只可预览：核心图确认后可采用；其他镜头生成动态视频时也可以采用，但本镜正在排队或生成时不行。</p>
         <p v-if="design" role="note">{{design.summary}} {{(design.warnings||[]).join(' ')}}</p>
       </div>
 

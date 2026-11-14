@@ -49,14 +49,14 @@ async function openDraft(draft) {
 onMounted(refresh)
 </script>
 <template>
-  <section v-if="info" class="codex-bridge" aria-label="Codex 制作桥">
-    <header><div><strong>Codex 制作桥</strong><p>Codex 准备草稿和分镜，你核查配音与画面。不会自动生成或扣费。</p></div><button type="button" :disabled="busy" @click="refresh">刷新</button></header>
-    <div v-if="!compact" class="bridge-steps"><span>① Codex 填入初始草稿</span><span>② 在 OCV 制作并确认配音</span><span>③ Codex 导入分镜方案</span><span>④ 审核后生成画面</span></div>
+  <section v-if="info" class="codex-bridge" aria-label="AI 制作桥">
+    <header><div><strong>AI 制作桥</strong><p>AI 助手准备草稿和分镜，你核查配音与画面。不会自动生成或扣费。</p></div><button type="button" :disabled="busy" @click="refresh">刷新</button></header>
+    <div v-if="!compact" class="bridge-steps"><span>① AI 填入初始草稿</span><span>② 在 OCV 制作并确认配音</span><span>③ AI 导入分镜方案</span><span>④ 审核后生成画面</span></div>
     <div class="bridge-tools"><select v-model="selected" aria-label="复制给 AI 的目标项目"><option value="">新项目 · 填写初始草稿</option><option v-for="p in projects" :key="p.id" :value="p.id">{{p.name}} · {{p.shot_count}} 镜</option></select><button type="button" title="复制项目上下文与说明书读取方式，粘贴给已连接 OCV MCP 或可使用旧制作桥的 AI。" @click="copyInstructions">复制给 AI 的说明</button><button v-if="selected" type="button" @click="emit('open-project',selected)">打开分镜</button></div>
     <div v-if="activeDrafts.length" class="bridge-drafts"><div v-for="draft in activeDrafts" :key="draft.id"><span><b>{{draft.name}}</b><small>服务器参数草稿 · v{{draft.revision}}</small></span><span class="draft-actions"><button type="button" :disabled="busy" @click="openDraft(draft)">打开并核查</button><button v-if="canArchive" type="button" :disabled="busy" @click="setArchived(draft,true)">归档</button></span></div></div>
-    <p v-else>Codex 保存的初始草稿会出现在这里。配音确认后，让 Codex 通过任务 ID 接手，无须先运行 OCV 的自动分镜规划。</p>
+    <p v-else>AI 保存的初始草稿会出现在这里。配音确认后，让 AI 通过任务 ID 接手，无须先运行 OCV 的自动分镜规划。</p>
     <details v-if="archivedDrafts.length" class="bridge-archive"><summary>历史归档（{{archivedDrafts.length}}）</summary><p>仅收起服务器草稿，不删除任务、成片或素材。</p><div class="bridge-drafts"><div v-for="draft in archivedDrafts" :key="draft.id"><span><b>{{draft.name}}</b><small>已归档 · v{{draft.revision}}</small></span><span class="draft-actions"><button type="button" :disabled="busy" @click="openDraft(draft)">打开并核查</button><button type="button" :disabled="busy" @click="setArchived(draft,false)">恢复</button></span></div></div></details>
-    <details v-if="!compact"><summary>接口与隐私说明</summary><p>当前版本用于动态视频的初始参数与分镜草案交接，不是自动出片工具。仅访问当前登录用户的数据；导入前校验、备份并检查版本，已有素材不会被整体覆盖。插件不捆绑私人创作规则或项目资料，也不自行调用外部模型；交给 Codex 的资料仍按你所用 Codex 服务的数据规则处理。</p><code>{{info.client_path}}</code></details>
+    <details v-if="!compact"><summary>接口与隐私说明</summary><p>当前版本用于动态视频的初始参数与分镜草案交接，不是自动出片工具。仅访问当前登录用户的数据；导入前校验、备份并检查版本，已有素材不会被整体覆盖。插件不捆绑私人创作规则或项目资料，也不自行调用外部模型；交给 AI 的资料仍按你所用 AI 服务的数据规则处理。</p><code>{{info.client_path}}</code></details>
     <p v-if="message" class="bridge-message" role="status">{{message}}</p>
   </section>
 </template>
