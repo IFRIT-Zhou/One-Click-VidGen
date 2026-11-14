@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.13.3",
-  "release_order": 2026111303,
-  "display_version": "2026.11.13 API 安全加固与密钥管理更新",
+  "release_id": "2026.11.15.1",
+  "release_order": 2026111501,
+  "display_version": "2026.11.15 全新制作工作台与 AI 制作桥更新",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.13.3/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.15.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "紧急安全更新：接口地址变更防止误带旧密钥；补齐多密钥日志脱敏、本机访问与工作区文件保护、随机会话签名密钥。完善语言/图像/视频/配音/Vibe密钥删除入口及思考模型兼容和等待上限。不覆盖用户素材和模型，不改写旧版本历史。",
+  "notes": "新版配音、画面字幕、动态视频工作台与接口管理界面；优化 AI 制作桥缓存管理。修复字幕校对设置继承、出图渠道提示与后台任务响应竞争；支持其他镜头生成时在空闲镜头采用 Vibe，恢复任务查询入口和未完成镜头导航。不覆盖用户素材、模型及密钥。",
   "content_fingerprint": "6226a551f9c4e2618f455a47c4d14c09758c9872d29d0ea9e610ad649a0ef046"
 }
