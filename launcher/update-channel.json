@@ -1,16 +1,16 @@
 {
-  "release_id": "2026.11.15.1",
-  "release_order": 2026111501,
-  "display_version": "2026.11.15 全新制作工作台与 AI 制作桥更新",
+  "release_id": "2026.11.16.1",
+  "release_order": 2026111601,
+  "display_version": "2026.11.16 云端参考图上传兼容修复",
   "branch": "main",
   "portable_overlay_safe": true,
   "portable_overlay_min_order": 2026081801,
   "archive_url": "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip",
   "archive_urls": [
-    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.15.1/One-Click-VidGen-main.zip",
+    "https://modelscope.cn/models/IFRIT95/One-Click-VidGen-Update-Mirror/resolve/master/releases/2026.11.16.1/One-Click-VidGen-main.zip",
     "https://github.com/IFRIT-Zhou/One-Click-VidGen/archive/refs/heads/main.zip"
   ],
   "archive_sha256": "",
-  "notes": "新版配音、画面字幕、动态视频工作台与接口管理界面；优化 AI 制作桥缓存管理。修复字幕校对设置继承、出图渠道提示与后台任务响应竞争；支持其他镜头生成时在空闲镜头采用 Vibe，恢复任务查询入口和未完成镜头导航。不覆盖用户素材、模型及密钥。",
-  "content_fingerprint": "334e86be3057728822fcfe479669c832d087b64e91aa0af09f13038f9ba4ef65"
+  "notes": "修复云端号池参考图上传失败后错误改用 Base64 的问题；兼容上传仅返回素材 ID，保留账号归属校验；失败提示显示 HTTP 状态，不再误导修改个人 API Key。保留任务检查点，不自动重试收费生成。云端上传服务故障仍需服务端排查。不覆盖用户素材、模型及密钥。",
+  "content_fingerprint": "9dea23f1cb9e78cb927d91b19f33d541e12958f0b0ec4fae343df90ae77a0d56"
 }
