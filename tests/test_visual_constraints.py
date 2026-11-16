@@ -671,7 +671,7 @@ class VisualConstraintsTest(unittest.TestCase):
                     "https://cloud.test/api/v1/image-pool/media/asset-1",
                 )
 
-    def test_cloud_reference_upload_falls_back_to_data_uri_on_proxy_500(self) -> None:
+    def test_cloud_reference_upload_stops_on_proxy_500(self) -> None:
         class Response:
             status_code = 500
             ok = False
@@ -703,9 +703,8 @@ class VisualConstraintsTest(unittest.TestCase):
             content = b"fake-image-bytes"
             path.write_bytes(content)
             with patch.object(visual, "_new_session", return_value=Session()):
-                result = visual._reference_image_url(config, str(path))
-        self.assertTrue(result.startswith("data:image/png;base64,"))
-        self.assertIn("ZmFrZS1pbWFnZS1ieXRlcw==", result)
+                with self.assertRaisesRegex(visual.RunningHubReferenceUploadError, "HTTP 500"):
+                    visual._reference_image_url(config, str(path))
 
     def test_poster_submit_uses_reference_data_uri_after_upload_failure(self) -> None:
         captured = {}

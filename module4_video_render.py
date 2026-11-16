@@ -4139,10 +4139,8 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
         except (CloudImageLoginRequired, image_control.ImageWaitStopped, image_control.ImageWaitTimeout):
             raise
         except (OSError, requests.RequestException, ValueError, RuntimeError) as exc:
-            # The cloud proxy currently returns HTTP 500 for some valid image
-            # uploads. Keep the generation request usable: image-pool/generate
-            # accepts a data URI, so this is a safe transport fallback rather
-            # than a paid retry or silently dropping the reference.
+            # Direct providers may support a data URI fallback. The cloud pool
+            # requires an uploaded, account-owned asset and must fail closed.
             upload_error = exc
             response = None
             payload = {}
@@ -4159,12 +4157,25 @@ def _reference_image_url(config: dict[str, str], raw_path: str | None = None) ->
             ).strip()
         else:
             url = ""
+        if config.get("cloud_pool") == "1" and response is not None and response.ok:
+            # Some pool versions return only the registered asset ID. Resolve
+            # that ID through the authenticated pool, never through upstream.
+            data = payload.get("data", payload) if isinstance(payload, dict) else {}
+            media_id = data.get("media_id") if isinstance(data, dict) else None
+            if isinstance(media_id, str) and re.fullmatch(r"[A-Za-z0-9_-]+", media_id):
+                base = config.get("cloud_base_url", "").rstrip("/")
+                if base:
+                    url = f"{base}/image-pool/media/{media_id}"
+        upload_status = response.status_code if response is not None else None
         if response is not None:
             response.close()
         if not url:
-            if config.get("cloud_pool") == "1" and config.get("method") == "ican":
+            if config.get("cloud_pool") == "1":
+                detail = f"HTTP {upload_status}" if upload_status is not None else type(upload_error).__name__
                 raise RunningHubReferenceUploadError(
-                    "ICAN 参考图上传失败，已停止生成；请重新上传后重试"
+                    f"云端号池参考图上传失败（{detail}，未取得可用素材链接），已停止本镜生成；"
+                    "未改用 Base64，也未丢弃参考图。请联系维护者检查号池上传服务，修复后断点续跑；"
+                    "无需修改个人 API Key。"
                 ) from upload_error
             # Standard-model resource fields such as ``imageUrls`` accept a
             # Base64 Data URI as well as a public URL. Some RunningHub account
